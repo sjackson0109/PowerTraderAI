@@ -5,6 +5,8 @@ Fully automated crypto trading powered by a custom price prediction AI and a str
 
 THESE INSTRUCTIONS WERE WRITTEN BY AI! PLEASE LET ME KNOW IF THERE ARE ANY ERRORS OR ISSUES WITH THIS SETUP PROCESS!
 
+If you have any crypto holdings in Robinhood currently, either transfer them out of your Robinhood account or sell them to dollars BEFORE going through this setup process!
+
 This page walks you through installing PowerTrader AI from start to finish, in the exact order a first-time user should do it.  
 No coding knowledge needed.  
 These instructions are Windows-based but PowerTrader AI can run on any OS.

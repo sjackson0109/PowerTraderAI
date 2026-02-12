@@ -82,9 +82,11 @@ IMPORTANT: This software places real trades automatically. You are responsible f
 
    `cd C:\PowerTraderAI`
 
-3. If using Python 3.12 or higher, run this command:
+3. If using Python 3.12 or higher (or, later on, if you just run into the pkg_resources error) , run this command:
 
-   `python -m pip install setuptools`
+   `python -m pip install "setuptools==81.0.0"`
+
+v81 is required, pkg_resources is not included with v82. I'll change the code away from it soon.
 
 4. Install everything PowerTrader AI needs:
 

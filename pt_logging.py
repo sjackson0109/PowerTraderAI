@@ -1,291 +1,478 @@
 """
-Secure logging system for PowerTrader AI.
-Provides safe logging with credential filtering and structured error handling.
+PowerTrader AI Enhanced Logging System
+Advanced logging with structured output, performance tracking, and audit trails.
 """
+
 import logging
-import os
-import re
+import logging.handlers
+import json
 import sys
-import time
-from typing import Any, Dict, Optional
-from logging.handlers import RotatingFileHandler
+import traceback
+from datetime import datetime
+from typing import Dict, Any, Optional, List, Union
+from pathlib import Path
+from dataclasses import dataclass, asdict
+from enum import Enum
+import threading
+import queue
+import atexit
 
+class LogLevel(Enum):
+    """Enhanced log levels with trading-specific categories."""
+    CRITICAL = "CRITICAL"
+    ERROR = "ERROR"
+    WARNING = "WARNING"
+    INFO = "INFO"
+    DEBUG = "DEBUG"
+    TRADE = "TRADE"      # Trading operations
+    AUDIT = "AUDIT"      # Audit trail
+    PERFORMANCE = "PERF" # Performance metrics
 
-class SecureFormatter(logging.Formatter):
-    """Custom formatter that filters sensitive information from logs."""
+@dataclass
+class LogEntry:
+    """Structured log entry with comprehensive metadata."""
+    timestamp: str
+    level: str
+    message: str
+    logger_name: str
+    module: str
+    function: str
+    line_number: int
+    thread_id: int
+    thread_name: str
+    process_id: int
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+    trade_id: Optional[str] = None
+    correlation_id: Optional[str] = None
+    tags: Optional[List[str]] = None
+    context: Optional[Dict[str, Any]] = None
+    exception_info: Optional[Dict[str, Any]] = None
+    performance_metrics: Optional[Dict[str, float]] = None
+
+class JSONFormatter(logging.Formatter):
+    """JSON formatter for structured logging."""
     
-    # Patterns for sensitive information
-    SENSITIVE_PATTERNS = [
-        re.compile(r'api[_-]?key["\']?\s*[:=]\s*["\']?([a-zA-Z0-9]{10,})["\']?', re.IGNORECASE),
-        re.compile(r'secret["\']?\s*[:=]\s*["\']?([a-zA-Z0-9+/=]{20,})["\']?', re.IGNORECASE),
-        re.compile(r'password["\']?\s*[:=]\s*["\']?([^"\'\s]{6,})["\']?', re.IGNORECASE),
-        re.compile(r'token["\']?\s*[:=]\s*["\']?([a-zA-Z0-9+/=]{15,})["\']?', re.IGNORECASE),
-        re.compile(r'x-api-key["\']?\s*[:=]\s*["\']?([a-zA-Z0-9]{10,})["\']?', re.IGNORECASE),
-        re.compile(r'x-signature["\']?\s*[:=]\s*["\']?([a-zA-Z0-9+/=]{20,})["\']?', re.IGNORECASE),
-    ]
+    def __init__(self, include_context: bool = True, 
+                 include_performance: bool = True):
+        super().__init__()
+        self.include_context = include_context
+        self.include_performance = include_performance
+        
+    def format(self, record: logging.LogRecord) -> str:
+        """Format log record as JSON."""
+        # Extract exception information
+        exc_info = None
+        if record.exc_info:
+            exc_info = {
+                "type": record.exc_info[0].__name__ if record.exc_info[0] else None,
+                "message": str(record.exc_info[1]) if record.exc_info[1] else None,
+                "traceback": traceback.format_exception(*record.exc_info)
+            }
+        
+        # Build log entry
+        log_entry = LogEntry(
+            timestamp=datetime.fromtimestamp(record.created).isoformat(),
+            level=record.levelname,
+            message=record.getMessage(),
+            logger_name=record.name,
+            module=record.module or "unknown",
+            function=record.funcName or "unknown",
+            line_number=record.lineno,
+            thread_id=record.thread,
+            thread_name=record.threadName,
+            process_id=record.process,
+            session_id=getattr(record, "session_id", None),
+            user_id=getattr(record, "user_id", None),
+            trade_id=getattr(record, "trade_id", None),
+            correlation_id=getattr(record, "correlation_id", None),
+            tags=getattr(record, "tags", None),
+            context=getattr(record, "context", None) if self.include_context else None,
+            exception_info=exc_info,
+            performance_metrics=getattr(record, "performance_metrics", None) if self.include_performance else None
+        )
+        
+        return json.dumps(asdict(log_entry), default=str, separators=(',', ':'))
+
+class ColoredFormatter(logging.Formatter):
+    """Colored console formatter for better readability."""
     
-    def format(self, record):
-        # Format the message normally
-        message = super().format(record)
-        
-        # Filter out sensitive information
-        for pattern in self.SENSITIVE_PATTERNS:
-            message = pattern.sub(lambda m: m.group(0).replace(m.group(1), '*' * 8), message)
-        
-        return message
-
-
-class SecurityLogFilter(logging.Filter):
-    """Filter to catch and sanitize security-related log entries."""
+    # Color codes
+    COLORS = {
+        'CRITICAL': '\033[41m',    # Red background
+        'ERROR': '\033[91m',       # Bright red
+        'WARNING': '\033[93m',     # Yellow
+        'INFO': '\033[92m',        # Green
+        'DEBUG': '\033[94m',       # Blue
+        'TRADE': '\033[95m',       # Magenta
+        'AUDIT': '\033[96m',       # Cyan
+        'PERF': '\033[97m',        # White
+    }
+    RESET = '\033[0m'
     
-    def filter(self, record):
-        # Convert args to strings safely
-        if hasattr(record, 'args') and record.args:
-            safe_args = []
-            for arg in record.args:
-                if isinstance(arg, (dict, list)) and len(str(arg)) > 1000:
-                    safe_args.append('<large_object_redacted>')
-                else:
-                    safe_args.append(arg)
-            record.args = tuple(safe_args)
+    def format(self, record: logging.LogRecord) -> str:
+        """Format log record with colors."""
+        # Apply color based on level
+        color = self.COLORS.get(record.levelname, '')
+        reset = self.RESET if color else ''
         
-        # Limit message length
-        if hasattr(record, 'getMessage'):
-            message = record.getMessage()
-            if len(message) > 2000:
-                record.msg = message[:2000] + '... [truncated]'
-                record.args = ()
+        # Format timestamp
+        timestamp = datetime.fromtimestamp(record.created).strftime('%H:%M:%S.%f')[:-3]
         
-        return True
+        # Build formatted message
+        formatted = f"{color}[{timestamp}] {record.levelname:8} {record.name:20} {record.getMessage()}{reset}"
+        
+        # Add exception info if present
+        if record.exc_info:
+            formatted += f"\\n{self.formatException(record.exc_info)}"
+        
+        return formatted
 
-
-class SecureLogger:
-    """Secure logger implementation for PowerTrader AI."""
+class PerformanceLogFilter(logging.Filter):
+    """Filter for performance-related log entries."""
     
-    def __init__(self, name: str = "PowerTrader", log_dir: str = None):
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Only allow performance-related records."""
+        return (hasattr(record, 'performance_metrics') or 
+                record.levelname == 'PERF' or
+                'performance' in record.getMessage().lower())
+
+class AuditLogFilter(logging.Filter):
+    """Filter for audit trail entries."""
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Only allow audit-related records."""
+        return (hasattr(record, 'audit_event') or 
+                record.levelname == 'AUDIT' or
+                'audit' in record.getMessage().lower())
+
+class TradeLogFilter(logging.Filter):
+    """Filter for trading-related log entries."""
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Only allow trading-related records."""
+        return (hasattr(record, 'trade_id') or 
+                record.levelname == 'TRADE' or
+                any(word in record.getMessage().lower() 
+                    for word in ['trade', 'order', 'position', 'buy', 'sell']))
+
+class AsyncFileHandler(logging.Handler):
+    """Asynchronous file handler to prevent I/O blocking."""
+    
+    def __init__(self, filename: str, maxBytes: int = 10485760, 
+                 backupCount: int = 5, encoding: str = 'utf-8'):
+        super().__init__()
+        self.filename = filename
+        self.maxBytes = maxBytes
+        self.backupCount = backupCount
+        self.encoding = encoding
+        
+        # Create background thread for file writing
+        self.queue = queue.Queue()
+        self.thread = threading.Thread(target=self._worker, daemon=True)
+        self.thread.start()
+        
+        # Setup file handler
+        self._setup_file_handler()
+        
+        # Register cleanup
+        atexit.register(self.close)
+    
+    def _setup_file_handler(self):
+        """Setup rotating file handler."""
+        self.file_handler = logging.handlers.RotatingFileHandler(
+            self.filename,
+            maxBytes=self.maxBytes,
+            backupCount=self.backupCount,
+            encoding=self.encoding
+        )
+    
+    def _worker(self):
+        """Background worker thread for file writing."""
+        while True:
+            try:
+                record = self.queue.get(timeout=1.0)
+                if record is None:  # Shutdown signal
+                    break
+                self.file_handler.emit(record)
+                self.queue.task_done()
+            except queue.Empty:
+                continue
+            except Exception as e:
+                # Handle errors in background thread
+                sys.stderr.write(f"Error in async log handler: {e}\\n")
+    
+    def emit(self, record: logging.LogRecord):
+        """Queue log record for async processing."""
+        try:
+            self.queue.put_nowait(record)
+        except queue.Full:
+            # If queue is full, skip this log entry
+            pass
+    
+    def close(self):
+        """Close handler and cleanup resources."""
+        # Send shutdown signal
+        self.queue.put(None)
+        self.thread.join(timeout=5.0)
+        self.file_handler.close()
+        super().close()
+
+class PowerTraderLogger:
+    """Enhanced logger for PowerTrader AI with structured logging capabilities."""
+    
+    def __init__(self, name: str = "PowerTrader"):
         self.name = name
-        self.log_dir = log_dir or os.path.join(os.path.dirname(__file__), 'logs')
-        self._ensure_log_directory()
-        
-        # Create logger
         self.logger = logging.getLogger(name)
-        self.logger.setLevel(logging.INFO)
+        self.session_id = self._generate_session_id()
+        self.correlation_counter = 0
+        self.context_stack: List[Dict[str, Any]] = []
         
-        # Remove existing handlers to avoid duplicates
-        self.logger.handlers = []
+        # Add custom log levels
+        self._add_custom_levels()
+        
+        # Configure handlers
+        self._configured = False
+        
+    def _generate_session_id(self) -> str:
+        """Generate unique session ID."""
+        import uuid
+        return str(uuid.uuid4())[:8]
+    
+    def _add_custom_levels(self):
+        """Add custom log levels."""
+        # Add TRADE level
+        logging.addLevelName(25, "TRADE")
+        def trade(self, message, *args, **kwargs):
+            if self.isEnabledFor(25):
+                self._log(25, message, args, **kwargs)
+        logging.Logger.trade = trade
+        
+        # Add AUDIT level
+        logging.addLevelName(35, "AUDIT")
+        def audit(self, message, *args, **kwargs):
+            if self.isEnabledFor(35):
+                self._log(35, message, args, **kwargs)
+        logging.Logger.audit = audit
+        
+        # Add PERF level
+        logging.addLevelName(15, "PERF")
+        def perf(self, message, *args, **kwargs):
+            if self.isEnabledFor(15):
+                self._log(15, message, args, **kwargs)
+        logging.Logger.perf = perf
+    
+    def configure(self, 
+                  log_level: str = "INFO",
+                  log_file: Optional[str] = None,
+                  json_output: bool = False,
+                  colored_console: bool = True,
+                  enable_performance_logging: bool = True,
+                  enable_audit_logging: bool = True,
+                  enable_trade_logging: bool = True) -> None:
+        """
+        Configure logger with handlers and formatters.
+        
+        Args:
+            log_level: Minimum log level
+            log_file: Log file path (if None, no file logging)
+            json_output: Use JSON formatting for file output
+            colored_console: Use colored console output
+            enable_performance_logging: Enable separate performance log
+            enable_audit_logging: Enable separate audit log
+            enable_trade_logging: Enable separate trade log
+        """
+        if self._configured:
+            return
+        
+        self.logger.setLevel(getattr(logging, log_level.upper()))
+        
+        # Clear existing handlers
+        self.logger.handlers.clear()
         
         # Console handler
         console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)
-        console_formatter = SecureFormatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+        if colored_console:
+            console_formatter = ColoredFormatter()
+        else:
+            console_formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
         console_handler.setFormatter(console_formatter)
-        console_handler.addFilter(SecurityLogFilter())
         self.logger.addHandler(console_handler)
         
-        # File handler with rotation
-        file_handler = RotatingFileHandler(
-            os.path.join(self.log_dir, f'{name.lower()}.log'),
-            maxBytes=10*1024*1024,  # 10MB
-            backupCount=5
-        )
-        file_handler.setLevel(logging.DEBUG)
-        file_formatter = SecureFormatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
-        )
-        file_handler.setFormatter(file_formatter)
-        file_handler.addFilter(SecurityLogFilter())
-        self.logger.addHandler(file_handler)
-        
-        # Error file handler
-        error_handler = RotatingFileHandler(
-            os.path.join(self.log_dir, f'{name.lower()}_error.log'),
-            maxBytes=5*1024*1024,  # 5MB
-            backupCount=3
-        )
-        error_handler.setLevel(logging.ERROR)
-        error_handler.setFormatter(file_formatter)
-        error_handler.addFilter(SecurityLogFilter())
-        self.logger.addHandler(error_handler)
-        
-        # Set file permissions
-        self._set_secure_permissions()
-    
-    def _ensure_log_directory(self):
-        """Create log directory if it doesn't exist."""
-        try:
-            if not os.path.exists(self.log_dir):
-                os.makedirs(self.log_dir, mode=0o750)
-        except OSError:
-            # Fallback to current directory
-            self.log_dir = os.path.dirname(__file__)
-    
-    def _set_secure_permissions(self):
-        """Set secure permissions on log files."""
-        try:
-            for handler in self.logger.handlers:
-                if hasattr(handler, 'baseFilename'):
-                    if os.path.exists(handler.baseFilename):
-                        os.chmod(handler.baseFilename, 0o640)
-        except OSError:
-            pass
-    
-    def info(self, message: str, *args, **kwargs):
-        """Log info message."""
-        self.logger.info(message, *args, **kwargs)
-    
-    def debug(self, message: str, *args, **kwargs):
-        """Log debug message."""
-        self.logger.debug(message, *args, **kwargs)
-    
-    def warning(self, message: str, *args, **kwargs):
-        """Log warning message."""
-        self.logger.warning(message, *args, **kwargs)
-    
-    def error(self, message: str, *args, **kwargs):
-        """Log error message."""
-        self.logger.error(message, *args, **kwargs)
-    
-    def critical(self, message: str, *args, **kwargs):
-        """Log critical message."""
-        self.logger.critical(message, *args, **kwargs)
-    
-    def log_trade_action(self, action: str, symbol: str, details: Dict[str, Any]):
-        """Log trading actions with structured format."""
-        # Sanitize details to prevent sensitive data leakage
-        safe_details = {}
-        for key, value in details.items():
-            if key.lower() in ['api_key', 'secret', 'signature', 'token', 'password']:
-                safe_details[key] = '***REDACTED***'
-            elif isinstance(value, str) and len(value) > 200:
-                safe_details[key] = value[:200] + '...[truncated]'
+        # Main file handler
+        if log_file:
+            log_path = Path(log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            main_handler = AsyncFileHandler(str(log_path))
+            if json_output:
+                main_formatter = JSONFormatter()
             else:
-                safe_details[key] = value
+                main_formatter = logging.Formatter(
+                    '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+                )
+            main_handler.setFormatter(main_formatter)
+            self.logger.addHandler(main_handler)
+            
+            # Specialized log handlers
+            log_dir = log_path.parent
+            
+            # Performance log
+            if enable_performance_logging:
+                perf_handler = AsyncFileHandler(str(log_dir / "performance.log"))
+                perf_handler.addFilter(PerformanceLogFilter())
+                perf_handler.setFormatter(JSONFormatter(include_context=False))
+                self.logger.addHandler(perf_handler)
+            
+            # Audit log
+            if enable_audit_logging:
+                audit_handler = AsyncFileHandler(str(log_dir / "audit.log"))
+                audit_handler.addFilter(AuditLogFilter())
+                audit_handler.setFormatter(JSONFormatter())
+                self.logger.addHandler(audit_handler)
+            
+            # Trade log
+            if enable_trade_logging:
+                trade_handler = AsyncFileHandler(str(log_dir / "trades.log"))
+                trade_handler.addFilter(TradeLogFilter())
+                trade_handler.setFormatter(JSONFormatter())
+                self.logger.addHandler(trade_handler)
         
-        self.info(f"TRADE_ACTION: {action} | Symbol: {symbol} | Details: {safe_details}")
+        self._configured = True
     
-    def log_api_call(self, method: str, endpoint: str, status_code: Optional[int] = None, 
-                     response_size: Optional[int] = None):
-        """Log API calls without exposing sensitive data."""
-        # Remove sensitive parts from endpoint
-        clean_endpoint = re.sub(r'([?&]api_key=)[^&]*', r'\1***', endpoint)
-        clean_endpoint = re.sub(r'([?&]signature=)[^&]*', r'\1***', clean_endpoint)
-        
-        message = f"API_CALL: {method} {clean_endpoint}"
-        if status_code is not None:
-            message += f" | Status: {status_code}"
-        if response_size is not None:
-            message += f" | Size: {response_size}b"
-        
-        if status_code and status_code >= 400:
-            self.error(message)
-        else:
-            self.debug(message)
+    def get_correlation_id(self) -> str:
+        """Get unique correlation ID for tracking related operations."""
+        self.correlation_counter += 1
+        return f"{self.session_id}_{self.correlation_counter:06d}"
     
-    def log_security_event(self, event_type: str, description: str, details: Dict[str, Any] = None):
-        """Log security-related events."""
-        message = f"SECURITY: {event_type} | {description}"
-        if details:
-            # Ensure no sensitive data in security logs
-            safe_details = {k: v for k, v in details.items() 
-                          if k.lower() not in ['password', 'key', 'secret', 'token']}
-            message += f" | Details: {safe_details}"
+    def push_context(self, **kwargs) -> None:
+        """Push context onto the context stack."""
+        self.context_stack.append(kwargs)
+    
+    def pop_context(self) -> Optional[Dict[str, Any]]:
+        """Pop context from the context stack."""
+        return self.context_stack.pop() if self.context_stack else None
+    
+    def _enrich_record(self, record: logging.LogRecord, **kwargs) -> None:
+        """Enrich log record with additional metadata."""
+        # Add session info
+        record.session_id = self.session_id
         
-        self.warning(message)
+        # Add context
+        merged_context = {}
+        for ctx in self.context_stack:
+            merged_context.update(ctx)
+        merged_context.update(kwargs.get('context', {}))
+        
+        if merged_context:
+            record.context = merged_context
+        
+        # Add other metadata
+        for key, value in kwargs.items():
+            if key != 'context':
+                setattr(record, key, value)
+    
+    def log_trade(self, message: str, trade_id: str = None, 
+                  symbol: str = None, side: str = None,
+                  quantity: float = None, price: float = None, **kwargs) -> None:
+        """Log trading operations with structured data."""
+        trade_data = {
+            'trade_id': trade_id,
+            'symbol': symbol,
+            'side': side,
+            'quantity': quantity,
+            'price': price
+        }
+        trade_data.update(kwargs)
+        
+        # Filter out None values
+        trade_data = {k: v for k, v in trade_data.items() if v is not None}
+        
+        self.logger.trade(message, extra=trade_data)
+    
+    def log_performance(self, operation: str, duration_ms: float, 
+                       **metrics) -> None:
+        """Log performance metrics."""
+        perf_metrics = {
+            'operation': operation,
+            'duration_ms': duration_ms,
+            **metrics
+        }
+        
+        self.logger.perf(f"Performance: {operation} completed in {duration_ms:.2f}ms",
+                        extra={'performance_metrics': perf_metrics})
+    
+    def log_audit(self, event: str, user_id: str = None, 
+                  details: Dict[str, Any] = None, **kwargs) -> None:
+        """Log audit events for compliance and security."""
+        audit_data = {
+            'audit_event': event,
+            'user_id': user_id,
+            'timestamp': datetime.now().isoformat(),
+            'details': details or {}
+        }
+        audit_data.update(kwargs)
+        
+        self.logger.audit(f"Audit: {event}", extra=audit_data)
+    
+    def log_error_with_context(self, message: str, error: Exception = None,
+                              **context) -> None:
+        """Log error with comprehensive context."""
+        error_data = {'context': context}
+        if error:
+            error_data['error_type'] = type(error).__name__
+            error_data['error_message'] = str(error)
+        
+        self.logger.error(message, exc_info=error is not None, 
+                         extra=error_data)
+    
+    def get_logger(self) -> logging.Logger:
+        """Get the underlying logger instance."""
+        return self.logger
+    
+    def shutdown(self) -> None:
+        """Shutdown logger and cleanup resources."""
+        # Close all handlers
+        for handler in self.logger.handlers:
+            handler.close()
+        
+        self.logger.handlers.clear()
 
-
-class SafeExceptionHandler:
-    """Safe exception handling with secure logging."""
+# Context manager for temporary logging context
+class LogContext:
+    """Context manager for adding temporary context to logs."""
     
-    def __init__(self, logger: SecureLogger):
+    def __init__(self, logger: PowerTraderLogger, **context):
         self.logger = logger
+        self.context = context
     
-    def handle_exception(self, exception: Exception, context: str = "", 
-                        additional_info: Dict[str, Any] = None) -> str:
-        """
-        Handle exceptions safely with logging.
-        
-        Returns:
-            Safe error message for user display
-        """
-        # Generate safe error message
-        safe_message = self._generate_safe_error_message(exception, context)
-        
-        # Log detailed error (with sanitization)
-        error_details = {
-            'exception_type': type(exception).__name__,
-            'context': context,
-            'safe_message': safe_message,
-        }
-        
-        if additional_info:
-            # Filter out sensitive info from additional details
-            safe_info = {k: v for k, v in additional_info.items() 
-                        if k.lower() not in ['password', 'key', 'secret', 'token', 'api_key']}
-            error_details.update(safe_info)
-        
-        self.logger.error(f"Exception in {context}: {safe_message}", exc_info=True, 
-                         extra={'error_details': error_details})
-        
-        return safe_message
+    def __enter__(self):
+        self.logger.push_context(**self.context)
+        return self
     
-    def _generate_safe_error_message(self, exception: Exception, context: str) -> str:
-        """Generate user-safe error message."""
-        error_type = type(exception).__name__
-        
-        # Map internal exceptions to user-friendly messages
-        safe_messages = {
-            'requests.ConnectionError': 'Network connection error. Please check your internet connection.',
-            'requests.Timeout': 'Request timed out. Please try again later.',
-            'requests.HTTPError': 'API service error. Please try again later.',
-            'json.JSONDecodeError': 'Invalid data received from service.',
-            'ValidationError': str(exception),  # Our validation errors are already safe
-            'FileNotFoundError': 'Required configuration file not found.',
-            'PermissionError': 'File access permission denied.',
-            'ValueError': 'Invalid data format encountered.',
-            'TypeError': 'Data type error occurred.',
-        }
-        
-        # Check for specific known error patterns
-        error_message = str(exception).lower()
-        if 'auth' in error_message or 'credential' in error_message:
-            return 'Authentication error. Please check your API credentials.'
-        elif 'network' in error_message or 'connection' in error_message:
-            return 'Network error. Please check your connection and try again.'
-        elif 'timeout' in error_message:
-            return 'Operation timed out. Please try again later.'
-        
-        # Use mapped message or generic fallback
-        return safe_messages.get(error_type, 'An unexpected error occurred. Please try again.')
-
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.logger.pop_context()
 
 # Global logger instance
-_global_logger: Optional[SecureLogger] = None
+logger = PowerTraderLogger("PowerTrader")
 
+# Convenience functions
+def configure_logging(**kwargs):
+    """Configure global logger."""
+    logger.configure(**kwargs)
 
-def get_logger(name: str = "PowerTrader") -> SecureLogger:
-    """Get global secure logger instance."""
-    global _global_logger
-    if _global_logger is None:
-        _global_logger = SecureLogger(name)
-    return _global_logger
+def get_logger(name: str = None) -> logging.Logger:
+    """Get logger instance."""
+    if name:
+        return logging.getLogger(name)
+    return logger.get_logger()
 
+def log_context(**context):
+    """Create logging context manager."""
+    return LogContext(logger, **context)
 
-def get_exception_handler() -> SafeExceptionHandler:
-    """Get exception handler with secure logging."""
-    return SafeExceptionHandler(get_logger())
-
-
-def log_startup_info(component: str, version: str = "1.0"):
-    """Log component startup information."""
-    logger = get_logger()
-    logger.info(f"Starting {component} v{version}")
-    logger.info(f"Python version: {sys.version.split()[0]}")
-    logger.info(f"Working directory: {os.getcwd()}")
-
-
-def log_shutdown_info(component: str):
-    """Log component shutdown information."""
-    logger = get_logger()
-    logger.info(f"Shutting down {component}")
+def shutdown_logging():
+    """Shutdown logging system."""
+    logger.shutdown()

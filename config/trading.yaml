@@ -1,0 +1,22 @@
+analysis_timeframes:
+- 5m
+- 15m
+- 1h
+- 4h
+api_retry_count: 3
+api_timeout: 30
+batch_size: 32
+default_amount: 100.0
+epochs: 100
+learning_rate: 0.001
+max_daily_trades: 50
+max_drawdown_percent: 10.0
+max_position_size: 1000.0
+min_trade_amount: 10.0
+position_size_percent: 5.0
+primary_timeframe: 1h
+rate_limit_per_minute: 60
+stop_loss_percent: 2.0
+take_profit_percent: 5.0
+update_interval: 60
+validation_split: 0.2

@@ -1,0 +1,107 @@
+{
+  "monitoring_interval": 5,
+  "metrics_retention_hours": 24,
+  "alerts_retention_days": 7,
+  "thresholds": {
+    "max_drawdown_pct": 5.0,
+    "max_daily_loss": 1000.0,
+    "min_available_balance_pct": 10.0,
+    "max_position_size_pct": 20.0,
+    "max_memory_usage_mb": 512,
+    "max_cpu_usage_pct": 80,
+    "max_response_time_ms": 5000,
+    "min_win_rate_pct": 40.0,
+    "max_commission_per_day": 50.0,
+    "max_open_positions": 5,
+    "min_account_balance": 1000.0
+  },
+  "alerts": {
+    "enable_email": false,
+    "enable_console": true,
+    "enable_file": true,
+    "email_recipients": [
+      "trader@example.com"
+    ],
+    "smtp_settings": {
+      "server": "smtp.gmail.com",
+      "port": 587,
+      "username": "",
+      "password": "",
+      "use_tls": true
+    },
+    "alert_levels": {
+      "portfolio_drawdown": "warning",
+      "system_error": "critical",
+      "api_failure": "error",
+      "low_balance": "warning",
+      "high_risk_position": "warning"
+    }
+  },
+  "performance_tracking": {
+    "enable_detailed_metrics": true,
+    "track_execution_times": true,
+    "track_memory_usage": true,
+    "track_api_response_times": true,
+    "benchmark_intervals": [
+      "1m",
+      "5m", 
+      "15m",
+      "1h",
+      "1d"
+    ]
+  },
+  "risk_monitoring": {
+    "enable_real_time_checks": true,
+    "position_size_alerts": true,
+    "correlation_checks": true,
+    "volatility_monitoring": true,
+    "drawdown_alerts": true,
+    "exposure_limits": {
+      "max_sector_exposure_pct": 40.0,
+      "max_single_position_pct": 15.0,
+      "max_correlation": 0.8
+    }
+  },
+  "system_health": {
+    "check_intervals": {
+      "api_connectivity": 30,
+      "database_status": 60,
+      "memory_usage": 10,
+      "disk_space": 300,
+      "network_latency": 60
+    },
+    "auto_recovery": {
+      "enable": true,
+      "max_retries": 3,
+      "backoff_multiplier": 2.0,
+      "circuit_breaker": true
+    }
+  },
+  "reporting": {
+    "daily_summary": {
+      "enable": true,
+      "time": "18:00",
+      "include_charts": true,
+      "email_recipients": []
+    },
+    "weekly_report": {
+      "enable": true,
+      "day": "Sunday",
+      "time": "20:00",
+      "detailed_analysis": true
+    },
+    "real_time_dashboard": {
+      "enable": true,
+      "refresh_interval": 5,
+      "port": 8080,
+      "auth_required": false
+    }
+  },
+  "data_export": {
+    "enable_csv_export": true,
+    "enable_json_export": true,
+    "export_directory": "exports/monitoring",
+    "retention_days": 90,
+    "compression": true
+  }
+}

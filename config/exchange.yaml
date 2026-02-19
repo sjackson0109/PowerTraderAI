@@ -1,0 +1,14 @@
+api_key: ''
+api_secret: ''
+base_url: ''
+max_order_size: 10000.0
+min_order_size: 10.0
+name: default
+primary_pair: BTC-USD
+sandbox: true
+supported_pairs:
+- BTC-USD
+- ETH-USD
+- LTC-USD
+trading_fee: 0.1
+withdrawal_fee: 0.0

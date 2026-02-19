@@ -11,118 +11,146 @@ import hmac
 import json
 import uuid
 import os
+import psutil
 import logging
 from datetime import datetime
-from typing import List, Dict, Optional, Any, Union
-from dataclasses import dataclass, field
+from typing import Dict, List, Any, Optional
 
 # Third-party imports
-import psutil
 from kucoin.client import Market
+
+# Local imports  
+from pt_files import secure_write_text, secure_write_json, set_secure_permissions
 
 # Initialize market client
 market = Market(url='https://api.kucoin.com')
 
-@dataclass
-class TradingConfiguration:
-    """Configuration class for trading parameters and state management."""
-    # Server configuration
-    server: str = 'server'
-    restarting: bool = False
-    in_trade: bool = False
-    
-    # Market data
-    avg50: List[float] = field(default_factory=list)
-    prediction_prices_avg_list: List[float] = field(default_factory=list)
-    
-    # Trading counters and variables
-    sells_count: int = 0
-    list_len: int = 0
-    updowncount: int = 0
-    updowncount1: int = 0
-    updowncount1_2: int = 0
-    updowncount1_3: int = 0
-    updowncount1_4: int = 0
-    
-    # Price variables
-    high_var2: float = 0.0
-    low_var2: float = 0.0
-    last_flipped: bool = False
-    
-    # Starting amounts (different timeframes)
-    starting_amounts: Dict[str, float] = field(default_factory=lambda: {
-        'h02': 100.0, 'h05': 100.0, 'h10': 100.0, 'h20': 100.0, 'h50': 100.0,
-        'base': 100.0, '1': 100.0, '1_2': 100.0, '1_3': 100.0, '1_4': 100.0,
-        '2': 100.0, '2_2': 100.0, '2_3': 100.0, '2_4': 100.0,
-        '3': 100.0, '3_2': 100.0, '3_3': 100.0, '3_4': 100.0,
-        '4': 100.0, '4_2': 100.0, '4_3': 100.0, '4_4': 100.0
-    })
+"""
+Neural network training module for PowerTrader AI.
 
-@dataclass
-class ProfitTracker:
-    """Tracks profit data across different trading strategies."""
-    profit_lists: Dict[str, List[float]] = field(default_factory=lambda: {
-        'base': [], '1': [], '1_2': [], '1_3': [], '1_4': [],
-        '2': [], '2_2': [], '2_3': [], '2_4': [],
-        '3': [], '3_2': [], '3_3': [], '4': [], '4_2': []
-    })
-    
-@dataclass  
-class PredictionTracker:
-    """Tracks prediction accuracy and performance metrics."""
-    good_hits: List[float] = field(default_factory=list)
-    good_preds: Dict[str, List[float]] = field(default_factory=lambda: {
-        '1': [], '2': [], '3': [], '4': [], '5': [], '6': []
-    })
-    big_good_preds: Dict[str, List[float]] = field(default_factory=lambda: {
-        '1': [], '2': [], '3': [], '4': [], '5': [], '6': []
-    })
-    big_good_hits: List[float] = field(default_factory=list)
-    
-@dataclass
-class DirectionTracker:
-    """Tracks up/down movement predictions across timeframes."""
-    upordown: Dict[str, List[str]] = field(default_factory=lambda: {
-        'base': [], '1': [], '1_2': [], '1_3': [], '1_4': [],
-        '2': [], '2_2': [], '2_3': [], '2_4': [],
-        '3': [], '3_2': [], '3_3': [], '3_4': [],
-        '4': [], '4_2': [], '4_3': [], '4_4': [], '5': []
-    })
+This module handles:
+- Training neural networks on cryptocurrency price data
+- Managing training memories and weights across timeframes  
+- Optimizing prediction accuracy through iterative learning
+"""
 
-# Global configuration instances
-config = TradingConfiguration()
-profit_tracker = ProfitTracker()
-prediction_tracker = PredictionTracker()
-direction_tracker = DirectionTracker()
+# Global state variables - TODO: Refactor into TrainerState class
+avg50: List[float] = []
+sells_count: int = 0
+prediction_prices_avg_list: List[float] = []
+pt_server: str = 'server'
+list_len: int = 0
+restarting: bool = False
+in_trade: bool = False
+updowncount: int = 0
+updowncount1 = 0
+updowncount1_2 = 0
+updowncount1_3 = 0
+updowncount1_4 = 0
+high_var2 = 0.0
+low_var2 = 0.0
+last_flipped = False
+starting_amount02 = 100.0
+starting_amount05 = 100.0
+starting_amount10 = 100.0
+starting_amount20 = 100.0
+starting_amount50 = 100.0
 
-# Configuration instances for backward compatibility with existing code
-sells_count = lambda: config.sells_count
-avg50 = config.avg50
-prediction_prices_avg_list = config.prediction_prices_avg_list
-pt_server = config.server
-list_len = lambda: config.list_len
-restarting = lambda: config.restarting
-in_trade = lambda: config.in_trade
-# Configuration classes handle all global state - remove old variable declarations
+# TODO: Refactor these repetitive variables into structured data
+# Example consolidated structure:
+# starting_amounts = {
+#     'base': 100.0, '1': 100.0, '1_2': 100.0, '1_3': 100.0, '1_4': 100.0,
+#     '2': 100.0, '2_2': 100.0, '2_3': 100.0, '2_4': 100.0,
+#     '3': 100.0, '3_2': 100.0, '3_3': 100.0, '3_4': 100.0,
+#     '4': 100.0, '4_2': 100.0, '4_3': 100.0, '4_4': 100.0
+# }
+
+starting_amount = 100.0
+starting_amount1 = 100.0
+starting_amount1_2 = 100.0
+starting_amount1_3 = 100.0
+starting_amount1_4 = 100.0
+starting_amount2 = 100.0
+starting_amount2_2 = 100.0
+starting_amount2_3 = 100.0
+starting_amount2_4 = 100.0
+starting_amount3 = 100.0
+starting_amount3_2 = 100.0
+starting_amount3_3 = 100.0
+starting_amount3_4 = 100.0
+starting_amount4 = 100.0
+starting_amount4_2 = 100.0
+starting_amount4_3 = 100.0
+starting_amount4_4 = 100.0
+profit_list = []
+profit_list1 = []
+profit_list1_2 = []
+profit_list1_3 = []
+profit_list1_4 = []
+profit_list2 = []
+profit_list2_2 = []
+profit_list2_3 = []
+profit_list2_4 = []
+profit_list3 = []
+profit_list3_2 = []
+profit_list3_3 = []
+profit_list4 = []
+profit_list4_2 = []
+good_hits = []
+good_preds = []
+good_preds2 = []
+good_preds3 = []
+good_preds4 = []
+good_preds5 = []
+good_preds6 = []
+big_good_preds = []
+big_good_preds2 = []
+big_good_preds3 = []
+big_good_preds4 = []
+big_good_preds5 = []
+big_good_preds6 = []
+big_good_hits = []
+upordown = []
+upordown1 = []
+upordown1_2 = []
+upordown1_3 = []
+upordown1_4 = []
+upordown2 = []
+upordown2_2 = []
+upordown2_3 = []
+upordown2_4 = []
+upordown3 = []
+upordown3_2 = []
+upordown3_3 = []
+upordown3_4 = []
+upordown4 = []
+upordown4_2 = []
+upordown4_3 = []
+upordown4_4 = []
+upordown5 = []
+import json
+import uuid
+import os
 
 # ---- speed knobs ----
 VERBOSE = False  # set True if you want the old high-volume prints
-def vprint(*args, **kwargs):
+def vprint(*args: Any, **kwargs: Any) -> None:
 	if VERBOSE:
 		print(*args, **kwargs)
 
 # Cache memory/weights in RAM (avoid re-reading and re-writing every loop)
-_memory_cache = {}  # tf_choice -> dict(memory_list, weight_list, high_weight_list, low_weight_list, dirty)
-_last_threshold_written = {}  # tf_choice -> float
+_memory_cache: Dict[str, Dict[str, Any]] = {}  # tf_choice -> dict(memory_list, weight_list, high_weight_list, low_weight_list, dirty)
+_last_threshold_written: Dict[str, float] = {}  # tf_choice -> float
 
-def _read_text(path):
+def _read_text(path: str) -> str:
 	with open(path, "r", encoding="utf-8", errors="ignore") as f:
 		return f.read()
 
-def load_memory(tf_choice):
+def load_memory(tf_choice: str) -> Dict[str, Any]:
 	"""Load memories/weights for a timeframe once and keep them in RAM."""
 	if tf_choice in _memory_cache:
 		return _memory_cache[tf_choice]
+	
 	data = {
 		"memory_list": [],
 		"weight_list": [],
@@ -130,78 +158,96 @@ def load_memory(tf_choice):
 		"low_weight_list": [],
 		"dirty": False,
 	}
+	
 	try:
-		data["memory_list"] = _read_text(f"memories_{tf_choice}.txt").replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').split('~')
-	except:
+		content = _read_text(f"memories_{tf_choice}.txt")
+		data["memory_list"] = content.replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').split('~')
+	except (FileNotFoundError, IOError) as e:
+		print(f"Warning: Could not load memories_{tf_choice}.txt: {e}")
 		data["memory_list"] = []
+	
 	try:
-		data["weight_list"] = _read_text(f"memory_weights_{tf_choice}.txt").replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').split(' ')
-	except:
+		content = _read_text(f"memory_weights_{tf_choice}.txt")
+		data["weight_list"] = content.replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').split(' ')
+	except (FileNotFoundError, IOError) as e:
+		print(f"Warning: Could not load memory_weights_{tf_choice}.txt: {e}")
 		data["weight_list"] = []
+	
 	try:
-		data["high_weight_list"] = _read_text(f"memory_weights_high_{tf_choice}.txt").replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').split(' ')
-	except:
+		content = _read_text(f"memory_weights_high_{tf_choice}.txt")
+		data["high_weight_list"] = content.replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').split(' ')
+	except (FileNotFoundError, IOError) as e:
+		print(f"Warning: Could not load memory_weights_high_{tf_choice}.txt: {e}")
 		data["high_weight_list"] = []
+	
 	try:
-		data["low_weight_list"] = _read_text(f"memory_weights_low_{tf_choice}.txt").replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').split(' ')
-	except:
+		content = _read_text(f"memory_weights_low_{tf_choice}.txt")
+		data["low_weight_list"] = content.replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').split(' ')
+	except (FileNotFoundError, IOError) as e:
+		print(f"Warning: Could not load memory_weights_low_{tf_choice}.txt: {e}")
 		data["low_weight_list"] = []
+	
 	_memory_cache[tf_choice] = data
 	return data
 
-def flush_memory(tf_choice, force=False):
+def flush_memory(tf_choice: str, force: bool = False) -> None:
 	"""Write memories/weights back to disk only when they changed (batch IO)."""
 	data = _memory_cache.get(tf_choice)
 	if not data:
 		return
 	if (not data.get("dirty")) and (not force):
 		return
+	
 	try:
-		with open(f"memories_{tf_choice}.txt", "w+", encoding="utf-8") as f:
-			f.write("~".join([x for x in data["memory_list"] if str(x).strip() != ""]))
-	except:
-		pass
+		content = "~".join([x for x in data["memory_list"] if str(x).strip() != ""])
+		secure_write_text(f"memories_{tf_choice}.txt", content)
+	except (IOError, OSError) as e:
+		print(f"Error writing memories_{tf_choice}.txt: {e}")
+	
 	try:
-		with open(f"memory_weights_{tf_choice}.txt", "w+", encoding="utf-8") as f:
-			f.write(" ".join([str(x) for x in data["weight_list"] if str(x).strip() != ""]))
-	except:
-		pass
+		content = " ".join([str(x) for x in data["weight_list"] if str(x).strip() != ""])
+		secure_write_text(f"memory_weights_{tf_choice}.txt", content)
+	except (IOError, OSError) as e:
+		print(f"Error writing memory_weights_{tf_choice}.txt: {e}")
+	
 	try:
-		with open(f"memory_weights_high_{tf_choice}.txt", "w+", encoding="utf-8") as f:
-			f.write(" ".join([str(x) for x in data["high_weight_list"] if str(x).strip() != ""]))
-	except:
-		pass
+		content = " ".join([str(x) for x in data["high_weight_list"] if str(x).strip() != ""])
+		secure_write_text(f"memory_weights_high_{tf_choice}.txt", content)
+	except (IOError, OSError) as e:
+		print(f"Error writing memory_weights_high_{tf_choice}.txt: {e}")
+	
 	try:
-		with open(f"memory_weights_low_{tf_choice}.txt", "w+", encoding="utf-8") as f:
-			f.write(" ".join([str(x) for x in data["low_weight_list"] if str(x).strip() != ""]))
-	except:
-		pass
+		content = " ".join([str(x) for x in data["low_weight_list"] if str(x).strip() != ""])
+		secure_write_text(f"memory_weights_low_{tf_choice}.txt", content)
+	except (IOError, OSError) as e:
+		print(f"Error writing memory_weights_low_{tf_choice}.txt: {e}")
+	
 	data["dirty"] = False
 
-def write_threshold_sometimes(tf_choice, perfect_threshold, loop_i, every=200):
+def write_threshold_sometimes(tf_choice: str, perfect_threshold: float, loop_i: int, every: int = 200) -> None:
 	"""Avoid writing neural_perfect_threshold_* every single loop."""
 	last = _last_threshold_written.get(tf_choice)
 	# write occasionally, or if it changed meaningfully
 	if (loop_i % every != 0) and (last is not None) and (abs(perfect_threshold - last) < 0.05):
 		return
 	try:
-		with open(f"neural_perfect_threshold_{tf_choice}.txt", "w+", encoding="utf-8") as f:
-			f.write(str(perfect_threshold))
+		secure_write_text(f"neural_perfect_threshold_{tf_choice}.txt", str(perfect_threshold))
 		_last_threshold_written[tf_choice] = perfect_threshold
-	except:
-		pass
+	except (IOError, OSError) as e:
+		print(f"Error writing neural_perfect_threshold_{tf_choice}.txt: {e}")
 
-def should_stop_training(loop_i, every=50):
+def should_stop_training(loop_i: int, every: int = 50) -> bool:
 	"""Check killer.txt less often (still responsive, way less IO)."""
 	if loop_i % every != 0:
 		return False
 	try:
 		with open("killer.txt", "r", encoding="utf-8", errors="ignore") as f:
-			return f.read().strip().lower() == "yes"
+			content = f.read().strip().lower()
+			return content == "yes" or content == "true"
 	except:
 		return False
 
-def PrintException():
+def PrintException() -> None:
 	exc_type, exc_obj, tb = sys.exc_info()
 
 	# IMPORTANT: don't swallow clean exits (sys.exit()) or Ctrl+C
@@ -222,7 +268,7 @@ def PrintException():
 how_far_to_look_back = 100000
 number_of_candles = [2]
 number_of_candles_index = 0
-def restart_program():
+def restart_program() -> None:
 	"""Restarts the current program, with file objects and descriptors cleanup"""
 
 	try:
@@ -254,7 +300,7 @@ except Exception:
 
 coin_choice = _arg_coin + '-USDT'
 
-restart_processing = "yes"
+restart_processing = True
 
 # GUI reads this status file to know if this coin is TRAINING or FINISHED
 _trainer_started_at = int(time.time())
@@ -276,8 +322,8 @@ except Exception:
 the_big_index = 0
 while True:
 	list_len = 0
-	restarting = 'no'
-	in_trade = 'no'
+	restarting = False
+	in_trade = False
 	updowncount = 0
 	updowncount1 = 0
 	updowncount1_2 = 0
@@ -285,7 +331,7 @@ while True:
 	updowncount1_4 = 0
 	high_var2 = 0.0
 	low_var2 = 0.0
-	last_flipped = 'no'
+	last_flipped = False
 	starting_amounth02 = 100.0
 	starting_amounth05 = 100.0
 	starting_amounth10 = 100.0
@@ -360,7 +406,7 @@ while True:
 	weight_list = _mem["weight_list"]
 	high_weight_list = _mem["high_weight_list"]
 	low_weight_list = _mem["low_weight_list"]
-	no_list = 'no' if len(memory_list) > 0 else 'yes'
+	no_list = len(memory_list) == 0
 
 	tf_list = ['1hour',tf_choice,tf_choice]
 	choice_index = tf_choices.index(tf_choice)
@@ -514,7 +560,7 @@ while True:
 			matched_patterns_count = 0
 			list_of_ys = []
 			list_of_ys_count = 0
-			next_coin = 'no'
+			next_coin = False
 			all_current_patterns = []
 			memory_or_history = []
 			memory_weights = []
@@ -526,7 +572,7 @@ while True:
 			low_final_moves = 0.0
 			memory_indexes = []
 			matches_yep = []
-			flipped = 'no'
+			flipped = False
 			last_minute = int(time.time()/60)
 			overunder = 'nothing'
 			overunder2 = 'nothing'
@@ -615,11 +661,10 @@ while True:
 					continue
 			# Check stop signal occasionally (much less disk IO)
 			if should_stop_training(loop_i):
-				exited = 'yes'
+				exited = True
 				print('finished processing')
-				file = open('trainer_last_start_time.txt','w+')
-				file.write(str(start_time_yes))
-				file.close()
+				if not secure_write_text('trainer_last_start_time.txt', str(start_time_yes)):
+					print("Warning: Could not write trainer start time file securely")
 
 				# Mark training finished for the GUI
 				try:
@@ -667,8 +712,8 @@ while True:
 				import psutil
 				import logging
 				list_len = 0
-				restarting = 'no'
-				in_trade = 'no'
+				restarting = False
+				in_trade = False
 				updowncount = 0
 				updowncount1 = 0
 				updowncount1_2 = 0
@@ -894,7 +939,7 @@ while True:
 										continue
 								diff_avg = sum(checks)/len(checks)
 								if diff_avg <= perfect_threshold:
-									any_perfect = 'yes'
+									any_perfect = True
 									high_diff = float(memory_list[mem_ind].split('{}')[1].replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').replace(' ',''))/100
 									low_diff = float(memory_list[mem_ind].split('{}')[2].replace("'","").replace(',','').replace('"','').replace(']','').replace('[','').replace(' ',''))/100
 									unweighted.append(float(memory_pattern[len(memory_pattern)-1]))
@@ -913,7 +958,7 @@ while True:
 								diffs_list.append(diff_avg)
 								mem_ind += 1
 								if mem_ind >= len(memory_list):
-									if any_perfect == 'no':
+									if any_perfect == False:
 										memory_diff = min(diffs_list)
 										which_memory_index = diffs_list.index(memory_diff)
 										perfect.append('no')

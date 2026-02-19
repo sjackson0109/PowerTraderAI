@@ -1,0 +1,42 @@
+# PowerTrader AI Code Ownership Rules
+# This file defines who must review and approve changes to specific files or directories
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global code owner - sjackson0109 must approve ALL changes
+* @sjackson0109
+
+# Critical Core Files - Require explicit approval for trading system components
+/pt_*.py @sjackson0109
+/requirements.txt @sjackson0109
+/LICENSE @sjackson0109
+/README.md @sjackson0109
+
+# Configuration and Infrastructure Files
+/.github/ @sjackson0109
+/.gitignore @sjackson0109
+/*.yml @sjackson0109
+/*.yaml @sjackson0109
+/*.json @sjackson0109
+/*.toml @sjackson0109
+
+# Documentation - Ensure quality and accuracy
+/docs/ @sjackson0109
+
+# Security and Sensitive Areas - High scrutiny required
+/docs/security/ @sjackson0109
+/docs/api-configuration/ @sjackson0109
+
+# Testing and CI/CD - Maintain system integrity
+/tests/ @sjackson0109
+/.github/workflows/ @sjackson0109
+
+# Exchange Integration - Critical for trading operations
+/docs/exchanges/ @sjackson0109
+
+# Any Python files - Core trading logic protection
+*.py @sjackson0109
+
+# Environment and deployment files
+.env* @sjackson0109
+docker* @sjackson0109
+Dockerfile* @sjackson0109

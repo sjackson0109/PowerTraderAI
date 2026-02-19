@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/PowerTrader-AI/PowerTrader_AI/discussions
+    about: Ask questions and discuss ideas with the community
+  - name: 📚 Documentation
+    url: https://github.com/PowerTrader-AI/PowerTrader_AI/wiki
+    about: Check the documentation for setup and usage guides

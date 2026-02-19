@@ -13,6 +13,9 @@ from colorama import Fore, Style
 import traceback
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
+from pt_credentials import get_credentials
+from pt_validation import InputValidator, ValidationError, validate_api_response
+from pt_logging import get_logger, get_exception_handler, log_startup_info
 
 # -----------------------------
 # GUI HUB OUTPUTS
@@ -75,28 +78,39 @@ def _load_gui_settings() -> dict:
 		if _gui_settings_cache["mtime"] == mtime:
 			return dict(_gui_settings_cache)
 
+		# Validate file path to prevent directory traversal
+		base_dir = os.path.dirname(os.path.abspath(__file__))
+		allowed_dirs = [base_dir, os.path.join(base_dir, 'config')]
+		from pt_files import validate_file_path
+		
+		if not validate_file_path(_GUI_SETTINGS_PATH, allowed_dirs):
+			logger = get_logger()
+			logger.warning(f"Invalid configuration file path: {_GUI_SETTINGS_PATH}")
+			return dict(_gui_settings_cache)
+
 		with open(_GUI_SETTINGS_PATH, "r", encoding="utf-8") as f:
 			data = json.load(f) or {}
 
-		coins = data.get("coins", None)
-		if not isinstance(coins, list) or not coins:
-			coins = list(_gui_settings_cache["coins"])
-		coins = [str(c).strip().upper() for c in coins if str(c).strip()]
-		if not coins:
-			coins = list(_gui_settings_cache["coins"])
-
-		main_neural_dir = data.get("main_neural_dir", None)
-		if isinstance(main_neural_dir, str):
-			main_neural_dir = main_neural_dir.strip() or None
-		else:
-			main_neural_dir = None
-
-		trade_start_level = data.get("trade_start_level", _gui_settings_cache.get("trade_start_level", 3))
+		# Use input validator for configuration validation
 		try:
-			trade_start_level = int(float(trade_start_level))
-		except Exception:
-			trade_start_level = int(_gui_settings_cache.get("trade_start_level", 3))
-		trade_start_level = max(1, min(trade_start_level, 7))
+			validated_config = InputValidator.validate_config_data(data)
+		except ValidationError as e:
+			logger = get_logger()
+			logger.error(f"Configuration validation failed: {e}")
+			return dict(_gui_settings_cache)
+
+		# Update cache with validated data
+		_gui_settings_cache["mtime"] = mtime
+		for key, value in validated_config.items():
+			_gui_settings_cache[key] = value
+
+		return dict(_gui_settings_cache)
+
+	except Exception as e:
+		# Use secure exception handling
+		exception_handler = get_exception_handler()
+		exception_handler.handle_exception(e, "loading GUI settings")
+		return dict(_gui_settings_cache)
 
 		start_allocation_pct = data.get("start_allocation_pct", _gui_settings_cache.get("start_allocation_pct", 0.005))
 		try:
@@ -325,11 +339,14 @@ API_KEY = ""
 BASE64_PRIVATE_KEY = ""
 
 try:
-    with open('r_key.txt', 'r', encoding='utf-8') as f:
-        API_KEY = (f.read() or "").strip()
-    with open('r_secret.txt', 'r', encoding='utf-8') as f:
-        BASE64_PRIVATE_KEY = (f.read() or "").strip()
-except Exception:
+    credentials = get_credentials()
+    if credentials:
+        API_KEY, BASE64_PRIVATE_KEY = credentials
+    else:
+        API_KEY = ""
+        BASE64_PRIVATE_KEY = ""
+except Exception as e:
+    print(f"[PowerTrader] Error loading credentials: Credential system error")
     API_KEY = ""
     BASE64_PRIVATE_KEY = ""
 
@@ -338,9 +355,12 @@ if not API_KEY or not BASE64_PRIVATE_KEY:
         "\n[PowerTrader] Robinhood API credentials not found.\n"
         "Open the GUI and go to Settings → Robinhood API → Setup / Update.\n"
         "That wizard will generate your keypair, tell you where to paste the public key on Robinhood,\n"
-        "and will save r_key.txt + r_secret.txt so this trader can authenticate.\n"
+        "and will save encrypted credential files so this trader can authenticate securely.\n"
     )
     raise SystemExit(1)
+
+# Initialize secure logging
+log_startup_info("PowerTrader Crypto Trader")
 
 class CryptoAPITrading:
     def __init__(self):
@@ -1110,13 +1130,22 @@ class CryptoAPITrading:
             return response.json()
         except requests.HTTPError as http_err:
             try:
-                # Parse and return the JSON error response
+                # Parse and return sanitized error response
                 error_response = response.json()
-                return error_response  # Return the JSON error for further handling
+                # Remove potentially sensitive fields from error response
+                sanitized_error = {}
+                safe_fields = ['error', 'message', 'code', 'type', 'detail']
+                if isinstance(error_response, dict):
+                    for field in safe_fields:
+                        if field in error_response:
+                            sanitized_error[field] = str(error_response[field])[:200]  # Limit length
+                return sanitized_error
             except Exception:
-                return None
+                return {'error': 'API request failed', 'code': response.status_code}
+        except requests.RequestException:
+            return {'error': 'Network request failed'}
         except Exception:
-            return None
+            return {'error': 'Request processing failed'}
 
     def get_authorization_header(
             self, method: str, path: str, body: str, timestamp: int
@@ -1136,7 +1165,39 @@ class CryptoAPITrading:
 
     def get_holdings(self) -> Any:
         path = "/api/v1/crypto/trading/holdings/"
-        return self.make_api_request("GET", path)
+        response = self.make_api_request("GET", path)
+        
+        if not response or isinstance(response, dict) and 'error' in response:
+            return response
+        
+        try:
+            # Validate response structure
+            validated_response = validate_api_response(response, ['results'])
+            
+            # Validate each holding entry
+            if 'results' in validated_response and isinstance(validated_response['results'], list):
+                validated_holdings = []
+                for holding in validated_response['results']:
+                    if isinstance(holding, dict):
+                        try:
+                            # Validate currency symbol
+                            if 'currency' in holding:
+                                holding['currency'] = InputValidator.validate_crypto_symbol(holding['currency'])
+                            
+                            # Validate quantities and values
+                            for field in ['quantity', 'total_cost', 'market_value']:
+                                if field in holding and holding[field] is not None:
+                                    holding[field] = InputValidator.validate_volume(holding[field], field)
+                            
+                            validated_holdings.append(holding)
+                        except ValidationError:
+                            continue  # Skip invalid holdings
+                
+                validated_response['results'] = validated_holdings
+            
+            return validated_response
+        except ValidationError:
+            return {'error': 'Invalid holdings data received'}
 
     def get_trading_pairs(self) -> Any:
         path = "/api/v1/crypto/trading/trading_pairs/"
@@ -1152,8 +1213,25 @@ class CryptoAPITrading:
         return trading_pairs
 
     def get_orders(self, symbol: str) -> Any:
-        path = f"/api/v1/crypto/trading/orders/?symbol={symbol}"
-        return self.make_api_request("GET", path)
+        try:
+            # Validate input symbol
+            validated_symbol = InputValidator.validate_trading_pair(symbol)
+            
+            path = f"/api/v1/crypto/trading/orders/?symbol={validated_symbol}"
+            response = self.make_api_request("GET", path)
+            
+            if not response or isinstance(response, dict) and 'error' in response:
+                return response
+            
+            # Validate response and order data
+            try:
+                validated_response = validate_api_response(response)
+                return validated_response
+            except ValidationError:
+                return {'error': 'Invalid order data received'}
+                
+        except ValidationError as e:
+            return {'error': str(e)}
 
     def calculate_cost_basis(self):
         holdings = self.get_holdings()

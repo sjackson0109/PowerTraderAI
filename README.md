@@ -18,6 +18,15 @@ PowerTrader AI is a sophisticated cryptocurrency trading bot powered by artifici
 - **[API Configuration](docs/api-configuration/README.md)** - Detailed API setup
 - **[Troubleshooting](docs/troubleshooting/README.md)** - Common issues and solutions
 
+### Technical Documentation
+- **[Cost Analysis](docs/technical/COST_ANALYSIS.md)** - Comprehensive cost analysis framework
+- **[Risk Management](docs/technical/RISK_MANAGEMENT_FRAMEWORK.md)** - Risk management system documentation
+
+### Development Resources
+- **[PR Validation](docs/development/PR_VALIDATION.md)** - Pull request validation system
+- **[Implementation Guide](docs/development/IMPLEMENTATION_COMPLETE.md)** - Complete implementation documentation
+- **[Release Strategy](docs/development/RELEASE_STRATEGY.md)** - Release planning and deployment
+
 ## System Architecture
 
 PowerTrader AI has undergone extensive refactoring and enhancement through multiple development phases:

@@ -1,9 +1,7 @@
+# Standard library imports
 import os
 import time
 import random
-import requests
-from kucoin.client import Market
-market = Market(url='https://api.kucoin.com')
 import sys
 import datetime
 import traceback
@@ -12,13 +10,23 @@ import base64
 import calendar
 import hashlib
 import hmac
-from datetime import datetime
-import psutil
-import logging
 import json
 import uuid
+import psutil
+import logging
+from datetime import datetime
+from typing import Dict, List, Any, Optional
 
+# Third-party imports
+import requests
+from kucoin.client import Market
 from nacl.signing import SigningKey
+
+# Local imports
+from pt_credentials import get_credentials
+
+# Initialize market client
+market = Market(url='https://api.kucoin.com')
 
 # -----------------------------
 # Robinhood market-data (current ASK), same source as rhcb.py trader:
@@ -70,10 +78,16 @@ class RobinhoodMarketData:
         ts = self._get_current_timestamp()
         headers = self._get_authorization_header(method, path, body, ts)
 
-        resp = self.session.request(method=method.upper(), url=url, headers=headers, data=body or None, timeout=self.timeout)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Robinhood HTTP {resp.status_code}: {resp.text}")
-        return resp.json()
+        try:
+            resp = self.session.request(method=method.upper(), url=url, headers=headers, data=body or None, timeout=self.timeout)
+            if resp.status_code >= 400:
+                # Return sanitized error information
+                return {'error': 'API request failed', 'status_code': resp.status_code, 'message': 'Authentication or request error'}
+            return resp.json()
+        except requests.RequestException:
+            return {'error': 'Network request failed'}
+        except Exception:
+            return {'error': 'Request processing failed'}
 
     def get_current_ask(self, symbol: str) -> float:
         symbol = (symbol or "").strip().upper()
@@ -91,32 +105,24 @@ class RobinhoodMarketData:
 def robinhood_current_ask(symbol: str) -> float:
     """
     Returns Robinhood current BUY price (ask_inclusive_of_buy_spread) for symbols like 'BTC-USD'.
-    Reads creds from r_key.txt and r_secret.txt in the same folder as this script.
+    Uses secure encrypted credential storage.
     """
     global _RH_MD
     if _RH_MD is None:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        key_path = os.path.join(base_dir, "r_key.txt")
-        secret_path = os.path.join(base_dir, "r_secret.txt")
-
-        if not os.path.isfile(key_path) or not os.path.isfile(secret_path):
+        credentials = get_credentials()
+        if not credentials:
             raise RuntimeError(
-                "Missing r_key.txt and/or r_secret.txt next to pt_thinker.py. "
-                "Run pt_trader.py once to create them (and to set your Robinhood API key)."
+                "Missing encrypted API credentials. "
+                "Run the GUI and set up Robinhood API credentials in Settings."
             )
 
-
-        with open(key_path, "r", encoding="utf-8") as f:
-            api_key = f.read()
-        with open(secret_path, "r", encoding="utf-8") as f:
-            priv_b64 = f.read()
-
+        api_key, priv_b64 = credentials
         _RH_MD = RobinhoodMarketData(api_key=api_key, base64_private_key=priv_b64)
 
     return _RH_MD.get_current_ask(symbol)
 
 
-def restart_program():
+def restart_program() -> None:
 	"""Restarts the current program (no CLI args; uses hardcoded COIN_SYMBOLS)."""
 	try:
 		os.execv(sys.executable, [sys.executable, os.path.abspath(__file__)])
@@ -125,7 +131,7 @@ def restart_program():
 
 
 
-def PrintException():
+def PrintException() -> None:
 	exc_type, exc_obj, tb = sys.exc_info()
 
 	# walk to the innermost frame (where the error actually happened)
@@ -140,9 +146,9 @@ def PrintException():
 	line = linecache.getline(filename, lineno, f.f_globals)
 	print('EXCEPTION IN (LINE {} "{}"): {}'.format(lineno, line.strip(), exc_obj))
 
-restarted = 'no'
-short_started = 'no'
-long_started = 'no'
+restarted = False
+short_started = False
+long_started = False
 minute = 0
 last_minute = 0
 
@@ -159,7 +165,7 @@ _gui_settings_cache = {
 	"coins": ['BTC', 'ETH', 'XRP', 'BNB', 'DOGE'],  # fallback defaults
 }
 
-def _load_gui_coins() -> list:
+def _load_gui_coins() -> List[str]:
 	"""
 	Reads gui_settings.json and returns settings["coins"] as an uppercased list.
 	Caches by mtime so it is cheap to call frequently.
@@ -268,7 +274,7 @@ for _sym in CURRENT_COINS:
 distance = 0.5
 tf_choices = ['1hour', '2hour', '4hour', '8hour', '12hour', '1day', '1week']
 
-def new_coin_state():
+def new_coin_state() -> Dict[str, Any]:
 	return {
 		'low_bound_prices': [.01] * len(tf_choices),
 		'high_bound_prices': [99999999999999999] * len(tf_choices),
@@ -318,7 +324,7 @@ def _is_printing_real_predictions(messages) -> bool:
 	except Exception:
 		return False
 
-def _sync_coins_from_settings():
+def _sync_coins_from_settings() -> None:
 	"""
 	Hot-reload coins from gui_settings.json while runner is running.
 
@@ -446,7 +452,7 @@ buy_coins = []
 cc_update = 'yes'
 wr_update = 'yes'
 
-def find_purple_area(lines):
+def find_purple_area(lines: List[float]) -> List[List[float]]:
     """
     Given a list of (price, color) pairs (color is 'orange' or 'blue'),
     returns (purple_bottom, purple_top) if a purple area exists,

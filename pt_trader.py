@@ -16,6 +16,8 @@ from cryptography.hazmat.primitives import serialization
 from pt_credentials import get_credentials
 from pt_validation import InputValidator, ValidationError, validate_api_response
 from pt_logging import get_logger, get_exception_handler, log_startup_info
+from pt_risk import RiskManager
+from pt_cost import CostManager, PerformanceTier
 
 # -----------------------------
 # GUI HUB OUTPUTS
@@ -399,7 +401,10 @@ class CryptoAPITrading:
         self._pnl_ledger = self._load_pnl_ledger()
         self._reconcile_pending_orders()
 
-
+        # Initialize Risk and Cost Management
+        self.risk_manager = RiskManager()
+        self.cost_manager = CostManager(PerformanceTier.PROFESSIONAL)
+        
         # Cache last known bid/ask per symbol so transient API misses don't zero out account value
         self._last_good_bid_ask = {}
 
@@ -1373,6 +1378,26 @@ class CryptoAPITrading:
                 # --- exact profit tracking snapshot (BEFORE placing order) ---
                 buying_power_before = self._get_buying_power()
 
+                # --- Risk Management Checks ---
+                # Check if we should halt trading due to risk controls
+                if self.risk_manager.is_trading_halted():
+                    print(f"{Fore.RED}RISK HALT: Trading is currently halted by risk management system{Style.RESET_ALL}")
+                    return None
+                
+                # Validate the order against risk limits
+                current_portfolio_value = self._get_account_value()
+                order_validation = self.risk_manager.validate_order({
+                    'symbol': symbol,
+                    'side': side,
+                    'quantity': asset_quantity,
+                    'price': current_price,
+                    'order_value': amount_in_usd
+                }, current_portfolio_value)
+                
+                if not order_validation['approved']:
+                    print(f"{Fore.YELLOW}RISK BLOCK: {order_validation['reason']}{Style.RESET_ALL}")
+                    return None
+
                 response = self.make_api_request("POST", path, json.dumps(body))
                 if response and "errors" not in response:
                     order_id = response.get("id", None)
@@ -1483,6 +1508,31 @@ class CryptoAPITrading:
 
         # --- exact profit tracking snapshot (BEFORE placing order) ---
         buying_power_before = self._get_buying_power()
+
+        # --- Risk Management Checks ---
+        # Check if we should halt trading due to risk controls
+        if self.risk_manager.is_trading_halted():
+            print(f"{Fore.RED}RISK HALT: Trading is currently halted by risk management system{Style.RESET_ALL}")
+            return None
+        
+        # Get current price for validation
+        current_buy_prices, current_sell_prices, valid_symbols = self.get_price([symbol])
+        current_price = current_sell_prices[symbol]
+        order_value = asset_quantity * current_price
+        
+        # Validate the sell order against risk limits
+        current_portfolio_value = self._get_account_value()
+        order_validation = self.risk_manager.validate_order({
+            'symbol': symbol,
+            'side': side,
+            'quantity': asset_quantity,
+            'price': current_price,
+            'order_value': order_value
+        }, current_portfolio_value)
+        
+        if not order_validation['approved']:
+            print(f"{Fore.YELLOW}RISK BLOCK: {order_validation['reason']}{Style.RESET_ALL}")
+            return None
 
         response = self.make_api_request("POST", path, json.dumps(body))
 
@@ -2259,10 +2309,29 @@ class CryptoAPITrading:
     def run(self):
         while True:
             try:
+                # Risk monitoring at start of each cycle
+                current_portfolio_value = self._get_account_value()
+                self.risk_manager.update_portfolio_value(current_portfolio_value)
+                
+                # Check for emergency conditions
+                risk_status = self.risk_manager.check_emergency_conditions(current_portfolio_value)
+                if risk_status['emergency_stop']:
+                    print(f"{Fore.RED}EMERGENCY STOP: {risk_status['reason']}{Style.RESET_ALL}")
+                    print(f"{Fore.RED}Trading halted until manual intervention{Style.RESET_ALL}")
+                    self.risk_manager.emergency_stop()
+                    break
+                
+                # Log risk warnings
+                if risk_status['warnings']:
+                    for warning in risk_status['warnings']:
+                        print(f"{Fore.YELLOW}RISK WARNING: {warning}{Style.RESET_ALL}")
+                
                 self.manage_trades()
                 time.sleep(0.5)
             except Exception as e:
                 print(traceback.format_exc())
+                # Log the error with risk system
+                self.risk_manager.record_error(str(e))
 
 if __name__ == "__main__":
     trading_bot = CryptoAPITrading()

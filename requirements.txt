@@ -12,3 +12,7 @@ requests>=2.31.0
 # Additional dependencies for risk management and monitoring
 numpy>=1.24.0
 pandas>=2.0.0
+
+# Development and Testing
+# Note: pr_validation.py uses only standard library modules for maximum compatibility
+# pytest>=7.0.0  # Optional: for extended testing with pt_testing.py framework

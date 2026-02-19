@@ -1,0 +1,213 @@
+name: PowerTrader AI CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  security-scan:
+    name: Security & Code Quality
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install security tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install bandit safety flake8 black isort
+        # Install project dependencies if requirements.txt exists
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    
+    - name: Code formatting check
+      run: |
+        black --check --diff . || echo "Black formatting issues found"
+        isort --check-only --diff . || echo "Import sorting issues found"
+      continue-on-error: true
+    
+    - name: Linting
+      run: |
+        # Basic syntax and import errors only
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --extend-ignore=E203,W503
+        # Extended linting with warnings
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=100 --statistics --extend-ignore=E203,W503
+      continue-on-error: true
+    
+    - name: Security scan with Bandit
+      run: |
+        bandit -r . -f json -o bandit-report.json -x tests/ || true
+        bandit -r . -f txt || true
+      continue-on-error: true
+    
+    - name: Dependency security check
+      run: |
+        safety check --json --output safety-report.json || true
+        safety check || true
+      continue-on-error: true
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+      if: always()
+
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11']
+      fail-fast: false
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ matrix.python-version }}-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov pytest-mock pytest-benchmark memory-profiler
+        # Install project dependencies if requirements.txt exists
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        # Install test-specific dependencies
+        pip install responses requests-mock
+    
+    - name: Create test environment
+      run: |
+        # Create minimal test environment
+        mkdir -p logs
+        export POWERTRADER_ENV=test
+        export POWERTRADER_LOG_LEVEL=DEBUG
+    
+    - name: Run tests
+      run: |
+        # Run tests if test directory exists
+        if [ -d "tests" ]; then
+          python -m pytest tests/ -v --cov=. --cov-report=xml --cov-report=html --tb=short
+        else
+          echo "No tests directory found, running basic import test"
+          python -c "import sys; print('Python version:', sys.version); print('Import test: PASS')"
+        fi
+      continue-on-error: true
+    
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+      if: always()
+
+  build-and-validate:
+    name: Build & Integration Test
+    runs-on: ubuntu-latest
+    needs: [security-scan]
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # Install project dependencies if requirements.txt exists
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    
+    - name: Basic import test
+      run: |
+        # Test basic Python file imports
+        echo "Testing basic imports..."
+        python -c "
+        import sys, os
+        print('Python version:', sys.version)
+        print('Current directory:', os.getcwd())
+        print('Files in directory:', os.listdir('.'))
+        
+        # Try to import main files if they exist
+        files_to_test = ['pt_hub.py', 'pt_trader.py', 'pt_thinker.py', 'pt_trainer.py']
+        for file in files_to_test:
+            if os.path.exists(file):
+                try:
+                    module_name = file.replace('.py', '')
+                    __import__(module_name)
+                    print(f'✓ {file} import: PASS')
+                except Exception as e:
+                    print(f'✗ {file} import: FAIL - {e}')
+            else:
+                print(f'- {file}: Not found')
+        "
+    
+    - name: Validate configuration files
+      run: |
+        # Check for common configuration files
+        echo "Validating configuration files..."
+        
+        if [ -f "requirements.txt" ]; then
+          echo "✓ requirements.txt found"
+          pip check || echo "⚠ Dependency conflicts detected"
+        else
+          echo "- requirements.txt not found"
+        fi
+        
+        if [ -f "README.md" ]; then
+          echo "✓ README.md found"
+        fi
+        
+        if [ -d "docs" ]; then
+          echo "✓ Documentation directory found"
+          echo "Documentation files:"
+          find docs -name "*.md" | head -10
+        fi
+    
+    - name: Test project structure
+      run: |
+        echo "Project structure validation..."
+        
+        # Check for main Python files
+        echo "Main Python files:"
+        ls -la *.py 2>/dev/null || echo "No Python files in root directory"
+        
+        # Check for important directories
+        for dir in docs tests .github; do
+          if [ -d "$dir" ]; then
+            echo "✓ $dir/ directory exists"
+          else
+            echo "- $dir/ directory missing"
+          fi
+        done

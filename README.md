@@ -147,6 +147,28 @@ This approach differs from common trading tactics that can be counterproductive 
 - **Component Testing**: Unit tests for all system components
 - **Mock APIs**: Realistic trading simulation for development
 
+### PR Validation
+PowerTrader AI includes a comprehensive PR validation system for ensuring code quality before merging:
+
+```bash
+# Run PR validation tests
+python tests/pr_validation.py
+```
+
+**Validation Categories:**
+- **File Structure**: Ensures all essential files are present
+- **Module Imports**: Verifies core modules import successfully
+- **Risk Management**: Tests risk calculation and position sizing
+- **Cost Analysis**: Validates cost calculation systems
+- **Input Validation**: Tests parameter validation functions
+- **Configuration**: Checks configuration system functionality
+
+**Usage in Development:**
+- Run before creating pull requests
+- Integrates with existing `pt_testing.py` framework
+- Provides clear pass/fail recommendations
+- Windows compatible (no Unicode dependencies)
+
 ### Market Integration
 - **KuCoin API**: Real-time market data and charts
 - **Robinhood API**: Automated trade execution

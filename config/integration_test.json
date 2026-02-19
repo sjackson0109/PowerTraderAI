@@ -1,0 +1,78 @@
+{
+  "test_mode": "paper_trading",
+  "api_timeout": 30,
+  "max_test_amount": 10.0,
+  "test_symbols": ["BTC", "ETH", "ADA", "SOL", "DOT"],
+  "enable_live_apis": false,
+  "performance_thresholds": {
+    "max_latency_ms": 5000,
+    "max_memory_mb": 512,
+    "max_cpu_percent": 80,
+    "max_response_time_ms": 3000
+  },
+  "risk_test_scenarios": [
+    {
+      "name": "Conservative",
+      "portfolio_value": 10000,
+      "risk_percent": 0.01,
+      "max_position_size": 100
+    },
+    {
+      "name": "Moderate",
+      "portfolio_value": 50000,
+      "risk_percent": 0.02,
+      "max_position_size": 1000
+    },
+    {
+      "name": "Aggressive", 
+      "portfolio_value": 100000,
+      "risk_percent": 0.03,
+      "max_position_size": 3000
+    }
+  ],
+  "api_endpoints": {
+    "kucoin": {
+      "base_url": "https://api.kucoin.com",
+      "test_endpoint": "/api/v1/symbols"
+    },
+    "robinhood": {
+      "base_url": "https://api.robinhood.com",
+      "test_endpoint": "/instruments/"
+    }
+  },
+  "test_data": {
+    "valid_symbols": ["BTC", "ETH", "ADA", "SOL", "DOT", "MATIC", "AVAX"],
+    "invalid_symbols": ["", "INVALID", "123", null],
+    "valid_amounts": [10.0, 100.0, 1000.0, 10000.0],
+    "invalid_amounts": [-10.0, 0, null, "invalid"]
+  },
+  "paper_trading": {
+    "initial_balance": 10000.0,
+    "commission_rate": 0.001,
+    "max_daily_trades": 10,
+    "max_position_count": 5
+  },
+  "monitoring": {
+    "enable_system_metrics": true,
+    "enable_performance_logging": true,
+    "metric_collection_interval": 5,
+    "alert_thresholds": {
+      "memory_usage_percent": 85,
+      "cpu_usage_percent": 90,
+      "response_time_ms": 5000
+    }
+  },
+  "logging": {
+    "level": "INFO",
+    "enable_file_logging": true,
+    "log_file": "logs/integration_test.log",
+    "enable_console_logging": true,
+    "max_log_size_mb": 100
+  },
+  "reporting": {
+    "save_detailed_results": true,
+    "generate_html_report": false,
+    "email_results": false,
+    "results_retention_days": 30
+  }
+}

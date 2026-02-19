@@ -1,0 +1,12 @@
+auto_backup_hours: 24
+backup_directory: backups
+cache_size_mb: 100
+data_directory: data
+enable_performance_monitoring: true
+log_backup_count: 5
+log_file_path: logs/powertrader.log
+log_level: INFO
+max_backup_files: 30
+max_log_size_mb: 100
+metrics_collection_interval: 1.0
+thread_pool_size: 10

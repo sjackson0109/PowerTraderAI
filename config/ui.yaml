@@ -1,0 +1,13 @@
+auto_save_layout: true
+chart_refresh_rate: 1000
+enable_animations: true
+enable_notifications: true
+font_size: 11
+notification_types:
+- trades
+- errors
+- alerts
+sound_enabled: true
+theme: dark
+window_height: 800
+window_width: 1200

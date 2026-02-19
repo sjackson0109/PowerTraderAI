@@ -1,0 +1,10 @@
+api_key_length: 32
+enable_audit_log: true
+enable_debug_mode: false
+enable_encryption: true
+key_rotation_days: 30
+log_retention_days: 90
+max_login_attempts: 3
+require_api_signature: true
+session_timeout: 3600
+webhook_secret: ''

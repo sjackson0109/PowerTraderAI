@@ -1,14 +1,6 @@
-from kucoin.client import Market
-market = Market(url='https://api.kucoin.com')
-import time
-"""
-<------------
-newest oldest
------------->
-oldest newest
-"""
-avg50 = []
+# Standard library imports
 import sys
+import time
 import datetime
 import traceback
 import linecache
@@ -16,94 +8,102 @@ import base64
 import calendar
 import hashlib
 import hmac
-from datetime import datetime
-sells_count = 0
-prediction_prices_avg_list = []
-pt_server = 'server'
-import psutil
-import logging
-list_len = 0
-restarting = 'no'
-in_trade = 'no'
-updowncount = 0
-updowncount1 = 0
-updowncount1_2 = 0
-updowncount1_3 = 0
-updowncount1_4 = 0
-high_var2 = 0.0
-low_var2 = 0.0
-last_flipped = 'no'
-starting_amounth02 = 100.0
-starting_amounth05 = 100.0
-starting_amounth10 = 100.0
-starting_amounth20 = 100.0
-starting_amounth50 = 100.0
-starting_amount = 100.0
-starting_amount1 = 100.0
-starting_amount1_2 = 100.0
-starting_amount1_3 = 100.0
-starting_amount1_4 = 100.0
-starting_amount2 = 100.0
-starting_amount2_2 = 100.0
-starting_amount2_3 = 100.0
-starting_amount2_4 = 100.0
-starting_amount3 = 100.0
-starting_amount3_2 = 100.0
-starting_amount3_3 = 100.0
-starting_amount3_4 = 100.0
-starting_amount4 = 100.0
-starting_amount4_2 = 100.0
-starting_amount4_3 = 100.0
-starting_amount4_4 = 100.0
-profit_list = []
-profit_list1 = []
-profit_list1_2 = []
-profit_list1_3 = []
-profit_list1_4 = []
-profit_list2 = []
-profit_list2_2 = []
-profit_list2_3 = []
-profit_list2_4 = []
-profit_list3 = []
-profit_list3_2 = []
-profit_list3_3 = []
-profit_list4 = []
-profit_list4_2 = []
-good_hits = []
-good_preds = []
-good_preds2 = []
-good_preds3 = []
-good_preds4 = []
-good_preds5 = []
-good_preds6 = []
-big_good_preds = []
-big_good_preds2 = []
-big_good_preds3 = []
-big_good_preds4 = []
-big_good_preds5 = []
-big_good_preds6 = []
-big_good_hits = []
-upordown = []
-upordown1 = []
-upordown1_2 = []
-upordown1_3 = []
-upordown1_4 = []
-upordown2 = []
-upordown2_2 = []
-upordown2_3 = []
-upordown2_4 = []
-upordown3 = []
-upordown3_2 = []
-upordown3_3 = []
-upordown3_4 = []
-upordown4 = []
-upordown4_2 = []
-upordown4_3 = []
-upordown4_4 = []
-upordown5 = []
 import json
 import uuid
 import os
+import logging
+from datetime import datetime
+from typing import List, Dict, Optional, Any, Union
+from dataclasses import dataclass, field
+
+# Third-party imports
+import psutil
+from kucoin.client import Market
+
+# Initialize market client
+market = Market(url='https://api.kucoin.com')
+
+@dataclass
+class TradingConfiguration:
+    """Configuration class for trading parameters and state management."""
+    # Server configuration
+    server: str = 'server'
+    restarting: bool = False
+    in_trade: bool = False
+    
+    # Market data
+    avg50: List[float] = field(default_factory=list)
+    prediction_prices_avg_list: List[float] = field(default_factory=list)
+    
+    # Trading counters and variables
+    sells_count: int = 0
+    list_len: int = 0
+    updowncount: int = 0
+    updowncount1: int = 0
+    updowncount1_2: int = 0
+    updowncount1_3: int = 0
+    updowncount1_4: int = 0
+    
+    # Price variables
+    high_var2: float = 0.0
+    low_var2: float = 0.0
+    last_flipped: bool = False
+    
+    # Starting amounts (different timeframes)
+    starting_amounts: Dict[str, float] = field(default_factory=lambda: {
+        'h02': 100.0, 'h05': 100.0, 'h10': 100.0, 'h20': 100.0, 'h50': 100.0,
+        'base': 100.0, '1': 100.0, '1_2': 100.0, '1_3': 100.0, '1_4': 100.0,
+        '2': 100.0, '2_2': 100.0, '2_3': 100.0, '2_4': 100.0,
+        '3': 100.0, '3_2': 100.0, '3_3': 100.0, '3_4': 100.0,
+        '4': 100.0, '4_2': 100.0, '4_3': 100.0, '4_4': 100.0
+    })
+
+@dataclass
+class ProfitTracker:
+    """Tracks profit data across different trading strategies."""
+    profit_lists: Dict[str, List[float]] = field(default_factory=lambda: {
+        'base': [], '1': [], '1_2': [], '1_3': [], '1_4': [],
+        '2': [], '2_2': [], '2_3': [], '2_4': [],
+        '3': [], '3_2': [], '3_3': [], '4': [], '4_2': []
+    })
+    
+@dataclass  
+class PredictionTracker:
+    """Tracks prediction accuracy and performance metrics."""
+    good_hits: List[float] = field(default_factory=list)
+    good_preds: Dict[str, List[float]] = field(default_factory=lambda: {
+        '1': [], '2': [], '3': [], '4': [], '5': [], '6': []
+    })
+    big_good_preds: Dict[str, List[float]] = field(default_factory=lambda: {
+        '1': [], '2': [], '3': [], '4': [], '5': [], '6': []
+    })
+    big_good_hits: List[float] = field(default_factory=list)
+    
+@dataclass
+class DirectionTracker:
+    """Tracks up/down movement predictions across timeframes."""
+    upordown: Dict[str, List[str]] = field(default_factory=lambda: {
+        'base': [], '1': [], '1_2': [], '1_3': [], '1_4': [],
+        '2': [], '2_2': [], '2_3': [], '2_4': [],
+        '3': [], '3_2': [], '3_3': [], '3_4': [],
+        '4': [], '4_2': [], '4_3': [], '4_4': [], '5': []
+    })
+
+# Global configuration instances
+config = TradingConfiguration()
+profit_tracker = ProfitTracker()
+prediction_tracker = PredictionTracker()
+direction_tracker = DirectionTracker()
+
+# Configuration instances for backward compatibility with existing code
+sells_count = lambda: config.sells_count
+avg50 = config.avg50
+prediction_prices_avg_list = config.prediction_prices_avg_list
+pt_server = config.server
+list_len = lambda: config.list_len
+restarting = lambda: config.restarting
+in_trade = lambda: config.in_trade
+# Configuration classes handle all global state - remove old variable declarations
 
 # ---- speed knobs ----
 VERBOSE = False  # set True if you want the old high-volume prints

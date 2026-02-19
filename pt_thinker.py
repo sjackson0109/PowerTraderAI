@@ -1,9 +1,8 @@
+# Standard library imports
 import os
 import time
 import random
 import requests
-from kucoin.client import Market
-market = Market(url='https://api.kucoin.com')
 import sys
 import datetime
 import traceback
@@ -12,92 +11,265 @@ import base64
 import calendar
 import hashlib
 import hmac
-from datetime import datetime
-import psutil
-import logging
 import json
 import uuid
+import logging
+from datetime import datetime
+from typing import List, Dict, Optional, Any, Union, Tuple
+from dataclasses import dataclass, field
 
+# Third-party imports
+import psutil
+from kucoin.client import Market
 from nacl.signing import SigningKey
+
+# Initialize market client
+market = Market(url='https://api.kucoin.com')
+
+@dataclass
+class RobinhoodConfig:
+    """Configuration for Robinhood API connections."""
+    base_url: str = "https://trading.robinhood.com"
+    timeout: int = 10
+    
+@dataclass
+class MarketDataCache:
+    """Cache for market data to reduce API calls."""
+    data: Dict[str, Any] = field(default_factory=dict)
+    timestamps: Dict[str, float] = field(default_factory=dict)
+    cache_duration: float = 30.0  # Cache for 30 seconds
+    
+    def is_valid(self, key: str) -> bool:
+        """Check if cached data is still valid."""
+        if key not in self.timestamps:
+            return False
+        return (time.time() - self.timestamps[key]) < self.cache_duration
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Get cached data if valid."""
+        if self.is_valid(key):
+            return self.data.get(key)
+        return None
+    
+    def set(self, key: str, value: Any) -> None:
+        """Set cached data with timestamp."""
+        self.data[key] = value
+        self.timestamps[key] = time.time()
+
+# Global instances
+rh_config = RobinhoodConfig()
+market_cache = MarketDataCache()
 
 # -----------------------------
 # Robinhood market-data (current ASK), same source as rhcb.py trader:
 #   GET /api/v1/crypto/marketdata/best_bid_ask/?symbol=BTC-USD
 #   use result["ask_inclusive_of_buy_spread"]
 # -----------------------------
-ROBINHOOD_BASE_URL = "https://trading.robinhood.com"
 
 _RH_MD = None  # lazy-init so import doesn't explode if creds missing
 
+class RobinhoodAPIError(Exception):
+    """Custom exception for Robinhood API errors."""
+    def __init__(self, message: str, status_code: Optional[int] = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 class RobinhoodMarketData:
-    def __init__(self, api_key: str, base64_private_key: str, base_url: str = ROBINHOOD_BASE_URL, timeout: int = 10):
+    """Enhanced Robinhood market data client with proper error handling and caching."""
+    
+    def __init__(self, api_key: str, base64_private_key: str, 
+                 base_url: str = None, timeout: int = None):
         self.api_key = (api_key or "").strip()
-        self.base_url = (base_url or "").rstrip("/")
-        self.timeout = timeout
+        self.base_url = (base_url or rh_config.base_url).rstrip("/")
+        self.timeout = timeout or rh_config.timeout
+        self.logger = logging.getLogger(f"{__name__}.RobinhoodMarketData")
 
+        self._validate_credentials(api_key, base64_private_key)
+        self._initialize_private_key(base64_private_key)
+        self._setup_session()
+
+    def _validate_credentials(self, api_key: str, base64_private_key: str) -> None:
+        """Validate API credentials before initialization."""
         if not self.api_key:
-            raise RuntimeError("Robinhood API key is empty (r_key.txt).")
+            raise RobinhoodAPIError("Robinhood API key is empty (r_key.txt).")
+        if not base64_private_key:
+            raise RobinhoodAPIError("Robinhood private key is empty (r_secret.txt).")
 
+    def _initialize_private_key(self, base64_private_key: str) -> None:
+        """Initialize and validate private key."""
         try:
-            raw_private = base64.b64decode((base64_private_key or "").strip())
+            raw_private = base64.b64decode(base64_private_key.strip())
             self.private_key = SigningKey(raw_private)
         except Exception as e:
-            raise RuntimeError(f"Failed to decode Robinhood private key (r_secret.txt): {e}")
+            raise RobinhoodAPIError(f"Failed to decode Robinhood private key (r_secret.txt): {e}")
 
+    def _setup_session(self) -> None:
+        """Setup requests session with proper configuration."""
         self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'PowerTrader-AI/1.0',
+            'Accept': 'application/json',
+        })
 
     def _get_current_timestamp(self) -> int:
+        """Get current Unix timestamp."""
         return int(time.time())
 
-    def _get_authorization_header(self, method: str, path: str, body: str, timestamp: int) -> dict:
-        # matches the trader's signing format
-        method = method.upper()
-        body = body or ""
-        message_to_sign = f"{self.api_key}{timestamp}{path}{method}{body}"
-        signed = self.private_key.sign(message_to_sign.encode("utf-8"))
-        signature_b64 = base64.b64encode(signed.signature).decode("utf-8")
+    def _get_authorization_header(self, method: str, path: str, body: str, timestamp: int) -> Dict[str, str]:
+        """Generate authorization headers for API requests."""
+        try:
+            method = method.upper()
+            body = body or ""
+            message_to_sign = f"{self.api_key}{timestamp}{path}{method}{body}"
+            signed = self.private_key.sign(message_to_sign.encode("utf-8"))
+            signature_b64 = base64.b64encode(signed.signature).decode("utf-8")
 
-        return {
-            "x-api-key": self.api_key,
-            "x-timestamp": str(timestamp),
-            "x-signature": signature_b64,
-            "Content-Type": "application/json",
-        }
+            return {
+                "x-api-key": self.api_key,
+                "x-timestamp": str(timestamp),
+                "x-signature": signature_b64,
+                "Content-Type": "application/json",
+            }
+        except Exception as e:
+            raise RobinhoodAPIError(f"Failed to generate authorization header: {e}")
 
-    def make_api_request(self, method: str, path: str, body: str = "") -> dict:
+    def make_api_request(self, method: str, path: str, body: str = "") -> Dict[str, Any]:
+        """Make authenticated API request with proper error handling."""
         url = f"{self.base_url}{path}"
         ts = self._get_current_timestamp()
-        headers = self._get_authorization_header(method, path, body, ts)
-
-        resp = self.session.request(method=method.upper(), url=url, headers=headers, data=body or None, timeout=self.timeout)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Robinhood HTTP {resp.status_code}: {resp.text}")
-        return resp.json()
+        
+        try:
+            headers = self._get_authorization_header(method, path, body, ts)
+            self.logger.debug(f"Making {method} request to {path}")
+            
+            resp = self.session.request(
+                method=method.upper(), 
+                url=url, 
+                headers=headers, 
+                data=body or None, 
+                timeout=self.timeout
+            )
+            
+            if resp.status_code >= 400:
+                error_text = resp.text[:500]  # Limit error text length
+                raise RobinhoodAPIError(
+                    f"HTTP {resp.status_code}: {error_text}", 
+                    status_code=resp.status_code
+                )
+            
+            return resp.json()
+            
+        except requests.RequestException as e:
+            raise RobinhoodAPIError(f"Network error during API request: {e}")
+        except Exception as e:
+            if isinstance(e, RobinhoodAPIError):
+                raise
+            raise RobinhoodAPIError(f"Unexpected error during API request: {e}")
 
     def get_current_ask(self, symbol: str) -> float:
+        """Get current ask price with caching and validation."""
         symbol = (symbol or "").strip().upper()
-        path = f"/api/v1/crypto/marketdata/best_bid_ask/?symbol={symbol}"
-        data = self.make_api_request("GET", path)
+        if not symbol:
+            raise RobinhoodAPIError("Symbol cannot be empty")
+        
+        # Check cache first
+        cache_key = f"ask_{symbol}"
+        cached_price = market_cache.get(cache_key)
+        if cached_price is not None:
+            self.logger.debug(f"Returning cached price for {symbol}: {cached_price}")
+            return cached_price
+        
+        try:
+            path = f"/api/v1/crypto/marketdata/best_bid_ask/?symbol={symbol}"
+            data = self.make_api_request("GET", path)
 
-        if not data or "results" not in data or not data["results"]:
-            raise RuntimeError(f"Robinhood best_bid_ask returned no results for {symbol}: {data}")
+            if not data or "results" not in data or not data["results"]:
+                raise RobinhoodAPIError(f"No results returned for {symbol}: {data}")
 
-        result = data["results"][0]
-        # EXACTLY like rhcb.py's get_price(): ask_inclusive_of_buy_spread
-        return float(result["ask_inclusive_of_buy_spread"])
+            result = data["results"][0]
+            ask_price = float(result["ask_inclusive_of_buy_spread"])
+            
+            # Cache the result
+            market_cache.set(cache_key, ask_price)
+            self.logger.debug(f"Retrieved and cached price for {symbol}: {ask_price}")
+            
+            return ask_price
+            
+        except (KeyError, ValueError, TypeError) as e:
+            raise RobinhoodAPIError(f"Invalid response format for {symbol}: {e}")
 
+
+def safe_file_read(file_path: str, encoding: str = 'utf-8') -> Optional[str]:
+    """Safely read file content with proper error handling."""
+    try:
+        if not os.path.exists(file_path):
+            logging.warning(f"File not found: {file_path}")
+            return None
+        
+        with open(file_path, 'r', encoding=encoding, errors='ignore') as f:
+            content = f.read().strip()
+            if not content:
+                logging.warning(f"File is empty: {file_path}")
+                return None
+            return content
+            
+    except (IOError, OSError) as e:
+        logging.error(f"Failed to read file {file_path}: {e}")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error reading file {file_path}: {e}")
+        return None
+
+def get_robinhood_credentials() -> Tuple[Optional[str], Optional[str]]:
+    """Get Robinhood API credentials from files."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    key_path = os.path.join(base_dir, "r_key.txt")
+    secret_path = os.path.join(base_dir, "r_secret.txt")
+    
+    api_key = safe_file_read(key_path)
+    private_key = safe_file_read(secret_path)
+    
+    return api_key, private_key
 
 def robinhood_current_ask(symbol: str) -> float:
     """
     Returns Robinhood current BUY price (ask_inclusive_of_buy_spread) for symbols like 'BTC-USD'.
     Reads creds from r_key.txt and r_secret.txt in the same folder as this script.
+    
+    Args:
+        symbol: Trading symbol (e.g., 'BTC-USD')
+        
+    Returns:
+        Current ask price as float
+        
+    Raises:
+        RobinhoodAPIError: If credentials missing, API call fails, or invalid response
     """
     global _RH_MD
+    
     if _RH_MD is None:
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        key_path = os.path.join(base_dir, "r_key.txt")
-        secret_path = os.path.join(base_dir, "r_secret.txt")
+        try:
+            api_key, private_key = get_robinhood_credentials()
+            
+            if not api_key or not private_key:
+                raise RobinhoodAPIError(
+                    "Missing Robinhood credentials. Ensure r_key.txt and r_secret.txt exist and contain valid data."
+                )
+            
+            _RH_MD = RobinhoodMarketData(api_key, private_key)
+            logging.info("Robinhood market data client initialized successfully")
+            
+        except RobinhoodAPIError:
+            raise
+        except Exception as e:
+            raise RobinhoodAPIError(f"Failed to initialize Robinhood client: {e}")
+    
+    try:
+        return _RH_MD.get_current_ask(symbol)
+    except RobinhoodAPIError:
+        raise
+    except Exception as e:
+        raise RobinhoodAPIError(f"Unexpected error getting ask price for {symbol}: {e}")
 
         if not os.path.isfile(key_path) or not os.path.isfile(secret_path):
             raise RuntimeError(

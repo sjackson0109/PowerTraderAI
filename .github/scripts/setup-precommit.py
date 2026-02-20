@@ -36,16 +36,43 @@ def main():
         print("❌ Failed to install pre-commit")
         sys.exit(1)
     
+    # Install required dependencies for pre-commit hooks
+    print("📦 Installing pre-commit dependencies...")
+    dependencies = [
+        "pytest pytest-cov pytest-mock pytest-benchmark",
+        "psutil memory-profiler",
+        "pynacl pbr cryptography",
+        "bandit safety flake8 black isort",
+        "responses requests-mock"
+    ]
+    
+    for dep_group in dependencies:
+        if not run_command(f"pip install {dep_group}", f"Installing {dep_group}"):
+            print(f"⚠️ Warning: Failed to install {dep_group}")
+    
+    # Install project dependencies
+    print("📦 Installing project dependencies...")
+    if os.path.exists('app/requirements.txt'):
+        run_command("pip install -r app/requirements.txt", "Installing app requirements")
+    elif os.path.exists('requirements.txt'):
+        run_command("pip install -r requirements.txt", "Installing requirements")
+    
     # Install the hooks
-    if not run_command("pre-commit install", "Installing git hooks"):
+    if not run_command("python -m pre_commit install", "Installing git hooks"):
         print("❌ Failed to install git hooks")
         sys.exit(1)
     
     # Run against all files initially
     print("🧹 Running pre-commit on all files...")
-    run_command("pre-commit run --all-files", "Initial pre-commit run")
+    run_command("python -m pre_commit run --all-files", "Initial pre-commit run")
     
     print("\n🎉 Pre-commit setup complete!")
+    print("\nInstalled dependencies:")
+    print("  • Testing: pytest, pytest-cov, pytest-mock, pytest-benchmark")
+    print("  • Performance: psutil, memory-profiler")
+    print("  • Security: pynacl, pbr, cryptography, bandit, safety")
+    print("  • Code Quality: flake8, black, isort")
+    print("  • Mocking: responses, requests-mock")
     print("\nNow your commits will automatically run:")
     print("  • Code formatting (Black, isort)")
     print("  • Linting (flake8)")
@@ -53,6 +80,8 @@ def main():
     print("  • Basic file checks")
     print("  • Tests (pytest)")
     print("\nTo bypass hooks temporarily: git commit --no-verify")
+    print("\n📋 Manual installation command if needed:")
+    print("pip install pytest pytest-cov pytest-mock pytest-benchmark psutil memory-profiler pynacl pbr cryptography bandit safety flake8 black isort responses requests-mock")
 
 if __name__ == "__main__":
     main()

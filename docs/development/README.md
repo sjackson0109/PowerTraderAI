@@ -7,6 +7,7 @@ This directory contains comprehensive development documentation including implem
 ## Documentation Structure
 
 ### 📋 [Implementation Guides](.)
+- [DEVELOPER_SETUP.md](DEVELOPER_SETUP.md) - Developer environment and pre-commit hooks setup
 - [IMPLEMENTATION_CHECKLIST.md](IMPLEMENTATION_CHECKLIST.md) - Development milestones and tasks
 - [IMPLEMENTATION_COMPLETE.md](IMPLEMENTATION_COMPLETE.md) - Completion validation framework
 - [PR_VALIDATION.md](PR_VALIDATION.md) - Pull request validation processes

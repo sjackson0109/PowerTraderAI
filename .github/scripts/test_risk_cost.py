@@ -6,7 +6,13 @@ Unit tests that don't require trading credentials or API access.
 
 import unittest
 import time
+import sys
+import os
 from unittest.mock import Mock, patch, MagicMock
+
+# Add app directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'app'))
+
 from pt_risk import RiskManager, RiskLevel, RiskLimits
 from pt_cost import CostManager, PerformanceTier, PerformanceMetrics
 

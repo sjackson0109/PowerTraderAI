@@ -8,7 +8,13 @@ with the main trading system.
 import unittest
 import time
 import json
+import sys
+import os
 from unittest.mock import Mock, patch, MagicMock
+
+# Add app directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'app'))
+
 from pt_risk import RiskManager, RiskLevel
 from pt_cost import CostManager, PerformanceTier, PerformanceMetrics
 from pt_trader import CryptoAPITrading

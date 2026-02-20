@@ -1,8 +1,23 @@
 import pytest
 import time
-import psutil
+import sys
+import os
 import threading
-from memory_profiler import profile
+
+# Add app directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'app'))
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
+try:
+    from memory_profiler import profile
+except ImportError:
+    # Mock profile decorator if memory_profiler not available
+    def profile(func):
+        return func
 
 class TestPerformance:
     """Performance and load testing"""

@@ -1,6 +1,11 @@
 import pytest
 import unittest.mock as mock
+import sys
+import os
 from datetime import datetime
+
+# Add app directory to Python path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'app'))
 
 # Core system tests
 class TestPowerTraderCore:

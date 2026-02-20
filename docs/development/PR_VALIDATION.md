@@ -19,7 +19,7 @@ Created a comprehensive PR validation system for PowerTrader AI that ensures cod
 ## Usage
 ```bash
 # Basic validation (run from project root)
-python tests/pr_validation.py
+python .github/scripts/test_pr_validation.py
 
 # Expected output:
 # Tests Passed: 6/6

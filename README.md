@@ -71,10 +71,10 @@ git clone https://github.com/sjackson0109/PowerTraderAI.git
 cd PowerTraderAI
 
 # 3. Install dependencies
-pip install -r requirements.txt
+pip install -r app/requirements.txt
 
 # 4. Launch the application
-python pt_hub.py
+python app/pt_desktop_app.py
 ```
 
 **Important**: Follow the complete [Installation Guide](docs/getting-started/installation.md) for detailed setup instructions.
@@ -161,7 +161,7 @@ PowerTrader AI includes a comprehensive PR validation system for ensuring code q
 
 ```bash
 # Run PR validation tests
-python tests/pr_validation.py
+python .github/scripts/test_pr_validation.py
 ```
 
 **Validation Categories:**
@@ -263,7 +263,7 @@ The following are the original setup instructions (kept for reference):
 1. **Install Python**: Download from python.org, check "Add Python to PATH"
 2. **Download PowerTrader AI**: Clone from GitHub or download files
 3. **Install Dependencies**: `pip install -r requirements.txt`
-4. **Launch Application**: `python pt_hub.py`
+4. **Launch Application**: `python app/pt_desktop_app.py`
 
 ### Configuration in PowerTrader Hub
 

@@ -1,4 +1,4 @@
-# PowerTrader AI
+﻿# PowerTrader AI
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
@@ -298,8 +298,4 @@ PowerTrader AI is released under the **Apache 2.0 License** - see [LICENSE](LICE
 
 **FINAL REMINDER**: This software trades with real money automatically. You are fully responsible for all trades, gains, losses, and security of your accounts. Always understand the system before using it with real funds.
 
-For comprehensive guides, troubleshooting, and best practices, visit the **[Complete Documentation](docs/README.md)**.#   T e s t   p r e - c o m m i t   h o o k s 
- 
- 
-#   C l e a n   e n d   o f   f i l e  
- 
+For comprehensive guides, troubleshooting, and best practices, visit the **[Complete Documentation](docs/README.md)**.

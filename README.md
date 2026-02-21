@@ -301,3 +301,5 @@ PowerTrader AI is released under the **Apache 2.0 License** - see [LICENSE](LICE
 For comprehensive guides, troubleshooting, and best practices, visit the **[Complete Documentation](docs/README.md)**.#   T e s t   p r e - c o m m i t   h o o k s 
  
  
+#   C l e a n   e n d   o f   f i l e  
+ 

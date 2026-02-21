@@ -1,5 +1,7 @@
 name: Code Quality & Testing
 
+# Workflow optimized for app/ directory structure
+
 on:
   push:
     branches: [ 'main', 'master', 'develop', 'release/*' ]  # Only important branches

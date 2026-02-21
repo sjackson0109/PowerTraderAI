@@ -29,25 +29,25 @@ class ExchangeType(Enum):
     BITGET = "bitget"
     MEXC = "mexc"
     BITFINEX = "bitfinex"
-    
+
     # Major Platform Additions
     CRYPTO_COM = "crypto_com"
     ETORO = "etoro"
-    
+
     # Asian Market Leaders
     UPBIT = "upbit"
     COINCHECK = "coincheck"
-    
+
     # Regional Exchanges
     COINDCX = "coindcx"
     WAZIRX = "wazirx"
     LUNO = "luno"
     MERCADO_BITCOIN = "mercado_bitcoin"
-    
+
     # Derivatives Specialists
     PHEMEX = "phemex"
     BINGX = "bingx"
-    
+
     # DeFi Protocols
     ONEINCH = "oneinch"
     UNISWAP = "uniswap"
@@ -58,53 +58,53 @@ class ExchangeType(Enum):
     SUSHISWAP = "sushiswap"
     BALANCER = "balancer"
     PERPETUAL_PROTOCOL = "perpetual_protocol"
-    
+
     # Institutional/OTC
     CUMBERLAND = "cumberland"
     GENESIS = "genesis"
     B2C2 = "b2c2"
-    
+
     # Traditional Finance
     INTERACTIVE_BROKERS = "interactive_brokers"
     PLUS500 = "plus500"
     REVOLUT = "revolut"
-    
+
     # Latin America
     BITSO = "bitso"
     RIPIO = "ripio"
     SATOSHITANGO = "satoshitango"
-    
+
     # Middle East & Africa
     RAIN = "rain"
     YELLOW_CARD = "yellow_card"
     QUIDAX = "quidax"
     VALR = "valr"
-    
+
     # Eastern Europe & CIS
     COINSBIT = "coinsbit"
     EXMO = "exmo"
     CEX_IO = "cex_io"
-    
+
     # Turkey
     BTCTURK = "btcturk"
     PARIBU = "paribu"
-    
+
     # DeFi Lending & Borrowing
     AAVE = "aave"
     COMPOUND = "compound"
     MAKERDAO = "makerdao"
-    
+
     # Yield Aggregation
     YEARN_FINANCE = "yearn_finance"
     CONVEX_FINANCE = "convex_finance"
     BEEFY_FINANCE = "beefy_finance"
-    
+
     # Layer 2 DEXs
     QUICKSWAP = "quickswap"
     SPOOKYSWAP = "spookyswap"
     TRADERJOE = "traderjoe"
     RAYDIUM = "raydium"
-    
+
     # Derivatives Specialists
     DERIBIT = "deribit"
     LYRA_FINANCE = "lyra_finance"
@@ -112,7 +112,7 @@ class ExchangeType(Enum):
     PERP_PROTOCOL = "perp_protocol"
     GMX = "gmx"
     GAINS_NETWORK = "gains_network"
-    
+
     # Cross-Chain Infrastructure
     HOP_PROTOCOL = "hop_protocol"
     ACROSS_PROTOCOL = "across_protocol"
@@ -120,14 +120,14 @@ class ExchangeType(Enum):
     LI_FI = "li_fi"
     RANGO = "rango"
     SOCKET = "socket"
-    
+
     # Specialized Platforms
     POLYMARKET = "polymarket"
     AUGUR = "augur"
     PAXFUL = "paxful"
     LOCALCOINSWAP = "localcoinswap"
     BISQ = "bisq"
-    
+
     # Staking Platforms
     LIDO_FINANCE = "lido_finance"
     ROCKET_POOL = "rocket_pool"

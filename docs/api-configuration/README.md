@@ -14,7 +14,7 @@ PowerTraderAI+ integrates with external services through APIs (Application Progr
 
 Before configuring APIs:
 - [KuCoin account setup](../exchanges/kucoin-setup.md) completed
-- [Robinhood account setup](../exchanges/robinhood-setup.md) completed  
+- [Robinhood account setup](../exchanges/robinhood-setup.md) completed
 - PowerTraderAI+ installed and running
 - Basic security measures implemented
 
@@ -215,7 +215,7 @@ For enhanced security, use environment variables:
 ```powershell
 # Windows PowerShell
 $env:KUCOIN_API_KEY="your_api_key"
-$env:KUCOIN_API_SECRET="your_api_secret" 
+$env:KUCOIN_API_SECRET="your_api_secret"
 $env:KUCOIN_PASSPHRASE="your_passphrase"
 $env:ROBINHOOD_USERNAME="your_email"
 $env:ROBINHOOD_PASSWORD="your_password"
@@ -360,7 +360,7 @@ print(f"Robinhood requests: {stats['robinhood']['total_requests']}")
 {
   "logging": {
     "api_calls": "INFO",
-    "authentication": "INFO", 
+    "authentication": "INFO",
     "errors": "ERROR",
     "data_quality": "WARNING",
     "performance": "DEBUG"

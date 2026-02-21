@@ -38,12 +38,12 @@ A clear and concise description of what you want to happen.
 **Use cases and benefits:**
 <!-- Describe specific scenarios where this feature would be useful -->
 
-1. **Use Case 1:** 
+1. **Use Case 1:**
    - Description:
    - Benefit:
 
 2. **Use Case 2:**
-   - Description:  
+   - Description:
    - Benefit:
 
 ## Trading Impact
@@ -73,7 +73,7 @@ Add any other context, mockups, screenshots, or examples about the feature reque
 ## Priority Assessment
 **How important is this feature to you?**
 - [ ] Critical - Blocks current workflow
-- [ ] High - Would significantly improve experience  
+- [ ] High - Would significantly improve experience
 - [ ] Medium - Nice to have improvement
 - [ ] Low - Minor enhancement
 

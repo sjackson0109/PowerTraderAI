@@ -16,22 +16,22 @@ from pt_exchange_abstraction import AbstractExchange, MarketData, OrderResult
 
 class AbstractExchange:
     """Base class for all cryptocurrency exchange implementations."""
-    
+
     async def initialize(self) -> bool:
         """Initialize exchange connection and authentication."""
-        
+
     async def get_market_data(self, symbol: str) -> MarketData:
         """Get current market data for a trading pair."""
-        
+
     async def place_order(self, order_request: OrderRequest) -> OrderResult:
         """Place a trading order on the exchange."""
-        
+
     async def get_balance(self, asset: str = None) -> Dict[str, float]:
         """Get account balance for specific asset or all assets."""
-        
+
     def get_supported_regions(self) -> List[str]:
         """Return list of supported geographic regions."""
-        
+
     def normalize_symbol(self, symbol: str) -> str:
         """Convert symbol to exchange-specific format."""
 ```
@@ -95,15 +95,15 @@ class ExchangeType(Enum):
 ```python
 class ExchangeFactory:
     """Factory for creating exchange instances."""
-    
+
     @staticmethod
     def create_exchange(exchange_type: str, config: Dict = None) -> AbstractExchange:
         """Create exchange instance by type."""
-        
+
     @staticmethod
     def get_available_exchanges() -> List[str]:
         """Get list of all available exchange types."""
-        
+
     @staticmethod
     def register_exchange(name: str, exchange_class: type):
         """Register custom exchange implementation."""
@@ -119,28 +119,28 @@ from pt_multi_exchange import MultiExchangeManager
 
 class MultiExchangeManager:
     """Manages multiple exchanges and provides unified interface."""
-    
+
     def __init__(self, config_manager: ExchangeConfigManager = None):
         """Initialize with optional configuration manager."""
-        
+
     def get_available_exchanges(self) -> List[str]:
         """Get list of exchanges available for current region."""
-        
+
     async def get_market_data(self, symbol: str, exchange: str = None) -> MarketData:
         """Get market data from specific or best exchange."""
-        
+
     async def compare_prices(self, symbol: str) -> Dict[str, MarketData]:
         """Compare prices across all available exchanges."""
-        
+
     async def get_best_price(self, symbol: str, side: str = "buy") -> MarketData:
         """Find best price across all exchanges."""
-        
+
     async def place_order(self, order_request: OrderRequest, exchange: str = None) -> OrderResult:
         """Place order on specific or optimal exchange."""
-        
+
     def get_exchange_status(self) -> Dict[str, Dict]:
         """Get connection status for all exchanges."""
-        
+
     async def get_balances(self, exchange: str = None) -> Dict[str, Dict[str, float]]:
         """Get balances from specific exchange or all exchanges."""
 ```
@@ -153,22 +153,22 @@ from pt_multi_exchange import ExchangeConfigManager
 
 class ExchangeConfigManager:
     """Manages exchange configurations and credentials."""
-    
+
     def __init__(self, config_dir: str = "credentials"):
         """Initialize with configuration directory."""
-        
+
     def load_exchange_config(self, exchange_name: str) -> Dict:
         """Load configuration for specific exchange."""
-        
+
     def save_exchange_config(self, exchange_name: str, config: Dict):
         """Save configuration for specific exchange."""
-        
+
     def validate_config(self, exchange_name: str) -> bool:
         """Validate exchange configuration."""
-        
+
     def get_configured_exchanges(self) -> List[str]:
         """Get list of exchanges with valid configurations."""
-        
+
     def delete_exchange_config(self, exchange_name: str):
         """Remove configuration for specific exchange."""
 ```
@@ -183,16 +183,16 @@ from pt_exchanges import RobinhoodExchange
 
 class RobinhoodExchange(AbstractExchange):
     """Robinhood exchange implementation."""
-    
+
     def __init__(self, config: Dict = None):
         """Initialize with username/password configuration."""
-        
+
     def get_supported_regions(self) -> List[str]:
         """Returns ['us'] - US only."""
-        
+
     async def initialize(self) -> bool:
         """Login with username/password, handle 2FA."""
-        
+
     async def get_market_data(self, symbol: str) -> MarketData:
         """Get crypto price data from Robinhood API."""
 ```
@@ -203,16 +203,16 @@ from pt_exchanges import KrakenExchange
 
 class KrakenExchange(AbstractExchange):
     """Kraken exchange implementation."""
-    
+
     def __init__(self, config: Dict = None):
         """Initialize with API key/secret configuration."""
-        
+
     def get_supported_regions(self) -> List[str]:
         """Returns ['us', 'eu', 'global'] - Worldwide."""
-        
+
     async def get_market_data(self, symbol: str) -> MarketData:
         """Get market data from Kraken REST API."""
-        
+
     async def place_order(self, order_request: OrderRequest) -> OrderResult:
         """Place order using Kraken trading API."""
 ```
@@ -223,13 +223,13 @@ from pt_exchanges import BinanceExchange
 
 class BinanceExchange(AbstractExchange):
     """Binance exchange implementation."""
-    
+
     def normalize_symbol(self, symbol: str) -> str:
         """Convert to Binance format (e.g., BTC-USD -> BTCUSDT)."""
-        
+
     async def get_market_data(self, symbol: str) -> MarketData:
         """Get ticker data from Binance API."""
-        
+
     def get_supported_regions(self) -> List[str]:
         """Returns ['eu', 'global'] - Excludes US."""
 ```
@@ -249,7 +249,7 @@ primary_exchange = settings.get("primary_exchange", "robinhood")
 region = settings.get("region", "us")
 price_comparison = settings.get("price_comparison_enabled", True)
 
-# Trading settings  
+# Trading settings
 coins = settings.get("coins", ["BTC", "ETH"])
 trade_start_level = settings.get("trade_start_level", 3)
 start_allocation_pct = settings.get("start_allocation_pct", 5.0)
@@ -285,16 +285,16 @@ from pt_multi_exchange import MultiExchangeManager
 
 async def get_crypto_prices():
     manager = MultiExchangeManager()
-    
+
     # Single exchange
     btc_data = await manager.get_market_data("BTC-USD", "kraken")
     print(f"BTC: ${btc_data.price}")
-    
+
     # Compare across exchanges
     eth_prices = await manager.compare_prices("ETH-USD")
     for exchange, data in eth_prices.items():
         print(f"{exchange}: ${data.price}")
-    
+
     # Best price discovery
     best_btc = await manager.get_best_price("BTC-USD", "buy")
     print(f"Best buy price: ${best_btc.price} on {best_btc.exchange}")
@@ -310,7 +310,7 @@ from pt_multi_exchange import MultiExchangeManager
 
 async def place_crypto_order():
     manager = MultiExchangeManager()
-    
+
     # Create order request
     order = OrderRequest(
         symbol="BTC-USD",
@@ -318,11 +318,11 @@ async def place_crypto_order():
         amount=0.001,
         order_type="market"
     )
-    
+
     # Place on specific exchange
     result = await manager.place_order(order, exchange="kraken")
     print(f"Order {result.order_id}: {result.status}")
-    
+
     # Place on best price exchange
     result = await manager.place_order(order)  # Auto-selects best exchange
     print(f"Executed at ${result.average_price} on best exchange")
@@ -334,7 +334,7 @@ asyncio.run(place_crypto_order())
 ```python
 async def check_balances():
     manager = MultiExchangeManager()
-    
+
     # Get balances from all exchanges
     all_balances = await manager.get_balances()
     for exchange, balances in all_balances.items():
@@ -342,7 +342,7 @@ async def check_balances():
         for asset, amount in balances.items():
             if amount > 0:
                 print(f"  {asset}: {amount}")
-    
+
     # Get specific exchange balance
     kraken_balances = await manager.get_balances("kraken")
     btc_balance = kraken_balances.get("kraken", {}).get("BTC", 0)
@@ -359,12 +359,12 @@ from pt_multi_exchange import MultiExchangeManager
 
 def monitor_exchanges():
     manager = MultiExchangeManager()
-    
+
     # Get overall system status
     status = manager.get_system_status()
     print(f"System Status: {status['overall']}")
     print(f"Available Exchanges: {status['available_count']}/{status['total_count']}")
-    
+
     # Detailed exchange status
     exchange_status = manager.get_exchange_status()
     for exchange, info in exchange_status.items():
@@ -383,21 +383,21 @@ import asyncio
 
 async def price_stream():
     manager = MultiExchangeManager()
-    
+
     def on_price_update(exchange, symbol, price_data):
         print(f"[{exchange}] {symbol}: ${price_data.price}")
-    
+
     def on_connection_change(exchange, connected):
         status = "Connected" if connected else "Disconnected"
         print(f"[{exchange}] {status}")
-    
+
     # Subscribe to events
     manager.subscribe_to_price_updates(on_price_update)
     manager.subscribe_to_connection_events(on_connection_change)
-    
+
     # Start monitoring
     await manager.start_price_monitoring(["BTC-USD", "ETH-USD"])
-    
+
     # Keep running
     while True:
         await asyncio.sleep(1)
@@ -439,7 +439,7 @@ import asyncio
 
 async def robust_trading():
     manager = MultiExchangeManager()
-    
+
     # Automatic retry with exponential backoff
     async def place_order_with_retry(order_request, max_retries=3):
         for attempt in range(max_retries):
@@ -452,7 +452,7 @@ async def robust_trading():
                 wait_time = 2 ** attempt
                 print(f"Retry {attempt + 1} in {wait_time}s: {e}")
                 await asyncio.sleep(wait_time)
-    
+
     # Exchange fallback
     async def place_order_with_fallback(order_request):
         exchanges = ["kraken", "coinbase", "binance"]
@@ -478,15 +478,15 @@ import aiohttp
 
 class CustomExchange(AbstractExchange):
     """Custom exchange implementation template."""
-    
+
     def __init__(self, config: Dict = None):
         super().__init__()
         self.config = config or {}
         self.session = None
-        
+
     def get_supported_regions(self) -> List[str]:
         return ["us", "eu", "global"]  # Specify supported regions
-        
+
     async def initialize(self) -> bool:
         """Initialize API connection."""
         try:
@@ -499,16 +499,16 @@ class CustomExchange(AbstractExchange):
         except Exception as e:
             print(f"Custom exchange init failed: {e}")
             return False
-            
+
     async def get_market_data(self, symbol: str) -> MarketData:
         """Implement market data retrieval."""
         normalized_symbol = self.normalize_symbol(symbol)
-        
+
         async with self.session.get(
             f"https://api.customexchange.com/ticker/{normalized_symbol}"
         ) as response:
             data = await response.json()
-            
+
             return MarketData(
                 symbol=symbol,
                 price=float(data['price']),
@@ -518,7 +518,7 @@ class CustomExchange(AbstractExchange):
                 timestamp=datetime.now(),
                 exchange="custom"
             )
-            
+
     async def place_order(self, order_request: OrderRequest) -> OrderResult:
         """Implement order placement."""
         # Build order payload
@@ -528,10 +528,10 @@ class CustomExchange(AbstractExchange):
             "type": order_request.order_type,
             "quantity": order_request.amount
         }
-        
+
         if order_request.order_type == "limit":
             payload["price"] = order_request.price
-            
+
         # Submit order
         async with self.session.post(
             "https://api.customexchange.com/order",
@@ -539,7 +539,7 @@ class CustomExchange(AbstractExchange):
             headers=self._get_auth_headers()
         ) as response:
             result = await response.json()
-            
+
             return OrderResult(
                 order_id=result['order_id'],
                 status=result['status'],
@@ -549,19 +549,19 @@ class CustomExchange(AbstractExchange):
                 fees=result.get('fees', {}),
                 timestamp=datetime.now()
             )
-            
+
     def normalize_symbol(self, symbol: str) -> str:
         """Convert symbol to exchange format."""
         # Example: BTC-USD -> BTCUSD
         return symbol.replace("-", "").upper()
-        
+
     def _get_auth_headers(self) -> Dict[str, str]:
         """Generate authentication headers."""
         return {
             "X-API-Key": self.config.get("api_key", ""),
             "X-API-Secret": self.config.get("api_secret", "")
         }
-        
+
     async def _test_connection(self):
         """Test API connectivity."""
         async with self.session.get(

@@ -153,7 +153,7 @@ PowerTrader_AI_Desktop_v1.0.0.zip.sha256
   run: |
     # Check PyPI
     pip index versions powertrader-ai
-    
+
     # Check artifact repositories
     curl -f "$ARTIFACTORY_URL/powertrader-releases/"
 ```
@@ -217,7 +217,7 @@ CMD ["powertrader"]
 
 ---
 
-**Configuration Team:**  
+**Configuration Team:**
 *Simon Jackson (@sjackson0109) - PowerTraderAI+ Development Team*
 
 **Last Updated:** February 20, 2026

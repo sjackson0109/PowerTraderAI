@@ -384,19 +384,25 @@ class HuobiExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         huobi_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/market/detail/merged?symbol={huobi_symbol}")
+        response = requests.get(
+            f"{self.base_url}/market/detail/merged?symbol={huobi_symbol}"
+        )
         data = response.json()
-        
+
         if data["status"] != "ok":
-            raise RuntimeError(f"Huobi API error: {data.get('err-msg', 'Unknown error')}")
-            
+            raise RuntimeError(
+                f"Huobi API error: {data.get('err-msg', 'Unknown error')}"
+            )
+
         return float(data["tick"]["ask"][0])
 
     def get_market_data(self, symbol: str) -> MarketData:
         huobi_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/market/detail/merged?symbol={huobi_symbol}")
+        response = requests.get(
+            f"{self.base_url}/market/detail/merged?symbol={huobi_symbol}"
+        )
         data = response.json()["tick"]
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["close"]),
@@ -404,10 +410,12 @@ class HuobiExchange(AbstractExchange):
             ask=float(data["ask"][0]),
             volume=float(data["vol"]),
             timestamp=time.time(),
-            exchange="huobi"
+            exchange="huobi",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Huobi order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -439,19 +447,23 @@ class GateExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         gate_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/spot/tickers?currency_pair={gate_symbol}")
+        response = requests.get(
+            f"{self.base_url}/spot/tickers?currency_pair={gate_symbol}"
+        )
         data = response.json()
-        
+
         if not data or len(data) == 0:
             raise RuntimeError("Gate.io API error: No data returned")
-            
+
         return float(data[0]["lowest_ask"])
 
     def get_market_data(self, symbol: str) -> MarketData:
         gate_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/spot/tickers?currency_pair={gate_symbol}")
+        response = requests.get(
+            f"{self.base_url}/spot/tickers?currency_pair={gate_symbol}"
+        )
         data = response.json()[0]
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["last"]),
@@ -459,10 +471,12 @@ class GateExchange(AbstractExchange):
             ask=float(data["lowest_ask"]),
             volume=float(data["base_volume"]),
             timestamp=time.time(),
-            exchange="gate"
+            exchange="gate",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Gate.io order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -495,19 +509,23 @@ class BitgetExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         bitget_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/api/spot/v1/market/ticker?symbol={bitget_symbol}")
+        response = requests.get(
+            f"{self.base_url}/api/spot/v1/market/ticker?symbol={bitget_symbol}"
+        )
         data = response.json()
-        
+
         if data["code"] != "00000":
             raise RuntimeError(f"Bitget API error: {data['msg']}")
-            
+
         return float(data["data"]["askPr"])
 
     def get_market_data(self, symbol: str) -> MarketData:
         bitget_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/api/spot/v1/market/ticker?symbol={bitget_symbol}")
+        response = requests.get(
+            f"{self.base_url}/api/spot/v1/market/ticker?symbol={bitget_symbol}"
+        )
         data = response.json()["data"]
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["close"]),
@@ -515,10 +533,12 @@ class BitgetExchange(AbstractExchange):
             ask=float(data["askPr"]),
             volume=float(data["baseVol"]),
             timestamp=time.time(),
-            exchange="bitget"
+            exchange="bitget",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Bitget order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -550,22 +570,28 @@ class MexcExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         mexc_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/api/v3/ticker/price?symbol={mexc_symbol}")
+        response = requests.get(
+            f"{self.base_url}/api/v3/ticker/price?symbol={mexc_symbol}"
+        )
         data = response.json()
-        
+
         if "code" in data:
             raise RuntimeError(f"MEXC API error: {data['msg']}")
-            
+
         return float(data["price"])
 
     def get_market_data(self, symbol: str) -> MarketData:
         mexc_symbol = self._convert_symbol(symbol)
-        ticker_response = requests.get(f"{self.base_url}/api/v3/ticker/24hr?symbol={mexc_symbol}")
+        ticker_response = requests.get(
+            f"{self.base_url}/api/v3/ticker/24hr?symbol={mexc_symbol}"
+        )
         ticker_data = ticker_response.json()
-        
-        book_response = requests.get(f"{self.base_url}/api/v3/ticker/bookTicker?symbol={mexc_symbol}")
+
+        book_response = requests.get(
+            f"{self.base_url}/api/v3/ticker/bookTicker?symbol={mexc_symbol}"
+        )
         book_data = book_response.json()
-        
+
         return MarketData(
             symbol=symbol,
             price=float(ticker_data["lastPrice"]),
@@ -573,10 +599,12 @@ class MexcExchange(AbstractExchange):
             ask=float(book_data["askPrice"]),
             volume=float(ticker_data["volume"]),
             timestamp=time.time(),
-            exchange="mexc"
+            exchange="mexc",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("MEXC order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -610,28 +638,30 @@ class BitfinexExchange(AbstractExchange):
         bitfinex_symbol = self._convert_symbol(symbol)
         response = requests.get(f"{self.base_url}/ticker/t{bitfinex_symbol}")
         data = response.json()
-        
+
         if isinstance(data, dict) and "error" in data:
             raise RuntimeError(f"Bitfinex API error: {data['error']}")
-            
+
         return float(data[2])  # Ask price
 
     def get_market_data(self, symbol: str) -> MarketData:
         bitfinex_symbol = self._convert_symbol(symbol)
         response = requests.get(f"{self.base_url}/ticker/t{bitfinex_symbol}")
         data = response.json()
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data[6]),  # Last price
-            bid=float(data[0]),    # Bid
-            ask=float(data[2]),    # Ask
-            volume=float(data[7]), # Volume
+            bid=float(data[0]),  # Bid
+            ask=float(data[2]),  # Ask
+            volume=float(data[7]),  # Volume
             timestamp=time.time(),
-            exchange="bitfinex"
+            exchange="bitfinex",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Bitfinex order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -665,18 +695,20 @@ class OneInchExchange(AbstractExchange):
     def get_current_price(self, symbol: str) -> float:
         # 1inch doesn't have traditional tickers, uses swap quotes
         token_address = self._get_token_address(symbol)
-        response = requests.get(f"{self.base_url}/quote?fromTokenAddress={token_address}&toTokenAddress=0xA0b86a33E6bF6BC15Ac361e8C37f3E3B7AC3E80f&amount=1000000000000000000")
+        response = requests.get(
+            f"{self.base_url}/quote?fromTokenAddress={token_address}&toTokenAddress=0xA0b86a33E6bF6BC15Ac361e8C37f3E3B7AC3E80f&amount=1000000000000000000"
+        )
         data = response.json()
-        
+
         if "error" in data:
             raise RuntimeError(f"1inch API error: {data['description']}")
-            
+
         return float(data["toTokenAmount"]) / 10**18
 
     def get_market_data(self, symbol: str) -> MarketData:
         # For DEX, market data is derived from swap quotes
         price = self.get_current_price(symbol)
-        
+
         return MarketData(
             symbol=symbol,
             price=price,
@@ -684,10 +716,12 @@ class OneInchExchange(AbstractExchange):
             ask=price * 1.005,
             volume=0.0,  # Volume data not readily available
             timestamp=time.time(),
-            exchange="oneinch"
+            exchange="oneinch",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("1inch swap execution to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -707,7 +741,7 @@ class OneInchExchange(AbstractExchange):
         token_map = {
             "BTC-USD": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",  # WBTC
             "ETH-USD": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
-            "USDC-USD": "0xA0b86a33E6bF6BC15Ac361e8C37f3E3B7AC3E80f", # USDC
+            "USDC-USD": "0xA0b86a33E6bF6BC15Ac361e8C37f3E3B7AC3E80f",  # USDC
         }
         return token_map.get(symbol, "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
 
@@ -726,7 +760,7 @@ class UniswapExchange(AbstractExchange):
     def get_current_price(self, symbol: str) -> float:
         # Query Uniswap subgraph for pool data
         pool_id = self._get_pool_id(symbol)
-        
+
         query = f"""
         {{
           pool(id: "{pool_id}") {{
@@ -736,18 +770,18 @@ class UniswapExchange(AbstractExchange):
           }}
         }}
         """
-        
+
         response = requests.post(self.base_url, json={"query": query})
         data = response.json()
-        
+
         if "errors" in data:
             raise RuntimeError(f"Uniswap API error: {data['errors']}")
-            
+
         return float(data["data"]["pool"]["token0Price"])
 
     def get_market_data(self, symbol: str) -> MarketData:
         price = self.get_current_price(symbol)
-        
+
         return MarketData(
             symbol=symbol,
             price=price,
@@ -755,10 +789,12 @@ class UniswapExchange(AbstractExchange):
             ask=price * 1.003,
             volume=0.0,  # Would need additional query
             timestamp=time.time(),
-            exchange="uniswap"
+            exchange="uniswap",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Uniswap swap execution to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -804,19 +840,23 @@ class CryptoComExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         cdc_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/public/get-ticker?instrument_name={cdc_symbol}")
+        response = requests.get(
+            f"{self.base_url}/public/get-ticker?instrument_name={cdc_symbol}"
+        )
         data = response.json()
-        
+
         if data["code"] != 0:
             raise RuntimeError(f"Crypto.com API error: {data['message']}")
-            
+
         return float(data["result"]["data"]["a"])  # Ask price
 
     def get_market_data(self, symbol: str) -> MarketData:
         cdc_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/public/get-ticker?instrument_name={cdc_symbol}")
+        response = requests.get(
+            f"{self.base_url}/public/get-ticker?instrument_name={cdc_symbol}"
+        )
         data = response.json()["result"]["data"]
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["a"]),
@@ -824,10 +864,12 @@ class CryptoComExchange(AbstractExchange):
             ask=float(data["a"]),
             volume=float(data["v"]),
             timestamp=time.time(),
-            exchange="crypto_com"
+            exchange="crypto_com",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Crypto.com order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -862,14 +904,14 @@ class EtoroExchange(AbstractExchange):
         etoro_symbol = self._convert_symbol(symbol)
         response = requests.get(f"{self.base_url}/instruments/{etoro_symbol}")
         data = response.json()
-        
+
         return float(data["LastRates"]["Sell"])
 
     def get_market_data(self, symbol: str) -> MarketData:
         etoro_symbol = self._convert_symbol(symbol)
         response = requests.get(f"{self.base_url}/instruments/{etoro_symbol}")
         data = response.json()
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["LastRates"]["Sell"]),
@@ -877,10 +919,12 @@ class EtoroExchange(AbstractExchange):
             ask=float(data["LastRates"]["Sell"]),
             volume=0.0,  # Volume not readily available
             timestamp=time.time(),
-            exchange="etoro"
+            exchange="etoro",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("eToro order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -896,11 +940,7 @@ class EtoroExchange(AbstractExchange):
         return True  # Available globally
 
     def _convert_symbol(self, symbol: str) -> str:
-        symbol_map = {
-            "BTC-USD": "BTC",
-            "ETH-USD": "ETH",
-            "ADA-USD": "ADA"
-        }
+        symbol_map = {"BTC-USD": "BTC", "ETH-USD": "ETH", "ADA-USD": "ADA"}
         return symbol_map.get(symbol, symbol.split("-")[0])
 
 
@@ -918,17 +958,17 @@ class UpbitExchange(AbstractExchange):
         upbit_symbol = self._convert_symbol(symbol)
         response = requests.get(f"{self.base_url}/ticker?markets={upbit_symbol}")
         data = response.json()
-        
+
         if "error" in data:
             raise RuntimeError(f"Upbit API error: {data['error']}")
-            
+
         return float(data[0]["trade_price"])
 
     def get_market_data(self, symbol: str) -> MarketData:
         upbit_symbol = self._convert_symbol(symbol)
         response = requests.get(f"{self.base_url}/ticker?markets={upbit_symbol}")
         data = response.json()[0]
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["trade_price"]),
@@ -936,10 +976,12 @@ class UpbitExchange(AbstractExchange):
             ask=float(data["trade_price"]),
             volume=float(data["acc_trade_volume_24h"]),
             timestamp=time.time(),
-            exchange="upbit"
+            exchange="upbit",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Upbit order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -975,14 +1017,14 @@ class DydxExchange(AbstractExchange):
         dydx_symbol = self._convert_symbol(symbol)
         response = requests.get(f"{self.base_url}/v3/markets/{dydx_symbol}")
         data = response.json()
-        
+
         return float(data["market"]["oraclePrice"])
 
     def get_market_data(self, symbol: str) -> MarketData:
         dydx_symbol = self._convert_symbol(symbol)
         response = requests.get(f"{self.base_url}/v3/markets/{dydx_symbol}")
         data = response.json()["market"]
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["oraclePrice"]),
@@ -990,10 +1032,12 @@ class DydxExchange(AbstractExchange):
             ask=float(data["oraclePrice"]) * 1.001,
             volume=float(data["volume24H"]),
             timestamp=time.time(),
-            exchange="dydx"
+            exchange="dydx",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("dYdX order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -1012,7 +1056,7 @@ class DydxExchange(AbstractExchange):
         symbol_map = {
             "BTC-USD": "BTC-USD",
             "ETH-USD": "ETH-USD",
-            "LINK-USD": "LINK-USD"
+            "LINK-USD": "LINK-USD",
         }
         return symbol_map.get(symbol, symbol)
 
@@ -1032,20 +1076,20 @@ class CurveExchange(AbstractExchange):
         # Curve specializes in stablecoin pairs - prices are near 1.0
         if "USD" in symbol:
             return 1.0  # Stablecoin to stablecoin approximation
-        
+
         response = requests.get(f"{self.base_url}/getPools")
         data = response.json()
-        
+
         # Find relevant pool for symbol
         for pool in data["data"]["poolData"]:
             if symbol.split("-")[0].upper() in pool["name"].upper():
                 return float(pool.get("virtualPrice", 1.0))
-        
+
         return 1.0
 
     def get_market_data(self, symbol: str) -> MarketData:
         price = self.get_current_price(symbol)
-        
+
         return MarketData(
             symbol=symbol,
             price=price,
@@ -1053,10 +1097,12 @@ class CurveExchange(AbstractExchange):
             ask=price * 1.0005,
             volume=0.0,  # Volume requires more complex calculation
             timestamp=time.time(),
-            exchange="curve"
+            exchange="curve",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Curve swap execution to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -1087,19 +1133,23 @@ class PhemexExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         phemex_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/md/ticker/24hr?symbol={phemex_symbol}")
+        response = requests.get(
+            f"{self.base_url}/md/ticker/24hr?symbol={phemex_symbol}"
+        )
         data = response.json()
-        
+
         if "code" in data and data["code"] != 0:
             raise RuntimeError(f"Phemex API error: {data['msg']}")
-            
+
         return float(data["result"]["askPx"]) / 10000  # Phemex uses scaled prices
 
     def get_market_data(self, symbol: str) -> MarketData:
         phemex_symbol = self._convert_symbol(symbol)
-        response = requests.get(f"{self.base_url}/md/ticker/24hr?symbol={phemex_symbol}")
+        response = requests.get(
+            f"{self.base_url}/md/ticker/24hr?symbol={phemex_symbol}"
+        )
         data = response.json()["result"]
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["lastPx"]) / 10000,
@@ -1107,10 +1157,12 @@ class PhemexExchange(AbstractExchange):
             ask=float(data["askPx"]) / 10000,
             volume=float(data["volume"]),
             timestamp=time.time(),
-            exchange="phemex"
+            exchange="phemex",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Phemex order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -1144,7 +1196,7 @@ class BitsoExchange(AbstractExchange):
     def __init__(self, api_key: str, api_secret: str, **kwargs):
         super().__init__(api_key, api_secret, **kwargs)
         self.base_url = "https://api.bitso.com/v3"
-        self.passphrase = kwargs.get('passphrase', '')
+        self.passphrase = kwargs.get("passphrase", "")
 
     def get_exchange_name(self) -> str:
         return "bitso"
@@ -1157,7 +1209,7 @@ class BitsoExchange(AbstractExchange):
         bitso_symbol = self._convert_symbol(symbol)
         response = requests.get(f"{self.base_url}/ticker?book={bitso_symbol}")
         data = response.json()["payload"]
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["last"]),
@@ -1165,10 +1217,12 @@ class BitsoExchange(AbstractExchange):
             ask=float(data["ask"]),
             volume=float(data["volume"]),
             timestamp=time.time(),
-            exchange="bitso"
+            exchange="bitso",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Bitso order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -1193,7 +1247,7 @@ class AaveExchange(AbstractExchange):
     def __init__(self, wallet_address: str, private_key: str, **kwargs):
         super().__init__(wallet_address, private_key, **kwargs)
         self.base_url = "https://api.aave.com/v1"
-        self.web3_provider = kwargs.get('web3_provider')
+        self.web3_provider = kwargs.get("web3_provider")
 
     def get_exchange_name(self) -> str:
         return "aave"
@@ -1206,7 +1260,7 @@ class AaveExchange(AbstractExchange):
         # Get lending/borrowing rates for asset
         response = requests.get(f"{self.base_url}/reserves/{symbol}")
         data = response.json()
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["priceInEth"]),  # Price in ETH
@@ -1214,10 +1268,12 @@ class AaveExchange(AbstractExchange):
             ask=float(data["variableBorrowRate"]),  # Borrowing rate
             volume=float(data["totalLiquidity"]),
             timestamp=time.time(),
-            exchange="aave"
+            exchange="aave",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         # In Aave, "orders" are deposit/borrow operations
         if side.lower() == "buy":
             # Deposit (lend) operation
@@ -1263,18 +1319,20 @@ class YearnFinanceExchange(AbstractExchange):
         # Get vault information
         response = requests.get(f"{self.base_url}/vaults/{symbol}")
         data = response.json()
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["token"]["price"]),
             bid=0.0,  # Not applicable for yield vaults
-            ask=0.0,  # Not applicable for yield vaults  
+            ask=0.0,  # Not applicable for yield vaults
             volume=float(data["tvl"]["value"]),  # TVL as volume
             timestamp=time.time(),
-            exchange="yearn_finance"
+            exchange="yearn_finance",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         if side.lower() == "buy":
             return self._deposit_to_vault(symbol, amount)
         else:
@@ -1305,7 +1363,7 @@ class DeribitExchange(AbstractExchange):
     def __init__(self, api_key: str, api_secret: str, **kwargs):
         super().__init__(api_key, api_secret, **kwargs)
         self.base_url = "https://www.deribit.com/api/v2"
-        self.testnet = kwargs.get('testnet', False)
+        self.testnet = kwargs.get("testnet", False)
         if self.testnet:
             self.base_url = "https://test.deribit.com/api/v2"
 
@@ -1317,9 +1375,11 @@ class DeribitExchange(AbstractExchange):
         return market_data.price
 
     def get_market_data(self, symbol: str) -> MarketData:
-        response = requests.get(f"{self.base_url}/public/get_book_summary_by_instrument?instrument_name={symbol}")
+        response = requests.get(
+            f"{self.base_url}/public/get_book_summary_by_instrument?instrument_name={symbol}"
+        )
         data = response.json()["result"][0]
-        
+
         return MarketData(
             symbol=symbol,
             price=float(data["last_price"]),
@@ -1327,10 +1387,12 @@ class DeribitExchange(AbstractExchange):
             ask=float(data["ask_price"]),
             volume=float(data["volume"]),
             timestamp=time.time(),
-            exchange="deribit"
+            exchange="deribit",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         raise NotImplementedError("Deribit order placement to be implemented")
 
     def get_balance(self) -> Dict[str, float]:
@@ -1366,11 +1428,11 @@ class LidoFinanceExchange(AbstractExchange):
         # Get stETH information
         response = requests.get(f"{self.base_url}/protocol/steth/apr")
         apr_data = response.json()
-        
+
         # Get stETH price
         price_response = requests.get(f"{self.base_url}/protocol/steth/price")
         price_data = price_response.json()
-        
+
         return MarketData(
             symbol=symbol,
             price=float(price_data["steth_price"]),
@@ -1378,10 +1440,12 @@ class LidoFinanceExchange(AbstractExchange):
             ask=0.0,  # No borrowing rate
             volume=float(apr_data["total_staked"]),
             timestamp=time.time(),
-            exchange="lido_finance"
+            exchange="lido_finance",
         )
 
-    def place_order(self, symbol: str, side: str, amount: float, price: Optional[float] = None) -> OrderResult:
+    def place_order(
+        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    ) -> OrderResult:
         if side.lower() == "buy":
             return self._stake_eth(amount)
         else:

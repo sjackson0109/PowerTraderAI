@@ -52,10 +52,10 @@ Error: 'python' is not recognized as an internal or external command
    ```powershell
    # Check if Python is installed
    where python
-   
+
    # If not found, add to PATH manually
    setx PATH "%PATH%;C:\Python39;C:\Python39\Scripts"
-   
+
    # Restart command prompt and test
    python --version
    ```
@@ -75,10 +75,10 @@ ModuleNotFoundError: No module named 'requests'
    ```bash
    # Upgrade pip first
    python -m pip install --upgrade pip
-   
+
    # Install all requirements
    pip install -r requirements.txt
-   
+
    # Verify installation
    pip list
    ```
@@ -87,10 +87,10 @@ ModuleNotFoundError: No module named 'requests'
    ```bash
    # Create new virtual environment
    python -m venv powertrader_env
-   
+
    # Activate environment
    powertrader_env\Scripts\activate
-   
+
    # Install requirements in environment
    pip install -r requirements.txt
    ```
@@ -130,12 +130,12 @@ Error: Failed to connect to KuCoin API
    ```python
    # Test credentials manually
    import requests
-   
+
    headers = {
        'KC-API-KEY': 'your_api_key',
        'KC-API-PASSPHRASE': 'your_passphrase'
    }
-   
+
    response = requests.get('https://api.kucoin.com/api/v1/timestamp', headers=headers)
    print(response.status_code, response.text)
    ```
@@ -174,7 +174,7 @@ Error: Invalid username or password
    # Clear cached Robinhood credentials
    from pt_trader import clear_credentials
    clear_credentials()
-   
+
    # Re-authenticate
    from pt_trader import authenticate
    authenticate()
@@ -199,7 +199,7 @@ Error: Two-factor authentication failed
    ```powershell
    # Sync system clock
    w32tm /resync
-   
+
    # Verify time
    time
    ```
@@ -342,7 +342,7 @@ Symptom: GUI freezing or slow response
    ```powershell
    # Monitor CPU and memory usage
    tasklist /fi "imagename eq python.exe"
-   
+
    # Check available memory
    systeminfo | findstr "Available Physical Memory"
    ```
@@ -401,7 +401,7 @@ Error: Unable to decrypt credentials
    # Clear corrupted credentials
    from pt_security import clear_all_credentials
    clear_all_credentials()
-   
+
    # Re-configure through GUI
    ```
 
@@ -508,10 +508,10 @@ findstr "Order\|Trade" logs\trading.log | more
    ```powershell
    # System details
    systeminfo | findstr "OS\|Version\|Memory"
-   
+
    # Python version
    python --version
-   
+
    # PowerTraderAI+ version
    python -c "import pt_hub; print(pt_hub.__version__)"
    ```
@@ -606,7 +606,7 @@ monitor.set_alert_thresholds({
     "log_level": "WARNING",
     "alert_types": [
       "api_failures",
-      "authentication_errors", 
+      "authentication_errors",
       "trading_failures",
       "system_errors"
     ]

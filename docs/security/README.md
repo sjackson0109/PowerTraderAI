@@ -16,7 +16,7 @@ PowerTraderAI+ handles sensitive financial data and trading access, making secur
 ### Exchange Account Protection
 
 #### Strong Authentication
-1. **Unique Passwords**: 
+1. **Unique Passwords**:
    - 16+ character passwords
    - Mix of uppercase, lowercase, numbers, symbols
    - Different password for each service
@@ -95,7 +95,7 @@ Security Measures:
 # Credential file structure (encrypted)
 credentials/
 ├── kucoin_keys.enc      # KuCoin API credentials
-├── robinhood_keys.enc   # Robinhood credentials  
+├── robinhood_keys.enc   # Robinhood credentials
 ├── master.key          # Encryption key (secure this!)
 └── backup/             # Encrypted backups
 ```
@@ -118,10 +118,10 @@ credentials/
    ```powershell
    # Keep Windows updated
    sconfig  # Configure updates
-   
+
    # Enable Windows Defender
    Set-MpPreference -DisableRealtimeMonitoring $false
-   
+
    # Configure firewall
    netsh advfirewall set allprofiles state on
    ```
@@ -144,7 +144,7 @@ credentials/
    ```powershell
    # Allow PowerTraderAI+ through Windows Firewall
    New-NetFirewallRule -DisplayName "PowerTraderAI+" -Direction Outbound -Program "C:\Python39\python.exe" -Action Allow
-   
+
    # Block unnecessary incoming connections
    New-NetFirewallRule -DisplayName "Block PowerTraderAI+ Incoming" -Direction Inbound -Program "C:\Python39\python.exe" -Action Block
    ```
@@ -157,7 +157,7 @@ credentials/
 ### Antivirus and Security Software
 
 #### Recommended Configuration
-1. **Windows Defender**: 
+1. **Windows Defender**:
    - Real-time protection enabled
    - Cloud-delivered protection on
    - Automatic sample submission enabled
@@ -183,13 +183,13 @@ credentials/
 4. **Device Encryption**: Enable BitLocker or similar
 
 ### Backup Security
-1. **Encrypted Backups**: 
+1. **Encrypted Backups**:
    ```bash
    # Create encrypted backup
    python pt_security.py --backup --encrypt
    ```
 
-2. **Offline Storage**: 
+2. **Offline Storage**:
    - Store backups on offline media
    - Use encrypted USB drives
    - Multiple backup locations
@@ -242,7 +242,7 @@ credentials/
    # Review PowerTraderAI+ security logs
    from pt_security import SecurityMonitor
    monitor = SecurityMonitor()
-   
+
    # Check for unusual activity
    alerts = monitor.check_security_alerts()
    suspicious = monitor.detect_anomalies()
@@ -319,7 +319,7 @@ credentials/
    ```python
    # Restore from encrypted backup
    python pt_security.py --restore --verify-integrity
-   
+
    # Reset all credentials
    python pt_security.py --reset-credentials --force
    ```

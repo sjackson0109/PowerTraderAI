@@ -414,7 +414,7 @@ PowerTraderAI+/
 
 **Cryptocurrencies:**
 - BTC (Bitcoin)
-- ETH (Ethereum) 
+- ETH (Ethereum)
 - ADA (Cardano)
 - DOT (Polkadot)
 - MATIC (Polygon)
@@ -431,6 +431,6 @@ PowerTraderAI+/
 
 ---
 
-*PowerTraderAI+ Desktop v4.0.0 - Installation and User Guide*  
-*Last Updated: {current_date}*  
+*PowerTraderAI+ Desktop v4.0.0 - Installation and User Guide*
+*Last Updated: {current_date}*
 *© 2024 PowerTraderAI+ Team*

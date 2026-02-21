@@ -9,12 +9,12 @@ Account Level:
   max_weekly_loss: 5.0%          # Maximum weekly portfolio loss
   max_monthly_loss: 10.0%        # Maximum monthly portfolio loss
   max_annual_loss: 20.0%         # Maximum annual portfolio loss
-  
+
 Position Level:
   max_position_size: 10.0%       # Maximum single position size
   max_sector_exposure: 25.0%     # Maximum exposure to single sector
   max_correlation_exposure: 15.0% # Maximum correlated positions
-  
+
 Strategy Level:
   max_strategy_allocation: 30.0% # Maximum capital per strategy
   min_strategy_performance: -5.0% # Strategy deactivation threshold
@@ -58,7 +58,7 @@ Exchange APIs:
   rate_limit_buffer: 20%         # Stay 20% below rate limits
   timeout_settings: 10s          # API call timeout
   retry_policy: exponential_backoff
-  
+
 Broker APIs:
   primary: Robinhood
   backup: Alpaca, Interactive Brokers
@@ -91,22 +91,22 @@ Broker APIs:
 def emergency_stop_sequence():
     """Execute emergency stop procedures"""
     logger.critical("EMERGENCY STOP ACTIVATED")
-    
+
     # 1. Stop all new orders
     trading_engine.halt_all_strategies()
-    
+
     # 2. Cancel pending orders
     trading_engine.cancel_all_pending_orders()
-    
+
     # 3. Close positions (market orders)
     trading_engine.close_all_positions(order_type='market')
-    
+
     # 4. Disconnect APIs
     api_manager.disconnect_all()
-    
+
     # 5. Preserve system state
     system_state.save_emergency_snapshot()
-    
+
     # 6. Send notifications
     notification_service.send_emergency_alert()
 ```
@@ -118,20 +118,20 @@ def emergency_stop_sequence():
 def calculate_position_size(account_value, risk_per_trade=0.01):
     """
     Calculate position size based on Kelly Criterion and risk limits
-    
+
     Args:
         account_value: Current portfolio value
         risk_per_trade: Risk per trade (default 1%)
-    
+
     Returns:
         Maximum position size in dollars
     """
     max_risk_amount = account_value * risk_per_trade
-    
+
     # Apply additional constraints
     max_position = account_value * 0.10  # Max 10% per position
     daily_loss_budget = account_value * 0.02  # Max 2% daily loss
-    
+
     return min(max_risk_amount, max_position, daily_loss_budget)
 ```
 
@@ -159,7 +159,7 @@ Market Data:
   latency_threshold: 500ms       # Maximum acceptable data delay
   missing_data_threshold: 1%     # Maximum missing data points
   price_spike_detection: 10%     # Flag price moves >10% as potential errors
-  
+
 Data Validation:
   price_range_check: true        # Validate prices within expected ranges
   volume_sanity_check: true      # Validate volume data
@@ -178,12 +178,12 @@ Authentication:
   multi_factor_required: true
   session_timeout: 30min
   failed_login_lockout: 5_attempts
-  
+
 API Security:
   api_key_rotation: quarterly
   encryption_in_transit: TLS_1.3
   encryption_at_rest: AES_256
-  
+
 Access Control:
   principle_of_least_privilege: true
   role_based_access: true
@@ -206,7 +206,7 @@ Required Records:
   order_records: 3_years
   system_logs: 7_years
   performance_reports: 7_years
-  
+
 Audit Trail:
   decision_rationale: required
   timestamp_precision: millisecond

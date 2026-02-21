@@ -53,5 +53,5 @@ When completing a new phase:
 
 ---
 
-*Contributor: Simon Jackson (@sjackson0109) - PowerTraderAI+ Development Team*  
+*Contributor: Simon Jackson (@sjackson0109) - PowerTraderAI+ Development Team*
 *Last Updated: February 20, 2026*

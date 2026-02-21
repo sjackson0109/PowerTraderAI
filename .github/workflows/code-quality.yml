@@ -128,6 +128,10 @@ jobs:
         export POWERTRADER_LOG_LEVEL=DEBUG
         export POWERTRADER_SKIP_CREDENTIALS=true
 
+        # Set up Robinhood API credentials from GitHub secrets (for CI/CD)
+        export POWERTRADER_ROBINHOOD_API_KEY="${{ secrets.ROBINHOOD_API_KEY }}"
+        export POWERTRADER_ROBINHOOD_PRIVATE_KEY="${{ secrets.ROBINHOOD_PRIVATE_KEY }}"
+
         # Run tests from .github/scripts directory
         if [ -d ".github/scripts" ] && [ -f ".github/scripts/conftest.py" ]; then
           echo "Running pytest on .github/scripts/"
@@ -176,6 +180,11 @@ jobs:
 
     - name: Basic import test
       run: |
+        # Set up Robinhood API credentials from GitHub secrets (for CI/CD)
+        export POWERTRADER_ROBINHOOD_API_KEY="${{ secrets.ROBINHOOD_API_KEY }}"
+        export POWERTRADER_ROBINHOOD_PRIVATE_KEY="${{ secrets.ROBINHOOD_PRIVATE_KEY }}"
+        export POWERTRADER_ENV=test
+
         # Test basic Python file imports from app directory
         echo "Testing basic imports..."
         python -c "

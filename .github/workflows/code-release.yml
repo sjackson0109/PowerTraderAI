@@ -3,7 +3,7 @@ name: Code Release & Distribution
 on:
   push:
     branches: [ main ]
-    tags: 
+    tags:
       - 'v*'
   pull_request:
     types: [closed]
@@ -17,29 +17,29 @@ jobs:
     name: Build Release Artifact
     runs-on: ubuntu-latest
     if: github.event.pull_request.merged == true || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0  # Full history for proper versioning
-    
+
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install build twine setuptools wheel
         # Install project dependencies
-        if [ -f app/requirements.txt ]; then 
+        if [ -f app/requirements.txt ]; then
           pip install -r app/requirements.txt
         elif [ -f requirements.txt ]; then
           pip install -r requirements.txt
         fi
-    
+
     - name: Generate version number
       id: version
       run: |
@@ -57,22 +57,22 @@ jobs:
         echo "DATE=$DATE" >> $GITHUB_OUTPUT
         echo "COMMIT=$COMMIT" >> $GITHUB_OUTPUT
         echo "Generated version: $VERSION"
-    
+
     - name: Create release directory structure
       run: |
         mkdir -p release-build/PowerTrader_AI_Desktop
-        
+
         # Copy application files
         cp -r app/* release-build/PowerTrader_AI_Desktop/
-        
+
         # Copy essential project files
         cp README.md release-build/PowerTrader_AI_Desktop/
         cp LICENSE release-build/PowerTrader_AI_Desktop/
-        
+
         # Copy documentation
         mkdir -p release-build/PowerTrader_AI_Desktop/docs
         cp -r docs/* release-build/PowerTrader_AI_Desktop/docs/
-        
+
         # Create installation script for Windows
         cat > release-build/PowerTrader_AI_Desktop/install.bat << 'EOF'
         @echo off
@@ -89,7 +89,7 @@ jobs:
         echo.
         pause
         EOF
-        
+
         # Create installation script for Linux/Mac
         cat > release-build/PowerTrader_AI_Desktop/install.sh << 'EOF'
         #!/bin/bash
@@ -105,7 +105,7 @@ jobs:
         echo "  python pt_desktop_app.py"
         EOF
         chmod +x release-build/PowerTrader_AI_Desktop/install.sh
-        
+
         # Create startup script
         cat > release-build/PowerTrader_AI_Desktop/start.py << 'EOF'
         #!/usr/bin/env python3
@@ -115,7 +115,7 @@ jobs:
         """
         import sys
         import os
-        
+
         try:
             # Import and run the desktop application
             import pt_desktop_app
@@ -130,37 +130,37 @@ jobs:
             print(f"Error starting PowerTrader AI: {e}")
             sys.exit(1)
         EOF
-    
+
     - name: Create release documentation
       run: |
         # Create release notes
         cat > release-build/PowerTrader_AI_Desktop/RELEASE_NOTES.md << EOF
         # PowerTrader AI Desktop - Release ${{ steps.version.outputs.VERSION }}
-        
-        **Release Date:** $(date +'%B %d, %Y')  
-        **Build:** ${{ steps.version.outputs.COMMIT }}  
+
+        **Release Date:** $(date +'%B %d, %Y')
+        **Build:** ${{ steps.version.outputs.COMMIT }}
         **Python Version:** ${{ env.PYTHON_VERSION }}+
-        
+
         ## Installation Instructions
-        
+
         ### Windows
         1. Extract the ZIP file
         2. Run \`install.bat\` to install dependencies
         3. Run \`python start.py\` to launch the application
-        
+
         ### Linux/macOS
         1. Extract the ZIP file
-        2. Run \`./install.sh\` to install dependencies  
+        2. Run \`./install.sh\` to install dependencies
         3. Run \`python start.py\` to launch the application
-        
+
         ### Manual Installation
         \`\`\`bash
         pip install -r requirements.txt
         python pt_desktop_app.py
         \`\`\`
-        
+
         ## What's New
-        
+
         This release includes all features from development phases 1-6:
         - Advanced neural network trading algorithms
         - Professional-grade GUI interface
@@ -168,71 +168,71 @@ jobs:
         - Risk management and paper trading
         - Desktop application integration
         - Improved project structure and organization
-        
+
         ## System Requirements
-        
+
         - Python 3.8 or higher
         - 4GB RAM minimum (8GB recommended)
         - Internet connection for market data
         - Windows 10/11, macOS 10.15+, or Linux
-        
+
         ## Support
-        
+
         For issues and support:
         - GitHub Issues: [Repository Issues]
         - Documentation: See \`docs/\` directory
         - Email: [Support Email]
-        
+
         ---
-        
-        *PowerTrader AI Development Team*  
+
+        *PowerTrader AI Development Team*
         *Simon Jackson (@sjackson0109)*
         EOF
-        
+
         # Create quick start guide
         cat > release-build/PowerTrader_AI_Desktop/QUICK_START.md << EOF
         # Quick Start Guide
-        
+
         ## 1. Installation
         - **Windows**: Double-click \`install.bat\`
         - **Linux/macOS**: Run \`./install.sh\`
-        
+
         ## 2. Launch Application
         \`\`\`bash
         python start.py
         \`\`\`
-        
+
         ## 3. First Time Setup
         1. Configure your exchange API keys in the settings
         2. Set up your trading preferences
         3. Enable paper trading mode for safe testing
         4. Review risk management settings
-        
+
         ## 4. Getting Help
         - Check the \`docs/\` folder for complete documentation
         - See \`RELEASE_NOTES.md\` for detailed information
         - Visit the troubleshooting guide in \`docs/troubleshooting/\`
-        
+
         Happy Trading! 🚀
         EOF
-    
+
     - name: Create release ZIP
       run: |
         cd release-build
         zip -r "PowerTrader_AI_Desktop_${{ steps.version.outputs.VERSION }}.zip" PowerTrader_AI_Desktop/
-        
+
         # Create checksums
         sha256sum "PowerTrader_AI_Desktop_${{ steps.version.outputs.VERSION }}.zip" > "PowerTrader_AI_Desktop_${{ steps.version.outputs.VERSION }}.zip.sha256"
-        
+
         ls -la *.zip*
-    
+
     - name: Create Python package
       run: |
         # Create setup.py for PyPI distribution
         cat > setup.py << EOF
         from setuptools import setup, find_packages
         import os
-        
+
         # Read requirements
         def read_requirements():
             req_path = os.path.join('app', 'requirements.txt')
@@ -240,14 +240,14 @@ jobs:
                 with open(req_path, 'r') as f:
                     return [line.strip() for line in f if line.strip() and not line.startswith('#')]
             return []
-        
+
         # Read README
         def read_readme():
             if os.path.exists('README.md'):
                 with open('README.md', 'r', encoding='utf-8') as f:
                     return f.read()
             return ""
-        
+
         setup(
             name="powertrader-ai",
             version="${{ steps.version.outputs.VERSION }}".replace('v', ''),
@@ -290,14 +290,14 @@ jobs:
             zip_safe=False,
         )
         EOF
-        
+
         # Build Python package
         python setup.py sdist bdist_wheel
-        
+
         ls -la dist/
-    
+
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: powertrader-ai-release-${{ steps.version.outputs.VERSION }}
         path: |
@@ -306,7 +306,7 @@ jobs:
           dist/*.whl
           dist/*.tar.gz
         retention-days: 90
-    
+
     - name: Publish to PyPI
       if: startsWith(github.ref, 'refs/tags/v')
       env:
@@ -316,7 +316,7 @@ jobs:
         # Upload to PyPI
         twine upload dist/* --verbose
       continue-on-error: true
-    
+
     - name: Publish to GitHub Packages
       if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
       env:
@@ -327,23 +327,23 @@ jobs:
         # Configure for GitHub Packages
         echo "Publishing to GitHub Packages..."
         pip install twine
-        
+
         # Create .pypirc for GitHub Packages
         cat > ~/.pypirc << EOF
         [distutils]
         index-servers = github
-        
+
         [github]
         repository = https://upload.pypi.org/legacy/
         username = __token__
         password = ${{ secrets.GITHUB_TOKEN }}
         EOF
-        
+
         # Upload to GitHub Packages (if configured)
         # twine upload --repository github dist/*
         echo "GitHub Packages upload configured (requires GITHUB_TOKEN)"
       continue-on-error: true
-    
+
     - name: Publish to Artifact Repository
       if: startsWith(github.ref, 'refs/tags/v')
       env:
@@ -353,12 +353,12 @@ jobs:
       run: |
         if [ -n "$ARTIFACTORY_URL" ]; then
           echo "Publishing to Artifactory..."
-          
+
           # Upload ZIP artifact
           curl -u "$ARTIFACTORY_USERNAME:$ARTIFACTORY_PASSWORD" \
                -X PUT "$ARTIFACTORY_URL/powertrader-releases/PowerTrader_AI_Desktop_${{ steps.version.outputs.VERSION }}.zip" \
                -T "release-build/PowerTrader_AI_Desktop_${{ steps.version.outputs.VERSION }}.zip"
-          
+
           # Upload Python wheels
           for wheel in dist/*.whl; do
             if [ -f "$wheel" ]; then
@@ -368,13 +368,13 @@ jobs:
                    -T "$wheel"
             fi
           done
-          
+
           echo "Artifacts uploaded to Artifactory"
         else
           echo "Artifactory not configured (set ARTIFACTORY_* secrets)"
         fi
       continue-on-error: true
-    
+
     - name: Publish to AWS CodeArtifact
       if: startsWith(github.ref, 'refs/tags/v')
       env:
@@ -386,33 +386,33 @@ jobs:
       run: |
         if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$CODEARTIFACT_DOMAIN" ]; then
           echo "Publishing to AWS CodeArtifact..."
-          
+
           # Install AWS CLI
           pip install awscli
-          
+
           # Get CodeArtifact authorization token
           export TWINE_USERNAME=aws
           export TWINE_PASSWORD=$(aws codeartifact get-authorization-token \
                                     --domain $CODEARTIFACT_DOMAIN \
                                     --query authorizationToken \
                                     --output text)
-          
+
           export TWINE_REPOSITORY_URL=$(aws codeartifact get-repository-endpoint \
                                           --domain $CODEARTIFACT_DOMAIN \
                                           --repository $CODEARTIFACT_REPOSITORY \
                                           --format pypi \
                                           --query repositoryEndpoint \
                                           --output text)
-          
+
           # Upload to CodeArtifact
           twine upload dist/* --verbose
-          
+
           echo "Artifacts uploaded to AWS CodeArtifact"
         else
           echo "AWS CodeArtifact not configured (set AWS_* and CODEARTIFACT_* secrets)"
         fi
       continue-on-error: true
-    
+
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: actions/create-release@v1
@@ -423,30 +423,30 @@ jobs:
         release_name: PowerTrader AI Desktop ${{ steps.version.outputs.VERSION }}
         body: |
           ## PowerTrader AI Desktop Release ${{ steps.version.outputs.VERSION }}
-          
+
           **Release Date:** $(date +'%B %d, %Y')
           **Build Commit:** ${{ steps.version.outputs.COMMIT }}
-          
+
           ### Installation
           1. Download the ZIP file below
           2. Extract and run the installation script
           3. Follow the Quick Start Guide
-          
+
           ### What's Included
           - Complete PowerTrader AI desktop application
           - All documentation and guides
           - Installation scripts for all platforms
           - Latest neural network models and configurations
-          
+
           ### System Requirements
           - Python 3.8+
           - 4GB+ RAM
           - Internet connection
-          
+
           See RELEASE_NOTES.md in the download for complete details.
         draft: false
         prerelease: ${{ contains(steps.version.outputs.VERSION, 'dev') || contains(steps.version.outputs.VERSION, 'beta') }}
-    
+
     - name: Upload release assets
       if: startsWith(github.ref, 'refs/tags/v')
       uses: actions/upload-release-asset@v1
@@ -457,7 +457,7 @@ jobs:
         asset_path: release-build/PowerTrader_AI_Desktop_${{ steps.version.outputs.VERSION }}.zip
         asset_name: PowerTrader_AI_Desktop_${{ steps.version.outputs.VERSION }}.zip
         asset_content_type: application/zip
-    
+
     - name: Summary
       run: |
         echo "## Release Build Summary" >> $GITHUB_STEP_SUMMARY

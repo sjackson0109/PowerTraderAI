@@ -1,5 +1,5 @@
 """
-PowerTrader AI Paper Trading System
+PowerTraderAI+ Paper Trading System
 
 Simulated trading environment for testing strategies with live market data
 without risking real capital.
@@ -527,7 +527,7 @@ class PaperTradingAccount:
 # Example usage and testing
 async def demo_paper_trading():
     """Demonstrate paper trading functionality."""
-    print("PowerTrader AI Paper Trading Demo")
+    print("PowerTraderAI+ Paper Trading Demo")
     print("=" * 40)
     
     # Create account

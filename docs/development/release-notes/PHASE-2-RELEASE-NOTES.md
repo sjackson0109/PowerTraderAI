@@ -1,4 +1,4 @@
-# PowerTrader AI - Phase 2 Release Notes
+# PowerTraderAI+ - Phase 2 Release Notes
 
 **Release Date:** 2026-02-05
 **Version:** v2.0.0  
@@ -82,7 +82,7 @@ Phase 2 focused on major code refactoring, architectural improvements, and optim
 ---
 
 **Phase 2 Team:**  
-*Contributor: Simon Jackson (@sjackson0109) - PowerTrader AI Development Team*
+*Contributor: Simon Jackson (@sjackson0109) - PowerTraderAI+ Development Team*
 
 **Documentation Updated:** February 20, 2026  
 **Status:** Complete and Production Ready

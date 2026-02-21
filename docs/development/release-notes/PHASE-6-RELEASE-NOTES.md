@@ -1,4 +1,4 @@
-# PowerTrader AI - Phase 6 Release Notes
+# PowerTraderAI+ - Phase 6 Release Notes
 
 **Release Date:** 2026-02-20 
 **Version:** v6.0.0  
@@ -108,7 +108,7 @@ python pt_desktop_app.py
 ---
 
 **Phase 6 Team:**  
-*Simon Jackson (@sjackson0109) - PowerTrader AI Development Team*
+*Simon Jackson (@sjackson0109) - PowerTraderAI+ Development Team*
 
 **Documentation Updated:** February 20, 2026  
 **Status:** Complete and Restructured

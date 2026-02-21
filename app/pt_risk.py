@@ -1,5 +1,5 @@
 """
-PowerTrader AI Risk Management System
+PowerTraderAI+ Risk Management System
 
 Implements comprehensive risk controls, monitoring, and emergency procedures
 for financial trading operations.
@@ -82,7 +82,7 @@ class PortfolioMetrics:
 
 class RiskManager:
     """
-    Comprehensive risk management system for PowerTrader AI
+    Comprehensive risk management system for PowerTraderAI+
     
     Monitors portfolio metrics, enforces risk limits, and executes
     emergency procedures when thresholds are breached.

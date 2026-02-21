@@ -1,6 +1,6 @@
-# PowerTrader AI - Release Notes
+# PowerTraderAI+ - Release Notes
 
-This directory contains comprehensive release notes for all development phases of PowerTrader AI.
+This directory contains comprehensive release notes for all development phases of PowerTraderAI+.
 
 ## Release Overview
 
@@ -53,5 +53,5 @@ When completing a new phase:
 
 ---
 
-*Contributor: Simon Jackson (@sjackson0109) - PowerTrader AI Development Team*  
+*Contributor: Simon Jackson (@sjackson0109) - PowerTraderAI+ Development Team*  
 *Last Updated: February 20, 2026*

@@ -1,5 +1,5 @@
 """
-PowerTrader AI Unit Tests - Risk and Cost Systems
+PowerTraderAI+ Unit Tests - Risk and Cost Systems
 
 Unit tests that don't require trading credentials or API access.
 """
@@ -246,7 +246,7 @@ class TestScalingAnalysis(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    print("Running PowerTrader AI Risk & Cost Management Tests...")
+    print("Running PowerTraderAI+ Risk & Cost Management Tests...")
     print("=" * 60)
 
     # Create test suite

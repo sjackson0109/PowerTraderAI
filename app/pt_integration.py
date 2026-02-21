@@ -1,5 +1,5 @@
 """
-PowerTrader AI Integration Testing Framework
+PowerTraderAI+ Integration Testing Framework
 
 End-to-end testing system that validates all components work together
 with live API connections and real market data.
@@ -53,7 +53,7 @@ class SystemHealthStatus:
 
 class LiveIntegrationTester:
     """
-    Comprehensive integration testing framework for PowerTrader AI.
+    Comprehensive integration testing framework for PowerTraderAI+.
     Tests all components with live data and real API connections.
     """
     
@@ -518,7 +518,7 @@ async def main():
     """Main entry point for integration testing."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="PowerTrader AI Integration Testing")
+    parser = argparse.ArgumentParser(description="PowerTraderAI+ Integration Testing")
     parser.add_argument("--config", default="config/integration_test.json", 
                        help="Configuration file path")
     parser.add_argument("--enable-live-apis", action="store_true",
@@ -536,7 +536,7 @@ async def main():
         tester.config["enable_live_apis"] = True
     
     # Run tests
-    print("Starting PowerTrader AI Integration Tests...")
+    print("Starting PowerTraderAI+ Integration Tests...")
     print("=" * 50)
     
     report = await tester.run_comprehensive_tests()

@@ -26,7 +26,7 @@ from pt_files import secure_write_text, secure_write_json, set_secure_permission
 market = Market(url='https://api.kucoin.com')
 
 """
-Neural network training module for PowerTrader AI.
+Neural network training module for PowerTraderAI+.
 
 This module handles:
 - Training neural networks on cryptocurrency price data

@@ -1,5 +1,5 @@
 """
-PowerTrader AI Real-Time Monitoring Dashboard
+PowerTraderAI+ Real-Time Monitoring Dashboard
 
 Provides live monitoring of risk management and cost analysis systems.
 """
@@ -19,7 +19,7 @@ colorama.init(autoreset=True)
 
 class MonitoringDashboard:
     """
-    Real-time monitoring dashboard for PowerTrader AI
+    Real-time monitoring dashboard for PowerTraderAI+
     
     Displays live risk metrics, cost analysis, performance tracking,
     and system health monitoring.
@@ -67,7 +67,7 @@ class MonitoringDashboard:
     def display_header(self):
         """Display dashboard header"""
         runtime = datetime.now() - self.start_time
-        print(f"{Back.BLUE}{Fore.WHITE} PowerTrader AI - Live Monitoring Dashboard {Style.RESET_ALL}")
+        print(f"{Back.BLUE}{Fore.WHITE} PowerTraderAI+ - Live Monitoring Dashboard {Style.RESET_ALL}")
         print(f"Runtime: {runtime} | Last Update: {datetime.now().strftime('%H:%M:%S')}")
         print("=" * 80)
     
@@ -268,7 +268,7 @@ class MonitoringDashboard:
     
     def run_dashboard(self):
         """Run the live monitoring dashboard"""
-        print(f"{Fore.CYAN}Starting PowerTrader AI Monitoring Dashboard...{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}Starting PowerTraderAI+ Monitoring Dashboard...{Style.RESET_ALL}")
         print("Press Ctrl+C to stop")
         time.sleep(2)
         

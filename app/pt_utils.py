@@ -1,5 +1,5 @@
 """
-PowerTrader AI Utilities Module
+PowerTraderAI+ Utilities Module
 Common utilities and helper functions used across the trading system.
 """
 

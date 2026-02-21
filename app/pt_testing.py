@@ -1,5 +1,5 @@
 """
-PowerTrader AI Testing Framework
+PowerTraderAI+ Testing Framework
 Comprehensive testing utilities for trading strategies, API integrations, and system components.
 """
 
@@ -402,7 +402,7 @@ class TradingStrategyTester:
         }
 
 class ComponentTester:
-    """Unit testing utilities for PowerTrader AI components."""
+    """Unit testing utilities for PowerTraderAI+ components."""
     
     @staticmethod
     def test_configuration_validation() -> TestResult:
@@ -453,7 +453,7 @@ class ComponentTester:
         
         try:
             # Test file writing and reading
-            test_content = "PowerTrader AI Test Content"
+            test_content = "PowerTraderAI+ Test Content"
             
             with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
                 temp_path = f.name

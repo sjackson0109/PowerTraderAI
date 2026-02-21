@@ -1,4 +1,4 @@
-# PowerTrader AI Dependencies - Security Hardened
+# PowerTraderAI+ Dependencies - Security Hardened
 # Generated with version pinning for security
 
 colorama>=0.4.6

@@ -21,6 +21,15 @@ from matplotlib.patches import Rectangle
 from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import blended_transform_factory
 
+# Multi-exchange imports
+try:
+    from pt_multi_exchange import MultiExchangeManager, ExchangeConfigManager
+    from pt_exchange_abstraction import ExchangeType
+    EXCHANGE_SUPPORT_AVAILABLE = True
+except ImportError:
+    EXCHANGE_SUPPORT_AVAILABLE = False
+    print("Warning: Multi-exchange support not available. Exchange status will be disabled.")
+
 DARK_BG = "#070B10"
 DARK_BG2 = "#0B1220"
 DARK_PANEL = "#0E1626"
@@ -316,6 +325,12 @@ DEFAULT_SETTINGS = {
     "pm_start_pct_no_dca": 5.0,
     "pm_start_pct_with_dca": 2.5,
     "trailing_gap_pct": 0.5,
+
+    # --- Multi-Exchange Settings ---
+    "region": "us",  # us, eu, global
+    "primary_exchange": "robinhood",  # Primary exchange for trading
+    "price_comparison_enabled": True,  # Compare prices across exchanges
+    "auto_best_price": False,  # Automatically use best price exchange
 
     "default_timeframe": "1hour",
     "timeframes": [
@@ -1624,8 +1639,11 @@ class PowerTraderHub(tk.Tk):
 
         self.fetcher = CandleFetcher()
 
-
-        self.fetcher = CandleFetcher()
+        # Initialize multi-exchange system
+        self._multi_exchange = None
+        self._exchange_status = {"status": "Checking...", "details": ""}
+        if EXCHANGE_SUPPORT_AVAILABLE:
+            self._init_exchange_system()
 
         self._build_menu()
         self._build_layout()
@@ -2243,7 +2261,11 @@ class PowerTraderHub(tk.Tk):
         self.lbl_neural.pack(anchor="w", padx=6, pady=(0, 2))
 
         self.lbl_trader = ttk.Label(controls_left, text="Trader: stopped")
-        self.lbl_trader.pack(anchor="w", padx=6, pady=(0, 6))
+        self.lbl_trader.pack(anchor="w", padx=6, pady=(0, 2))
+
+        # Exchange status indicator
+        self.lbl_exchange = ttk.Label(controls_left, text="Exchange: Checking...")
+        self.lbl_exchange.pack(anchor="w", padx=6, pady=(0, 6))
 
         self.lbl_last_status = ttk.Label(controls_left, text="Last status: N/A")
         self.lbl_last_status.pack(anchor="w", padx=6, pady=(0, 2))
@@ -3501,6 +3523,9 @@ class PowerTraderHub(tk.Tk):
         self.lbl_neural.config(text=f"Neural: {'running' if neural_running else 'stopped'}")
         self.lbl_trader.config(text=f"Trader: {'running' if trader_running else 'stopped'}")
 
+        # Update exchange status display (non-blocking check)
+        self._update_exchange_status_display()
+
         # Start All is now a toggle (Start/Stop)
         try:
             if hasattr(self, "btn_toggle_all") and self.btn_toggle_all:
@@ -4576,6 +4601,65 @@ class PowerTraderHub(tk.Tk):
 
         ttk.Separator(frm, orient="horizontal").grid(row=r, column=0, columnspan=3, sticky="ew", pady=10); r += 1
 
+        # --- Exchange Provider Settings ---
+        ttk.Label(frm, text="🌍 Exchange Provider Settings", font=("TkDefaultFont", 10, "bold")).grid(row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)); r += 1
+        
+        # User region selection
+        ttk.Label(frm, text="Your region:").grid(row=r, column=0, sticky="w", padx=(0, 10), pady=6)
+        region_var = tk.StringVar(value=self.settings.get("region", "us"))
+        region_combo = ttk.Combobox(frm, textvariable=region_var, values=["us", "eu", "global"], state="readonly")
+        region_combo.grid(row=r, column=1, sticky="ew", pady=6)
+        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6); r += 1
+        
+        # Primary exchange selection  
+        ttk.Label(frm, text="Primary exchange:").grid(row=r, column=0, sticky="w", padx=(0, 10), pady=6)
+        primary_exchange_var = tk.StringVar(value=self.settings.get("primary_exchange", "robinhood"))
+        
+        # Exchange options based on region
+        def update_exchange_options(*args):
+            region = region_var.get()
+            if region == "US":
+                exchanges = ["robinhood", "coinbase", "kraken", "binance", "kucoin"]
+            elif region in ["EU", "UK"]:
+                exchanges = ["kraken", "coinbase", "binance", "bitstamp", "kucoin"]
+            else:  # GLOBAL
+                exchanges = ["binance", "kraken", "kucoin", "coinbase", "robinhood", "bybit", "okx"]
+            
+            exchange_combo.configure(values=exchanges)
+            # Set default if current selection not in new list
+            if primary_exchange_var.get() not in exchanges:
+                primary_exchange_var.set(exchanges[0])
+        
+        exchange_combo = ttk.Combobox(frm, textvariable=primary_exchange_var, state="readonly")
+        exchange_combo.grid(row=r, column=1, sticky="ew", pady=6)
+        region_var.trace("w", update_exchange_options)
+        update_exchange_options()  # Initialize
+        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6); r += 1
+        
+        # Price comparison options
+        price_comparison_var = tk.BooleanVar(value=self.settings.get("price_comparison_enabled", True))
+        ttk.Checkbutton(frm, text="Enable price comparison across exchanges", variable=price_comparison_var).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
+        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6); r += 1
+        
+        auto_best_price_var = tk.BooleanVar(value=self.settings.get("auto_best_price", False))
+        ttk.Checkbutton(frm, text="Automatically use best price exchange", variable=auto_best_price_var).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
+        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6); r += 1
+        
+        # Exchange setup button
+        def open_exchange_setup():
+            import subprocess
+            import sys
+            try:
+                subprocess.Popen([sys.executable, "exchange_setup.py"], cwd=os.path.dirname(__file__))
+                messagebox.showinfo("Exchange Setup", "Exchange configuration tool opened in separate window.")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to open exchange setup: {e}")
+        
+        ttk.Button(frm, text="Configure Exchange APIs...", command=open_exchange_setup).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
+        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6); r += 1
+
+        ttk.Separator(frm, orient="horizontal").grid(row=r, column=0, columnspan=3, sticky="ew", pady=10); r += 1
+
         add_row(r, "pt_thinker.py path:", neural_script_var); r += 1
         add_row(r, "pt_trainer.py path:", trainer_script_var); r += 1
         add_row(r, "pt_trader.py path:", trader_script_var); r += 1
@@ -5260,6 +5344,12 @@ class PowerTraderHub(tk.Tk):
 
                 self.settings["hub_data_dir"] = hub_dir_var.get().strip()
 
+                # --- Exchange Provider Settings ---
+                self.settings["region"] = region_var.get().strip()
+                self.settings["primary_exchange"] = primary_exchange_var.get().strip()
+                self.settings["price_comparison_enabled"] = bool(price_comparison_var.get())
+                self.settings["auto_best_price"] = bool(auto_best_price_var.get())
+
 
 
 
@@ -5305,6 +5395,9 @@ class PowerTraderHub(tk.Tk):
                 # Refresh all coin-driven UI (dropdowns + chart tabs)
                 self._refresh_coin_dependent_ui(prev_coins)
 
+                # Refresh exchange system with new settings
+                self.refresh_exchange_settings()
+
                 messagebox.showinfo("Saved", "Settings saved.")
                 win.destroy()
 
@@ -5315,6 +5408,102 @@ class PowerTraderHub(tk.Tk):
 
         ttk.Button(btns, text="Save", command=save).pack(side="left")
         ttk.Button(btns, text="Cancel", command=win.destroy).pack(side="left", padx=8)
+
+
+    # ---- Exchange System Management ----
+
+    def _init_exchange_system(self):
+        """Initialize the multi-exchange system"""
+        try:
+            # Initialize exchange configuration
+            config_manager = ExchangeConfigManager()
+            
+            # Create multi-exchange manager
+            self._multi_exchange = MultiExchangeManager(config_manager)
+            
+            # Start checking exchange status in background
+            threading.Thread(target=self._check_exchange_status_worker, daemon=True).start()
+            
+        except Exception as e:
+            self._exchange_status = {
+                "status": "Error", 
+                "details": f"Failed to initialize: {str(e)}"
+            }
+            print(f"Exchange system initialization error: {e}")
+
+    def _check_exchange_status_worker(self):
+        """Background worker to check exchange connectivity"""
+        while True:
+            try:
+                if not self._multi_exchange:
+                    time.sleep(5)
+                    continue
+                
+                primary_exchange = self.settings.get("primary_exchange", "robinhood")
+                region = self.settings.get("region", "us")
+                
+                # Check if primary exchange is available
+                available_exchanges = self._multi_exchange.get_available_exchanges()
+                
+                if primary_exchange in available_exchanges:
+                    # Try to get market data to test connectivity
+                    try:
+                        # Test with a common symbol
+                        test_symbol = "BTCUSD" if primary_exchange in ["coinbase", "kraken", "binance", "kucoin"] else "BTC"
+                        market_data = self._multi_exchange.get_market_data(test_symbol, primary_exchange)
+                        
+                        if market_data and market_data.price > 0:
+                            status = f"✅ {primary_exchange.upper()}"
+                            details = f"Connected | Price: ${market_data.price:,.2f}"
+                        else:
+                            status = f"⚠️ {primary_exchange.upper()}" 
+                            details = "Connected but no data"
+                    except Exception:
+                        status = f"❌ {primary_exchange.upper()}"
+                        details = "Connection failed"
+                else:
+                    status = f"❌ {primary_exchange.upper()}"
+                    details = "Exchange not available"
+                    
+                # Update status
+                self._exchange_status = {"status": status, "details": details}
+                
+                # Schedule GUI update
+                self.after_idle(self._update_exchange_status_display)
+                
+            except Exception as e:
+                self._exchange_status = {
+                    "status": "Error",
+                    "details": f"Status check failed: {str(e)}"
+                }
+                self.after_idle(self._update_exchange_status_display)
+            
+            # Check every 30 seconds
+            time.sleep(30)
+
+    def _update_exchange_status_display(self):
+        """Update the exchange status label in the GUI"""
+        try:
+            if hasattr(self, 'lbl_exchange'):
+                status_text = f"Exchange: {self._exchange_status['status']}"
+                self.lbl_exchange.config(text=status_text)
+                
+                # Set tooltip with details if available
+                if self._exchange_status.get('details'):
+                    # Simple tooltip approach - could be enhanced with proper tooltip widget
+                    self.lbl_exchange.bind("<Button-1>", 
+                        lambda e: messagebox.showinfo("Exchange Status", self._exchange_status['details']))
+        except Exception:
+            pass
+
+    def refresh_exchange_settings(self):
+        """Refresh exchange system with new settings - called when settings are saved"""
+        if EXCHANGE_SUPPORT_AVAILABLE and self._multi_exchange:
+            try:
+                # Reinitialize with new settings
+                self._init_exchange_system()
+            except Exception as e:
+                print(f"Error refreshing exchange settings: {e}")
 
 
     # ---- close ----

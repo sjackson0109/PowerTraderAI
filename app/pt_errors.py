@@ -1,5 +1,5 @@
 """
-PowerTrader AI Error Handling Module
+PowerTraderAI+ Error Handling Module
 Centralised error handling, custom exceptions, and error reporting system.
 """
 
@@ -47,9 +47,9 @@ class ErrorReport:
     user_message: Optional[str] = None
     recovery_suggestion: Optional[str] = None
 
-# PowerTrader AI Custom Exceptions
+# PowerTraderAI+ Custom Exceptions
 class PowerTraderError(Exception):
-    """Base exception for all PowerTrader AI errors."""
+    """Base exception for all PowerTraderAI+ errors."""
     
     def __init__(self, message: str, category: ErrorCategory = ErrorCategory.SYSTEM_ERROR,
                  severity: ErrorSeverity = ErrorSeverity.MEDIUM, context: Dict[str, Any] = None):

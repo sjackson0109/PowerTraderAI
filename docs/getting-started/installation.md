@@ -1,6 +1,6 @@
 # Installation Guide
 
-Comprehensive installation instructions for PowerTrader AI on Windows.
+Comprehensive installation instructions for PowerTraderAI+ on Windows.
 
 ## System Requirements
 
@@ -72,7 +72,7 @@ powertrader_env\Scripts\activate
 ### Install Required Packages
 
 ```bash
-# Navigate to PowerTrader AI directory
+# Navigate to PowerTraderAI+ directory
 cd PowerTraderAI
 
 # Install dependencies
@@ -106,7 +106,7 @@ python pt_hub.py
 
 ### Expected Behavior
 
-1. **GUI Window**: Main PowerTrader AI interface should appear
+1. **GUI Window**: Main PowerTraderAI+ interface should appear
 2. **Setup Wizard**: First-time configuration dialog
 3. **Log Output**: Console should show initialization messages
 
@@ -138,7 +138,7 @@ The first run will prompt you to configure:
 
 ### Configuration Files
 
-PowerTrader AI creates these files during setup:
+PowerTraderAI+ creates these files during setup:
 
 ```
 PowerTraderAI/
@@ -199,7 +199,7 @@ pip install -r requirements.txt
 ```
 
 **4. Firewall/Antivirus Blocks**
-- Add PowerTrader AI folder to antivirus exclusions
+- Add PowerTraderAI+ folder to antivirus exclusions
 - Allow Python through Windows Firewall
 - Check corporate firewall settings
 

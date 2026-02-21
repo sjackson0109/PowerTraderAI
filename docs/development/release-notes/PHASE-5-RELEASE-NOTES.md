@@ -1,4 +1,4 @@
-# PowerTrader AI - Phase 5 Release Notes
+# PowerTraderAI+ - Phase 5 Release Notes
 
 **Release Date:** 2026-02-20  
 **Version:** v5.0.0  
@@ -233,7 +233,7 @@ python migrate_to_desktop.py
 ---
 
 **Phase 5 Team:**  
-*Contributor: Simon Jackson (@sjackson0109) - PowerTrader AI Development Team*
+*Contributor: Simon Jackson (@sjackson0109) - PowerTraderAI+ Development Team*
 
 **Major Contributors:**  
 - Desktop Integration Engineering Team

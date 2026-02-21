@@ -1,5 +1,5 @@
 """
-PowerTrader AI Configuration Management Module
+PowerTraderAI+ Configuration Management Module
 Advanced configuration handling with validation, hot-reloading, and environment support.
 """
 

@@ -1,10 +1,10 @@
-# PowerTrader AI Desktop Installation Guide
+# PowerTraderAI+ Desktop Installation Guide
 
 **Version 4.0.0** | **Windows Desktop Application**
 
 ## Overview
 
-PowerTrader AI is a sophisticated desktop trading application with advanced paper trading, live monitoring, risk management, and cost analysis capabilities. This guide provides complete installation and configuration instructions for the Windows desktop version.
+PowerTraderAI+ is a sophisticated desktop trading application with advanced paper trading, live monitoring, risk management, and cost analysis capabilities. This guide provides complete installation and configuration instructions for the Windows desktop version.
 
 ## System Requirements
 
@@ -42,7 +42,7 @@ python -m pip install --upgrade pip
 ## Installation Process
 
 ### Step 1: Download and Extract
-1. Download the latest PowerTrader AI Desktop release from GitHub Releases
+1. Download the latest PowerTraderAI+ Desktop release from GitHub Releases
 2. Extract the ZIP file to a temporary directory (e.g., `C:\Temp\PowerTraderInstaller`)
 3. Navigate to the extracted directory
 
@@ -52,18 +52,18 @@ python -m pip install --upgrade pip
 3. Wait for the installation to complete
 
 **Installation Locations:**
-- Application: `%USERPROFILE%\PowerTrader AI\`
-- Configuration: `%USERPROFILE%\PowerTrader AI\config\`
-- Data: `%USERPROFILE%\PowerTrader AI\data\`
-- Logs: `%USERPROFILE%\PowerTrader AI\logs\`
+- Application: `%USERPROFILE%\PowerTraderAI+\`
+- Configuration: `%USERPROFILE%\PowerTraderAI+\config\`
+- Data: `%USERPROFILE%\PowerTraderAI+\data\`
+- Logs: `%USERPROFILE%\PowerTraderAI+\logs\`
 
 ### Step 3: Setup Python Environment
-1. Double-click the "PowerTrader AI Setup" shortcut on your desktop
+1. Double-click the "PowerTraderAI+ Setup" shortcut on your desktop
 2. Wait for Python packages to install automatically
 3. Close the setup window when complete
 
 ### Step 4: Launch Application
-1. Double-click the "PowerTrader AI" shortcut on your desktop
+1. Double-click the "PowerTraderAI+" shortcut on your desktop
 2. The application will initialize and open the main interface
 3. First-time setup wizard will guide you through initial configuration
 
@@ -99,7 +99,7 @@ python -m pip install --upgrade pip
 
 ### Initial Setup Wizard
 
-The first time you launch PowerTrader AI, you'll be guided through:
+The first time you launch PowerTraderAI+, you'll be guided through:
 
 1. **Account Setup**
    - Select trading mode (Paper Trading recommended for new users)
@@ -204,7 +204,7 @@ The first time you launch PowerTrader AI, you'll be guided through:
 ### Common Issues
 
 #### Application Won't Start
-**Problem:** PowerTrader AI shortcut doesn't launch the application
+**Problem:** PowerTraderAI+ shortcut doesn't launch the application
 
 **Solutions:**
 1. Verify Python installation:
@@ -212,11 +212,11 @@ The first time you launch PowerTrader AI, you'll be guided through:
    python --version
    ```
 2. Re-run the setup script:
-   - Double-click "PowerTrader AI Setup" desktop shortcut
+   - Double-click "PowerTraderAI+ Setup" desktop shortcut
    - Wait for completion, then try launching again
 
 3. Check installation path:
-   - Navigate to `%USERPROFILE%\PowerTrader AI`
+   - Navigate to `%USERPROFILE%\PowerTraderAI+`
    - Ensure all files are present
    - Try running `PowerTrader_AI.bat` directly
 
@@ -226,7 +226,7 @@ The first time you launch PowerTrader AI, you'll be guided through:
 **Solutions:**
 1. Re-run environment setup:
    ```cmd
-   cd "%USERPROFILE%\PowerTrader AI"
+   cd "%USERPROFILE%\PowerTraderAI+"
    setup_environment.bat
    ```
 
@@ -290,7 +290,7 @@ To enable debug logging:
 
 ### Auto-Updater
 
-PowerTrader AI includes an automatic update system:
+PowerTraderAI+ includes an automatic update system:
 
 - **Automatic Checks:** Daily update checking (configurable)
 - **Background Downloads:** Updates downloaded automatically
@@ -336,7 +336,7 @@ Advanced users can add custom trading indicators:
 - No sensitive credentials stored in plain text
 
 ### Backup Recommendations
-1. Regular backup of entire `PowerTrader AI` folder
+1. Regular backup of entire `PowerTraderAI+` folder
 2. Export critical configuration files weekly
 3. Store backups on external media or cloud storage
 
@@ -371,7 +371,7 @@ Advanced users can add custom trading indicators:
 - **Alpha Channel:** Cutting-edge development builds
 
 ### Contribution
-PowerTrader AI is open-source software. Contributions welcome:
+PowerTraderAI+ is open-source software. Contributions welcome:
 - Bug reports via GitHub issues
 - Feature requests and suggestions
 - Code contributions through pull requests
@@ -382,7 +382,7 @@ PowerTrader AI is open-source software. Contributions welcome:
 
 ### A. File Structure
 ```
-PowerTrader AI/
+PowerTraderAI+/
 ├── app/                    # Application files
 │   ├── pt_desktop_app.py  # Main application launcher
 │   ├── pt_hub.py          # Core GUI interface
@@ -431,6 +431,6 @@ PowerTrader AI/
 
 ---
 
-*PowerTrader AI Desktop v4.0.0 - Installation and User Guide*  
+*PowerTraderAI+ Desktop v4.0.0 - Installation and User Guide*  
 *Last Updated: {current_date}*  
-*© 2024 PowerTrader AI Team*
+*© 2024 PowerTraderAI+ Team*

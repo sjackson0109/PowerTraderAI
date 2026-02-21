@@ -1,4 +1,4 @@
-# PowerTrader AI Risk Management Framework
+# PowerTraderAI+ Risk Management Framework
 
 ## Financial Risk Controls
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PowerTrader AI - Pre-commit Setup Script
+PowerTraderAI+ - Pre-commit Setup Script
 Install and configure pre-commit hooks for local development
 """
 
@@ -22,7 +22,7 @@ def run_command(cmd, description):
 
 def main():
     """Set up pre-commit hooks"""
-    print("🔧 PowerTrader AI - Pre-commit Setup")
+    print("🔧 PowerTraderAI+ - Pre-commit Setup")
     print("=" * 50)
     
     # Check if we're in git repository

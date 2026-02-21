@@ -1,6 +1,6 @@
 ---
 name: 🐛 Bug Report
-about: Report a bug or unexpected behavior in PowerTrader AI
+about: Report a bug or unexpected behavior in PowerTraderAI+
 title: '[BUG] '
 labels: ['bug', 'needs-triage']
 assignees: ''
@@ -30,7 +30,7 @@ A clear and concise description of what actually happened.
 **Environment Details:**
 - OS: [e.g. Windows 11, Ubuntu 22.04]
 - Python Version: [e.g. 3.11.5]
-- PowerTrader AI Version: [e.g. v1.2.3 or commit hash]
+- PowerTraderAI+ Version: [e.g. v1.2.3 or commit hash]
 - Trading Platform: [e.g. Robinhood, KuCoin]
 
 ## Configuration

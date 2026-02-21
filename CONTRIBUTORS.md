@@ -22,7 +22,7 @@ Please read our contributing guidelines and code of conduct before submitting co
 
 ### Acknowledgements
 
-Special thanks to all community members who have provided feedback, reported issues, and suggested improvements to make PowerTrader AI better.
+Special thanks to all community members who have provided feedback, reported issues, and suggested improvements to make PowerTraderAI+ better.
 
 ---
 

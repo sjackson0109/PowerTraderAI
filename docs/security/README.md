@@ -1,10 +1,10 @@
 # Security Best Practices
 
-Comprehensive security guidelines for protecting your PowerTrader AI setup, API keys, and trading accounts.
+Comprehensive security guidelines for protecting your PowerTraderAI+ setup, API keys, and trading accounts.
 
 ## Security Overview
 
-PowerTrader AI handles sensitive financial data and trading access, making security paramount. This guide covers:
+PowerTraderAI+ handles sensitive financial data and trading access, making security paramount. This guide covers:
 - **Account Security**: Protecting exchange accounts
 - **API Key Management**: Securing authentication credentials
 - **System Security**: Hardening your trading environment
@@ -64,7 +64,7 @@ PowerTrader AI handles sensitive financial data and trading access, making secur
 #### KuCoin API Keys
 ```
 Configuration Checklist:
-- Use descriptive name: "PowerTrader AI - Market Data"
+- Use descriptive name: "PowerTraderAI+ - Market Data"
 - Enable only required permissions: General (read-only)
 - Disable trading permissions (not needed for market data)
 - Set IP restrictions to your server IP
@@ -84,7 +84,7 @@ Security Measures:
 
 ### API Key Storage
 
-#### PowerTrader AI Security Features
+#### PowerTraderAI+ Security Features
 1. **Encrypted Storage**: All credentials encrypted at rest
 2. **Memory Protection**: Credentials cleared from memory after use
 3. **Secure Transmission**: HTTPS/TLS for all communications
@@ -127,13 +127,13 @@ credentials/
    ```
 
 2. **User Account Control**:
-   - Run PowerTrader AI as standard user
+   - Run PowerTraderAI+ as standard user
    - Use administrator account only for installation
    - Enable UAC prompts
 
 3. **File System Security**:
    ```powershell
-   # Set secure permissions on PowerTrader AI folder
+   # Set secure permissions on PowerTraderAI+ folder
    icacls "C:\PowerTraderAI" /inheritance:r
    icacls "C:\PowerTraderAI" /grant:r "%USERNAME%:(OI)(CI)F"
    icacls "C:\PowerTraderAI\credentials" /grant:r "%USERNAME%:(OI)(CI)RX"
@@ -142,11 +142,11 @@ credentials/
 #### Network Security
 1. **Firewall Configuration**:
    ```powershell
-   # Allow PowerTrader AI through Windows Firewall
-   New-NetFirewallRule -DisplayName "PowerTrader AI" -Direction Outbound -Program "C:\Python39\python.exe" -Action Allow
+   # Allow PowerTraderAI+ through Windows Firewall
+   New-NetFirewallRule -DisplayName "PowerTraderAI+" -Direction Outbound -Program "C:\Python39\python.exe" -Action Allow
    
    # Block unnecessary incoming connections
-   New-NetFirewallRule -DisplayName "Block PowerTrader AI Incoming" -Direction Inbound -Program "C:\Python39\python.exe" -Action Block
+   New-NetFirewallRule -DisplayName "Block PowerTraderAI+ Incoming" -Direction Inbound -Program "C:\Python39\python.exe" -Action Block
    ```
 
 2. **VPN Considerations**:
@@ -211,7 +211,7 @@ credentials/
 
 2. **Session Management**:
    ```python
-   # PowerTrader AI security features
+   # PowerTraderAI+ security features
    - Automatic session timeouts
    - Secure credential caching
    - Memory cleanup on exit
@@ -239,7 +239,7 @@ credentials/
 #### Security Monitoring
 1. **Log Analysis**:
    ```python
-   # Review PowerTrader AI security logs
+   # Review PowerTraderAI+ security logs
    from pt_security import SecurityMonitor
    monitor = SecurityMonitor()
    
@@ -279,7 +279,7 @@ credentials/
    2. Change all passwords
    3. Review recent trading activity
    4. Generate new API keys
-   5. Update PowerTrader AI configuration
+   5. Update PowerTraderAI+ configuration
    ```
 
 2. **Unauthorized Trading**:
@@ -315,7 +315,7 @@ credentials/
    5. Change all credentials
    ```
 
-2. **PowerTrader AI Recovery**:
+2. **PowerTraderAI+ Recovery**:
    ```python
    # Restore from encrypted backup
    python pt_security.py --restore --verify-integrity
@@ -367,7 +367,7 @@ credentials/
 ### Compliance and Standards
 
 #### Security Framework
-PowerTrader AI follows industry best practices:
+PowerTraderAI+ follows industry best practices:
 - **NIST Cybersecurity Framework**
 - **ISO 27001 Guidelines**
 - **Financial Industry Standards**
@@ -380,7 +380,7 @@ PowerTrader AI follows industry best practices:
   - KuCoin: security@kucoin.com
   - Robinhood: [In-app security center]
 
-- **PowerTrader AI Support**:
+- **PowerTraderAI+ Support**:
   - GitHub Issues (non-urgent)
   - Security Email: [configured in setup]
 
@@ -396,7 +396,7 @@ PowerTrader AI follows industry best practices:
 - [ ] Two-factor authentication enabled everywhere
 - [ ] API keys configured with minimal permissions
 - [ ] IP restrictions enabled (where possible)
-- [ ] PowerTrader AI encryption configured
+- [ ] PowerTraderAI+ encryption configured
 - [ ] Firewall and antivirus configured
 - [ ] Secure backup procedures established
 - [ ] Emergency procedures documented

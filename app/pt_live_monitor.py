@@ -1,5 +1,5 @@
 """
-PowerTrader AI Live Monitoring System
+PowerTraderAI+ Live Monitoring System
 
 Real-time monitoring and alerting system for live trading operations.
 Tracks performance, risk metrics, and system health.
@@ -84,7 +84,7 @@ class SystemHealth:
 
 class LiveMonitor:
     """
-    Live monitoring system for PowerTrader AI.
+    Live monitoring system for PowerTraderAI+.
     Tracks system performance, trading metrics, and generates alerts.
     """
     
@@ -447,11 +447,11 @@ class LiveMonitor:
             msg = MimeMultipart()
             msg['From'] = smtp_config["username"]
             msg['To'] = ", ".join(email_config["email_recipients"])
-            msg['Subject'] = f"PowerTrader AI Alert: {alert.level.upper()} - {alert.component}"
+            msg['Subject'] = f"PowerTraderAI+ Alert: {alert.level.upper()} - {alert.component}"
             
             # Email body
             body = f"""
-PowerTrader AI Alert
+PowerTraderAI+ Alert
 
 Level: {alert.level.upper()}
 Component: {alert.component}
@@ -573,7 +573,7 @@ Alert ID: {alert.alert_id}
 # Example usage
 async def demo_live_monitoring():
     """Demonstrate live monitoring functionality."""
-    print("PowerTrader AI Live Monitoring Demo")
+    print("PowerTraderAI+ Live Monitoring Demo")
     print("=" * 40)
     
     # Create monitoring system

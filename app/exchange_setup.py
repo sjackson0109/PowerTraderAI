@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PowerTrader AI Exchange Configuration Tool
+PowerTraderAI+ Exchange Configuration Tool
 Setup and manage multiple cryptocurrency exchanges
 """
 import os
@@ -14,7 +14,7 @@ from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
 def print_header():
     """Print tool header"""
     print("\n" + "=" * 60)
-    print("PowerTrader AI - Exchange Configuration Tool")
+    print("PowerTraderAI+ - Exchange Configuration Tool")
     print("=" * 60)
 
 
@@ -286,11 +286,11 @@ def main():
 
     # Check if we're in the right directory
     if not os.path.exists("pt_multi_exchange.py"):
-        print("❌ Error: Please run this tool from the PowerTrader AI app directory")
+        print("❌ Error: Please run this tool from the PowerTraderAI+ app directory")
         print("Expected files: pt_multi_exchange.py, pt_exchanges.py")
         return
 
-    print("\n🚀 Welcome to PowerTrader AI Exchange Configuration!")
+    print("\n🚀 Welcome to PowerTraderAI+ Exchange Configuration!")
     print("\nThis tool helps you:")
     print("• Configure multiple exchange APIs")
     print("• Set regional preferences")
@@ -304,7 +304,7 @@ def main():
 
     print("\n🎉 Configuration complete!")
     print("\nNext steps:")
-    print("1. Run PowerTrader AI with: python pt_hub.py")
+    print("1. Run PowerTraderAI+ with: python pt_hub.py")
     print("2. Your configured exchanges will be available")
     print("3. Price comparison and best execution enabled")
     print("\n💡 Tip: You can re-run this tool anytime to update settings")

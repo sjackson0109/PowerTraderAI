@@ -1,5 +1,5 @@
 """
-PowerTrader AI Integration Test Suite
+PowerTraderAI+ Integration Test Suite
 
 Tests the integration of risk management and cost analysis
 with the main trading system.
@@ -268,7 +268,7 @@ class TestPerformanceMetrics(unittest.TestCase):
 
 if __name__ == "__main__":
     # Setup test environment
-    print("Running PowerTrader AI Integration Tests...")
+    print("Running PowerTraderAI+ Integration Tests...")
     print("=" * 50)
 
     # Create test suite

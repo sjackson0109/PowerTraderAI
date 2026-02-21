@@ -1,14 +1,20 @@
-﻿# PowerTrader AI
+﻿# PowerTraderAI+
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Status: Active](https://img.shields.io/badge/Status-Active-green.svg)]()
 
-PowerTrader AI is a sophisticated cryptocurrency trading bot powered by artificial intelligence and machine learning algorithms. Originally designed as a personal trading system, it has evolved into a comprehensive framework that combines automated trading strategies, real-time market analysis, and enterprise-grade infrastructure.
+PowerTraderAI+ is a sophisticated cryptocurrency trading bot powered by artificial intelligence and machine learning algorithms. Originally designed as a personal trading system, it has evolved into a comprehensive framework that combines automated trading strategies, real-time market analysis, and enterprise-grade infrastructure.
 
 ## Complete Documentation
 
 **[Full Documentation](docs/README.md)** - Comprehensive guides and tutorials
+
+### Multi-Exchange Documentation
+- **[Quick Reference](QUICK_REFERENCE.md)** - Fast overview of all new features
+- **[Exchange Documentation](EXCHANGE_DOCUMENTATION.md)** - Complete multi-exchange system guide
+- **[GUI User Guide](GUI_USER_GUIDE.md)** - Desktop application manual
+- **[API Reference](API_REFERENCE.md)** - Developer API documentation
 
 ### Quick Navigation
 - **[Getting Started](docs/getting-started/README.md)** - Installation and setup
@@ -29,7 +35,7 @@ PowerTrader AI is a sophisticated cryptocurrency trading bot powered by artifici
 
 ## System Architecture
 
-PowerTrader AI has undergone extensive refactoring and enhancement through multiple development phases:
+PowerTraderAI+ has undergone extensive refactoring and enhancement through multiple development phases:
 
 - **Phase 1**: Code Quality Foundations (Type hints, imports, error handling)
 - **Phase 2**: Architecture Refactoring (Configuration classes, enhanced APIs)
@@ -38,14 +44,14 @@ PowerTrader AI has undergone extensive refactoring and enhancement through multi
 
 ## Important Disclaimer
 
-**READ THIS BEFORE USING POWERTRADER AI**
+**READ THIS BEFORE USING POWERTRADERAI+**
 
 - **Real Money Risk**: This software places real trades automatically with your money
 - **Your Responsibility**: You are responsible for all financial and security risks
 - **No Financial Advice**: This is not investment advice - do your own research
 - **Security**: Keep your API keys private and secure
 - **Open Source**: Code is completely open source and can be verified as non-malicious
-- **Free Forever**: PowerTrader AI is completely free - never pay for this software
+- **Free Forever**: PowerTraderAI+ is completely free - never pay for this software
 
 **You are fully responsible for:**
 - Understanding how this trading system works
@@ -58,7 +64,7 @@ For detailed security practices, see the **[Security Guide](docs/security/README
 ## Quick Start
 
 ### For New Users
-1. **[Install PowerTrader AI](docs/getting-started/installation.md)** - Complete installation guide
+1. **[Install PowerTraderAI+](docs/getting-started/installation.md)** - Complete installation guide
 2. **[Set up Exchange Accounts](docs/exchanges/README.md)** - KuCoin & Robinhood setup
 3. **[Configure API Keys](docs/api-configuration/README.md)** - Secure API configuration
 4. **[Start Trading](docs/user-guide/README.md)** - Learn to use the application
@@ -66,7 +72,7 @@ For detailed security practices, see the **[Security Guide](docs/security/README
 ### Basic Installation
 ```bash
 # 1. Install Python 3.8+ from python.org
-# 2. Clone or download PowerTrader AI
+# 2. Clone or download PowerTraderAI+
 git clone https://github.com/sjackson0109/PowerTraderAI.git
 cd PowerTraderAI
 
@@ -79,11 +85,11 @@ python app/pt_desktop_app.py
 
 **Important**: Follow the complete [Installation Guide](docs/getting-started/installation.md) for detailed setup instructions.
 
-## How PowerTrader AI Works
+## How PowerTraderAI+ Works
 
 ### AI Trading Strategy
 
-PowerTrader AI uses a unique approach to cryptocurrency trading:
+PowerTraderAI+ uses a unique approach to cryptocurrency trading:
 
 - **Multi-timeframe Analysis**: Analyzes patterns across 1h to 1w timeframes
 - **Instance-based Prediction**: Uses k-Nearest Neighbors (kNN) pattern matching
@@ -157,7 +163,7 @@ This approach differs from common trading tactics that can be counterproductive 
 - **Mock APIs**: Realistic trading simulation for development
 
 ### PR Validation
-PowerTrader AI includes a comprehensive PR validation system for ensuring code quality before merging:
+PowerTraderAI+ includes a comprehensive PR validation system for ensuring code quality before merging:
 
 ```bash
 # Run PR validation tests
@@ -237,14 +243,14 @@ For complete setup instructions, see the **[Installation Guide](docs/getting-sta
 - **[Security Reporting](docs/security/README.md)** - Report security issues
 
 ### Important Notes
-- PowerTrader AI is **completely free forever**
+- PowerTraderAI+ is **completely free forever**
 - No paid features or subscriptions
 - Be wary of scams asking for payment
 - All code is open source and verifiable
 
 ## Contributing
 
-PowerTrader AI is open source and welcomes contributions:
+PowerTraderAI+ is open source and welcomes contributions:
 - **Bug Reports**: Use GitHub issues
 - **Feature Requests**: Submit enhancement proposals
 - **Code Contributions**: Fork, develop, and submit pull requests
@@ -261,13 +267,13 @@ The following are the original setup instructions (kept for reference):
 ### Basic Setup Steps
 
 1. **Install Python**: Download from python.org, check "Add Python to PATH"
-2. **Download PowerTrader AI**: Clone from GitHub or download files
+2. **Download PowerTraderAI+**: Clone from GitHub or download files
 3. **Install Dependencies**: `pip install -r requirements.txt`
 4. **Launch Application**: `python app/pt_desktop_app.py`
 
 ### Configuration in PowerTrader Hub
 
-1. **Set Main Folder**: Point to your PowerTrader AI directory
+1. **Set Main Folder**: Point to your PowerTraderAI+ directory
 2. **Choose Coins**: Start with BTC for initial testing
 3. **Configure Robinhood**: Use the built-in API setup wizard
 4. **Train Models**: Click "Train All" and wait for completion
@@ -284,7 +290,7 @@ For detailed configuration instructions, see the **[API Configuration Guide](doc
 
 ## Support the Project
 
-PowerTrader AI is **completely free and open source**! If you find it valuable, consider supporting continued development:
+PowerTraderAI+ is **completely free and open source**! If you find it valuable, consider supporting continued development:
 
 - **Cash App**: $garagesteve
 - **PayPal**: @garagesteve
@@ -292,7 +298,7 @@ PowerTrader AI is **completely free and open source**! If you find it valuable, 
 
 ## License
 
-PowerTrader AI is released under the **Apache 2.0 License** - see [LICENSE](LICENSE) file for details.
+PowerTraderAI+ is released under the **Apache 2.0 License** - see [LICENSE](LICENSE) file for details.
 
 ---
 

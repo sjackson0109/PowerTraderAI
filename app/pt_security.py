@@ -1,5 +1,5 @@
 """
-Dependency security checker for PowerTrader AI.
+Dependency security checker for PowerTraderAI+.
 Validates and monitors dependencies for known vulnerabilities.
 """
 import os
@@ -112,7 +112,7 @@ class DependencySecurityChecker:
     def generate_secure_requirements(self) -> str:
         """Generate secure requirements.txt content with pinned versions."""
         lines = []
-        lines.append("# PowerTrader AI Dependencies - Security Hardened")
+        lines.append("# PowerTraderAI+ Dependencies - Security Hardened")
         lines.append("# Generated with version pinning for security")
         lines.append("")
         

@@ -1,10 +1,10 @@
-# PowerTrader AI User Guide
+# PowerTraderAI+ User Guide
 
-Learn how to use PowerTrader AI for automated cryptocurrency trading with AI-powered price predictions.
+Learn how to use PowerTraderAI+ for automated cryptocurrency trading with AI-powered price predictions.
 
 ## Overview
 
-PowerTrader AI is an advanced cryptocurrency trading bot that combines:
+PowerTraderAI+ is an advanced cryptocurrency trading bot that combines:
 - **AI Price Prediction**: Machine learning models for market forecasting
 - **Automated Trading**: Dollar-cost averaging (DCA) strategies
 - **Risk Management**: Comprehensive safety and security features
@@ -16,7 +16,7 @@ PowerTrader AI is an advanced cryptocurrency trading bot that combines:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ PowerTrader AI                                    [_][□][×]│
+│ PowerTraderAI+                                   [_][□][×]│
 ├─────────────────────────────────────────────────────────┤
 │ File  Settings  Tools  Help                             │
 ├─────────────────────────────────────────────────────────┤
@@ -165,7 +165,7 @@ Dollar-Cost Averaging implementation:
 
 ### Configuration Files
 
-PowerTrader AI stores settings in:
+PowerTraderAI+ stores settings in:
 - `gui_settings.json`: User interface preferences
 - `trading_config.json`: Trading parameters
 - `ai_config.json`: AI model settings

@@ -66,7 +66,7 @@ def integrate_with_powertrader_hub():
         return False
 
 if __name__ == "__main__":
-    print("PowerTrader AI - Phase 4 Desktop GUI Integration")
+    print("PowerTraderAI+ - Phase 4 Desktop GUI Integration")
     print("=" * 50)
     
     # Apply the integration

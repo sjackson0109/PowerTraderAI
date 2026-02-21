@@ -1,5 +1,5 @@
 """
-Secure file operations for PowerTrader AI.
+Secure file operations for PowerTraderAI+.
 Provides secure file writing with proper permissions.
 """
 import os

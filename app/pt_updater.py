@@ -1,5 +1,5 @@
 """
-PowerTrader AI Auto-Updater
+PowerTraderAI+ Auto-Updater
 
 Handles automatic updates for the desktop application, including version checking,
 download management, and seamless update installation.
@@ -86,7 +86,7 @@ class UpdateManager:
             # Mock update check for demo (replace with actual API)
             latest_version = "4.1.0"
             release_notes = """
-🚀 PowerTrader AI v4.1.0 - Enhanced Trading Features
+🚀 PowerTraderAI+ v4.1.0 - Enhanced Trading Features
 
 ✨ New Features:
 • Advanced risk management with portfolio heat maps
@@ -288,7 +288,7 @@ class UpdateDialog(tk.Toplevel):
         self.update_info = update_info
         self.result = False
         
-        self.title(f"PowerTrader AI Update Available")
+        self.title(f"PowerTraderAI+ Update Available")
         self.geometry("600x500")
         self.resizable(False, False)
         self.transient(parent)
@@ -373,7 +373,7 @@ class UpdateProgressDialog(tk.Toplevel):
     
     def __init__(self, parent):
         super().__init__(parent)
-        self.title("Updating PowerTrader AI")
+        self.title("Updating PowerTraderAI+")
         self.geometry("400x200")
         self.resizable(False, False)
         self.transient(parent)
@@ -467,7 +467,7 @@ def check_and_apply_updates(parent_window=None) -> bool:
             
             if success:
                 messagebox.showinfo("Update Complete", 
-                                  "Update installed successfully!\\nPlease restart PowerTrader AI to use the new version.")
+                                  "Update installed successfully!\\nPlease restart PowerTraderAI+ to use the new version.")
                 return True
             else:
                 messagebox.showerror("Error", "Failed to install update")

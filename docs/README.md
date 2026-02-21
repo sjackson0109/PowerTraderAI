@@ -1,6 +1,6 @@
-# PowerTrader AI Documentation
+# PowerTraderAI+ Documentation
 
-Welcome to the PowerTrader AI comprehensive documentation. This guide will help you set up, configure, and use the PowerTrader AI cryptocurrency trading bot with advanced AI-powered price prediction and automated trading strategies.
+Welcome to the PowerTraderAI+ comprehensive documentation. This guide will help you set up, configure, and use the PowerTraderAI+ cryptocurrency trading bot with advanced AI-powered price prediction and automated trading strategies.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ Welcome to the PowerTrader AI comprehensive documentation. This guide will help 
 
 ## Security First
 
-PowerTrader AI includes enterprise-grade security features:
+PowerTraderAI+ includes enterprise-grade security features:
 - Encrypted API key storage
 - Secure file operations
 - Input validation and sanitization

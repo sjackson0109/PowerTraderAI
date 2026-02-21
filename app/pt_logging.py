@@ -1,5 +1,5 @@
 """
-PowerTrader AI Enhanced Logging System
+PowerTraderAI+ Enhanced Logging System
 Advanced logging with structured output, performance tracking, and audit trails.
 """
 
@@ -219,7 +219,7 @@ class AsyncFileHandler(logging.Handler):
         super().close()
 
 class PowerTraderLogger:
-    """Enhanced logger for PowerTrader AI with structured logging capabilities."""
+    """Enhanced logger for PowerTraderAI+ with structured logging capabilities."""
     
     def __init__(self, name: str = "PowerTrader"):
         self.name = name

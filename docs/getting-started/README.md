@@ -1,6 +1,6 @@
-# Getting Started with PowerTrader AI
+# Getting Started with PowerTraderAI+
 
-This guide will walk you through the initial setup and configuration of PowerTrader AI.
+This guide will walk you through the initial setup and configuration of PowerTraderAI+.
 
 ## Prerequisites
 
@@ -37,7 +37,7 @@ If the GUI launches successfully, your installation is complete.
 
 ### 1. First-time Setup Wizard
 
-When you run PowerTrader AI for the first time, you'll be guided through:
+When you run PowerTraderAI+ for the first time, you'll be guided through:
 
 - Exchange API configuration
 - Basic trading parameters
@@ -46,7 +46,7 @@ When you run PowerTrader AI for the first time, you'll be guided through:
 
 ### 2. Configuration Files
 
-PowerTrader AI creates several configuration files:
+PowerTraderAI+ creates several configuration files:
 
 - `gui_settings.json` - GUI preferences and settings
 - `credentials/` - Encrypted API keys and authentication

@@ -1,5 +1,5 @@
 """
-PowerTrader AI Desktop Installer
+PowerTraderAI+ Desktop Installer
 
 Creates a Windows desktop installer package with auto-updater and dependency management.
 Includes Python environment setup, configuration templates, and desktop shortcuts.
@@ -17,10 +17,10 @@ import requests
 from datetime import datetime
 
 class DesktopInstaller:
-    """Desktop application installer for PowerTrader AI."""
+    """Desktop application installer for PowerTraderAI+."""
     
     def __init__(self):
-        self.app_name = "PowerTrader AI"
+        self.app_name = "PowerTraderAI+"
         self.version = "4.0.0"
         self.project_dir = Path(__file__).parent.absolute()
         self.build_dir = self.project_dir / "dist" / "desktop"
@@ -189,7 +189,7 @@ class DesktopInstaller:
         
         # Requirements installer script
         setup_script = '''@echo off
-echo PowerTrader AI - Python Environment Setup
+echo PowerTraderAI+ - Python Environment Setup
 echo =========================================
 
 echo Checking Python installation...
@@ -221,9 +221,9 @@ pause
         
         # Application launcher script
         launcher_script = '''@echo off
-title PowerTrader AI
+title PowerTraderAI+
 
-echo Starting PowerTrader AI...
+echo Starting PowerTraderAI+...
 cd /d "%~dp0"
 
 python app\\pt_desktop_app.py
@@ -250,15 +250,15 @@ if %errorlevel% neq 0 (
 $WshShell = New-Object -comObject WScript.Shell
 $InstallDir = Get-Location
 
-# PowerTrader AI shortcut
-$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\\Desktop\\PowerTrader AI.lnk")
+# PowerTraderAI+ shortcut
+$Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\\Desktop\\PowerTraderAI+.lnk")
 $Shortcut.TargetPath = "$InstallDir\\PowerTrader_AI.bat"
 $Shortcut.WorkingDirectory = "$InstallDir"
 $Shortcut.Description = "{self.app_name} v{self.version} - Desktop Trading Application"
 $Shortcut.Save()
 
 # Setup shortcut
-$SetupShortcut = $WshShell.CreateShortcut("$env:USERPROFILE\\Desktop\\PowerTrader AI Setup.lnk")  
+$SetupShortcut = $WshShell.CreateShortcut("$env:USERPROFILE\\Desktop\\PowerTraderAI+ Setup.lnk")  
 $SetupShortcut.TargetPath = "$InstallDir\\setup_environment.bat"
 $SetupShortcut.WorkingDirectory = "$InstallDir"
 $SetupShortcut.Description = "Setup Python environment for {self.app_name}"
@@ -329,8 +329,8 @@ echo {self.app_name} installed successfully!
 echo Installation directory: %USERPROFILE%\\{self.app_name}
 echo.
 echo Next steps:
-echo 1. Run "PowerTrader AI Setup" from desktop to install Python packages
-echo 2. Run "PowerTrader AI" from desktop to start the application
+echo 1. Run "PowerTraderAI+ Setup" from desktop to install Python packages
+echo 2. Run "PowerTraderAI+" from desktop to start the application
 echo.
 pause
 '''
@@ -361,8 +361,8 @@ echo Removing application files...
 if exist "%USERPROFILE%\\{self.app_name}" rmdir /s /q "%USERPROFILE%\\{self.app_name}"
 
 echo Removing desktop shortcuts...
-if exist "%USERPROFILE%\\Desktop\\PowerTrader AI.lnk" del "%USERPROFILE%\\Desktop\\PowerTrader AI.lnk"
-if exist "%USERPROFILE%\\Desktop\\PowerTrader AI Setup.lnk" del "%USERPROFILE%\\Desktop\\PowerTrader AI Setup.lnk"
+if exist "%USERPROFILE%\\Desktop\\PowerTraderAI+.lnk" del "%USERPROFILE%\\Desktop\\PowerTraderAI+.lnk"
+if exist "%USERPROFILE%\\Desktop\\PowerTraderAI+ Setup.lnk" del "%USERPROFILE%\\Desktop\\PowerTraderAI+ Setup.lnk"
 
 echo.
 echo {self.app_name} uninstalled successfully!
@@ -402,7 +402,7 @@ pause
 
 def main():
     """Main installer creation function."""
-    print(f"PowerTrader AI Desktop Installer Builder")
+    print(f"PowerTraderAI+ Desktop Installer Builder")
     print(f"Build Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print()
     
@@ -416,8 +416,8 @@ def main():
         print("1. Extract the installer ZIP file to a temporary directory")
         print("2. Run 'install.bat' as Administrator")
         print("3. Follow the installation prompts")
-        print("4. Run 'PowerTrader AI Setup' from desktop to install Python packages")
-        print("5. Run 'PowerTrader AI' from desktop to start the application")
+        print("4. Run 'PowerTraderAI+ Setup' from desktop to install Python packages")
+        print("5. Run 'PowerTraderAI+' from desktop to start the application")
         print()
         print("NOTE: Requires Python 3.9+ installed and added to PATH")
         print("Download Python: https://python.org/downloads/")

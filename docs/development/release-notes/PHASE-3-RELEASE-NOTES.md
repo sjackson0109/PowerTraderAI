@@ -1,4 +1,4 @@
-# PowerTrader AI - Phase 3 Release Notes
+# PowerTraderAI+ - Phase 3 Release Notes
 
 **Release Date:** 2026-02-12  
 **Version:** v3.0.0  
@@ -105,7 +105,7 @@ class CandleChart:
 ---
 
 **Phase 3 Team:**  
-*Contributor: Simon Jackson (@sjackson0109) - PowerTrader AI Development Team*
+*Contributor: Simon Jackson (@sjackson0109) - PowerTraderAI+ Development Team*
 
 **Documentation Updated:** February 20, 2026  
 **Status:** Complete and Production Deployed

@@ -1,6 +1,6 @@
-# PowerTrader AI Application
+# PowerTraderAI+ Application
 
-This directory contains the core PowerTrader AI application files.
+This directory contains the core PowerTraderAI+ application files.
 
 ## Directory Structure
 
@@ -51,4 +51,4 @@ pip install -r requirements.txt
 
 ---
 
-*PowerTrader AI Application Directory*
+*PowerTraderAI+ Application Directory*

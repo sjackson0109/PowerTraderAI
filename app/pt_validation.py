@@ -1,5 +1,5 @@
 """
-Input validation and sanitization for PowerTrader AI.
+Input validation and sanitization for PowerTraderAI+.
 Provides comprehensive validation for external data sources and user inputs.
 """
 import re

@@ -1,6 +1,6 @@
 ---
 name: ✨ Feature Request
-about: Suggest an idea or enhancement for PowerTrader AI
+about: Suggest an idea or enhancement for PowerTraderAI+
 title: '[FEATURE] '
 labels: ['enhancement', 'needs-discussion']
 assignees: ''

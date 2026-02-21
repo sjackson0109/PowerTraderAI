@@ -1,5 +1,5 @@
 """
-PowerTrader AI Cost Management System
+PowerTraderAI+ Cost Management System
 
 Tracks operational costs, performance metrics, and ROI analysis
 for sustainable trading operations.

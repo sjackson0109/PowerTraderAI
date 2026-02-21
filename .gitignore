@@ -152,7 +152,7 @@ dmypy.json
 # Coda docs
 .coda/
 
-# PowerTrader AI specific
+# PowerTraderAI+ specific
 *.key
 *.pem
 *.p12

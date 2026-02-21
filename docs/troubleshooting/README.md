@@ -1,6 +1,6 @@
 # Troubleshooting Guide
 
-Common issues and solutions for PowerTrader AI setup, configuration, and operation.
+Common issues and solutions for PowerTraderAI+ setup, configuration, and operation.
 
 ## Quick Emergency Procedures
 
@@ -11,12 +11,12 @@ If you need to immediately halt all trading:
 IMMEDIATE ACTIONS:
 1. Click "Emergency Stop" button (red button in main interface)
 2. OR press Ctrl + Alt + S
-3. OR close PowerTrader AI application completely
+3. OR close PowerTraderAI+ application completely
 4. Log into Robinhood app/website to verify all orders are cancelled
 ```
 
 ### System Recovery
-If PowerTrader AI crashes or becomes unresponsive:
+If PowerTraderAI+ crashes or becomes unresponsive:
 
 ```powershell
 # Force close if needed
@@ -104,7 +104,7 @@ PermissionError: [Errno 13] Permission denied
 1. **Run as Administrator**:
    - Right-click Command Prompt
    - Select "Run as administrator"
-   - Navigate to PowerTrader AI folder
+   - Navigate to PowerTraderAI+ folder
    - Run installation commands
 
 2. **User Permissions**:
@@ -145,12 +145,12 @@ Error: Failed to connect to KuCoin API
    - Log into KuCoin
    - Delete existing API key
    - Create new API key with correct permissions
-   - Update PowerTrader AI configuration
+   - Update PowerTraderAI+ configuration
 
 2. **Check Firewall**:
    ```powershell
    # Allow Python through firewall
-   netsh advfirewall firewall add rule name="PowerTrader AI" dir=out action=allow program="C:\Python39\python.exe"
+   netsh advfirewall firewall add rule name="PowerTraderAI+" dir=out action=allow program="C:\Python39\python.exe"
    ```
 
 3. **IP Restrictions**:
@@ -378,7 +378,7 @@ Symptom: Python process using excessive memory
    ```
 
 2. **Restart Application**:
-   - Close PowerTrader AI
+   - Close PowerTraderAI+
    - Clear system cache
    - Restart application
 
@@ -487,7 +487,7 @@ findstr "Order\|Trade" logs\trading.log | more
 ### Support Resources
 
 #### Documentation
-- **Full Documentation**: [PowerTrader AI Docs](../README.md)
+- **Full Documentation**: [PowerTraderAI+ Docs](../README.md)
 - **API Reference**: [API Configuration](../api-configuration/README.md)
 - **Security Guide**: [Security Best Practices](../security/README.md)
 
@@ -512,7 +512,7 @@ findstr "Order\|Trade" logs\trading.log | more
    # Python version
    python --version
    
-   # PowerTrader AI version
+   # PowerTraderAI+ version
    python -c "import pt_hub; print(pt_hub.__version__)"
    ```
 
@@ -531,7 +531,7 @@ findstr "Order\|Trade" logs\trading.log | more
 
 #### Issue Template
 ```markdown
-**PowerTrader AI Version**: [version]
+**PowerTraderAI+ Version**: [version]
 **Operating System**: [OS and version]
 **Python Version**: [version]
 

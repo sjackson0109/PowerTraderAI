@@ -1,4 +1,4 @@
-# PowerTrader AI Release Strategy & Roadmap
+# PowerTraderAI+ Release Strategy & Roadmap
 
 ## Phase 1: Merge Strategy (Week 1)
 

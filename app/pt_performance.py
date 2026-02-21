@@ -1,5 +1,5 @@
 """
-PowerTrader AI Performance Monitoring Module
+PowerTraderAI+ Performance Monitoring Module
 Advanced performance tracking, metrics collection, and optimisation tools.
 """
 

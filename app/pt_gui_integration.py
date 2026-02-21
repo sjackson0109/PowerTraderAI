@@ -1,5 +1,5 @@
 """
-PowerTrader AI GUI Integration Module
+PowerTraderAI+ GUI Integration Module
 
 Integrates Phase 4 backend systems with the existing Tkinter GUI interface.
 Provides live trading controls, monitoring dashboards, and configuration panels.

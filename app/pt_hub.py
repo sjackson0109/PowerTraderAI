@@ -6009,7 +6009,10 @@ class PowerTraderHub(tk.Tk):
                     time.sleep(5)
                     continue
 
-                primary_exchange = self.settings.get("primary_exchange", "robinhood")
+                primary_exchange = self.settings.get("primary_exchange", "")
+                if not primary_exchange:
+                    # No exchange configured, skip exchange-dependent operations
+                    continue
                 region = self.settings.get("region", "us")
 
                 # Check if primary exchange is available

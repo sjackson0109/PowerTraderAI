@@ -4,32 +4,32 @@
 
 PowerTraderAI+ now supports **global multi-exchange trading** with unified management across 10+ major cryptocurrency exchanges. This system provides price comparison, automatic failover, regional compliance, and seamless credential management.
 
-## 🌍 Supported Exchanges
+## Supported Exchanges
 
 ### Regional Availability
 
-#### **🇺🇸 United States**
+#### **United States**
 - **Robinhood** - Commission-free crypto trading
 - **Coinbase** - Largest US crypto exchange
 - **Kraken** - Professional trading platform
 - **Binance.US** - US version of global exchange
 - **KuCoin** - Global exchange (US accessible)
 
-#### **🇪🇺 Europe/UK**
+#### **Europe/UK**
 - **Kraken** - EU-regulated exchange
 - **Coinbase** - Available in 100+ countries
 - **Binance** - Global platform
 - **Bitstamp** - EU-licensed exchange
 - **KuCoin** - Global exchange
 
-#### **🌐 Global**
+#### **Global**
 - **Binance** - World's largest crypto exchange
 - **KuCoin** - Wide altcoin selection
 - **Bybit** - Derivatives specialist
 - **OKX** - Comprehensive trading platform
 - **Kraken** - Global availability
 
-## 🚀 Quick Start Guide
+## Quick Start Guide
 
 ### 1. Launch Desktop GUI
 ```bash
@@ -39,7 +39,7 @@ python pt_hub.py
 
 ### 2. Configure Exchange Settings
 1. Click **Settings** menu
-2. Scroll to **🌍 Exchange Provider Settings**
+2. Scroll to **Exchange Provider Settings**
 3. Select your **region** (US/EU-UK/Global)
 4. Choose **primary exchange** from filtered list
 5. Enable **price comparison** (optional)
@@ -48,11 +48,11 @@ python pt_hub.py
 
 ### 3. Exchange Status Monitoring
 - Check **Exchange:** status indicator in main GUI
-- ✅ = Connected and working
-- ⚠️ = Connected but limited data
-- ❌ = Connection failed
+- Connected = Connected and working
+- Limited = Connected but limited data
+- Failed = Connection failed
 
-## 📋 Exchange Setup & Credentials
+## Exchange Setup & Credentials
 
 ### Setup Wizard
 Run the interactive setup wizard:
@@ -122,7 +122,7 @@ export KRAKEN_API_SECRET="secret"
 # ... etc for other exchanges
 ```
 
-## 🔧 Configuration Options
+## Configuration Options
 
 ### Desktop GUI Settings
 
@@ -161,7 +161,7 @@ REQUEST_TIMEOUT = 10     # seconds
 RETRY_ATTEMPTS = 3       # number of retries
 ```
 
-## 💼 Trading Features
+## Trading Features
 
 ### Multi-Exchange Price Discovery
 ```python
@@ -196,7 +196,7 @@ order_result = manager.place_order(
 )
 ```
 
-## 🛡️ Security & Compliance
+## Security & Compliance
 
 ### Credential Protection
 - **Encryption**: All stored credentials encrypted at rest
@@ -214,7 +214,7 @@ order_result = manager.place_order(
 - **Adaptive**: Adjusts to exchange-specific limits
 - **Fallback**: Switches exchanges when limits hit
 
-## 📊 Monitoring & Diagnostics
+## Monitoring & Diagnostics
 
 ### Exchange Status Dashboard
 Access via GUI or programmatically:
@@ -243,11 +243,11 @@ logging.getLogger('pt_exchanges').setLevel(logging.DEBUG)
 logging.getLogger('pt_multi_exchange').setLevel(logging.INFO)
 ```
 
-## 🚨 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
-#### ❌ "Exchange not available"
+#### ERROR: "Exchange not available"
 **Solution**: Check region settings and exchange support
 ```python
 # Verify exchange availability
@@ -256,21 +256,21 @@ available = manager.get_available_exchanges()
 print("Available exchanges:", available)
 ```
 
-#### ❌ "Authentication failed"
+#### ERROR: "Authentication failed"
 **Solutions**:
 1. Verify credentials in `credentials/` directory
 2. Check API key permissions
 3. Ensure 2FA is properly configured
 4. Validate IP whitelist settings
 
-#### ❌ "Rate limit exceeded"
+#### ERROR: "Rate limit exceeded"
 **Solutions**:
 1. Enable automatic exchange rotation
 2. Reduce request frequency
 3. Check exchange-specific limits
 4. Use multiple API keys (if supported)
 
-#### ❌ "Connection timeout"
+#### ERROR: "Connection timeout"
 **Solutions**:
 1. Check internet connectivity
 2. Verify exchange is operational
@@ -289,7 +289,7 @@ python pt_hub.py
 python test_exchanges.py
 ```
 
-## 🔧 Developer API
+## Developer API
 
 ### Basic Usage
 ```python
@@ -344,7 +344,7 @@ manager.subscribe_to_price_updates(on_price_update)
 manager.subscribe_to_connection_events(on_connection_lost)
 ```
 
-## 📈 Performance Optimization
+## Performance Optimization
 
 ### Connection Pooling
 ```python
@@ -416,7 +416,7 @@ config_manager.update_exchange_config("kraken", {
 manager.refresh_exchange("kraken")
 ```
 
-## 📞 Support
+## Support
 
 ### Getting Help
 1. **GUI Issues**: Check the exchange status indicator

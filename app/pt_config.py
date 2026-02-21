@@ -269,7 +269,7 @@ class ConfigurationManager:
 
         # Configuration instances
         self.trading = TradingConfig()
-        self.exchange = ExchangeConfig("default")
+        self.exchange = ExchangeConfig("")  # No default exchange - user must configure
         self.security = SecurityConfig()
         self.ui = UIConfig()
         self.system = SystemConfig()

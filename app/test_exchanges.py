@@ -83,7 +83,7 @@ def test_multi_exchange():
 
 def test_legacy_fallback():
     """Test legacy Robinhood fallback"""
-    print("\n🔄 Testing legacy Robinhood fallback...")
+    print("\nTESTING: Testing legacy Robinhood fallback...")
 
     try:
         # Import the updated thinker module
@@ -91,11 +91,11 @@ def test_legacy_fallback():
 
         # This should try multi-exchange first, then fallback
         price = robinhood_current_ask("BTC-USD")
-        print(f"✅ Legacy function returned: ${price:,.2f}")
+        print(f"SUCCESS: Legacy function returned: ${price:,.2f}")
         return True
 
     except Exception as e:
-        print(f"❌ Legacy test failed: {e}")
+        print(f"ERROR: Legacy test failed: {e}")
         return False
 
 

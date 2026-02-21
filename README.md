@@ -1,6 +1,6 @@
 # PowerTrader AI
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Status: Active](https://img.shields.io/badge/Status-Active-green.svg)]()
 
@@ -71,10 +71,10 @@ git clone https://github.com/sjackson0109/PowerTraderAI.git
 cd PowerTraderAI
 
 # 3. Install dependencies
-pip install -r requirements.txt
+pip install -r app/requirements.txt
 
 # 4. Launch the application
-python pt_hub.py
+python app/pt_desktop_app.py
 ```
 
 **Important**: Follow the complete [Installation Guide](docs/getting-started/installation.md) for detailed setup instructions.
@@ -94,7 +94,7 @@ PowerTrader AI uses a unique approach to cryptocurrency trading:
 
 > *"It's an instance-based (kNN/kernel-style) predictor with online per-instance reliability weighting, used as a multi-timeframe trading signal."* - ChatGPT
 
-**Simple Explanation**: 
+**Simple Explanation**:
 1. **Pattern Learning**: Analyzes historical price patterns across multiple timeframes
 2. **Memory Storage**: Saves each pattern with what happened next
 3. **Prediction**: Matches current patterns to historical data using weighted averages
@@ -161,7 +161,7 @@ PowerTrader AI includes a comprehensive PR validation system for ensuring code q
 
 ```bash
 # Run PR validation tests
-python tests/pr_validation.py
+python .github/scripts/test_pr_validation.py
 ```
 
 **Validation Categories:**
@@ -246,7 +246,7 @@ For complete setup instructions, see the **[Installation Guide](docs/getting-sta
 
 PowerTrader AI is open source and welcomes contributions:
 - **Bug Reports**: Use GitHub issues
-- **Feature Requests**: Submit enhancement proposals  
+- **Feature Requests**: Submit enhancement proposals
 - **Code Contributions**: Fork, develop, and submit pull requests
 - **Documentation**: Help improve guides and tutorials
 
@@ -263,12 +263,12 @@ The following are the original setup instructions (kept for reference):
 1. **Install Python**: Download from python.org, check "Add Python to PATH"
 2. **Download PowerTrader AI**: Clone from GitHub or download files
 3. **Install Dependencies**: `pip install -r requirements.txt`
-4. **Launch Application**: `python pt_hub.py`
+4. **Launch Application**: `python app/pt_desktop_app.py`
 
 ### Configuration in PowerTrader Hub
 
 1. **Set Main Folder**: Point to your PowerTrader AI directory
-2. **Choose Coins**: Start with BTC for initial testing  
+2. **Choose Coins**: Start with BTC for initial testing
 3. **Configure Robinhood**: Use the built-in API setup wizard
 4. **Train Models**: Click "Train All" and wait for completion
 5. **Start Trading**: Click "Start All" to begin automated trading
@@ -277,7 +277,7 @@ The following are the original setup instructions (kept for reference):
 
 - **Neural Levels**: Signal strength from low to high (predicted price ranges)
 - **LONG Signals**: Buy-direction signals (higher = stronger)
-- **SHORT Signals**: No-start signals 
+- **SHORT Signals**: No-start signals
 - **Trade Trigger**: Trades start when reaching LONG level 3+ with SHORT level 0
 
 For detailed configuration instructions, see the **[API Configuration Guide](docs/api-configuration/README.md)**.
@@ -287,15 +287,17 @@ For detailed configuration instructions, see the **[API Configuration Guide](doc
 PowerTrader AI is **completely free and open source**! If you find it valuable, consider supporting continued development:
 
 - **Cash App**: $garagesteve
-- **PayPal**: @garagesteve  
+- **PayPal**: @garagesteve
 - **Facebook**: [Subscribe for $1/month](https://www.facebook.com/stephen.bryant.hughes)
 
 ## License
 
-PowerTrader AI is released under the **MIT License** - see [LICENSE](LICENSE) file for details.
+PowerTrader AI is released under the **Apache 2.0 License** - see [LICENSE](LICENSE) file for details.
 
 ---
 
 **FINAL REMINDER**: This software trades with real money automatically. You are fully responsible for all trades, gains, losses, and security of your accounts. Always understand the system before using it with real funds.
 
-For comprehensive guides, troubleshooting, and best practices, visit the **[Complete Documentation](docs/README.md)**.
+For comprehensive guides, troubleshooting, and best practices, visit the **[Complete Documentation](docs/README.md)**.#   T e s t   p r e - c o m m i t   h o o k s 
+ 
+ 

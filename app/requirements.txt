@@ -17,8 +17,6 @@ pandas>=2.0.0
 # Multi-Exchange Support Dependencies
 python-binance>=1.0.15
 krakenex>=2.1.0
-# Note: Using coinbase-advanced-trader instead of deprecated cbpro
-coinbase-advanced-trader>=1.3.0
 
 # Development and Testing
 # Note: pr_validation.py uses only standard library modules for maximum compatibility

@@ -50,13 +50,17 @@ jobs:
         # Generate version
         if [[ $GITHUB_REF == refs/tags/* ]]; then
           VERSION=${GITHUB_REF#refs/tags/}
+          PYPI_VERSION=${VERSION#v}
         else
-          VERSION="v$(date +'%Y.%m.%d')-${COMMIT}"
+          VERSION="v$(date +'%Y.%-m.%-d')+${COMMIT}"
+          PYPI_VERSION="$(date +'%Y.%-m.%-d').dev0+${COMMIT}"
         fi
         echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        echo "PYPI_VERSION=$PYPI_VERSION" >> $GITHUB_OUTPUT
         echo "DATE=$DATE" >> $GITHUB_OUTPUT
         echo "COMMIT=$COMMIT" >> $GITHUB_OUTPUT
         echo "Generated version: $VERSION"
+        echo "Generated PyPI version: $PYPI_VERSION"
 
     - name: Create release directory structure
       run: |
@@ -250,7 +254,7 @@ jobs:
 
         setup(
             name="powertrader-ai",
-            version="${{ steps.version.outputs.VERSION }}".replace('v', ''),
+            version="${{ steps.version.outputs.PYPI_VERSION }}",
             author="Simon Jackson",
             author_email="simon@powertrader.ai",
             description="PowerTraderAI+ - Advanced Cryptocurrency Trading Bot",

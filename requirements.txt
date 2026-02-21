@@ -13,6 +13,11 @@ requests>=2.31.0
 numpy>=1.24.0
 pandas>=2.0.0
 
+# Multi-Exchange Support Dependencies
+python-binance>=1.0.15
+krakenex>=2.1.0
+cbpro>=1.1.4
+
 # Development and Testing
 # Note: pr_validation.py uses only standard library modules for maximum compatibility
 # pytest>=7.0.0  # Optional: for extended testing with pt_testing.py framework

@@ -76,7 +76,7 @@ jobs:
         # Create installation script for Windows
         cat > release-build/PowerTrader_AI_Desktop/install.bat << 'EOF'
         @echo off
-        echo PowerTrader AI Desktop Installation
+        echo PowerTraderAI+ Desktop Installation
         echo ====================================
         echo.
         echo Installing Python dependencies...
@@ -84,7 +84,7 @@ jobs:
         echo.
         echo Installation complete!
         echo.
-        echo To run PowerTrader AI:
+        echo To run PowerTraderAI+:
         echo   python pt_desktop_app.py
         echo.
         pause
@@ -93,7 +93,7 @@ jobs:
         # Create installation script for Linux/Mac
         cat > release-build/PowerTrader_AI_Desktop/install.sh << 'EOF'
         #!/bin/bash
-        echo "PowerTrader AI Desktop Installation"
+        echo "PowerTraderAI+ Desktop Installation"
         echo "===================================="
         echo ""
         echo "Installing Python dependencies..."
@@ -101,7 +101,7 @@ jobs:
         echo ""
         echo "Installation complete!"
         echo ""
-        echo "To run PowerTrader AI:"
+        echo "To run PowerTraderAI+:"
         echo "  python pt_desktop_app.py"
         EOF
         chmod +x release-build/PowerTrader_AI_Desktop/install.sh
@@ -110,8 +110,8 @@ jobs:
         cat > release-build/PowerTrader_AI_Desktop/start.py << 'EOF'
         #!/usr/bin/env python3
         """
-        PowerTrader AI Desktop Startup Script
-        Simple launcher for the PowerTrader AI application
+        PowerTraderAI+ Desktop Startup Script
+        Simple launcher for the PowerTraderAI+ application
         """
         import sys
         import os
@@ -119,15 +119,15 @@ jobs:
         try:
             # Import and run the desktop application
             import pt_desktop_app
-            print("PowerTrader AI started successfully")
+            print("PowerTraderAI+ started successfully")
         except ImportError as e:
-            print(f"Error importing PowerTrader AI: {e}")
+            print(f"Error importing PowerTraderAI+: {e}")
             print("Please run the installation script first:")
             print("  Windows: install.bat")
             print("  Linux/Mac: ./install.sh")
             sys.exit(1)
         except Exception as e:
-            print(f"Error starting PowerTrader AI: {e}")
+            print(f"Error starting PowerTraderAI+: {e}")
             sys.exit(1)
         EOF
 
@@ -135,7 +135,7 @@ jobs:
       run: |
         # Create release notes
         cat > release-build/PowerTrader_AI_Desktop/RELEASE_NOTES.md << EOF
-        # PowerTrader AI Desktop - Release ${{ steps.version.outputs.VERSION }}
+        # PowerTraderAI+ Desktop - Release ${{ steps.version.outputs.VERSION }}
 
         **Release Date:** $(date +'%B %d, %Y')
         **Build:** ${{ steps.version.outputs.COMMIT }}
@@ -185,7 +185,7 @@ jobs:
 
         ---
 
-        *PowerTrader AI Development Team*
+        *PowerTraderAI+ Development Team*
         *Simon Jackson (@sjackson0109)*
         EOF
 
@@ -253,7 +253,7 @@ jobs:
             version="${{ steps.version.outputs.VERSION }}".replace('v', ''),
             author="Simon Jackson",
             author_email="simon@powertrader.ai",
-            description="PowerTrader AI - Advanced Cryptocurrency Trading Bot",
+            description="PowerTraderAI+ - Advanced Cryptocurrency Trading Bot",
             long_description=read_readme(),
             long_description_content_type="text/markdown",
             url="https://github.com/sjackson0109/PowerTraderAI",
@@ -420,9 +420,9 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.version.outputs.VERSION }}
-        release_name: PowerTrader AI Desktop ${{ steps.version.outputs.VERSION }}
+        release_name: PowerTraderAI+ Desktop ${{ steps.version.outputs.VERSION }}
         body: |
-          ## PowerTrader AI Desktop Release ${{ steps.version.outputs.VERSION }}
+          ## PowerTraderAI+ Desktop Release ${{ steps.version.outputs.VERSION }}
 
           **Release Date:** $(date +'%B %d, %Y')
           **Build Commit:** ${{ steps.version.outputs.COMMIT }}
@@ -433,7 +433,7 @@ jobs:
           3. Follow the Quick Start Guide
 
           ### What's Included
-          - Complete PowerTrader AI desktop application
+          - Complete PowerTraderAI+ desktop application
           - All documentation and guides
           - Installation scripts for all platforms
           - Latest neural network models and configurations

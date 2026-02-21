@@ -1,6 +1,6 @@
 # Artifact Repository Configuration
 
-This document explains how to configure PowerTrader AI's release pipeline to publish artifacts to various artifact repositories.
+This document explains how to configure PowerTraderAI+'s release pipeline to publish artifacts to various artifact repositories.
 
 ## Overview
 
@@ -153,7 +153,7 @@ PowerTrader_AI_Desktop_v1.0.0.zip.sha256
   run: |
     # Check PyPI
     pip index versions powertrader-ai
-    
+
     # Check artifact repositories
     curl -f "$ARTIFACTORY_URL/powertrader-releases/"
 ```
@@ -200,7 +200,7 @@ aws codeartifact list-repositories --domain your-domain
 ### Enterprise CI/CD Integration
 ```yaml
 # Download from Artifactory in downstream pipelines
-- name: Download PowerTrader AI
+- name: Download PowerTraderAI+
   run: |
     curl -u $ARTIFACTORY_USER:$ARTIFACTORY_PASS \
          -o powertrader-ai.zip \
@@ -217,7 +217,7 @@ CMD ["powertrader"]
 
 ---
 
-**Configuration Team:**  
-*Simon Jackson (@sjackson0109) - PowerTrader AI Development Team*
+**Configuration Team:**
+*Simon Jackson (@sjackson0109) - PowerTraderAI+ Development Team*
 
 **Last Updated:** February 20, 2026

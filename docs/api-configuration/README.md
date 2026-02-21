@@ -1,10 +1,10 @@
 # API Configuration Guide
 
-Detailed instructions for configuring API connections between PowerTrader AI and external services.
+Detailed instructions for configuring API connections between PowerTraderAI+ and external services.
 
 ## API Overview
 
-PowerTrader AI integrates with external services through APIs (Application Programming Interfaces). This guide covers:
+PowerTraderAI+ integrates with external services through APIs (Application Programming Interfaces). This guide covers:
 - **KuCoin API**: Market data and price feeds
 - **Robinhood API**: Trading execution and portfolio management
 - **Configuration Management**: Secure setup and management
@@ -14,15 +14,15 @@ PowerTrader AI integrates with external services through APIs (Application Progr
 
 Before configuring APIs:
 - [KuCoin account setup](../exchanges/kucoin-setup.md) completed
-- [Robinhood account setup](../exchanges/robinhood-setup.md) completed  
-- PowerTrader AI installed and running
+- [Robinhood account setup](../exchanges/robinhood-setup.md) completed
+- PowerTraderAI+ installed and running
 - Basic security measures implemented
 
 ## Configuration Methods
 
 ### Method 1: GUI Configuration (Recommended)
 
-1. **Launch PowerTrader AI**:
+1. **Launch PowerTraderAI+**:
    ```bash
    python pt_hub.py
    ```
@@ -57,7 +57,7 @@ From your KuCoin account (see [KuCoin Setup Guide](../exchanges/kucoin-setup.md)
 - **API Secret**: Even longer alphanumeric string
 - **API Passphrase**: Your chosen passphrase
 
-### Step 2: Configure in PowerTrader AI
+### Step 2: Configure in PowerTraderAI+
 
 #### GUI Method:
 1. **Open API Settings**: Settings → Exchanges → KuCoin
@@ -99,7 +99,7 @@ Edit `config/exchanges.json`:
 
 #### Automatic Test:
 ```
-In PowerTrader AI:
+In PowerTraderAI+:
 1. Click "Test Connection" button
 2. Verify "Connection Successful" message
 3. Check market data appears in charts
@@ -138,7 +138,7 @@ From your Robinhood account:
 - **Password**: Your account password
 - **2FA Method**: SMS or authenticator app
 
-### Step 2: Configure in PowerTrader AI
+### Step 2: Configure in PowerTraderAI+
 
 #### GUI Method:
 1. **Open Trading Settings**: Settings → Exchanges → Robinhood
@@ -177,7 +177,7 @@ Edit `config/exchanges.json`:
 
 #### First-Time Setup:
 1. **Start Authentication**: Click "Connect to Robinhood"
-2. **Enter 2FA Code**: PowerTrader AI will prompt for code
+2. **Enter 2FA Code**: PowerTraderAI+ will prompt for code
 3. **Device Registration**: App creates secure device token
 4. **Save Configuration**: Encrypted credentials stored locally
 
@@ -215,13 +215,13 @@ For enhanced security, use environment variables:
 ```powershell
 # Windows PowerShell
 $env:KUCOIN_API_KEY="your_api_key"
-$env:KUCOIN_API_SECRET="your_api_secret" 
+$env:KUCOIN_API_SECRET="your_api_secret"
 $env:KUCOIN_PASSPHRASE="your_passphrase"
 $env:ROBINHOOD_USERNAME="your_email"
 $env:ROBINHOOD_PASSWORD="your_password"
 ```
 
-PowerTrader AI will automatically use these if config files are empty.
+PowerTraderAI+ will automatically use these if config files are empty.
 
 ### Configuration Encryption
 
@@ -269,7 +269,7 @@ Configure different environments:
 
 ### Connection Pooling
 
-PowerTrader AI manages connections efficiently:
+PowerTraderAI+ manages connections efficiently:
 - **Connection Reuse**: Maintains persistent connections
 - **Pool Management**: Limits concurrent connections
 - **Health Monitoring**: Regular connection health checks
@@ -360,7 +360,7 @@ print(f"Robinhood requests: {stats['robinhood']['total_requests']}")
 {
   "logging": {
     "api_calls": "INFO",
-    "authentication": "INFO", 
+    "authentication": "INFO",
     "errors": "ERROR",
     "data_quality": "WARNING",
     "performance": "DEBUG"
@@ -445,7 +445,7 @@ Solutions:
 Error: "Connection timeout"
 Solutions:
 - Check internet connection
-- Verify firewall isn't blocking PowerTrader AI
+- Verify firewall isn't blocking PowerTraderAI+
 - Test with different network (mobile hotspot)
 - Check exchange status pages
 ```
@@ -455,7 +455,7 @@ Solutions:
 Error: "Rate limit exceeded"
 Solutions:
 - Reduce update frequency in settings
-- Check for multiple PowerTrader AI instances
+- Check for multiple PowerTraderAI+ instances
 - Wait for rate limit reset
 - Contact exchange for limit increase
 ```
@@ -528,7 +528,7 @@ for alert in security_alerts:
 ### API Documentation
 - **KuCoin API Docs**: [docs.kucoin.com](https://docs.kucoin.com)
 - **Robinhood API**: Internal documentation available
-- **PowerTrader AI API Guide**: [api-reference.md](api-reference.md)
+- **PowerTraderAI+ API Guide**: [api-reference.md](api-reference.md)
 
 ### Support Channels
 - **GitHub Issues**: Technical problems and bugs
@@ -539,7 +539,7 @@ for alert in security_alerts:
 ### Status Pages
 - **KuCoin Status**: [status.kucoin.com](https://status.kucoin.com)
 - **Robinhood Status**: [status.robinhood.com](https://status.robinhood.com)
-- **PowerTrader AI Status**: Monitor through application logs
+- **PowerTraderAI+ Status**: Monitor through application logs
 
 ## Configuration Checklist
 
@@ -562,4 +562,4 @@ for alert in security_alerts:
 - [ ] Monitor security alerts
 - [ ] Performance optimization reviews
 
-**Next Steps**: With API configuration complete, proceed to [User Guide](../user-guide/README.md) to start using PowerTrader AI.
+**Next Steps**: With API configuration complete, proceed to [User Guide](../user-guide/README.md) to start using PowerTraderAI+.

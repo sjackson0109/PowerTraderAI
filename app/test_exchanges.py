@@ -11,7 +11,7 @@ from pt_multi_exchange import MultiExchangeManager
 
 def test_multi_exchange():
     """Test the multi-exchange system"""
-    print("🧪 Testing PowerTrader AI Multi-Exchange System")
+    print("🧪 Testing PowerTraderAI+ Multi-Exchange System")
     print("=" * 50)
 
     # Initialize manager
@@ -101,7 +101,7 @@ def test_legacy_fallback():
 
 def main():
     """Run all tests"""
-    print("🚀 PowerTrader AI Multi-Exchange Test Suite")
+    print("🚀 PowerTraderAI+ Multi-Exchange Test Suite")
     print("=" * 60)
 
     # Test 1: Multi-exchange system

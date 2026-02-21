@@ -62,7 +62,7 @@ If this is a critical security vulnerability that could affect live trading or u
 **Environment where discovered:**
 - OS: [e.g. Windows 11, Ubuntu 22.04]
 - Python Version: [e.g. 3.11.5]
-- PowerTrader AI Version: [e.g. v1.2.3 or commit hash]
+- PowerTraderAI+ Version: [e.g. v1.2.3 or commit hash]
 
 ## Reproduction (General Steps)
 **General reproduction steps (without exploit details):**

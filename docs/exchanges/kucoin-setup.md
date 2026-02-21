@@ -1,6 +1,6 @@
 # KuCoin Setup Guide
 
-Complete step-by-step guide to setting up KuCoin for market data with PowerTrader AI.
+Complete step-by-step guide to setting up KuCoin for market data with PowerTraderAI+.
 
 ## What is KuCoin?
 
@@ -10,7 +10,7 @@ KuCoin is a global cryptocurrency exchange that provides:
 - **Technical Indicators**: Built-in analysis tools
 - **API Access**: Programmatic data access for trading bots
 
-**For PowerTrader AI**: KuCoin serves as the primary market data provider, offering reliable and fast price feeds for AI analysis and charting.
+**For PowerTraderAI+**: KuCoin serves as the primary market data provider, offering reliable and fast price feeds for AI analysis and charting.
 
 ## Account Requirements
 
@@ -25,7 +25,7 @@ KuCoin is a global cryptocurrency exchange that provides:
 - **Level 2**: Identity verification (increases limits)
 - **Level 3**: Advanced verification (highest limits)
 
-**Note**: Level 1 verification is sufficient for PowerTrader AI's market data needs.
+**Note**: Level 1 verification is sufficient for PowerTraderAI+'s market data needs.
 
 ## Step-by-Step Setup
 
@@ -94,7 +94,7 @@ KuCoin is a global cryptocurrency exchange that provides:
 
 ### Step 4: Generate API Keys
 
-**Critical for PowerTrader AI Integration**
+**Critical for PowerTraderAI+ Integration**
 
 1. **Access API Management**:
    - Log in to KuCoin
@@ -103,7 +103,7 @@ KuCoin is a global cryptocurrency exchange that provides:
 
 2. **API Key Configuration**:
    ```
-   API Name: PowerTrader AI Market Data
+   API Name: PowerTraderAI+ Market Data
    Permissions:
    - General (required)
    - Trade (not needed for market data)
@@ -114,7 +114,7 @@ KuCoin is a global cryptocurrency exchange that provides:
 
 3. **Security Settings**:
    - **Passphrase**: Create a secure passphrase (save this!)
-   - **IP Restriction**: Add your PowerTrader AI server IP (optional but recommended)
+   - **IP Restriction**: Add your PowerTraderAI+ server IP (optional but recommended)
    - **Validity Period**: Set to never expire or 1+ years
 
 4. **Complete Creation**:
@@ -139,24 +139,24 @@ KuCoin is a global cryptocurrency exchange that provides:
         https://api.kucoin.com/api/v1/accounts
    ```
 
-2. **Test in PowerTrader AI**:
-   - Run PowerTrader AI
+2. **Test in PowerTraderAI+**:
+   - Run PowerTraderAI+
    - Go to Settings → Exchanges → KuCoin
    - Enter your API credentials
    - Click "Test Connection"
    - Verify successful connection
 
-## KuCoin Configuration in PowerTrader AI
+## KuCoin Configuration in PowerTraderAI+
 
 ### API Settings
 
-In PowerTrader AI settings:
+In PowerTraderAI+ settings:
 
 ```json
 {
   "kucoin": {
     "api_key": "your_api_key_here",
-    "api_secret": "your_api_secret_here", 
+    "api_secret": "your_api_secret_here",
     "passphrase": "your_passphrase_here",
     "sandbox": false,
     "timeout": 30
@@ -202,9 +202,9 @@ KuCoin returns data in JSON format:
 ### API Key Security
 
 1. **Minimal Permissions**: Only enable "General" permission
-2. **IP Whitelisting**: Restrict to your PowerTrader AI server
+2. **IP Whitelisting**: Restrict to your PowerTraderAI+ server
 3. **Regular Rotation**: Change keys every 3-6 months
-4. **Secure Storage**: Encrypt keys in PowerTrader AI
+4. **Secure Storage**: Encrypt keys in PowerTraderAI+
 
 ### Account Security
 
@@ -222,9 +222,9 @@ KuCoin enforces these limits:
 - **Private Data**: 45 requests per 10 seconds
 - **WebSocket**: 100 connections per IP
 
-### PowerTrader AI Optimization
+### PowerTraderAI+ Optimization
 
-PowerTrader AI automatically:
+PowerTraderAI+ automatically:
 - Respects rate limits
 - Uses WebSocket for real-time data
 - Caches frequently accessed data
@@ -242,7 +242,7 @@ PowerTrader AI automatically:
 - **Taker Fee**: 0.1%
 - **Reduced Fees**: Available with KCS token holdings
 
-**Note**: PowerTrader AI uses KuCoin only for data, not trading, so no trading fees apply.
+**Note**: PowerTraderAI+ uses KuCoin only for data, not trading, so no trading fees apply.
 
 ## Troubleshooting
 
@@ -251,7 +251,7 @@ PowerTrader AI automatically:
 **1. API Key Authentication Failed**
 ```
 Error: Invalid API Key
-Solution: 
+Solution:
 - Verify API key, secret, and passphrase
 - Check IP restrictions
 - Ensure API permissions are correct
@@ -261,7 +261,7 @@ Solution:
 ```
 Error: Too Many Requests
 Solution:
-- Reduce update frequency in PowerTrader AI
+- Reduce update frequency in PowerTraderAI+
 - Check for multiple running instances
 - Wait for rate limit reset (usually 1 minute)
 ```
@@ -297,7 +297,7 @@ Solution:
 
 1. **Stable Connection**: Use wired internet for reliability
 2. **Backup Data Sources**: Configure alternative providers
-3. **Data Validation**: Enable PowerTrader AI's data checking
+3. **Data Validation**: Enable PowerTraderAI+'s data checking
 4. **Performance Monitoring**: Track API response times
 
 ### Advanced Features
@@ -316,7 +316,7 @@ Solution:
 - [ ] API keys generated with correct permissions
 - [ ] IP restrictions configured (if applicable)
 - [ ] API credentials securely stored
-- [ ] PowerTrader AI successfully connects to KuCoin
+- [ ] PowerTraderAI+ successfully connects to KuCoin
 - [ ] Market data is flowing correctly
 - [ ] Chart updates are working
 
@@ -338,6 +338,6 @@ With KuCoin setup complete:
 1. **Robinhood Setup**: [Configure trading account](robinhood-setup.md)
 2. **API Integration**: [Complete API configuration](../api-configuration/README.md)
 3. **Security Review**: [Implement security best practices](../security/README.md)
-4. **Start Trading**: [Begin using PowerTrader AI](../user-guide/README.md)
+4. **Start Trading**: [Begin using PowerTraderAI+](../user-guide/README.md)
 
-**Congratulations!** Your KuCoin market data feed is ready for PowerTrader AI.
+**Congratulations!** Your KuCoin market data feed is ready for PowerTraderAI+.

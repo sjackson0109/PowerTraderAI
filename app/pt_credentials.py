@@ -1,5 +1,5 @@
 """
-Secure credential management for PowerTrader AI.
+Secure credential management for PowerTraderAI+.
 Handles encryption/decryption of API keys and private keys.
 """
 import base64

@@ -1,4 +1,4 @@
-# PowerTrader AI - Developer Setup Guide
+# PowerTraderAI+ - Developer Setup Guide
 
 ## Pre-commit Hooks Setup
 
@@ -43,7 +43,7 @@ pip install pre-commit
 #### 2. Install Project Dependencies
 
 ```bash
-# Install PowerTrader AI dependencies
+# Install PowerTraderAI+ dependencies
 pip install -r app/requirements.txt
 ```
 

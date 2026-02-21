@@ -2,7 +2,7 @@
 
 ## 🔐 Robinhood API Credentials Configuration
 
-PowerTrader AI now supports **dual credential modes** for different use cases:
+PowerTraderAI+ now supports **dual credential modes** for different use cases:
 
 ### 🖥️ **Desktop Use (Option 2): Encrypted Credentials**
 

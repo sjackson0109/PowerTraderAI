@@ -1,5 +1,5 @@
 ---
-name: 🔄 Code Quality Improvement
+name: Code Quality Improvement
 about: Suggest code quality, refactoring, or technical debt improvements
 title: '[CODE QUALITY] '
 labels: ['code-quality', 'technical-debt', 'needs-discussion']

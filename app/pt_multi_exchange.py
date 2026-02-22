@@ -90,13 +90,13 @@ class ExchangeConfigManager:
         if user_region.upper() in ["US", "USA"]:
             # US users - Robinhood, Coinbase, global exchanges
             exchanges = [
-                ExchangeConfig("robinhood", True, 1),
-                ExchangeConfig("coinbase", True, 2),
+                ExchangeConfig("robinhood", False, 1),
+                ExchangeConfig("coinbase", False, 2),
                 ExchangeConfig("kraken", False, 3),
                 ExchangeConfig("binance", False, 4),
                 ExchangeConfig("kucoin", False, 5),
             ]
-            primary = "robinhood"
+            primary = ""
 
         elif user_region.upper() in ["EU", "EUROPE"]:
             # EU users - Kraken, Bitstamp, global exchanges

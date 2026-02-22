@@ -371,30 +371,48 @@ def _refresh_paths_and_symbols():
     base_paths = _build_base_paths(main_dir, crypto_symbols)
 
 
-# API STUFF
-API_KEY = ""
-BASE64_PRIVATE_KEY = ""
+# API STUFF - Initialize as None, load when needed
+API_KEY = None
+BASE64_PRIVATE_KEY = None
 
-try:
-    credentials = get_credentials()
-    if credentials:
-        API_KEY, BASE64_PRIVATE_KEY = credentials
-    else:
+
+def _load_credentials_if_needed():
+    """Load credentials only when actually needed for trading operations"""
+    global API_KEY, BASE64_PRIVATE_KEY
+
+    if API_KEY is not None and BASE64_PRIVATE_KEY is not None:
+        return  # Already loaded
+
+    # Check if we're in test/CI environment
+    if os.environ.get("POWERTRADER_ENV") == "test":
         API_KEY = ""
         BASE64_PRIVATE_KEY = ""
-except Exception as e:
-    print(f"[PowerTrader] Error loading credentials: Credential system error")
-    API_KEY = ""
-    BASE64_PRIVATE_KEY = ""
+        return
 
-if not API_KEY or not BASE64_PRIVATE_KEY:
-    print(
-        "\n[PowerTrader] Robinhood API credentials not found.\n"
-        "Open the GUI and go to Settings → Robinhood API → Setup / Update.\n"
-        "That wizard will generate your keypair, tell you where to paste the public key on Robinhood,\n"
-        "and will save encrypted credential files so this trader can authenticate securely.\n"
-    )
-    raise SystemExit(1)
+    try:
+        credentials = get_credentials()
+        if credentials:
+            API_KEY, BASE64_PRIVATE_KEY = credentials
+        else:
+            API_KEY = ""
+            BASE64_PRIVATE_KEY = ""
+    except Exception as e:
+        print(f"[PowerTrader] Error loading credentials: Credential system error")
+        API_KEY = ""
+        BASE64_PRIVATE_KEY = ""
+
+    if not API_KEY or not BASE64_PRIVATE_KEY:
+        print(
+            "\n[PowerTrader] Robinhood API credentials not found.\n"
+            "Open the GUI and go to Settings → Robinhood API → Setup / Update.\n"
+            "That wizard will generate your keypair, tell you where to paste the public key on Robinhood,\n"
+            "and will save encrypted credential files so this trader can authenticate securely.\n"
+        )
+        # Don't exit during import - let the calling code handle the error
+        return False
+
+    return True
+
 
 # Initialize secure logging
 logger = get_logger(__name__)
@@ -403,6 +421,10 @@ logger.info("PowerTrader Crypto Trader initialized")
 
 class CryptoAPITrading:
     def __init__(self):
+        # Load credentials only when the class is actually instantiated
+        if not _load_credentials_if_needed():
+            raise RuntimeError("Robinhood API credentials not available")
+
         # keep a copy of the folder map (same idea as trader.py)
         self.path_map = dict(base_paths)
 

@@ -617,15 +617,15 @@ def integrate_phase4_gui(notebook_widget):
     try:
         # Add trading control panel
         trading_panel = TradingControlPanel(notebook_widget)
-        notebook_widget.add(trading_panel, text="Trading Control")
+        notebook_widget.add(trading_panel, text="Trading\nControl")
 
         # Add risk management panel
         risk_panel = RiskManagementPanel(notebook_widget)
-        notebook_widget.add(risk_panel, text="Risk Management")
+        notebook_widget.add(risk_panel, text="Risk\nManagement")
 
         # Add cost analysis panel
         cost_panel = CostAnalysisPanel(notebook_widget)
-        notebook_widget.add(cost_panel, text="Cost Analysis")
+        notebook_widget.add(cost_panel, text="Cost\nAnalysis")
 
         return {
             "trading_panel": trading_panel,

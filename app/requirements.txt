@@ -24,6 +24,15 @@ krakenex>=2.1.0
 # Order Management Database Dependencies
 sqlalchemy>=2.0.0
 
+# Essential Dependencies for Full Functionality
+flask>=2.3.0  # Public API Server
+flask-cors>=4.0.0  # Cross-origin support for API
+beautifulsoup4>=4.12.0  # Web scraping and HTML parsing
+ccxt>=4.0.0  # Cryptocurrency exchange trading library (65+ exchanges)
+openai>=1.0.0  # LLM Research Engine and AI features
+seaborn>=0.12.0  # Advanced charting and visualization
+websockets>=11.0.0  # Real-time market data feeds
+
 # Development and Testing
 # Note: pr_validation.py uses only standard library modules for maximum compatibility
 # pytest>=7.0.0  # Optional: for extended testing with pt_testing.py framework

@@ -12,13 +12,6 @@ import sys
 import time
 from typing import Optional
 
-# Add the parent directory to Python path so we can import pt_data_provider
-# This is needed when running from coin subfolders
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
-
 
 def train_neural_network(coin: str) -> bool:
     """
@@ -58,20 +51,17 @@ def train_neural_network(coin: str) -> bool:
 
         # Simulate training process (replace with actual neural network training)
         print(f"Training neural network for {coin}...")
-        for epoch in range(1, 21):  # 20 epochs to run longer
-            time.sleep(2)  # 2 seconds per epoch = 40 seconds total
-            accuracy = 85.0 + epoch * 0.5  # Mock increasing accuracy
-            print(f"Epoch {epoch}/20 - Accuracy: {accuracy:.1f}%")
-
-        print(f"Final training phase for {coin}...")
-        time.sleep(5)  # Additional 5 seconds for final phase
+        for epoch in range(1, 6):  # 5 epochs for demo
+            time.sleep(1)  # Simulate training time
+            accuracy = 85.0 + epoch * 2.5  # Mock increasing accuracy
+            print(f"Epoch {epoch}/5 - Accuracy: {accuracy:.1f}%")
 
         # Save training results
         training_results = {
             "coin": coin,
             "timestamp": time.time(),
-            "epochs": 20,
-            "final_accuracy": 95.0,
+            "epochs": 5,
+            "final_accuracy": 97.5,
             "status": "completed",
         }
 

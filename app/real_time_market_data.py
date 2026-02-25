@@ -410,7 +410,7 @@ class MarketDataAggregator:
             )
 
             # Coinbase Pro
-            self.exchanges[DataSource.COINBASE_PRO] = ccxt.coinbasepro(
+            self.exchanges[DataSource.COINBASE_PRO] = ccxt.coinbase(
                 {
                     "apiKey": "",
                     "secret": "",

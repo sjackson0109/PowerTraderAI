@@ -24,7 +24,6 @@ class DataProvider:
 
     def __init__(self):
         self.multi_exchange = None
-        self.fallback_provider = None
         self.initialized = False
         self._init_providers()
 
@@ -66,25 +65,11 @@ class DataProvider:
                         print(f"  Enabled exchanges: {', '.join(enabled)}")
                     return
                 else:
-                    print(
-                        "WARNING: Multi-exchange system failed to initialize, trying fallbacks..."
-                    )
+                    print("ERROR: Multi-exchange system failed to initialize")
 
         except Exception as e:
             if os.environ.get("POWERTRADER_ENV") != "test":
-                print(f"WARNING: Multi-exchange system unavailable: {e}")
-
-        # Fallback hierarchy based on user config
-        fallback_exchanges = config.get("fallback_exchanges", ["kucoin"])
-        for exchange_name in fallback_exchanges:
-            if self._try_fallback_provider(exchange_name):
-                print(f"WARNING: Using {exchange_name} fallback provider")
-                return
-
-        # Final fallback: KuCoin (for backward compatibility)
-        if self._try_fallback_provider("kucoin"):
-            print("WARNING: Using KuCoin fallback provider")
-            return
+                print(f"ERROR: Multi-exchange system unavailable: {e}")
 
         # No providers available
         if os.environ.get("POWERTRADER_ENV") == "test":
@@ -108,27 +93,9 @@ class DataProvider:
             # Return default config if file not found
             return {
                 "preferred_exchange": "auto",
-                "fallback_exchanges": ["binance", "kraken", "coinbase", "kucoin"],
                 "user_region": "GLOBAL",
                 "use_multi_exchange": True,
             }
-
-    def _try_fallback_provider(self, exchange_name: str) -> bool:
-        """Try to initialize a specific fallback provider"""
-        try:
-            if exchange_name.lower() == "kucoin":
-                from kucoin.client import Market
-
-                self.fallback_provider = Market(url="https://api.kucoin.com")
-                self.initialized = True
-                return True
-            # Add other exchange fallbacks here as needed
-            # elif exchange_name.lower() == "binance":
-            #     ... implement Binance fallback
-
-        except Exception:
-            pass
-        return False
 
     def get_kline_data(self, symbol: str, timeframe: str, **kwargs) -> str:
         """
@@ -148,24 +115,16 @@ class DataProvider:
         if not self.initialized:
             raise RuntimeError("No data providers available")
 
-        # Try multi-exchange system first (user's preferred exchanges)
+        # Use multi-exchange system (handles all 65+ exchanges)
         if self.multi_exchange and self.multi_exchange.initialized:
             try:
-                # Get data from user's preferred exchange
+                # Get data from user's configured exchanges
                 return self._get_multi_exchange_kline(symbol, timeframe, **kwargs)
             except Exception as e:
-                print(f"Primary exchange failed: {e}, trying fallback...")
+                print(f"Multi-exchange system failed: {e}")
+                raise RuntimeError("Multi-exchange system failed")
 
-        # Fallback to KuCoin
-        if self.fallback_provider:
-            try:
-                return str(
-                    self.fallback_provider.get_kline(symbol, timeframe, **kwargs)
-                )
-            except Exception as e:
-                print(f"Fallback provider failed: {e}")
-
-        raise RuntimeError("All data providers failed")
+        raise RuntimeError("Multi-exchange system not initialized")
 
     def get_ticker_data(self, symbol: str) -> str:
         """
@@ -183,7 +142,7 @@ class DataProvider:
         if not self.initialized:
             raise RuntimeError("No data providers available")
 
-        # Try multi-exchange system first
+        # Use multi-exchange system (handles all 65+ exchanges)
         if self.multi_exchange and self.multi_exchange.initialized:
             try:
                 # Convert to format expected by existing code
@@ -191,16 +150,10 @@ class DataProvider:
                 # Format as ticker-like data for backward compatibility
                 return f'{{"symbol": "{symbol}", "price": "{price}"}}'
             except Exception as e:
-                print(f"Primary exchange ticker failed: {e}, trying fallback...")
+                print(f"Multi-exchange ticker failed: {e}")
+                raise RuntimeError("Multi-exchange system failed")
 
-        # Fallback to KuCoin
-        if self.fallback_provider:
-            try:
-                return str(self.fallback_provider.get_ticker(symbol))
-            except Exception as e:
-                print(f"Fallback ticker failed: {e}")
-
-        raise RuntimeError("All data providers failed for ticker")
+        raise RuntimeError("Multi-exchange system not initialized")
 
     def _get_multi_exchange_kline(self, symbol: str, timeframe: str, **kwargs) -> str:
         """

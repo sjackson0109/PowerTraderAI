@@ -173,7 +173,7 @@ class ExchangeRegion(Enum):
 class AbstractExchange(abc.ABC):
     """Abstract base class for all exchange implementations"""
 
-    def __init__(self, api_key: str, api_secret: str, **kwargs):
+    def __init__(self, api_key: str = "", api_secret: str = "", **kwargs):
         self.api_key = api_key
         self.api_secret = api_secret
         self.exchange_name = self.get_exchange_name()
@@ -252,8 +252,11 @@ class ExchangeFactory:
 
         # Get credentials from config or environment
         creds = cls._get_credentials(exchange_type)
+
+        # Allow public access for market data feeds (no credentials needed)
         if not creds:
-            raise ValueError(f"No credentials found for {exchange_type.value}")
+            print(f"Using public access for {exchange_type.value} (market data only)")
+            creds = {}
 
         exchange_class = cls._exchanges[exchange_type]
         return exchange_class(**creds, **kwargs)

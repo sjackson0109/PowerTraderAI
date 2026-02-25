@@ -246,7 +246,7 @@ class AsyncFileHandler(logging.Handler):
 class PowerTraderLogger:
     """Enhanced logger for PowerTraderAI+ with structured logging capabilities."""
 
-    def __init__(self, name: str = "PowerTrader"):
+    def __init__(self, name: str = "PowerTraderAI+"):
         self.name = name
         self.logger = logging.getLogger(name)
         self.session_id = self._generate_session_id()
@@ -497,7 +497,7 @@ class LogContext:
 
 
 # Global logger instance
-logger = PowerTraderLogger("PowerTrader")
+logger = PowerTraderLogger("PowerTraderAI+")
 
 
 # Convenience functions

@@ -375,6 +375,10 @@ class InstitutionalTradingEngine:
         self.orders = {}
         self.accounts = {}
 
+        # Initialize database connection and lock early
+        self.db_conn = None
+        self.db_lock = threading.Lock()
+
         # Performance tracking
         self.performance_metrics = {
             "orders_per_second": 0,
@@ -389,10 +393,13 @@ class InstitutionalTradingEngine:
     def _init_database(self):
         """Initialize institutional trading database"""
         try:
-            self.db_conn = sqlite3.connect(
-                "app/institutional_trading.db", check_same_thread=False
-            )
-            self.db_lock = threading.Lock()
+            # Ensure we use absolute path to database
+            import os
+
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            db_path = os.path.join(current_dir, "institutional_trading.db")
+
+            self.db_conn = sqlite3.connect(db_path, check_same_thread=False)
 
             with self.db_lock:
                 cursor = self.db_conn.cursor()

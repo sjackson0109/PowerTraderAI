@@ -214,9 +214,13 @@ class MultiExchangeManager:
 
                 # Get credentials from config or environment
                 credentials = self._get_exchange_credentials(exchange_config)
+
+                # For public market data, allow connections without credentials
                 if not credentials:
-                    print(f"No credentials found for {exchange_config.exchange_type}")
-                    continue
+                    print(
+                        f"No credentials for {exchange_config.exchange_type}, trying public access..."
+                    )
+                    credentials = {}
 
                 # Add exchange to manager
                 if self.exchange_manager.add_exchange(exchange_type, **credentials):

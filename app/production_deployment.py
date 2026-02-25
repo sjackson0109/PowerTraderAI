@@ -41,7 +41,7 @@ class ProductionConfig:
 
         default_config = {
             "application": {
-                "name": "PowerTrader",
+                "name": "PowerTraderAI+",
                 "version": "3.0.0",
                 "environment": "production",
                 "debug": "false",

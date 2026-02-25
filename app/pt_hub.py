@@ -485,7 +485,7 @@ DEFAULT_SETTINGS = {
     "trailing_gap_pct": 0.5,
     # --- Multi-Exchange Settings ---
     "region": "us",  # us, eu, global
-    "primary_exchange": "robinhood",  # Primary exchange for trading
+    "primary_exchange": "",  # No exchange configured by default
     "price_comparison_enabled": True,  # Compare prices across exchanges
     "auto_best_price": False,  # Automatically use best price exchange
     "default_timeframe": "1hour",
@@ -509,7 +509,7 @@ DEFAULT_SETTINGS = {
     "script_neural_runner2": "pt_thinker.py",
     "script_neural_trainer": "pt_trainer.py",
     "script_trader": "pt_trader.py",
-    "auto_start_scripts": False,
+    "auto_start_scripts": False,  # Disabled to prevent auto-triggering
     # --- Public API Server Settings ---
     "api_server_enabled": False,  # Enable public REST API server
     "api_server_host": "127.0.0.1",  # API server host (127.0.0.1 for localhost only)
@@ -1817,12 +1817,12 @@ class LogProc:
 class PowerTraderHub(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("PowerTrader - Hub")
+        self.title("PowerTraderAI+ (https://github.com/sjackson0109/PowerTraderAI)")
         self.geometry("1400x820")
 
         # Hard minimum window size so the UI can't be shrunk to a point where panes vanish.
         # (Keeps things usable even if someone aggressively resizes.)
-        self.minsize(980, 640)
+        self.minsize(1400, 820)
 
         # Debounce map for panedwindow clamp operations
         self._paned_clamp_after_ids: Dict[str, str] = {}
@@ -1954,8 +1954,9 @@ class PowerTraderHub(tk.Tk):
 
         self._last_chart_refresh = 0.0
 
-        if bool(self.settings.get("auto_start_scripts", False)):
-            self.start_all_scripts()
+        # Disabled auto-start to prevent accidental triggering
+        # if bool(self.settings.get("auto_start_scripts", False)):
+        #     self.start_all_scripts()
 
         # Auto-start API server if enabled
         if API_SERVER_AVAILABLE and self.settings.get("api_server_enabled", False):
@@ -2636,21 +2637,45 @@ class PowerTraderHub(tk.Tk):
         # ----------------------------
         # Training section (everything training-specific lives here)
         # ----------------------------
-        train_buttons_row = ttk.Frame(training_left)
-        train_buttons_row.pack(fill="x", padx=6, pady=(6, 6))
+        train_buttons_frame = ttk.Frame(training_left)
+        train_buttons_frame.pack(fill="x", padx=6, pady=(6, 6))
+
+        # Create 2x2 grid of training buttons
+        # Top row
+        train_row1 = ttk.Frame(train_buttons_frame)
+        train_row1.pack(fill="x", pady=(0, 3))
 
         ttk.Button(
-            train_buttons_row,
+            train_row1,
             text="Train Selected",
             width=BTN_W,
             command=self.train_selected_coin,
-        ).pack(anchor="w", pady=(0, 6))
+        ).pack(side="left", padx=(0, 3))
+
         ttk.Button(
-            train_buttons_row,
+            train_row1,
+            text="Stop Selected",
+            width=BTN_W,
+            command=self.stop_selected_trainer,
+        ).pack(side="left")
+
+        # Bottom row
+        train_row2 = ttk.Frame(train_buttons_frame)
+        train_row2.pack(fill="x")
+
+        ttk.Button(
+            train_row2,
             text="Train All",
             width=BTN_W,
             command=self.train_all_coins,
-        ).pack(anchor="w")
+        ).pack(side="left", padx=(0, 3))
+
+        ttk.Button(
+            train_row2,
+            text="Stop All",
+            width=BTN_W,
+            command=self.stop_all_trainers,
+        ).pack(side="left")
 
         # Training status (per-coin + gating reason)
         self.lbl_training_overview = ttk.Label(training_left, text="Training: N/A")
@@ -3150,7 +3175,7 @@ class PowerTraderHub(tk.Tk):
         # TAB 1: Current Trades
         # ----------------------------
         trades_tab = ttk.Frame(self.bottom_notebook)
-        self.bottom_notebook.add(trades_tab, text="Current Trades")
+        self.bottom_notebook.add(trades_tab, text="Current\nTrades")
 
         trades_frame = ttk.LabelFrame(trades_tab, text="Current Trades")
         trades_frame.pack(fill="both", expand=True, padx=6, pady=6)
@@ -3261,7 +3286,7 @@ class PowerTraderHub(tk.Tk):
         # TAB 2: Long-term Holdings
         # ----------------------------
         lth_tab = ttk.Frame(self.bottom_notebook)
-        self.bottom_notebook.add(lth_tab, text="Long-term Holdings")
+        self.bottom_notebook.add(lth_tab, text="Long-term\nHoldings")
 
         lth_frame = ttk.LabelFrame(
             lth_tab, text="Long-term Holdings (Manual/HODL Positions)"
@@ -3324,7 +3349,7 @@ class PowerTraderHub(tk.Tk):
 
         # Trade history (now in its own tab)
         hist_tab = ttk.Frame(self.bottom_notebook)
-        self.bottom_notebook.add(hist_tab, text="Trade History")
+        self.bottom_notebook.add(hist_tab, text="Trade\nHistory")
 
         hist_frame = ttk.LabelFrame(hist_tab, text="Trade History (Scroll)")
         hist_frame.pack(fill="both", expand=True, padx=6, pady=6)
@@ -3644,7 +3669,7 @@ class PowerTraderHub(tk.Tk):
 
             # Create tab even if order manager isn't fully available
             order_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(order_tab, text="Order Management")
+            self.bottom_notebook.add(order_tab, text="Order\nManagement")
 
             if not self.order_manager.is_available:
                 # Show a message about limited functionality
@@ -4200,7 +4225,7 @@ class PowerTraderHub(tk.Tk):
         try:
             # Always create the tab first
             research_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(research_tab, text="LLM Research")
+            self.bottom_notebook.add(research_tab, text="LLM\nResearch")
 
             if not LLM_RESEARCH_AVAILABLE:
                 # Show a message about unavailability
@@ -4253,7 +4278,7 @@ class PowerTraderHub(tk.Tk):
         try:
             # Always create the tab first
             holdings_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(holdings_tab, text="Holdings Management")
+            self.bottom_notebook.add(holdings_tab, text="Holdings\nManagement")
 
             if not HOLDINGS_MANAGEMENT_AVAILABLE:
                 # Show a message about unavailability
@@ -4294,7 +4319,7 @@ class PowerTraderHub(tk.Tk):
         try:
             # Always create the tab first
             analytics_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(analytics_tab, text="Portfolio Analytics")
+            self.bottom_notebook.add(analytics_tab, text="Portfolio\nAnalytics")
 
             if not PORTFOLIO_ANALYTICS_AVAILABLE:
                 # Show a message about unavailability
@@ -4335,7 +4360,7 @@ class PowerTraderHub(tk.Tk):
         try:
             # Always create the tab first
             advanced_order_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(advanced_order_tab, text="Advanced Orders")
+            self.bottom_notebook.add(advanced_order_tab, text="Advanced\nOrders")
 
             if not ADVANCED_ORDER_AVAILABLE:
                 # Show a message about unavailability
@@ -4376,7 +4401,7 @@ class PowerTraderHub(tk.Tk):
         try:
             # Always create the tab first
             market_data_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(market_data_tab, text="Market Data")
+            self.bottom_notebook.add(market_data_tab, text="Market\nData")
 
             if not MARKET_DATA_GUI_AVAILABLE:
                 # Show a message about unavailability
@@ -4417,7 +4442,7 @@ class PowerTraderHub(tk.Tk):
         try:
             # Always create the tab first
             portfolio_opt_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(portfolio_opt_tab, text="Portfolio Optimization")
+            self.bottom_notebook.add(portfolio_opt_tab, text="Portfolio\nOptimization")
 
             if not PORTFOLIO_OPTIMIZER_AVAILABLE:
                 # Show a message about unavailability
@@ -4461,7 +4486,7 @@ class PowerTraderHub(tk.Tk):
         try:
             # Create tab
             backtest_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(backtest_tab, text="Backtesting Framework")
+            self.bottom_notebook.add(backtest_tab, text="Backtesting\nFramework")
 
             if not BACKTESTING_FRAMEWORK_AVAILABLE:
                 # Show dependency message
@@ -4502,7 +4527,7 @@ class PowerTraderHub(tk.Tk):
         try:
             # Create tab
             attribution_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(attribution_tab, text="Performance Attribution")
+            self.bottom_notebook.add(attribution_tab, text="Performance\nAttribution")
 
             if not PERFORMANCE_ATTRIBUTION_AVAILABLE:
                 # Show dependency message
@@ -4547,13 +4572,13 @@ class PowerTraderHub(tk.Tk):
         try:
             # Create tab
             institutional_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(institutional_tab, text="🏦 Institutional Trading")
+            self.bottom_notebook.add(institutional_tab, text="Institutional\nTrading")
 
             if not INSTITUTIONAL_TRADING_AVAILABLE:
                 # Show dependency message
                 ttk.Label(
                     institutional_tab,
-                    text="🏦 Institutional Trading System\n\nEnterprise-grade trading infrastructure with:\n• High-volume order processing\n• Advanced algorithmic execution (TWAP, VWAP, Iceberg)\n• Institutional risk management\n• Batch order processing\n• Performance monitoring\n• Compliance reporting\n\nSystem is initializing...",
+                    text="Institutional Trading System\n\nEnterprise-grade trading infrastructure with:\n• High-volume order processing\n• Advanced algorithmic execution (TWAP, VWAP, Iceberg)\n• Institutional risk management\n• Batch order processing\n• Performance monitoring\n• Compliance reporting\n\nSystem is initializing...",
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
@@ -5087,13 +5112,113 @@ Platform: {sys.platform}
 
     def train_all_coins(self) -> None:
         # Start trainers for every coin (in parallel)
+        print(f"DEBUG: Starting training for coins: {self.coins}")
         for c in self.coins:
+            print(f"DEBUG: Training coin: {c}")
             self.trainer_coin_var.set(c)
             self.start_trainer_for_selected_coin()
 
+    def stop_all_trainers(self) -> None:
+        """Stop all running trainer processes."""
+        print(f"DEBUG: Stopping all trainer processes")
+        stopped_count = 0
+
+        for coin, lp in list(self.trainers.items()):
+            try:
+                if lp and lp.info.proc and lp.info.proc.poll() is None:
+                    print(
+                        f"DEBUG: Stopping trainer for {coin} (PID: {lp.info.proc.pid})"
+                    )
+                    lp.info.proc.terminate()
+                    stopped_count += 1
+                    # Give it a moment to terminate gracefully
+                    try:
+                        lp.info.proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        # Force kill if it doesn't terminate gracefully
+                        print(f"DEBUG: Force killing trainer for {coin}")
+                        lp.info.proc.kill()
+                else:
+                    print(f"DEBUG: Trainer for {coin} already stopped")
+            except Exception as e:
+                print(f"DEBUG: Error stopping trainer for {coin}: {e}")
+
+        # Clear the trainers dictionary
+        self.trainers.clear()
+
+        if stopped_count > 0:
+            print(f"DEBUG: Stopped {stopped_count} trainer processes")
+            try:
+                self.status.config(text=f"Stopped {stopped_count} trainer(s)")
+            except Exception:
+                pass
+        else:
+            print(f"DEBUG: No trainers were running")
+            try:
+                self.status.config(text="No trainers were running")
+            except Exception:
+                pass
+
+    def stop_selected_trainer(self) -> None:
+        """Stop the currently selected trainer process."""
+        coin = (self.trainer_coin_var.get() or "").strip().upper()
+        print(f"DEBUG: Stopping selected trainer: {coin}")
+
+        if not coin:
+            print(f"DEBUG: No coin selected for stopping")
+            try:
+                self.status.config(text="No coin selected")
+            except Exception:
+                pass
+            return
+
+        if coin not in self.trainers:
+            print(f"DEBUG: No trainer running for {coin}")
+            try:
+                self.status.config(text=f"No trainer running for {coin}")
+            except Exception:
+                pass
+            return
+
+        lp = self.trainers[coin]
+        try:
+            if lp and lp.info.proc and lp.info.proc.poll() is None:
+                print(f"DEBUG: Stopping trainer for {coin} (PID: {lp.info.proc.pid})")
+                lp.info.proc.terminate()
+                # Give it a moment to terminate gracefully
+                try:
+                    lp.info.proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    # Force kill if it doesn't terminate gracefully
+                    print(f"DEBUG: Force killing trainer for {coin}")
+                    lp.info.proc.kill()
+
+                # Remove from trainers dictionary
+                del self.trainers[coin]
+
+                print(f"DEBUG: Stopped trainer for {coin}")
+                try:
+                    self.status.config(text=f"Stopped trainer for {coin}")
+                except Exception:
+                    pass
+            else:
+                print(f"DEBUG: Trainer for {coin} not running")
+                try:
+                    self.status.config(text=f"Trainer for {coin} not running")
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"DEBUG: Error stopping trainer for {coin}: {e}")
+            try:
+                self.status.config(text=f"Error stopping {coin}: {e}")
+            except Exception:
+                pass
+
     def start_trainer_for_selected_coin(self) -> None:
         coin = (self.trainer_coin_var.get() or "").strip().upper()
+        print(f"DEBUG: start_trainer_for_selected_coin called for: {coin}")
         if not coin:
+            print("DEBUG: No coin selected, returning")
             return
 
         # Stop the Neural Runner before any training starts (training modifies artifacts the runner reads)
@@ -5128,12 +5253,16 @@ Platform: {sys.platform}
                 pass
 
         trainer_path = os.path.join(coin_cwd, trainer_name)
+        print(f"DEBUG: Looking for trainer at: {trainer_path}")
 
         if not os.path.isfile(trainer_path):
+            print(f"DEBUG: Trainer not found at {trainer_path}")
             messagebox.showerror(
                 "Missing trainer", f"Cannot find trainer for {coin} at:\n{trainer_path}"
             )
             return
+
+        print(f"DEBUG: Trainer found, proceeding with launch")
 
         if (
             coin in self.trainers
@@ -5180,8 +5309,14 @@ Platform: {sys.platform}
 
         try:
             # IMPORTANT: pass `coin` so neural_trainer trains the correct market instead of defaulting to BTC
+            cmd_args = [sys.executable, "-u", info.path, coin]
+            print(f"DEBUG: Command args: {cmd_args}")
+            print(f"DEBUG: Working directory: {coin_cwd}")
+            print(
+                f"DEBUG: Environment POWERTRADER_HUB_DIR: {env.get('POWERTRADER_HUB_DIR')}"
+            )
             info.proc = subprocess.Popen(
-                [sys.executable, "-u", info.path, coin],
+                cmd_args,
                 cwd=coin_cwd,
                 env=env,
                 stdout=subprocess.PIPE,
@@ -5189,6 +5324,23 @@ Platform: {sys.platform}
                 text=True,
                 bufsize=1,
             )
+            print(f"DEBUG: Process started with PID: {info.proc.pid}")
+            # Give it a moment to start and check if it's still running
+            time.sleep(0.5)
+            if info.proc.poll() is not None:
+                print(
+                    f"DEBUG: Process {info.proc.pid} already terminated with exit code: {info.proc.returncode}"
+                )
+                try:
+                    stdout, stderr = info.proc.communicate(timeout=1)
+                    print(f"DEBUG: Process output: {stdout}")
+                    if stderr:
+                        print(f"DEBUG: Process stderr: {stderr}")
+                except:
+                    pass
+                return  # Don't register a failed process
+
+            print(f"DEBUG: Subprocess launched successfully for {coin}")
             t = threading.Thread(
                 target=self._reader_thread,
                 args=(info.proc, q, f"[{coin}] "),
@@ -5199,10 +5351,42 @@ Platform: {sys.platform}
             self.trainers[coin] = LogProc(
                 info=info, log_q=q, thread=t, is_trainer=True, coin=coin
             )
+            print(f"DEBUG: Trainer {coin} registered successfully")
+
+            # Add periodic monitoring to see when process exits
+            self.after(1000, lambda c=coin: self._monitor_trainer_process(c))
         except Exception as e:
+            print(f"DEBUG: ERROR starting trainer for {coin}: {e}")
             messagebox.showerror(
                 "Failed to start", f"Trainer for {coin} failed to start:\n{e}"
             )
+
+    def _monitor_trainer_process(self, coin: str) -> None:
+        """Monitor a specific trainer process and log when it exits"""
+        try:
+            if coin in self.trainers:
+                proc = self.trainers[coin].info.proc
+                if proc and proc.poll() is not None:
+                    print(
+                        f"DEBUG: Trainer process for {coin} exited with code: {proc.returncode}"
+                    )
+                    # Try to get any remaining output
+                    try:
+                        remaining_output = proc.stdout.read() if proc.stdout else ""
+                        if remaining_output:
+                            print(
+                                f"DEBUG: Final output from {coin}: {remaining_output}"
+                            )
+                    except:
+                        pass
+                else:
+                    # Process still running, check again in 2 seconds
+                    print(
+                        f"DEBUG: Trainer {coin} still running (PID: {proc.pid if proc else 'None'})"
+                    )
+                    self.after(2000, lambda: self._monitor_trainer_process(coin))
+        except Exception as e:
+            print(f"DEBUG: Error monitoring {coin}: {e}")
 
     def stop_trainer_for_selected_coin(self) -> None:
         coin = (self.trainer_coin_var.get() or "").strip().upper()
@@ -5637,6 +5821,9 @@ Platform: {sys.platform}
             pass
 
         positions = data.get("positions", {}) or {}
+        # Defensive type checking - positions should be a dict, not a list
+        if isinstance(positions, list):
+            positions = {}
         self._last_positions = positions
 
         # --- precompute per-coin DCA count in rolling 24h (and after last SELL for that coin) ---
@@ -6583,14 +6770,14 @@ Platform: {sys.platform}
             row=r, column=0, sticky="w", padx=(0, 10), pady=6
         )
         primary_exchange_var = tk.StringVar(
-            value=self.settings.get("primary_exchange", "robinhood")
+            value=self.settings.get("primary_exchange", "")
         )
 
         # Exchange options based on region
         def update_exchange_options(*args):
             region = region_var.get()
             if region == "US":
-                exchanges = ["robinhood", "coinbase", "kraken", "binance", "kucoin"]
+                exchanges = ["binance", "coinbase", "kraken", "robinhood", "kucoin"]
             elif region in ["EU", "UK"]:
                 exchanges = ["kraken", "coinbase", "binance", "bitstamp", "kucoin"]
             else:  # GLOBAL
@@ -7791,7 +7978,12 @@ Platform: {sys.platform}
 
                 # Skip if no primary exchange is configured
                 if not primary_exchange:
-                    time.sleep(10)
+                    self._exchange_status = {
+                        "status": "No exchange configured",
+                        "details": "Configure API credentials in Settings to enable trading",
+                    }
+                    self.after_idle(self._update_exchange_status_display)
+                    time.sleep(30)
                     continue
 
                 # Check if primary exchange is available

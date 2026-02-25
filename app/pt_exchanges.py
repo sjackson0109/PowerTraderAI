@@ -162,7 +162,7 @@ class KrakenExchange(AbstractExchange):
 class BinanceExchange(AbstractExchange):
     """Binance API implementation"""
 
-    def __init__(self, api_key: str, api_secret: str, **kwargs):
+    def __init__(self, api_key: str = "", api_secret: str = "", **kwargs):
         super().__init__(api_key, api_secret, **kwargs)
         self.base_url = "https://api.binance.com"
 

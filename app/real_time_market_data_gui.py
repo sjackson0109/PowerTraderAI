@@ -101,28 +101,28 @@ class MarketDataGUI:
 
         # Market Overview Tab
         self.overview_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.overview_tab, text="Market Overview")
+        self.notebook.add(self.overview_tab, text="Market\nOverview")
         self.setup_overview_tab()
 
         # Price Charts Tab
         if MATPLOTLIB_AVAILABLE:
             self.charts_tab = ttk.Frame(self.notebook)
-            self.notebook.add(self.charts_tab, text="Price Charts")
+            self.notebook.add(self.charts_tab, text="Price\nCharts")
             self.setup_charts_tab()
 
         # Order Books Tab
         self.orderbook_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.orderbook_tab, text="Order Books")
+        self.notebook.add(self.orderbook_tab, text="Order\nBooks")
         self.setup_orderbook_tab()
 
         # Arbitrage Tab
         self.arbitrage_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.arbitrage_tab, text="Arbitrage Monitor")
+        self.notebook.add(self.arbitrage_tab, text="Arbitrage\nMonitor")
         self.setup_arbitrage_tab()
 
         # Data Feeds Tab
         self.feeds_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.feeds_tab, text="Data Feeds")
+        self.notebook.add(self.feeds_tab, text="Data\nFeeds")
         self.setup_feeds_tab()
 
     def setup_fallback_ui(self):

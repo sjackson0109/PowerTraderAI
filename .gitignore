@@ -218,3 +218,5 @@ app/AVAX/
 .DS_Store
 Thumbs.db
 desktop.ini
+app/security_audit.jsonl
+app/credential_audit.jsonl

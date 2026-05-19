@@ -98,6 +98,7 @@ class TestSecurityEvent(unittest.TestCase):
     def test_new_id_uses_utc(self):
         """Event ID must be UTC-based (no timezone-ambiguous local time)."""
         from datetime import datetime, timezone
+
         before = datetime.now(timezone.utc).strftime("%Y%m%d")
         eid = SecurityEvent.new_id()
         self.assertIn(before, eid)
@@ -157,13 +158,17 @@ class TestSecurityLogger(unittest.TestCase):
     def test_log_credential_use(self):
         self.sec_logger.log_credential_use("robinhood", "place_order")
         events = self._events()
-        self.assertEqual(events[0]["event_type"], SecurityEventType.CREDENTIAL_USE.value)
+        self.assertEqual(
+            events[0]["event_type"], SecurityEventType.CREDENTIAL_USE.value
+        )
         self.assertEqual(events[0]["details"]["operation"], "place_order")
 
     def test_log_credential_rotation(self):
         self.sec_logger.log_credential_rotation("robinhood", success=True)
         events = self._events()
-        self.assertEqual(events[0]["event_type"], SecurityEventType.CREDENTIAL_ROTATION.value)
+        self.assertEqual(
+            events[0]["event_type"], SecurityEventType.CREDENTIAL_ROTATION.value
+        )
 
     def test_log_suspicious_activity(self):
         self.sec_logger.log_suspicious_activity(
@@ -172,25 +177,35 @@ class TestSecurityLogger(unittest.TestCase):
             details={"endpoint": "/orders", "count": 100},
         )
         events = self._events()
-        self.assertEqual(events[0]["event_type"], SecurityEventType.SUSPICIOUS_ACTIVITY.value)
+        self.assertEqual(
+            events[0]["event_type"], SecurityEventType.SUSPICIOUS_ACTIVITY.value
+        )
         self.assertEqual(events[0]["source_ip"], "1.2.3.4")
 
     def test_log_permission_denied(self):
         self.sec_logger.log_permission_denied("robinhood", "sell")
         events = self._events()
-        self.assertEqual(events[0]["event_type"], SecurityEventType.PERMISSION_DENIED.value)
+        self.assertEqual(
+            events[0]["event_type"], SecurityEventType.PERMISSION_DENIED.value
+        )
         self.assertEqual(events[0]["details"]["required_permission"], "sell")
 
     def test_log_trade_event_success(self):
-        self.sec_logger.log_trade_event("BTC-USD", "buy", 0.1, 45000.0, order_id="ord-001")
+        self.sec_logger.log_trade_event(
+            "BTC-USD", "buy", 0.1, 45000.0, order_id="ord-001"
+        )
         events = self._events()
-        self.assertEqual(events[0]["event_type"], SecurityEventType.TRADE_EXECUTED.value)
+        self.assertEqual(
+            events[0]["event_type"], SecurityEventType.TRADE_EXECUTED.value
+        )
         self.assertEqual(events[0]["details"]["symbol"], "BTC-USD")
 
     def test_log_trade_event_rejected(self):
         self.sec_logger.log_trade_event("ETH-USD", "sell", 1.0, 3000.0, success=False)
         events = self._events()
-        self.assertEqual(events[0]["event_type"], SecurityEventType.TRADE_REJECTED.value)
+        self.assertEqual(
+            events[0]["event_type"], SecurityEventType.TRADE_REJECTED.value
+        )
 
     def test_log_rate_limit(self):
         self.sec_logger.log_rate_limit("binance", details={"endpoint": "/api/v3/order"})

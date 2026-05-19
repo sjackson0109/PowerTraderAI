@@ -46,19 +46,19 @@ logger = logging.getLogger(__name__)
 # Security event types
 # ---------------------------------------------------------------------------
 class SecurityEventType(Enum):
-    AUTH_ATTEMPT = "auth_attempt"       # API key authentication attempt
-    AUTH_SUCCESS = "auth_success"       # Successful authentication
-    AUTH_FAILURE = "auth_failure"       # Failed authentication
-    CREDENTIAL_USE = "credential_use"   # Credential accessed/used
-    CREDENTIAL_ROTATION = "credential_rotation"   # Credential rotated
-    SUSPICIOUS_ACTIVITY = "suspicious_activity"   # Anomalous behavior detected
-    PERMISSION_DENIED = "permission_denied"       # Insufficient API permissions
-    RATE_LIMIT = "rate_limit"           # Rate limit hit
-    TRADE_EXECUTED = "trade_executed"   # Order placed
-    TRADE_REJECTED = "trade_rejected"   # Order rejected
-    CONFIG_CHANGE = "config_change"     # Configuration modified
-    SYSTEM_START = "system_start"       # Application started
-    SYSTEM_STOP = "system_stop"         # Application stopped
+    AUTH_ATTEMPT = "auth_attempt"  # API key authentication attempt
+    AUTH_SUCCESS = "auth_success"  # Successful authentication
+    AUTH_FAILURE = "auth_failure"  # Failed authentication
+    CREDENTIAL_USE = "credential_use"  # Credential accessed/used
+    CREDENTIAL_ROTATION = "credential_rotation"  # Credential rotated
+    SUSPICIOUS_ACTIVITY = "suspicious_activity"  # Anomalous behavior detected
+    PERMISSION_DENIED = "permission_denied"  # Insufficient API permissions
+    RATE_LIMIT = "rate_limit"  # Rate limit hit
+    TRADE_EXECUTED = "trade_executed"  # Order placed
+    TRADE_REJECTED = "trade_rejected"  # Order rejected
+    CONFIG_CHANGE = "config_change"  # Configuration modified
+    SYSTEM_START = "system_start"  # Application started
+    SYSTEM_STOP = "system_stop"  # Application stopped
 
 
 @dataclass
@@ -214,7 +214,7 @@ class SecurityLogger:
 
     AUDIT_LOG_FILENAME = "security_audit.jsonl"
     MAX_BYTES = 10 * 1024 * 1024  # 10 MB per file
-    BACKUP_COUNT = 10              # Keep 10 rotated files
+    BACKUP_COUNT = 10  # Keep 10 rotated files
 
     def __init__(self, log_dir: Optional[str] = None):
         self._log_dir = log_dir or os.path.join(
@@ -296,15 +296,24 @@ class SecurityLogger:
     ) -> None:
         """Log an API authentication attempt (success or failure)."""
         event_type = (
-            SecurityEventType.AUTH_SUCCESS if success else SecurityEventType.AUTH_FAILURE
+            SecurityEventType.AUTH_SUCCESS
+            if success
+            else SecurityEventType.AUTH_FAILURE
         )
         msg = f"API auth {'succeeded' if success else 'FAILED'} for {api_name}"
         if not success:
             logger.warning("SECURITY: %s", msg)
-        self._emit(self._make_event(
-            event_type, msg, source=api_name, success=success,
-            details=details, source_ip=source_ip, user_id=user_id,
-        ))
+        self._emit(
+            self._make_event(
+                event_type,
+                msg,
+                source=api_name,
+                success=success,
+                details=details,
+                source_ip=source_ip,
+                user_id=user_id,
+            )
+        )
 
     def log_credential_use(
         self,
@@ -314,10 +323,15 @@ class SecurityLogger:
     ) -> None:
         """Log that credentials were accessed/used for an operation."""
         msg = f"Credential used: {api_name} for {operation}"
-        self._emit(self._make_event(
-            SecurityEventType.CREDENTIAL_USE, msg, source=api_name, success=True,
-            details={**(details or {}), "operation": operation},
-        ))
+        self._emit(
+            self._make_event(
+                SecurityEventType.CREDENTIAL_USE,
+                msg,
+                source=api_name,
+                success=True,
+                details={**(details or {}), "operation": operation},
+            )
+        )
 
     def log_credential_rotation(
         self,
@@ -326,13 +340,20 @@ class SecurityLogger:
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Log a credential rotation event."""
-        msg = f"Credential rotation {'succeeded' if success else 'FAILED'} for {api_name}"
+        msg = (
+            f"Credential rotation {'succeeded' if success else 'FAILED'} for {api_name}"
+        )
         if not success:
             logger.critical("SECURITY: %s", msg)
-        self._emit(self._make_event(
-            SecurityEventType.CREDENTIAL_ROTATION, msg, source=api_name,
-            success=success, details=details,
-        ))
+        self._emit(
+            self._make_event(
+                SecurityEventType.CREDENTIAL_ROTATION,
+                msg,
+                source=api_name,
+                success=success,
+                details=details,
+            )
+        )
 
     def log_suspicious_activity(
         self,
@@ -344,10 +365,17 @@ class SecurityLogger:
         """Log detected suspicious activity."""
         msg = f"Suspicious activity detected: {activity_type}"
         logger.warning("SECURITY ALERT: %s", msg)
-        self._emit(self._make_event(
-            SecurityEventType.SUSPICIOUS_ACTIVITY, msg, source=activity_type,
-            success=False, source_ip=source_ip, user_id=user_id, details=details,
-        ))
+        self._emit(
+            self._make_event(
+                SecurityEventType.SUSPICIOUS_ACTIVITY,
+                msg,
+                source=activity_type,
+                success=False,
+                source_ip=source_ip,
+                user_id=user_id,
+                details=details,
+            )
+        )
 
     def log_permission_denied(
         self,
@@ -358,10 +386,15 @@ class SecurityLogger:
         """Log an API permission denial."""
         msg = f"Permission denied: {required_permission} on {api_name}"
         logger.error("SECURITY: %s", msg)
-        self._emit(self._make_event(
-            SecurityEventType.PERMISSION_DENIED, msg, source=api_name, success=False,
-            details={**(details or {}), "required_permission": required_permission},
-        ))
+        self._emit(
+            self._make_event(
+                SecurityEventType.PERMISSION_DENIED,
+                msg,
+                source=api_name,
+                success=False,
+                details={**(details or {}), "required_permission": required_permission},
+            )
+        )
 
     def log_trade_event(
         self,
@@ -375,14 +408,26 @@ class SecurityLogger:
     ) -> None:
         """Log a trade execution event to the audit trail."""
         event_type = (
-            SecurityEventType.TRADE_EXECUTED if success else SecurityEventType.TRADE_REJECTED
+            SecurityEventType.TRADE_EXECUTED
+            if success
+            else SecurityEventType.TRADE_REJECTED
         )
         msg = f"Trade {'executed' if success else 'REJECTED'}: {side} {quantity} {symbol} @ {price}"
-        self._emit(self._make_event(
-            event_type, msg, success=success,
-            details={"symbol": symbol, "side": side, "quantity": quantity,
-                     "price": price, "order_id": order_id, **(details or {})},
-        ))
+        self._emit(
+            self._make_event(
+                event_type,
+                msg,
+                success=success,
+                details={
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "price": price,
+                    "order_id": order_id,
+                    **(details or {}),
+                },
+            )
+        )
 
     def log_rate_limit(
         self,
@@ -392,10 +437,15 @@ class SecurityLogger:
         """Log a rate limit event."""
         msg = f"Rate limit hit on {api_name}"
         logger.warning("SECURITY: %s", msg)
-        self._emit(self._make_event(
-            SecurityEventType.RATE_LIMIT, msg, source=api_name,
-            success=False, details=details,
-        ))
+        self._emit(
+            self._make_event(
+                SecurityEventType.RATE_LIMIT,
+                msg,
+                source=api_name,
+                success=False,
+                details=details,
+            )
+        )
 
     def log_config_change(
         self,
@@ -405,9 +455,14 @@ class SecurityLogger:
         """Log a configuration change event."""
         msg = f"Configuration changed: {component}"
         logger.info("SECURITY: %s", msg)
-        self._emit(self._make_event(
-            SecurityEventType.CONFIG_CHANGE, msg, source=component, details=details,
-        ))
+        self._emit(
+            self._make_event(
+                SecurityEventType.CONFIG_CHANGE,
+                msg,
+                source=component,
+                details=details,
+            )
+        )
 
     def log_system_event(
         self,

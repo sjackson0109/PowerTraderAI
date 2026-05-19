@@ -2587,8 +2587,8 @@ class PowerTraderHub(tk.Tk):
             1, weight=0, minsize=90
         )  # Training section - compact
         main_container.grid_rowconfigure(
-            2, weight=1, minsize=90
-        )  # Thinking section - grows to fill leftover space
+            2, weight=1, minsize=150
+        )  # Thinking section - grows to fit tile content
         main_container.grid_columnconfigure(
             0, weight=2, minsize=180
         )  # Account column - wider with minimum
@@ -2747,13 +2747,13 @@ class PowerTraderHub(tk.Tk):
 
         # Neural levels display (compact version for the section)
         neural_levels_frame = ttk.Frame(neural_section)
-        neural_levels_frame.pack(fill="x", expand=False, padx=6, pady=(0, 6))
+        neural_levels_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
 
         # ttk.Label(neural_levels_frame, text="Neural Levels (0-7):").pack(anchor="w")
 
         # Scrollable area for neural tiles in the neural section
         neural_viewport = ttk.Frame(neural_levels_frame)
-        neural_viewport.pack(fill="x", expand=False, pady=(2, 0))
+        neural_viewport.pack(fill="both", expand=True, pady=(2, 0))
         neural_viewport.grid_rowconfigure(0, weight=1)
         neural_viewport.grid_columnconfigure(0, weight=1)
 
@@ -2763,7 +2763,7 @@ class PowerTraderHub(tk.Tk):
             highlightthickness=1,
             highlightbackground=DARK_BORDER,
             bd=0,
-            height=35,  # Very compact height to eliminate scrollbar
+            height=110,  # Tall enough for one row of NeuralSignalTile (~52px bar + labels)
         )
         self._neural_overview_canvas.grid(row=0, column=0, sticky="nsew")
 
@@ -3040,7 +3040,7 @@ class PowerTraderHub(tk.Tk):
                 if total <= 2:
                     self.after(10, _init_left_split_sash_once)
                     return
-                target = min(380, total - 80)
+                target = min(450, total - 80)
                 left_split.sashpos(0, int(target))
                 self._did_init_left_split_sash = True
             except Exception:

@@ -238,8 +238,12 @@ def atomic_transaction(
                         ) from commit_exc
                     commit_attempts += 1
                     actual = min(commit_delay, MAX_RETRY_DELAY)
-                    logger.warning("COMMIT contention (attempt %d/%d), retrying in %.2fs",
-                                   commit_attempts, max_retries, actual)
+                    logger.warning(
+                        "COMMIT contention (attempt %d/%d), retrying in %.2fs",
+                        commit_attempts,
+                        max_retries,
+                        actual,
+                    )
                     time.sleep(actual)
                     commit_delay *= 2
 
@@ -286,14 +290,40 @@ class InputSanitizer:
     # on legitimate values like "dropbox", "selection", "truncate_me".
     # Punctuation tokens (-- ; ) are matched as exact substrings.
     _SQL_KEYWORDS_WORD = frozenset(
-        ["drop", "delete", "truncate", "insert", "update",
-         "alter", "create", "exec", "execute", "union", "select"]
+        [
+            "drop",
+            "delete",
+            "truncate",
+            "insert",
+            "update",
+            "alter",
+            "create",
+            "exec",
+            "execute",
+            "union",
+            "select",
+        ]
     )
     _SQL_TOKENS_EXACT = frozenset(["--", ";"])
     _SQL_KEYWORD_RE = re.compile(
-        r"(?:" + "|".join(re.escape(k) for k in
-            ["drop", "delete", "truncate", "insert", "update",
-             "alter", "create", "exec", "execute", "union", "select"]) + r")"
+        r"(?:"
+        + "|".join(
+            re.escape(k)
+            for k in [
+                "drop",
+                "delete",
+                "truncate",
+                "insert",
+                "update",
+                "alter",
+                "create",
+                "exec",
+                "execute",
+                "union",
+                "select",
+            ]
+        )
+        + r")"
     )
     _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 

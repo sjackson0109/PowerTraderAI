@@ -2047,7 +2047,7 @@ class PowerTraderHub(tk.Tk):
 
         # Auto-start API server if enabled
         if API_SERVER_AVAILABLE and self.settings.get("api_server_enabled", False):
-            self.start_api_server()
+            self.toggle_api_server(True)
 
         self.after(250, self._tick)
 
@@ -2486,9 +2486,9 @@ class PowerTraderHub(tk.Tk):
         except Exception:
             pass
 
-        # LEFT: using direct grid layout (no PanedWindow)
-        # left_split = ttk.Panedwindow(left, orient="vertical")
-        # left_split.pack(fill="both", expand=True, padx=8, pady=8)
+        # LEFT: vertical split (Controls on top, Live Output underneath)
+        left_split = ttk.Panedwindow(left, orient="vertical")
+        left_split.pack(fill="both", expand=True, padx=8, pady=8)
 
         # RIGHT: vertical split (Charts on top, Trades+History underneath)
         right_split = ttk.Panedwindow(right, orient="vertical")
@@ -2496,7 +2496,7 @@ class PowerTraderHub(tk.Tk):
 
         # Keep references so we can clamp sash positions later
         self._pw_outer = outer
-        # self._pw_left_split = left_split  # No longer using PanedWindow for left side
+        self._pw_left_split = left_split
         self._pw_right_split = right_split
 
         # Clamp panes when the user releases a sash or the window resizes
@@ -2509,17 +2509,16 @@ class PowerTraderHub(tk.Tk):
             ),
         )
 
-        # left_split bindings removed since using grid layout
-        # left_split.bind(
-        #     "<Configure>", lambda e: self._schedule_paned_clamp(self._pw_left_split)
-        # )
-        # left_split.bind(
-        #     "<ButtonRelease-1>",
-        #     lambda e: (
-        #         setattr(self, "_user_moved_left_split", True),
-        #         self._schedule_paned_clamp(self._pw_left_split),
-        #     ),
-        # )
+        left_split.bind(
+            "<Configure>", lambda e: self._schedule_paned_clamp(self._pw_left_split)
+        )
+        left_split.bind(
+            "<ButtonRelease-1>",
+            lambda e: (
+                setattr(self, "_user_moved_left_split", True),
+                self._schedule_paned_clamp(self._pw_left_split),
+            ),
+        )
 
         right_split.bind(
             "<Configure>", lambda e: self._schedule_paned_clamp(self._pw_right_split)
@@ -2566,7 +2565,7 @@ class PowerTraderHub(tk.Tk):
             "<ButtonRelease-1>",
             lambda e: (
                 self._schedule_paned_clamp(getattr(self, "_pw_outer", None)),
-                # self._schedule_paned_clamp(getattr(self, "_pw_left_split", None)),  # Removed - using grid layout
+                self._schedule_paned_clamp(getattr(self, "_pw_left_split", None)),
                 self._schedule_paned_clamp(getattr(self, "_pw_right_split", None)),
             ),
         )
@@ -2574,7 +2573,7 @@ class PowerTraderHub(tk.Tk):
         # ----------------------------
         # LEFT: 1) Controls / Health (pane)
         # ----------------------------
-        top_controls = ttk.LabelFrame(left, text="Controls / Health")
+        top_controls = ttk.LabelFrame(left_split, text="Controls / Health")
 
         # Create a main container for organized sections
         main_container = ttk.Frame(top_controls)
@@ -2588,8 +2587,8 @@ class PowerTraderHub(tk.Tk):
             1, weight=0, minsize=90
         )  # Training section - compact
         main_container.grid_rowconfigure(
-            2, weight=0, minsize=70
-        )  # Thinking section - compact
+            2, weight=1, minsize=90
+        )  # Thinking section - grows to fill leftover space
         main_container.grid_columnconfigure(
             0, weight=2, minsize=180
         )  # Account column - wider with minimum
@@ -2657,7 +2656,7 @@ class PowerTraderHub(tk.Tk):
 
         # Thinking section: row 2, column 0, 2x wide, 1x high
         neural_section = ttk.LabelFrame(
-            main_container, text="Thinking (Signals)", font=("TkDefaultFont", 7)
+            main_container, text="Thinking (Signals)"
         )
         neural_section.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(6, 0))
 
@@ -2915,7 +2914,7 @@ class PowerTraderHub(tk.Tk):
         self._live_log_font = _base.copy()
         self._live_log_font.configure(size=8)
 
-        logs_frame = ttk.LabelFrame(left, text="Live Output")
+        logs_frame = ttk.LabelFrame(left_split, text="Live Output")
         self.logs_nb = ttk.Notebook(logs_frame)
         self.logs_nb.pack(fill="both", expand=True, padx=6, pady=6)
 
@@ -3021,32 +3020,33 @@ class PowerTraderHub(tk.Tk):
         self.trader_text.configure(yscrollcommand=trader_scroll.set)
         self.trader_text.pack(side="left", fill="both", expand=True)
         trader_scroll.pack(side="right", fill="y")
-        # Add left panes using grid layout instead of PanedWindow for rowspan control
-        # Configure left container for grid layout
-        left.grid_rowconfigure(
-            0, weight=0, minsize=320
-        )  # Controls section - compact fixed size
-        left.grid_rowconfigure(
-            1, weight=1
-        )  # Live Output section - expands to fill space
-        left.grid_columnconfigure(0, weight=1)
+        # Add left panes to vertical PanedWindow (enables drag sash between Controls and Live Output)
+        left_split.add(top_controls, weight=0)
+        left_split.add(logs_frame, weight=1)
+        try:
+            left_split.paneconfigure(top_controls, minsize=280)
+            left_split.paneconfigure(logs_frame, minsize=80)
+        except Exception:
+            pass
 
-        # Add sections to grid
-        top_controls.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
-        logs_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(4, 8))
+        def _init_left_split_sash_once():
+            try:
+                if getattr(self, "_did_init_left_split_sash", False):
+                    return
+                if getattr(self, "_user_moved_left_split", False):
+                    self._did_init_left_split_sash = True
+                    return
+                total = left_split.winfo_height()
+                if total <= 2:
+                    self.after(10, _init_left_split_sash_once)
+                    return
+                target = min(380, total - 80)
+                left_split.sashpos(0, int(target))
+                self._did_init_left_split_sash = True
+            except Exception:
+                pass
 
-        # Grid layout configuration (no longer using PanedWindow for left side)
-        # left_split PanedWindow is now only used as a container
-
-        # Left side sash initialization removed since using grid layout
-        # def _init_left_split_sash_once():
-        #     try:
-        #         if getattr(self, "_did_init_left_split_sash", False):
-        #             return
-        #         # ... (left split sash code removed)
-        #     except Exception:
-        #         pass
-        # self.after_idle(_init_left_split_sash_once)
+        self.after_idle(_init_left_split_sash_once)
 
         # ----------------------------
         # RIGHT TOP: Charts (tabs)
@@ -8458,10 +8458,7 @@ Platform: {sys.platform}
 
                 # Restart API server if settings changed
                 if API_SERVER_AVAILABLE:
-                    if api_enabled_var.get():
-                        self.start_api_server()
-                    else:
-                        self.stop_api_server()
+                    self.toggle_api_server(api_enabled_var.get())
 
                 # If new coin(s) were added and their training folder doesn't exist yet,
                 # create the folder and copy neural_trainer.py into it RIGHT AFTER saving settings.

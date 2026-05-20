@@ -364,24 +364,28 @@ class PowerTraderAPIServer:
             logger.warning("API server is already running")
             return
 
+        # Set the flag BEFORE starting the thread so any immediate stop_server()
+        # or second start_server() call sees the correct state during thread startup.
+        self._is_running = True
+
         def run_server():
             try:
                 logger.info(
                     f"Starting PowerTrader API server on {self.host}:{self.port}"
                 )
                 self._httpd = make_server(self.host, self.port, self.app, threaded=True)
-                self._is_running = True
                 self._httpd.serve_forever()
             except Exception as e:
                 logger.error(f"API server error: {e}")
-            finally:
                 self._is_running = False
+            finally:
                 if self._httpd is not None:
                     try:
                         self._httpd.server_close()
                     except Exception:
                         pass
                 self._httpd = None
+                self._is_running = False
 
         self._server_thread = threading.Thread(target=run_server, daemon=True)
         self._server_thread.start()
@@ -391,13 +395,18 @@ class PowerTraderAPIServer:
 
     def stop_server(self):
         """Stop the API server, releasing the bound socket."""
-        if not self._is_running:
+        # Gate on _httpd rather than _is_running to handle the brief startup
+        # window where the thread is running but _is_running may lag.
+        if self._httpd is None and not self._is_running:
             return
         try:
             if self._httpd is not None:
                 self._httpd.shutdown()
         except Exception as e:
             logger.warning(f"API server shutdown error: {e}")
+        # Wait briefly for the thread to release the socket before returning.
+        if self._server_thread is not None:
+            self._server_thread.join(timeout=3)
         self._is_running = False
         logger.info("API server stopped")
 

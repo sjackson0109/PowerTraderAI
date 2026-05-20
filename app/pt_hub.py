@@ -3,6 +3,7 @@ from __future__ import annotations
 import bisect
 import glob
 import json
+import logging
 import math
 import os
 import queue
@@ -75,6 +76,13 @@ try:
 except ImportError:
     DEPENDENCY_CHECKER_AVAILABLE = False
     print("Warning: Dependency checker not available.")
+
+# Secure credential manager (encrypted vault for API key + secret)
+try:
+    from pt_credentials import SecureCredentialManager
+except ImportError:
+    SecureCredentialManager = None  # type: ignore[assignment]
+    print("Warning: pt_credentials not available — encrypted vault disabled.")
 
 # API Server imports
 try:

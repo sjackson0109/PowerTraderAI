@@ -369,7 +369,9 @@ class PowerTraderAPIServer:
                 logger.info(
                     f"Starting PowerTrader API server on {self.host}:{self.port}"
                 )
-                self._httpd = make_server(self.host, self.port, self.app)
+                self._httpd = make_server(
+                    self.host, self.port, self.app, threaded=True
+                )
                 self._is_running = True
                 self._httpd.serve_forever()
             except Exception as e:

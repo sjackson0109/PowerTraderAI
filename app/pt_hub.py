@@ -359,7 +359,7 @@ class NeuralSignalTile(ttk.Frame):
             width=w,
             height=h,
             bg=self._normal_canvas_bg,
-            highlightthickness=1,
+            highlightthickness=2,
             highlightbackground=self._normal_border,
         )
         self.canvas.pack(padx=2, pady=(2, 0))
@@ -438,7 +438,7 @@ class NeuralSignalTile(ttk.Frame):
                 self.canvas.configure(
                     bg=self._normal_canvas_bg,
                     highlightbackground=self._normal_border,
-                    highlightthickness=1,
+                    highlightthickness=2,
                 )
                 self.title_lbl.configure(foreground=self._normal_fg)
                 self.value_lbl.configure(foreground=self._normal_fg)

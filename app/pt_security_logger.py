@@ -25,7 +25,6 @@ Usage:
 """
 
 import collections
-import hashlib
 import json
 import logging
 import logging.handlers
@@ -246,11 +245,17 @@ class SecurityLogger:
         return handler
 
     def close(self) -> None:
-        """Flush and close the underlying handler (call on shutdown)."""
-        if self._handler:
-            self._handler.flush()
-            self._handler.close()
-            self._audit_logger.removeHandler(self._handler)
+        """Flush and close the underlying handler (call on shutdown).
+        Idempotent: safe to call multiple times."""
+        if self._handler is None:
+            return
+        handler = self._handler
+        self._handler = None
+        try:
+            handler.flush()
+            handler.close()
+        finally:
+            self._audit_logger.removeHandler(handler)
 
     def _emit(self, event: SecurityEvent) -> None:
         """Write security event to audit log (thread-safe)."""
@@ -477,10 +482,15 @@ class SecurityLogger:
         """
         Read the last `limit` events from the audit log.
 
-        Uses O(limit) tail reading via collections.deque so cost scales with
-        limit, not file size.  Only reads the active log file; rotated backup
-        files are not included.
+        Time complexity is O(file_size) — the iterator walks every line;
+        memory is bounded to O(limit) via ``collections.deque(maxlen=limit)``.
+        Only reads the active log file; rotated backups (`*.1`, `*.2`, …)
+        are not included.
+
+        Returns [] when limit <= 0.
         """
+        if limit <= 0:
+            return []
         if not os.path.exists(self._audit_path):
             return []
         try:

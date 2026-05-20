@@ -237,8 +237,21 @@ class TestSecurityLogger(unittest.TestCase):
         self.sec_logger.log_trade_event("BTC-USD", "buy", 0.5, 44000.0)
         events = self._events()
         self.assertEqual(len(events), 3)
+        # Assert event_type append order — robust against clock adjustments
+        # (time.time() can move backwards on NTP correction or DST shifts).
+        self.assertEqual(
+            [e["event_type"] for e in events],
+            [
+                SecurityEventType.AUTH_SUCCESS.value,
+                SecurityEventType.CREDENTIAL_USE.value,
+                SecurityEventType.TRADE_EXECUTED.value,
+            ],
+        )
+        # Sanity check: timestamps are non-decreasing (cheap monotonicity
+        # check; sub-second jumps backwards from NTP do not break this).
         timestamps = [e["timestamp"] for e in events]
-        self.assertEqual(timestamps, sorted(timestamps))
+        for prev, curr in zip(timestamps, timestamps[1:]):
+            self.assertLessEqual(prev, curr)
 
     def test_audit_file_created(self):
         self.sec_logger.log_auth_attempt("robinhood", success=True)

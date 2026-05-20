@@ -12,11 +12,12 @@ import os
 import shutil
 import socket
 import stat
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
@@ -56,6 +57,14 @@ class CredentialMetadata:
 
     @classmethod
     def from_dict(cls, d: dict) -> "CredentialMetadata":
+        """Build from dict. Filters unknown keys; raises ValueError when
+        required fields are missing (instead of an opaque TypeError)."""
+        required = {"created_at", "last_rotated_at", "rotation_due_at"}
+        missing = required - d.keys()
+        if missing:
+            raise ValueError(
+                f"CredentialMetadata missing required fields: {sorted(missing)}"
+            )
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
     @classmethod
@@ -132,11 +141,28 @@ class SecureCredentialManager:
             user = os.environ.get("USER", os.environ.get("USERNAME", ""))
         return hashlib.sha256(f"{host}{user}".encode()).hexdigest()[:32]
 
+    def _get_legacy_machine_password(self) -> Optional[str]:
+        """
+        Legacy derivation (Windows-only, pre-cross-platform). Returned only
+        when COMPUTERNAME/USERNAME env vars are present so decrypt_credentials
+        can fall back transparently for vaults encrypted by older versions.
+        """
+        host = os.environ.get("COMPUTERNAME")
+        user = os.environ.get("USERNAME")
+        if not host or not user:
+            return None
+        return hashlib.sha256(f"{host}{user}".encode()).hexdigest()[:32]
+
     def _atomic_write_text(self, filepath: str, content: str) -> None:
-        """Write text file atomically via temp → rename."""
-        tmp = filepath + ".tmp"
+        """Write text file atomically via unique temp → rename. Uses
+        tempfile.mkstemp so concurrent writers cannot collide on the same
+        temp name."""
+        directory = os.path.dirname(filepath) or "."
+        fd, tmp = tempfile.mkstemp(
+            prefix=os.path.basename(filepath) + ".", suffix=".tmp", dir=directory
+        )
         try:
-            with open(tmp, "w", encoding="utf-8") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(content)
             self._set_secure_permissions(tmp)
             os.replace(tmp, filepath)
@@ -149,10 +175,13 @@ class SecureCredentialManager:
             raise
 
     def _atomic_write_binary(self, filepath: str, content: bytes) -> None:
-        """Write binary file atomically via temp → rename."""
-        tmp = filepath + ".tmp"
+        """Write binary file atomically via unique temp → rename."""
+        directory = os.path.dirname(filepath) or "."
+        fd, tmp = tempfile.mkstemp(
+            prefix=os.path.basename(filepath) + ".", suffix=".tmp", dir=directory
+        )
         try:
-            with open(tmp, "wb") as f:
+            with os.fdopen(fd, "wb") as f:
                 f.write(content)
             self._set_secure_permissions(tmp)
             os.replace(tmp, filepath)
@@ -179,7 +208,7 @@ class SecureCredentialManager:
         try:
             with open(self.metadata_file, "r", encoding="utf-8") as f:
                 return CredentialMetadata.from_dict(json.load(f))
-        except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        except (OSError, json.JSONDecodeError, ValueError, TypeError):
             return None
 
     def _save_metadata(self, meta: CredentialMetadata) -> None:
@@ -238,28 +267,66 @@ class SecureCredentialManager:
                 return False
 
     def decrypt_credentials(self) -> Optional[Tuple[str, str]]:
-        """Decrypt and return (api_key, private_key_b64), or None on failure."""
+        """Decrypt and return (api_key, private_key_b64), or None on failure.
+
+        Falls back to the legacy COMPUTERNAME/USERNAME derivation if the new
+        gethostname()/getuser() derivation fails — this allows vaults encrypted
+        by pre-cross-platform versions to decrypt without user intervention.
+        On successful legacy decrypt, re-encrypts with the new key so the
+        fallback is one-shot per vault.
+        """
         with self._lock:
+            if not self.has_encrypted_credentials():
+                return None
             try:
-                if not self.has_encrypted_credentials():
-                    return None
                 with open(self.salt_file, "rb") as f:
                     salt = f.read()
-                key = self._derive_key(self._get_machine_password(), salt)
-                cipher = Fernet(key)
                 with open(self.encrypted_key_file, "rb") as f:
-                    api_key = cipher.decrypt(f.read()).decode("utf-8").strip()
+                    key_blob = f.read()
                 with open(self.encrypted_secret_file, "rb") as f:
-                    private_key = cipher.decrypt(f.read()).decode("utf-8").strip()
+                    secret_blob = f.read()
+            except OSError as exc:
+                logger.error("Failed to read vault files: %s", exc)
+                return None
+
+            # Try current derivation first
+            try:
+                cipher = Fernet(self._derive_key(self._get_machine_password(), salt))
+                api_key = cipher.decrypt(key_blob).decode("utf-8").strip()
+                private_key = cipher.decrypt(secret_blob).decode("utf-8").strip()
                 return api_key, private_key
             except Exception as exc:
-                logger.error("Failed to decrypt credentials: %s", exc)
+                logger.debug("Primary decrypt failed, trying legacy derivation: %s", exc)
+
+            # Fallback: legacy Windows derivation
+            legacy_pw = self._get_legacy_machine_password()
+            if legacy_pw is None:
+                logger.error("Failed to decrypt credentials with current derivation")
                 return None
+            try:
+                cipher = Fernet(self._derive_key(legacy_pw, salt))
+                api_key = cipher.decrypt(key_blob).decode("utf-8").strip()
+                private_key = cipher.decrypt(secret_blob).decode("utf-8").strip()
+            except Exception as exc:
+                logger.error("Failed to decrypt credentials (legacy fallback): %s", exc)
+                return None
+
+            logger.warning(
+                "Decrypted vault using legacy machine-password derivation. "
+                "Re-encrypting with new derivation."
+            )
+            try:
+                self.encrypt_credentials(api_key, private_key)
+            except Exception as exc:
+                logger.warning("Re-encrypt after legacy decrypt failed: %s", exc)
+            return api_key, private_key
 
     # ------------------------------------------------------------------
     # Rotation
     # ------------------------------------------------------------------
-    def get_rotation_status(self) -> Dict:
+    def get_rotation_status(self) -> Dict[str, Any]:
+        """Return a dict with a consistent shape regardless of metadata
+        presence (all keys always present; None when not applicable)."""
         meta = self._load_metadata()
         if not meta:
             return {
@@ -267,6 +334,7 @@ class SecureCredentialManager:
                 "rotation_due": False,
                 "days_until_rotation": None,
                 "last_rotated_at": None,
+                "rotation_due_at": None,
             }
         return {
             "has_metadata": True,
@@ -413,10 +481,16 @@ class SecureCredentialManager:
 # PermissionValidator
 # ---------------------------------------------------------------------------
 class PermissionValidator:
-    """Validates API key permissions on startup against required permission sets."""
+    """Validates API key permissions on startup against required permission sets.
+
+    Note on default base_dir: resolves to the source directory of this module
+    when not supplied. For production installs to read-only locations, pass a
+    writable base_dir explicitly (e.g. user data dir).
+    """
 
     AUDIT_LOG_FILE = "credential_audit.jsonl"
-    MAX_AUDIT_LINES = 10_000  # Cap to prevent unbounded growth
+    MAX_AUDIT_LINES = 10_000  # Soft cap; older entries rotated to .1
+    AUDIT_ROTATION_KEEP = 1  # Number of rotated backups to keep
 
     def __init__(self, base_dir: str = None):
         self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
@@ -506,26 +580,53 @@ class PermissionValidator:
         return result
 
     def _log_audit(self, result: PermissionAuditResult) -> None:
-        """Append audit result to JSONL log with size cap and secure permissions."""
+        """Append audit result to JSONL log. Rotates when MAX_AUDIT_LINES is
+        reached (renames active log to ``*.1``, drops older rotations). This
+        avoids the per-call O(n) read/rewrite of the previous trim strategy."""
         try:
-            # Size cap: trim to last MAX_AUDIT_LINES - 1 entries before appending
-            if os.path.exists(self._audit_log):
-                with open(self._audit_log, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                if len(lines) >= self.MAX_AUDIT_LINES:
-                    keep = lines[-(self.MAX_AUDIT_LINES - 1) :]
-                    with open(self._audit_log, "w", encoding="utf-8") as f:
-                        f.writelines(keep)
-
+            self._rotate_audit_if_needed()
             with open(self._audit_log, "a", encoding="utf-8") as f:
                 f.write(json.dumps(result.to_dict()) + "\n")
-            # Secure permissions on the audit log itself
             try:
                 os.chmod(self._audit_log, stat.S_IRUSR | stat.S_IWUSR)
             except (OSError, AttributeError):
                 pass
         except OSError as exc:
             logger.warning("Could not write permission audit log: %s", exc)
+
+    def _rotate_audit_if_needed(self) -> None:
+        """Rotate audit log when line count reaches MAX_AUDIT_LINES.
+
+        Uses size-based heuristic to avoid reading the file every call: only
+        counts lines if the file is large enough to plausibly hit the cap.
+        Approximate entry size is ~200 bytes; we trigger the precise check
+        once the file exceeds MAX_AUDIT_LINES * 100 bytes.
+        """
+        try:
+            size = os.path.getsize(self._audit_log)
+        except OSError:
+            return
+        if size < self.MAX_AUDIT_LINES * 100:
+            return  # cheap path: nowhere near the cap
+        try:
+            with open(self._audit_log, "rb") as f:
+                line_count = sum(1 for _ in f)
+        except OSError:
+            return
+        if line_count < self.MAX_AUDIT_LINES:
+            return
+        # Rotate: active → .1 (overwrite older .1)
+        rotated = f"{self._audit_log}.1"
+        try:
+            if os.path.exists(rotated):
+                os.remove(rotated)
+            os.replace(self._audit_log, rotated)
+            try:
+                os.chmod(rotated, stat.S_IRUSR | stat.S_IWUSR)
+            except (OSError, AttributeError):
+                pass
+        except OSError as exc:
+            logger.warning("Audit log rotation failed: %s", exc)
 
     def get_audit_history(self, limit: int = 50) -> List[dict]:
         if not os.path.exists(self._audit_log):
@@ -551,6 +652,8 @@ class CredentialRotationScheduler:
     credentials remain overdue.
     """
 
+    MIN_INTERVAL_SECONDS = 60  # Lower bound on tick interval
+
     def __init__(
         self,
         notification_callback: Callable[[str], None],
@@ -558,7 +661,14 @@ class CredentialRotationScheduler:
         base_dir: str = None,
     ):
         self._callback = notification_callback
-        self._interval = max(check_interval_hours * 3600, 60)  # minimum 1 minute
+        raw_interval = check_interval_hours * 3600
+        self._interval = max(raw_interval, self.MIN_INTERVAL_SECONDS)
+        if raw_interval < self.MIN_INTERVAL_SECONDS:
+            logger.warning(
+                "check_interval_hours=%.4f clamped to %ds minimum",
+                check_interval_hours,
+                self.MIN_INTERVAL_SECONDS,
+            )
         self._manager = SecureCredentialManager(base_dir)
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -581,19 +691,28 @@ class CredentialRotationScheduler:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5)
+            if self._thread.is_alive():
+                logger.warning(
+                    "Credential rotation scheduler thread did not exit within 5s"
+                )
+                return
         logger.info("Credential rotation scheduler stopped")
+
+    def _tick(self) -> None:
+        """Single check + dedup-callback cycle. Extracted so tests can exercise
+        the real dedup path without simulating it."""
+        try:
+            warning = self._manager.check_rotation_warning()
+            if warning and warning != self._last_warning:
+                logger.warning(warning)
+                self._callback(warning)
+            self._last_warning = warning
+        except Exception as exc:
+            logger.error("Rotation scheduler check failed: %s", exc)
 
     def _run(self) -> None:
         while not self._stop_event.is_set():
-            try:
-                warning = self._manager.check_rotation_warning()
-                # Only notify when warning appears or changes (de-dup)
-                if warning and warning != self._last_warning:
-                    logger.warning(warning)
-                    self._callback(warning)
-                self._last_warning = warning
-            except Exception as exc:
-                logger.error("Rotation scheduler check failed: %s", exc)
+            self._tick()
             self._stop_event.wait(timeout=self._interval)
 
     def check_now(self) -> Optional[str]:
@@ -627,26 +746,28 @@ def get_credentials() -> Optional[Tuple[str, str]]:
     if manager.has_plaintext_credentials():
         if manager.migrate_from_plaintext():
             return manager.decrypt_credentials()
-        else:
-            # Plaintext fallback: migration failed (e.g. vault write permission
-            # denied). Return plaintext creds rather than locking the user out.
-            logger.warning(
-                "Encrypted vault write failed — falling back to plaintext credentials. "
-                "Fix vault permissions and re-run to migrate."
-            )
-            try:
-                base_dir = os.path.dirname(os.path.abspath(__file__))
-                with open(
-                    os.path.join(base_dir, "r_key.txt"), "r", encoding="utf-8"
-                ) as f:
-                    api_key = f.read().strip()
-                with open(
-                    os.path.join(base_dir, "r_secret.txt"), "r", encoding="utf-8"
-                ) as f:
-                    private_key = f.read().strip()
-                return api_key, private_key
-            except OSError:
-                pass
+        # Plaintext fallback: migration failed (e.g. vault write permission
+        # denied). Return plaintext creds rather than locking the user out.
+        # Logged at error level so the degraded security posture is visible.
+        logger.error(
+            "SECURITY DEGRADATION: encrypted vault write failed — returning "
+            "PLAINTEXT credentials. Callers cannot distinguish vault-backed "
+            "from plaintext via this API. Fix vault permissions and re-run "
+            "to migrate."
+        )
+        try:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            with open(
+                os.path.join(base_dir, "r_key.txt"), "r", encoding="utf-8"
+            ) as f:
+                api_key = f.read().strip()
+            with open(
+                os.path.join(base_dir, "r_secret.txt"), "r", encoding="utf-8"
+            ) as f:
+                private_key = f.read().strip()
+            return api_key, private_key
+        except OSError:
+            pass
 
     return None
 
@@ -655,15 +776,20 @@ def validate_credentials_on_startup(
     permission_fetcher: Optional[Callable[[], List[str]]] = None,
     require_trading: bool = True,
     notify_rotation: Optional[Callable[[str], None]] = None,
+    base_dir: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
     Startup validation: checks permission audit AND rotation status.
 
+    Args:
+        base_dir: Override the default base directory for the credential
+            vault and audit log. Useful for tests and non-default installs.
+
     Returns:
         (audit_passed: bool, message: str)
     """
-    manager = SecureCredentialManager()
-    validator = PermissionValidator()
+    manager = SecureCredentialManager(base_dir)
+    validator = PermissionValidator(base_dir)
     messages = []
 
     warning = manager.check_rotation_warning()

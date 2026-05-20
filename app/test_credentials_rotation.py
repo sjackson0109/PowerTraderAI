@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import stat
 import tempfile
 import time
 import unittest
@@ -38,14 +39,19 @@ class TestCredentialMetadata(unittest.TestCase):
         self.assertEqual(meta.rotation_interval_days, meta2.rotation_interval_days)
 
     def test_from_dict_handles_corrupt_metadata(self):
-        """TypeError on missing required fields should be caught by _load_metadata."""
-        mgr = SecureCredentialManager(tempfile.mkdtemp())
+        """Missing required fields should be caught by _load_metadata."""
+        tmpdir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmpdir, ignore_errors=True)
+        mgr = SecureCredentialManager(tmpdir)
         # Write partial/corrupt metadata
         with open(mgr.metadata_file, "w") as f:
             json.dump({"created_at": 0}, f)  # missing required fields
-        result = mgr._load_metadata()
-        self.assertIsNone(result)
-        shutil.rmtree(mgr.base_dir, ignore_errors=True)
+        self.assertIsNone(mgr._load_metadata())
+
+    def test_from_dict_raises_value_error_on_missing_fields(self):
+        """from_dict must raise ValueError (not opaque TypeError) for missing fields."""
+        with self.assertRaises(ValueError):
+            CredentialMetadata.from_dict({"created_at": 0})
 
 
 class TestSecureCredentialManager(unittest.TestCase):
@@ -110,6 +116,8 @@ class TestSecureCredentialManager(unittest.TestCase):
     def test_rotate_restores_metadata_on_failure(self):
         """Rotation rollback must restore metadata alongside ciphertext files."""
         self.mgr.encrypt_credentials("OLD_KEY", "OLD_SECRET", rotation_interval_days=90)
+        pre_meta = self.mgr._load_metadata()
+        self.assertIsNotNone(pre_meta)
 
         # Corrupt the manager to force failure during encrypt
         original = self.mgr._atomic_write_binary
@@ -122,11 +130,18 @@ class TestSecureCredentialManager(unittest.TestCase):
             return original(path, data)
 
         self.mgr._atomic_write_binary = failing_write
-        result = self.mgr.rotate_credentials("NEW_KEY", "NEW_SECRET")
+        result = self.mgr.rotate_credentials(
+            "NEW_KEY", "NEW_SECRET", rotation_interval_days=30
+        )
         self.assertFalse(result)
-        # Should still decrypt old credentials
+        # Ciphertext: old credentials still decryptable
         creds = self.mgr.decrypt_credentials()
         self.assertEqual(creds[0], "OLD_KEY")
+        # Metadata: rotation_interval_days + rotation_due_at unchanged
+        post_meta = self.mgr._load_metadata()
+        self.assertEqual(post_meta.rotation_interval_days, pre_meta.rotation_interval_days)
+        self.assertEqual(post_meta.rotation_due_at, pre_meta.rotation_due_at)
+        self.assertEqual(post_meta.created_at, pre_meta.created_at)
 
     def test_no_rotation_warning_when_fresh(self):
         self.mgr.encrypt_credentials("K", "S", rotation_interval_days=90)
@@ -225,6 +240,11 @@ class TestPermissionValidator(unittest.TestCase):
         with open(log_path) as f:
             entry = json.loads(f.readline())
         self.assertIn("audit_passed", entry)
+        # Permission bits: 0600 (user rw only). POSIX-only — chmod is a no-op
+        # on Windows so st_mode reflects ACLs, not unix bits.
+        if os.name == "posix":
+            mode = stat.S_IMODE(os.stat(log_path).st_mode)
+            self.assertEqual(mode, stat.S_IRUSR | stat.S_IWUSR)
 
     def test_audit_history_returned(self):
         self.validator.validate(None)
@@ -304,7 +324,8 @@ class TestCredentialRotationScheduler(unittest.TestCase):
         self.assertIn("OVERDUE", warning)
 
     def test_dedup_callback_not_repeated(self):
-        """Same warning should not trigger callback twice."""
+        """Same warning should not trigger callback twice. Exercises the
+        real _tick() path so a regression in dedup logic would fail this test."""
         cb = MagicMock()
         mgr = SecureCredentialManager(self.tmpdir)
         meta = CredentialMetadata(
@@ -317,19 +338,40 @@ class TestCredentialRotationScheduler(unittest.TestCase):
             cb, check_interval_hours=24, base_dir=self.tmpdir
         )
 
-        # Simulate two consecutive scheduler ticks manually
-        warning1 = sched._manager.check_rotation_warning()
-        if warning1 and warning1 != sched._last_warning:
-            cb(warning1)
-            sched._last_warning = warning1
+        sched._tick()  # first tick — should fire
+        sched._tick()  # second tick — same warning, dedup'd
 
-        warning2 = sched._manager.check_rotation_warning()
-        if warning2 and warning2 != sched._last_warning:
-            cb(warning2)
-            sched._last_warning = warning2
-
-        # Same message — callback should have been called only once
         cb.assert_called_once()
+
+    def test_tick_fires_on_warning_change(self):
+        """When warning text changes, callback fires again."""
+        cb = MagicMock()
+        mgr = SecureCredentialManager(self.tmpdir)
+        sched = CredentialRotationScheduler(
+            cb, check_interval_hours=24, base_dir=self.tmpdir
+        )
+
+        # Seed overdue → tick should fire
+        mgr._save_metadata(
+            CredentialMetadata(
+                created_at=time.time() - 200 * 86400,
+                last_rotated_at=time.time() - 200 * 86400,
+                rotation_due_at=time.time() - 1,
+            )
+        )
+        sched._tick()
+        self.assertEqual(cb.call_count, 1)
+
+        # Replace with near-due → different message, callback fires again
+        mgr._save_metadata(
+            CredentialMetadata(
+                created_at=time.time(),
+                last_rotated_at=time.time(),
+                rotation_due_at=time.time() + 3 * 86400,
+            )
+        )
+        sched._tick()
+        self.assertEqual(cb.call_count, 2)
 
 
 if __name__ == "__main__":

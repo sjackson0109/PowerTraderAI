@@ -367,7 +367,7 @@ class NeuralSignalTile(ttk.Frame):
             width=w,
             height=h,
             bg=self._normal_canvas_bg,
-            highlightthickness=1,
+            highlightthickness=2,
             highlightbackground=self._normal_border,
         )
         self.canvas.pack(padx=2, pady=(2, 0))
@@ -446,7 +446,7 @@ class NeuralSignalTile(ttk.Frame):
                 self.canvas.configure(
                     bg=self._normal_canvas_bg,
                     highlightbackground=self._normal_border,
-                    highlightthickness=1,
+                    highlightthickness=2,
                 )
                 self.title_lbl.configure(foreground=self._normal_fg)
                 self.value_lbl.configure(foreground=self._normal_fg)
@@ -2053,9 +2053,8 @@ class PowerTraderHub(tk.Tk):
         # if bool(self.settings.get("auto_start_scripts", False)):
         #     self.start_all_scripts()
 
-        # Auto-start API server if enabled
-        if API_SERVER_AVAILABLE and self.settings.get("api_server_enabled", False):
-            self.start_api_server()
+        # NOTE: API server auto-start is handled inside _init_api_server() above.
+        # No second toggle here — that would risk a double-bind on the same port.
 
         self.after(250, self._tick)
 
@@ -2418,7 +2417,7 @@ class PowerTraderHub(tk.Tk):
             relief="flat",
         )
 
-        m_scripts = tk.Menu(
+        m_file = tk.Menu(
             menubar,
             tearoff=0,
             bg=DARK_BG2,
@@ -2426,15 +2425,8 @@ class PowerTraderHub(tk.Tk):
             activebackground=DARK_SELECT_BG,
             activeforeground=DARK_SELECT_FG,
         )
-        m_scripts.add_command(label="Start All", command=self.start_all_scripts)
-        m_scripts.add_command(label="Stop All", command=self.stop_all_scripts)
-        m_scripts.add_separator()
-        m_scripts.add_command(label="Start Neural Runner", command=self.start_neural)
-        m_scripts.add_command(label="Stop Neural Runner", command=self.stop_neural)
-        m_scripts.add_separator()
-        m_scripts.add_command(label="Start Trader", command=self.start_trader)
-        m_scripts.add_command(label="Stop Trader", command=self.stop_trader)
-        menubar.add_cascade(label="Scripts", menu=m_scripts)
+        m_file.add_command(label="Exit", command=self._on_close)
+        menubar.add_cascade(label="File", menu=m_file)
 
         m_settings = tk.Menu(
             menubar,
@@ -2463,17 +2455,6 @@ class PowerTraderHub(tk.Tk):
         m_help.add_command(label="About PowerTrader", command=self.show_about)
         menubar.add_cascade(label="Help", menu=m_help)
 
-        m_file = tk.Menu(
-            menubar,
-            tearoff=0,
-            bg=DARK_BG2,
-            fg=DARK_FG,
-            activebackground=DARK_SELECT_BG,
-            activeforeground=DARK_SELECT_FG,
-        )
-        m_file.add_command(label="Exit", command=self._on_close)
-        menubar.add_cascade(label="File", menu=m_file)
-
         self.config(menu=menubar)
 
     def _build_layout(self) -> None:
@@ -2494,9 +2475,9 @@ class PowerTraderHub(tk.Tk):
         except Exception:
             pass
 
-        # LEFT: using direct grid layout (no PanedWindow)
-        # left_split = ttk.Panedwindow(left, orient="vertical")
-        # left_split.pack(fill="both", expand=True, padx=8, pady=8)
+        # LEFT: vertical split (Controls on top, Live Output underneath)
+        left_split = ttk.Panedwindow(left, orient="vertical")
+        left_split.pack(fill="both", expand=True, padx=8, pady=8)
 
         # RIGHT: vertical split (Charts on top, Trades+History underneath)
         right_split = ttk.Panedwindow(right, orient="vertical")
@@ -2504,7 +2485,7 @@ class PowerTraderHub(tk.Tk):
 
         # Keep references so we can clamp sash positions later
         self._pw_outer = outer
-        # self._pw_left_split = left_split  # No longer using PanedWindow for left side
+        self._pw_left_split = left_split
         self._pw_right_split = right_split
 
         # Clamp panes when the user releases a sash or the window resizes
@@ -2517,17 +2498,16 @@ class PowerTraderHub(tk.Tk):
             ),
         )
 
-        # left_split bindings removed since using grid layout
-        # left_split.bind(
-        #     "<Configure>", lambda e: self._schedule_paned_clamp(self._pw_left_split)
-        # )
-        # left_split.bind(
-        #     "<ButtonRelease-1>",
-        #     lambda e: (
-        #         setattr(self, "_user_moved_left_split", True),
-        #         self._schedule_paned_clamp(self._pw_left_split),
-        #     ),
-        # )
+        left_split.bind(
+            "<Configure>", lambda e: self._schedule_paned_clamp(self._pw_left_split)
+        )
+        left_split.bind(
+            "<ButtonRelease-1>",
+            lambda e: (
+                setattr(self, "_user_moved_left_split", True),
+                self._schedule_paned_clamp(self._pw_left_split),
+            ),
+        )
 
         right_split.bind(
             "<Configure>", lambda e: self._schedule_paned_clamp(self._pw_right_split)
@@ -2574,7 +2554,7 @@ class PowerTraderHub(tk.Tk):
             "<ButtonRelease-1>",
             lambda e: (
                 self._schedule_paned_clamp(getattr(self, "_pw_outer", None)),
-                # self._schedule_paned_clamp(getattr(self, "_pw_left_split", None)),  # Removed - using grid layout
+                self._schedule_paned_clamp(getattr(self, "_pw_left_split", None)),
                 self._schedule_paned_clamp(getattr(self, "_pw_right_split", None)),
             ),
         )
@@ -2582,7 +2562,7 @@ class PowerTraderHub(tk.Tk):
         # ----------------------------
         # LEFT: 1) Controls / Health (pane)
         # ----------------------------
-        top_controls = ttk.LabelFrame(left, text="Controls / Health")
+        top_controls = ttk.LabelFrame(left_split, text="Controls / Health")
 
         # Create a main container for organized sections
         main_container = ttk.Frame(top_controls)
@@ -2596,8 +2576,8 @@ class PowerTraderHub(tk.Tk):
             1, weight=0, minsize=90
         )  # Training section - compact
         main_container.grid_rowconfigure(
-            2, weight=0, minsize=70
-        )  # Thinking section - compact
+            2, weight=0, minsize=0
+        )  # Thinking section - sizes to content exactly
         main_container.grid_columnconfigure(
             0, weight=2, minsize=180
         )  # Account column - wider with minimum
@@ -2664,9 +2644,7 @@ class PowerTraderHub(tk.Tk):
         trading_section.grid(row=1, column=1, sticky="nsew", padx=(3, 0), pady=(3, 3))
 
         # Thinking section: row 2, column 0, 2x wide, 1x high
-        neural_section = ttk.LabelFrame(
-            main_container, text="Thinking (Signals)", font=("TkDefaultFont", 7)
-        )
+        neural_section = ttk.LabelFrame(main_container, text="Thinking (Signals)")
         neural_section.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(6, 0))
 
         # Title row with training counter and buttons
@@ -2756,14 +2734,14 @@ class PowerTraderHub(tk.Tk):
 
         # Neural levels display (compact version for the section)
         neural_levels_frame = ttk.Frame(neural_section)
-        neural_levels_frame.pack(fill="x", expand=False, padx=6, pady=(0, 6))
+        neural_levels_frame.pack(fill="x", padx=6, pady=(0, 6))
 
         # ttk.Label(neural_levels_frame, text="Neural Levels (0-7):").pack(anchor="w")
 
-        # Scrollable area for neural tiles in the neural section
+        # Tile area - no scrollbar; canvas auto-sizes to tile content
         neural_viewport = ttk.Frame(neural_levels_frame)
-        neural_viewport.pack(fill="x", expand=False, pady=(2, 0))
-        neural_viewport.grid_rowconfigure(0, weight=1)
+        neural_viewport.pack(fill="x", pady=(2, 0))
+        neural_viewport.grid_rowconfigure(0, weight=0)
         neural_viewport.grid_columnconfigure(0, weight=1)
 
         self._neural_overview_canvas = tk.Canvas(
@@ -2772,21 +2750,9 @@ class PowerTraderHub(tk.Tk):
             highlightthickness=1,
             highlightbackground=DARK_BORDER,
             bd=0,
-            height=35,  # Very compact height to eliminate scrollbar
+            height=110,  # Initial value; auto-updated by _fit_neural_canvas
         )
-        self._neural_overview_canvas.grid(row=0, column=0, sticky="nsew")
-
-        # Remove scrollbar to eliminate mini scrollbar
-        # self._neural_overview_scroll = ttk.Scrollbar(
-        #     neural_viewport,
-        #     orient="vertical",
-        #     command=self._neural_overview_canvas.yview,
-        # )
-        # self._neural_overview_scroll.grid(row=0, column=1, sticky="ns")
-
-        # self._neural_overview_canvas.configure(
-        #     yscrollcommand=self._neural_overview_scroll.set
-        # )
+        self._neural_overview_canvas.grid(row=0, column=0, sticky="ew")
 
         self.neural_wrap = WrapFrame(self._neural_overview_canvas)
         self._neural_overview_window = self._neural_overview_canvas.create_window(
@@ -2795,65 +2761,35 @@ class PowerTraderHub(tk.Tk):
             anchor="nw",
         )
 
-        def _update_neural_overview_scrollbars(event=None) -> None:
-            """Update scrollregion + hide/show the scrollbar depending on overflow."""
+        def _fit_neural_canvas(event=None) -> None:
+            """Resize the canvas height to exactly match the tile content — no scrollbar."""
             try:
-                c = self._neural_overview_canvas
-                win = self._neural_overview_window
-
-                c.update_idletasks()
-                bbox = c.bbox(win)
-                if not bbox:
-                    self._neural_overview_scroll.grid_remove()
-                    return
-
-                c.configure(scrollregion=bbox)
-                content_h = int(bbox[3] - bbox[1])
-                view_h = int(c.winfo_height())
-
-                if content_h > (view_h + 1):
-                    self._neural_overview_scroll.grid()
-                else:
-                    self._neural_overview_scroll.grid_remove()
-                    try:
-                        c.yview_moveto(0)
-                    except Exception:
-                        pass
+                self.neural_wrap.update_idletasks()
+                h = self.neural_wrap.winfo_reqheight()
+                if h > 1:
+                    c = self._neural_overview_canvas
+                    c.configure(
+                        height=h,
+                        scrollregion=(0, 0, c.winfo_reqwidth(), h),
+                    )
             except Exception:
                 pass
 
         def _on_neural_canvas_configure(e) -> None:
-            # Keep the inner wrap frame exactly the canvas width so wrapping is correct.
+            # Keep the inner wrap frame exactly the canvas width so tiles wrap correctly.
             try:
                 self._neural_overview_canvas.itemconfigure(
                     self._neural_overview_window, width=int(e.width)
                 )
             except Exception:
                 pass
-            _update_neural_overview_scrollbars()
+            _fit_neural_canvas()
 
         self._neural_overview_canvas.bind(
             "<Configure>", _on_neural_canvas_configure, add="+"
         )
-        self.neural_wrap.bind(
-            "<Configure>", _update_neural_overview_scrollbars, add="+"
-        )
-        self._update_neural_overview_scrollbars = _update_neural_overview_scrollbars
-
-        # Mousewheel scroll inside the tiles area
-        def _wheel(e):
-            try:
-                if self._neural_overview_scroll.winfo_ismapped():
-                    self._neural_overview_canvas.yview_scroll(
-                        int(-1 * (e.delta / 120)), "units"
-                    )
-            except Exception:
-                pass
-
-        self._neural_overview_canvas.bind(
-            "<Enter>", lambda _e: self._neural_overview_canvas.focus_set(), add="+"
-        )
-        self._neural_overview_canvas.bind("<MouseWheel>", _wheel, add="+")
+        self.neural_wrap.bind("<Configure>", _fit_neural_canvas, add="+")
+        self._fit_neural_canvas_height = _fit_neural_canvas
 
         # Initialize neural tiles dictionary and cache for this neural section
         self.neural_tiles: Dict[str, NeuralSignalTile] = {}
@@ -2862,7 +2798,7 @@ class PowerTraderHub(tk.Tk):
         # Build the neural tiles
         self._rebuild_neural_overview()
         try:
-            self.after_idle(self._update_neural_overview_scrollbars)
+            self.after_idle(self._fit_neural_canvas_height)
         except Exception:
             pass
 
@@ -2923,7 +2859,7 @@ class PowerTraderHub(tk.Tk):
         self._live_log_font = _base.copy()
         self._live_log_font.configure(size=8)
 
-        logs_frame = ttk.LabelFrame(left, text="Live Output")
+        logs_frame = ttk.LabelFrame(left_split, text="Live Output")
         self.logs_nb = ttk.Notebook(logs_frame)
         self.logs_nb.pack(fill="both", expand=True, padx=6, pady=6)
 
@@ -3029,32 +2965,33 @@ class PowerTraderHub(tk.Tk):
         self.trader_text.configure(yscrollcommand=trader_scroll.set)
         self.trader_text.pack(side="left", fill="both", expand=True)
         trader_scroll.pack(side="right", fill="y")
-        # Add left panes using grid layout instead of PanedWindow for rowspan control
-        # Configure left container for grid layout
-        left.grid_rowconfigure(
-            0, weight=0, minsize=320
-        )  # Controls section - compact fixed size
-        left.grid_rowconfigure(
-            1, weight=1
-        )  # Live Output section - expands to fill space
-        left.grid_columnconfigure(0, weight=1)
+        # Add left panes to vertical PanedWindow (enables drag sash between Controls and Live Output)
+        left_split.add(top_controls, weight=0)
+        left_split.add(logs_frame, weight=1)
+        try:
+            left_split.paneconfigure(top_controls, minsize=280)
+            left_split.paneconfigure(logs_frame, minsize=80)
+        except Exception:
+            pass
 
-        # Add sections to grid
-        top_controls.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
-        logs_frame.grid(row=1, column=0, sticky="nsew", padx=8, pady=(4, 8))
+        def _init_left_split_sash_once():
+            try:
+                if getattr(self, "_did_init_left_split_sash", False):
+                    return
+                if getattr(self, "_user_moved_left_split", False):
+                    self._did_init_left_split_sash = True
+                    return
+                total = left_split.winfo_height()
+                if total <= 2:
+                    self.after(10, _init_left_split_sash_once)
+                    return
+                target = min(450, total - 80)
+                left_split.sashpos(0, int(target))
+                self._did_init_left_split_sash = True
+            except Exception:
+                pass
 
-        # Grid layout configuration (no longer using PanedWindow for left side)
-        # left_split PanedWindow is now only used as a container
-
-        # Left side sash initialization removed since using grid layout
-        # def _init_left_split_sash_once():
-        #     try:
-        #         if getattr(self, "_did_init_left_split_sash", False):
-        #             return
-        #         # ... (left split sash code removed)
-        #     except Exception:
-        #         pass
-        # self.after_idle(_init_left_split_sash_once)
+        self.after_idle(_init_left_split_sash_once)
 
         # ----------------------------
         # RIGHT TOP: Charts (tabs)
@@ -6866,7 +6803,7 @@ Platform: {sys.platform}
             pass
 
         try:
-            fn = getattr(self, "_update_neural_overview_scrollbars", None)
+            fn = getattr(self, "_fit_neural_canvas_height", None)
             if callable(fn):
                 self.after_idle(fn)
         except Exception:
@@ -8521,10 +8458,30 @@ Platform: {sys.platform}
 
                 # Restart API server if settings changed
                 if API_SERVER_AVAILABLE:
-                    if api_enabled_var.get():
-                        self.start_api_server()
-                    else:
-                        self.stop_api_server()
+                    # Sync instance fields from newly-saved settings before toggling
+                    _old_host = self._api_server_host
+                    _old_port = self._api_server_port
+                    self._api_server_enabled = bool(
+                        self.settings.get("api_server_enabled", False)
+                    )
+                    self._api_server_host = self.settings.get(
+                        "api_server_host", "127.0.0.1"
+                    )
+                    self._api_server_port = int(
+                        self.settings.get("api_server_port", 8080)
+                    )
+                    # If host/port changed, tear down the old server so _init_api_server
+                    # will recreate it with the correct address on the next toggle.
+                    if (
+                        _old_host != self._api_server_host
+                        or _old_port != self._api_server_port
+                    ) and getattr(self, "_api_server", None):
+                        try:
+                            self._api_server.stop_server()
+                        except Exception:
+                            pass
+                        self._api_server = None
+                    self.toggle_api_server(self._api_server_enabled)
 
                 # If new coin(s) were added and their training folder doesn't exist yet,
                 # create the folder and copy neural_trainer.py into it RIGHT AFTER saving settings.

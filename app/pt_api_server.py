@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from flask import Flask, jsonify, request
+from werkzeug.serving import make_server
 from flask_cors import CORS
 from pt_logging import get_logger
 
@@ -34,6 +35,7 @@ class PowerTraderAPIServer:
 
         # Server state
         self._server_thread = None
+        self._httpd = None
         self._is_running = False
 
         self._setup_routes()
@@ -362,31 +364,51 @@ class PowerTraderAPIServer:
             logger.warning("API server is already running")
             return
 
+        # Set the flag BEFORE starting the thread so any immediate stop_server()
+        # or second start_server() call sees the correct state during thread startup.
+        self._is_running = True
+
         def run_server():
             try:
                 logger.info(
                     f"Starting PowerTrader API server on {self.host}:{self.port}"
                 )
-                self.app.run(host=self.host, port=self.port, debug=False, threaded=True)
+                self._httpd = make_server(self.host, self.port, self.app, threaded=True)
+                self._httpd.serve_forever()
             except Exception as e:
                 logger.error(f"API server error: {e}")
+                self._is_running = False
             finally:
+                if self._httpd is not None:
+                    try:
+                        self._httpd.server_close()
+                    except Exception:
+                        pass
+                self._httpd = None
                 self._is_running = False
 
         self._server_thread = threading.Thread(target=run_server, daemon=True)
         self._server_thread.start()
-        self._is_running = True
-
-        logger.info(f"PowerTrader API server started at http://{self.host}:{self.port}")
+        logger.info(
+            f"PowerTrader API server starting at http://{self.host}:{self.port}"
+        )
 
     def stop_server(self):
-        """Stop the API server."""
-        if not self._is_running:
+        """Stop the API server, releasing the bound socket."""
+        # Gate on _httpd rather than _is_running to handle the brief startup
+        # window where the thread is running but _is_running may lag.
+        if self._httpd is None and not self._is_running:
             return
-
-        # Flask doesn't have a clean shutdown method, so we'll just mark as stopped
+        try:
+            if self._httpd is not None:
+                self._httpd.shutdown()
+        except Exception as e:
+            logger.warning(f"API server shutdown error: {e}")
+        # Wait briefly for the thread to release the socket before returning.
+        if self._server_thread is not None:
+            self._server_thread.join(timeout=3)
         self._is_running = False
-        logger.info("API server stop requested")
+        logger.info("API server stopped")
 
     def is_running(self) -> bool:
         """Check if the server is running."""

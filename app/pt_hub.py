@@ -3,6 +3,7 @@ from __future__ import annotations
 import bisect
 import glob
 import json
+import logging
 import math
 import os
 import queue
@@ -75,6 +76,13 @@ try:
 except ImportError:
     DEPENDENCY_CHECKER_AVAILABLE = False
     print("Warning: Dependency checker not available.")
+
+# Secure credential manager (encrypted vault for API key + secret)
+try:
+    from pt_credentials import SecureCredentialManager
+except ImportError:
+    SecureCredentialManager = None  # type: ignore[assignment]
+    print("Warning: pt_credentials not available — encrypted vault disabled.")
 
 # API Server imports
 try:
@@ -7422,6 +7430,30 @@ Platform: {sys.platform}
             return key_path, secret_path
 
         def _read_api_files() -> Tuple[str, str]:
+            # Try encrypted vault first; only fall back to plaintext when no
+            # vault exists (legacy install). If the vault exists but is
+            # unreadable, surface the error rather than silently returning
+            # empty credentials (plaintext files may already be deleted).
+            _logger = logging.getLogger(__name__)
+            if SecureCredentialManager is not None:
+                mgr = SecureCredentialManager(self.project_dir)
+                if mgr.has_encrypted_credentials():
+                    try:
+                        creds = mgr.decrypt_credentials()
+                        if creds:
+                            return creds[0], creds[1]
+                        raise RuntimeError(
+                            "Credential vault exists but decrypt_credentials returned None. "
+                            "The vault may be corrupted or was encrypted on a different machine."
+                        )
+                    except RuntimeError:
+                        raise  # surface vault-broken error to caller
+                    except Exception as exc:
+                        _logger.warning("Encrypted vault read failed: %s", exc)
+                        raise RuntimeError(
+                            f"Credential vault is present but unreadable: {exc}"
+                        ) from exc
+            # Plaintext fallback for legacy installs (no vault present)
             key_path, secret_path = _api_paths()
             try:
                 with open(key_path, "r", encoding="utf-8") as f:
@@ -8091,15 +8123,46 @@ Platform: {sys.platform}
                     pass
 
                 try:
-                    # Use atomic writes to prevent corruption during concurrent access
-                    _atomic_write_text(key_path, api_key)
-                    _atomic_write_text(secret_path, priv_b64)
+                    # Encrypt credentials via SecureCredentialManager
+                    # (replaces plaintext r_key.txt / r_secret.txt writes)
+                    if SecureCredentialManager is None:
+                        raise RuntimeError(
+                            "pt_credentials module not available — "
+                            "cannot encrypt credentials."
+                        )
+                    mgr = SecureCredentialManager(self.project_dir)
+                    if not mgr.encrypt_credentials(api_key, priv_b64):
+                        raise RuntimeError(
+                            "Encryption failed - check disk space and permissions."
+                        )
                 except Exception as e:
                     messagebox.showerror(
                         "Save failed",
-                        f"Couldn't write the credential files.\n\nError:\n{e}",
+                        f"Couldn't save credentials.\n\nError:\n{e}",
                     )
                     return
+
+                # Secure-erase stale plaintext files before unlinking
+                _hub_logger = logging.getLogger(__name__)
+                for stale_path in (key_path, secret_path):
+                    if not os.path.isfile(stale_path):
+                        continue
+                    try:
+                        size = os.path.getsize(stale_path)
+                        with open(stale_path, "r+b") as sf:
+                            sf.write(b"\x00" * size)
+                            sf.flush()
+                            os.fsync(sf.fileno())
+                    except OSError:
+                        pass  # best-effort; still remove
+                    try:
+                        os.remove(stale_path)
+                    except OSError as rm_exc:
+                        _hub_logger.warning(
+                            "Could not remove stale plaintext credential %s: %s",
+                            stale_path,
+                            rm_exc,
+                        )
 
                 _refresh_api_status()
                 messagebox.showinfo(

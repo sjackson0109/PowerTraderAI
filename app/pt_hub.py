@@ -2045,9 +2045,8 @@ class PowerTraderHub(tk.Tk):
         # if bool(self.settings.get("auto_start_scripts", False)):
         #     self.start_all_scripts()
 
-        # Auto-start API server if enabled
-        if API_SERVER_AVAILABLE and self.settings.get("api_server_enabled", False):
-            self.toggle_api_server(True)
+        # NOTE: API server auto-start is handled inside _init_api_server() above.
+        # No second toggle here — that would risk a double-bind on the same port.
 
         self.after(250, self._tick)
 

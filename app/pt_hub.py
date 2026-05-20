@@ -2765,17 +2765,17 @@ class PowerTraderHub(tk.Tk):
         )
         self._neural_overview_canvas.grid(row=0, column=0, sticky="nsew")
 
-        # Remove scrollbar to eliminate mini scrollbar
-        # self._neural_overview_scroll = ttk.Scrollbar(
-        #     neural_viewport,
-        #     orient="vertical",
-        #     command=self._neural_overview_canvas.yview,
-        # )
-        # self._neural_overview_scroll.grid(row=0, column=1, sticky="ns")
+        self._neural_overview_scroll = ttk.Scrollbar(
+            neural_viewport,
+            orient="vertical",
+            command=self._neural_overview_canvas.yview,
+        )
+        self._neural_overview_scroll.grid(row=0, column=1, sticky="ns")
+        self._neural_overview_scroll.grid_remove()  # Hidden by default; shown only if tiles overflow
 
-        # self._neural_overview_canvas.configure(
-        #     yscrollcommand=self._neural_overview_scroll.set
-        # )
+        self._neural_overview_canvas.configure(
+            yscrollcommand=self._neural_overview_scroll.set
+        )
 
         self.neural_wrap = WrapFrame(self._neural_overview_canvas)
         self._neural_overview_window = self._neural_overview_canvas.create_window(
@@ -8456,7 +8456,30 @@ Platform: {sys.platform}
 
                 # Restart API server if settings changed
                 if API_SERVER_AVAILABLE:
-                    self.toggle_api_server(api_enabled_var.get())
+                    # Sync instance fields from newly-saved settings before toggling
+                    _old_host = self._api_server_host
+                    _old_port = self._api_server_port
+                    self._api_server_enabled = bool(
+                        self.settings.get("api_server_enabled", False)
+                    )
+                    self._api_server_host = self.settings.get(
+                        "api_server_host", "127.0.0.1"
+                    )
+                    self._api_server_port = int(
+                        self.settings.get("api_server_port", 8080)
+                    )
+                    # If host/port changed, tear down the old server so _init_api_server
+                    # will recreate it with the correct address on the next toggle.
+                    if (
+                        _old_host != self._api_server_host
+                        or _old_port != self._api_server_port
+                    ) and getattr(self, "_api_server", None):
+                        try:
+                            self._api_server.stop_server()
+                        except Exception:
+                            pass
+                        self._api_server = None
+                    self.toggle_api_server(self._api_server_enabled)
 
                 # If new coin(s) were added and their training folder doesn't exist yet,
                 # create the folder and copy neural_trainer.py into it RIGHT AFTER saving settings.

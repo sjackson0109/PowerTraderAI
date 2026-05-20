@@ -296,7 +296,9 @@ class SecureCredentialManager:
                 private_key = cipher.decrypt(secret_blob).decode("utf-8").strip()
                 return api_key, private_key
             except Exception as exc:
-                logger.debug("Primary decrypt failed, trying legacy derivation: %s", exc)
+                logger.debug(
+                    "Primary decrypt failed, trying legacy derivation: %s", exc
+                )
 
             # Fallback: legacy Windows derivation
             legacy_pw = self._get_legacy_machine_password()
@@ -757,9 +759,7 @@ def get_credentials() -> Optional[Tuple[str, str]]:
         )
         try:
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            with open(
-                os.path.join(base_dir, "r_key.txt"), "r", encoding="utf-8"
-            ) as f:
+            with open(os.path.join(base_dir, "r_key.txt"), "r", encoding="utf-8") as f:
                 api_key = f.read().strip()
             with open(
                 os.path.join(base_dir, "r_secret.txt"), "r", encoding="utf-8"

@@ -139,7 +139,9 @@ class TestSecureCredentialManager(unittest.TestCase):
         self.assertEqual(creds[0], "OLD_KEY")
         # Metadata: rotation_interval_days + rotation_due_at unchanged
         post_meta = self.mgr._load_metadata()
-        self.assertEqual(post_meta.rotation_interval_days, pre_meta.rotation_interval_days)
+        self.assertEqual(
+            post_meta.rotation_interval_days, pre_meta.rotation_interval_days
+        )
         self.assertEqual(post_meta.rotation_due_at, pre_meta.rotation_due_at)
         self.assertEqual(post_meta.created_at, pre_meta.created_at)
 

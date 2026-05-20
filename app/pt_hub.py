@@ -2782,7 +2782,7 @@ class PowerTraderHub(tk.Tk):
             "<Configure>", _on_neural_canvas_configure, add="+"
         )
         self.neural_wrap.bind("<Configure>", _fit_neural_canvas, add="+")
-        self._update_neural_overview_scrollbars = _fit_neural_canvas
+        self._fit_neural_canvas_height = _fit_neural_canvas
 
         # Initialize neural tiles dictionary and cache for this neural section
         self.neural_tiles: Dict[str, NeuralSignalTile] = {}
@@ -2791,7 +2791,7 @@ class PowerTraderHub(tk.Tk):
         # Build the neural tiles
         self._rebuild_neural_overview()
         try:
-            self.after_idle(self._update_neural_overview_scrollbars)
+            self.after_idle(self._fit_neural_canvas_height)
         except Exception:
             pass
 
@@ -6796,7 +6796,7 @@ Platform: {sys.platform}
             pass
 
         try:
-            fn = getattr(self, "_update_neural_overview_scrollbars", None)
+            fn = getattr(self, "_fit_neural_canvas_height", None)
             if callable(fn):
                 self.after_idle(fn)
         except Exception:

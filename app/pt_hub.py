@@ -2655,9 +2655,7 @@ class PowerTraderHub(tk.Tk):
         trading_section.grid(row=1, column=1, sticky="nsew", padx=(3, 0), pady=(3, 3))
 
         # Thinking section: row 2, column 0, 2x wide, 1x high
-        neural_section = ttk.LabelFrame(
-            main_container, text="Thinking (Signals)"
-        )
+        neural_section = ttk.LabelFrame(main_container, text="Thinking (Signals)")
         neural_section.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(6, 0))
 
         # Title row with training counter and buttons

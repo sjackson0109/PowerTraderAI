@@ -2587,8 +2587,8 @@ class PowerTraderHub(tk.Tk):
             1, weight=0, minsize=90
         )  # Training section - compact
         main_container.grid_rowconfigure(
-            2, weight=1, minsize=150
-        )  # Thinking section - grows to fit tile content
+            2, weight=0, minsize=0
+        )  # Thinking section - sizes to content exactly
         main_container.grid_columnconfigure(
             0, weight=2, minsize=180
         )  # Account column - wider with minimum
@@ -2745,14 +2745,14 @@ class PowerTraderHub(tk.Tk):
 
         # Neural levels display (compact version for the section)
         neural_levels_frame = ttk.Frame(neural_section)
-        neural_levels_frame.pack(fill="both", expand=True, padx=6, pady=(0, 6))
+        neural_levels_frame.pack(fill="x", padx=6, pady=(0, 6))
 
         # ttk.Label(neural_levels_frame, text="Neural Levels (0-7):").pack(anchor="w")
 
-        # Scrollable area for neural tiles in the neural section
+        # Tile area - no scrollbar; canvas auto-sizes to tile content
         neural_viewport = ttk.Frame(neural_levels_frame)
-        neural_viewport.pack(fill="both", expand=True, pady=(2, 0))
-        neural_viewport.grid_rowconfigure(0, weight=1)
+        neural_viewport.pack(fill="x", pady=(2, 0))
+        neural_viewport.grid_rowconfigure(0, weight=0)
         neural_viewport.grid_columnconfigure(0, weight=1)
 
         self._neural_overview_canvas = tk.Canvas(
@@ -2761,21 +2761,9 @@ class PowerTraderHub(tk.Tk):
             highlightthickness=1,
             highlightbackground=DARK_BORDER,
             bd=0,
-            height=110,  # Tall enough for one row of NeuralSignalTile (~52px bar + labels)
+            height=110,  # Initial value; auto-updated by _fit_neural_canvas
         )
-        self._neural_overview_canvas.grid(row=0, column=0, sticky="nsew")
-
-        self._neural_overview_scroll = ttk.Scrollbar(
-            neural_viewport,
-            orient="vertical",
-            command=self._neural_overview_canvas.yview,
-        )
-        self._neural_overview_scroll.grid(row=0, column=1, sticky="ns")
-        self._neural_overview_scroll.grid_remove()  # Hidden by default; shown only if tiles overflow
-
-        self._neural_overview_canvas.configure(
-            yscrollcommand=self._neural_overview_scroll.set
-        )
+        self._neural_overview_canvas.grid(row=0, column=0, sticky="ew")
 
         self.neural_wrap = WrapFrame(self._neural_overview_canvas)
         self._neural_overview_window = self._neural_overview_canvas.create_window(
@@ -2784,65 +2772,35 @@ class PowerTraderHub(tk.Tk):
             anchor="nw",
         )
 
-        def _update_neural_overview_scrollbars(event=None) -> None:
-            """Update scrollregion + hide/show the scrollbar depending on overflow."""
+        def _fit_neural_canvas(event=None) -> None:
+            """Resize the canvas height to exactly match the tile content — no scrollbar."""
             try:
-                c = self._neural_overview_canvas
-                win = self._neural_overview_window
-
-                c.update_idletasks()
-                bbox = c.bbox(win)
-                if not bbox:
-                    self._neural_overview_scroll.grid_remove()
-                    return
-
-                c.configure(scrollregion=bbox)
-                content_h = int(bbox[3] - bbox[1])
-                view_h = int(c.winfo_height())
-
-                if content_h > (view_h + 1):
-                    self._neural_overview_scroll.grid()
-                else:
-                    self._neural_overview_scroll.grid_remove()
-                    try:
-                        c.yview_moveto(0)
-                    except Exception:
-                        pass
+                self.neural_wrap.update_idletasks()
+                h = self.neural_wrap.winfo_reqheight()
+                if h > 1:
+                    c = self._neural_overview_canvas
+                    c.configure(
+                        height=h,
+                        scrollregion=(0, 0, c.winfo_reqwidth(), h),
+                    )
             except Exception:
                 pass
 
         def _on_neural_canvas_configure(e) -> None:
-            # Keep the inner wrap frame exactly the canvas width so wrapping is correct.
+            # Keep the inner wrap frame exactly the canvas width so tiles wrap correctly.
             try:
                 self._neural_overview_canvas.itemconfigure(
                     self._neural_overview_window, width=int(e.width)
                 )
             except Exception:
                 pass
-            _update_neural_overview_scrollbars()
+            _fit_neural_canvas()
 
         self._neural_overview_canvas.bind(
             "<Configure>", _on_neural_canvas_configure, add="+"
         )
-        self.neural_wrap.bind(
-            "<Configure>", _update_neural_overview_scrollbars, add="+"
-        )
-        self._update_neural_overview_scrollbars = _update_neural_overview_scrollbars
-
-        # Mousewheel scroll inside the tiles area
-        def _wheel(e):
-            try:
-                if self._neural_overview_scroll.winfo_ismapped():
-                    self._neural_overview_canvas.yview_scroll(
-                        int(-1 * (e.delta / 120)), "units"
-                    )
-            except Exception:
-                pass
-
-        self._neural_overview_canvas.bind(
-            "<Enter>", lambda _e: self._neural_overview_canvas.focus_set(), add="+"
-        )
-        self._neural_overview_canvas.bind("<MouseWheel>", _wheel, add="+")
+        self.neural_wrap.bind("<Configure>", _fit_neural_canvas, add="+")
+        self._update_neural_overview_scrollbars = _fit_neural_canvas
 
         # Initialize neural tiles dictionary and cache for this neural section
         self.neural_tiles: Dict[str, NeuralSignalTile] = {}

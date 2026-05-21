@@ -220,3 +220,7 @@ Thumbs.db
 desktop.ini
 app/security_audit.jsonl
 app/credential_audit.jsonl
+
+# Contributor working notes (not project docs)
+CLAUDE.md
+LEARNINGS.md

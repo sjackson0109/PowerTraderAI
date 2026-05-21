@@ -17,6 +17,7 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   create-release-artifact:
@@ -268,7 +269,7 @@ jobs:
             return ""
 
         setup(
-            name="PowerTraderAI+",
+            name="PowerTraderAI",
             version="${{ steps.version.outputs.PYTHON_VERSION }}",
             author="Simon Jackson",
             author_email="simon@jacksonfamily.me",

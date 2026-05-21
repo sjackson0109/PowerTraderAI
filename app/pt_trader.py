@@ -270,7 +270,7 @@ def _load_credentials_if_needed():
     if not API_KEY or not BASE64_PRIVATE_KEY:
         print(
             "\n[PowerTrader] Robinhood API credentials not found.\n"
-            "Open the GUI and go to Settings → Robinhood API → Setup / Update.\n"
+            "Open the GUI and go to Settings -> Robinhood API -> Setup / Update.\n"
             "That wizard will generate your keypair, tell you where to paste the public key on Robinhood,\n"
             "and will save encrypted credential files so this trader can authenticate securely.\n"
         )

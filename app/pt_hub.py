@@ -4247,7 +4247,7 @@ class PowerTraderHub(tk.Tk):
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-            except:
+            except Exception:
                 pass
             print(f"Error creating LLM Research tab: {e}")
             import traceback
@@ -4288,7 +4288,7 @@ class PowerTraderHub(tk.Tk):
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-            except:
+            except Exception:
                 pass
             print(f"Error creating Holdings Management tab: {e}")
             import traceback
@@ -4329,7 +4329,7 @@ class PowerTraderHub(tk.Tk):
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-            except:
+            except Exception:
                 pass
             print(f"Error creating Portfolio Analytics tab: {e}")
             import traceback
@@ -4370,7 +4370,7 @@ class PowerTraderHub(tk.Tk):
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-            except:
+            except Exception:
                 pass
             print(f"Error creating Advanced Order Types tab: {e}")
             import traceback
@@ -4411,7 +4411,7 @@ class PowerTraderHub(tk.Tk):
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-            except:
+            except Exception:
                 pass
             print(f"Error creating Real-time Market Data tab: {e}")
             import traceback
@@ -4455,7 +4455,7 @@ class PowerTraderHub(tk.Tk):
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-            except:
+            except Exception:
                 pass
             print(f"Error creating Portfolio Optimization tab: {e}")
             import traceback
@@ -4496,7 +4496,7 @@ class PowerTraderHub(tk.Tk):
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-            except:
+            except Exception:
                 pass
             print(f"Error creating Backtesting Framework tab: {e}")
             import traceback
@@ -4541,7 +4541,7 @@ class PowerTraderHub(tk.Tk):
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-            except:
+            except Exception:
                 pass
             print(f"Error creating Performance Attribution tab: {e}")
             import traceback
@@ -4582,7 +4582,7 @@ class PowerTraderHub(tk.Tk):
                     font=("TkDefaultFont", 10),
                     anchor="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-            except:
+            except Exception:
                 pass
             print(f"Error creating Institutional Trading tab: {e}")
             import traceback
@@ -5494,7 +5494,7 @@ Platform: {sys.platform}
                     print(f"DEBUG: Process output: {stdout}")
                     if stderr:
                         print(f"DEBUG: Process stderr: {stderr}")
-                except:
+                except (TimeoutError, OSError):
                     pass
                 return  # Don't register a failed process
 
@@ -5543,7 +5543,7 @@ Platform: {sys.platform}
                             print(
                                 f"DEBUG: Final output from {coin}: {remaining_output}"
                             )
-                    except:
+                    except (OSError, AttributeError):
                         pass
                 else:
                     # Process still running, check again in 2 seconds
@@ -5626,7 +5626,7 @@ Platform: {sys.platform}
                 # Ensure we get 3 coins in normal view, 4-5 in fullscreen
                 if max_cols < 3:
                     max_cols = 3
-            except:
+            except Exception:
                 max_cols = 3  # Default to 3 for better wrapping
 
             row = 0
@@ -5715,7 +5715,7 @@ Platform: {sys.platform}
                                 frame.configure(relief="raised", bd=3)
                             else:
                                 frame.configure(relief="raised", bd=3)
-                        except:
+                        except Exception:
                             frame.configure(relief="raised", bd=3)
 
                     def on_leave(event):
@@ -5852,7 +5852,7 @@ Platform: {sys.platform}
                         "Training Error",
                         f"Failed {action} training for {coin_name}: {e}",
                     )
-                except:
+                except Exception:
                     pass
 
         return on_coin_click

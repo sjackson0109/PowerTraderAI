@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from pt_database_manager import (
     DatabaseConnectionPool,
@@ -171,25 +171,32 @@ class TestAtomicTransaction(unittest.TestCase):
 
     def test_commit_contention_retries(self):
         """SQLITE_BUSY on COMMIT should trigger retry, not silently fail."""
-        call_count = {"n": 0}
-        orig_execute = self.conn.execute
 
-        def patched_execute(sql, *args, **kwargs):
-            if sql == "COMMIT":
-                call_count["n"] += 1
-                if call_count["n"] == 1:
-                    # Simulate COMMIT contention on first attempt
-                    raise sqlite3.OperationalError("database is locked")
-            return orig_execute(sql, *args, **kwargs)
+        # Python 3.12 made sqlite3.Connection.execute read-only, so we cannot
+        # patch it directly. Use a transparent wrapper that intercepts execute.
+        class _CommitFailingConn:
+            def __init__(self, conn):
+                self._conn = conn
+                self.commit_calls = 0
 
-        with patch.object(self.conn, "execute", side_effect=patched_execute):
-            with atomic_transaction(self.conn, max_retries=2, base_delay=0.01) as c:
-                orig_execute("INSERT INTO t VALUES (77, 'commit_retry')")
+            def execute(self, sql, *args, **kwargs):
+                if sql == "COMMIT":
+                    self.commit_calls += 1
+                    if self.commit_calls == 1:
+                        raise sqlite3.OperationalError("database is locked")
+                return self._conn.execute(sql, *args, **kwargs)
+
+            def __getattr__(self, name):
+                return getattr(self._conn, name)
+
+        wrapped = _CommitFailingConn(self.conn)
+        with atomic_transaction(wrapped, max_retries=2, base_delay=0.01):
+            self.conn.execute("INSERT INTO t VALUES (77, 'commit_retry')")
 
         # Row should be committed on the second COMMIT attempt
         row = self.conn.execute("SELECT val FROM t WHERE id=77").fetchone()
         self.assertEqual(row[0], "commit_retry")
-        self.assertGreater(call_count["n"], 1, "COMMIT should have been retried")
+        self.assertGreater(wrapped.commit_calls, 1, "COMMIT should have been retried")
 
 
 class TestInputSanitizer(unittest.TestCase):

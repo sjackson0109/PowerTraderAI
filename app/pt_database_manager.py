@@ -249,8 +249,8 @@ def atomic_transaction(
 
         except sqlite3.OperationalError as exc:
             err_lower = str(exc).lower()
-            is_contention = any(
-                w in err_lower for w in ("busy", "locked", "cannot start")
+            is_contention = ("database is busy" in err_lower) or (
+                "database is locked" in err_lower
             )
             if not is_contention:
                 # Non-contention OperationalError (e.g. constraint violation, syntax error)
@@ -306,24 +306,8 @@ class InputSanitizer:
     )
     _SQL_TOKENS_EXACT = frozenset(["--", ";"])
     _SQL_KEYWORD_RE = re.compile(
-        r"(?:"
-        + "|".join(
-            re.escape(k)
-            for k in [
-                "drop",
-                "delete",
-                "truncate",
-                "insert",
-                "update",
-                "alter",
-                "create",
-                "exec",
-                "execute",
-                "union",
-                "select",
-            ]
-        )
-        + r")"
+        r"\b(?:" + "|".join(re.escape(k) for k in sorted(_SQL_KEYWORDS_WORD)) + r")\b",
+        re.IGNORECASE,
     )
     _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 

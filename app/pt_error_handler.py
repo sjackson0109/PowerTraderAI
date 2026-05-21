@@ -108,15 +108,21 @@ class ApplicationErrorHandler:
     # Suppression
     # ------------------------------------------------------------------
     def suppress_module(self, module_name: str) -> None:
-        """Suppress notification callbacks for errors from `module_name`."""
+        """Suppress notification callbacks for errors originating from
+        ``module_name``.
+
+        Pass the bare module name (``"pt_trader"``), not the filename —
+        :class:`ErrorReport` stores the filename (``"pt_trader.py"``) but
+        suppression normalizes both sides so either spelling works.
+        """
         self._ensure_init()
         with self._cb_lock:
-            self._suppressed_modules.add(module_name)
+            self._suppressed_modules.add(self._normalize_module(module_name))
 
     def unsuppress_module(self, module_name: str) -> None:
         self._ensure_init()
         with self._cb_lock:
-            self._suppressed_modules.discard(module_name)
+            self._suppressed_modules.discard(self._normalize_module(module_name))
 
     # ------------------------------------------------------------------
     # Core handle
@@ -159,33 +165,25 @@ class ApplicationErrorHandler:
         Handle an exception and escalate to CRITICAL severity regardless of
         automatic classification. Fires CRITICAL-level callbacks only.
 
-        The underlying ErrorHandler classifies and logs the error first; the
-        severity field on the returned ErrorReport is then set to CRITICAL so
-        that `get_critical_errors()` and the CRITICAL callback list both see
-        the escalated severity consistently.
+        Uses ``ErrorHandler.handle_error(..., severity_override=CRITICAL)`` so
+        the underlying logger records the error at CRITICAL from the start —
+        no post-hoc severity mutation, no double-counting in
+        ``error_counts``, and ``get_critical_errors()`` sees the escalated
+        severity consistently.
         """
         self._ensure_init()
-        report = self._handler.handle_error(error, context=context)
-
-        if report.severity != ErrorSeverity.CRITICAL:
-            original_severity = report.severity
-            # Update the stored report so stats and get_critical_errors() agree
-            report.severity = ErrorSeverity.CRITICAL
-            # Move the count from original severity to CRITICAL - no double-counting
-            orig_key = original_severity.value
-            if self._handler.error_counts.get(orig_key, 0) > 0:
-                self._handler.error_counts[orig_key] -= 1
-            self._handler.error_counts[ErrorSeverity.CRITICAL.value] = (
-                self._handler.error_counts.get(ErrorSeverity.CRITICAL.value, 0) + 1
-            )
-
+        report = self._handler.handle_error(
+            error,
+            context=context,
+            severity_override=ErrorSeverity.CRITICAL,
+        )
         self._fire_callbacks(report)
         return report
 
     def _fire_callbacks(self, report: ErrorReport) -> None:
         self._ensure_init()
         with self._cb_lock:
-            if report.module in self._suppressed_modules:
+            if self._is_module_suppressed(report.module):
                 return
             callbacks = list(self._callbacks.get(report.severity, []))
         for cb in callbacks:
@@ -194,6 +192,21 @@ class ApplicationErrorHandler:
             except Exception:
                 # Log full traceback so callback bugs are diagnosable
                 logger.warning("Error callback raised an exception", exc_info=True)
+
+    @staticmethod
+    def _normalize_module(name: Optional[str]) -> Optional[str]:
+        """Strip a trailing ``.py`` so callers can pass either the module
+        name (``pt_trader``) or the filename (``pt_trader.py``) when
+        registering suppression — :class:`ErrorReport` carries the filename
+        but a module name reads more naturally in code that calls
+        :meth:`suppress_module`."""
+        if not name:
+            return name
+        return name[:-3] if name.endswith(".py") else name
+
+    def _is_module_suppressed(self, module: Optional[str]) -> bool:
+        normalized = self._normalize_module(module)
+        return normalized is not None and normalized in self._suppressed_modules
 
     # ------------------------------------------------------------------
     # Query / stats

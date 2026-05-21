@@ -205,7 +205,8 @@ class ErrorHandler:
     def __init__(self, logger: Optional[logging.Logger] = None):
         self.logger = logger or logging.getLogger(__name__)
         self.error_reports: List[ErrorReport] = []
-        self.error_counts: Dict[str, int] = {}
+        # Nested counters: category.value -> severity.value -> count.
+        self.error_counts: Dict[str, Dict[str, int]] = {}
 
         # Recovery suggestions for common errors
         self.recovery_suggestions = {
@@ -226,7 +227,10 @@ class ErrorHandler:
         return f"PT_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
 
     def handle_error(
-        self, error: Exception, context: Dict[str, Any] = None
+        self,
+        error: Exception,
+        context: Dict[str, Any] = None,
+        severity_override: Optional[ErrorSeverity] = None,
     ) -> ErrorReport:
         """
         Handle and report an error with comprehensive logging.
@@ -234,6 +238,12 @@ class ErrorHandler:
         Args:
             error: The exception that occurred
             context: Additional context information
+            severity_override: If provided, replaces the auto-classified or
+                PowerTraderError-declared severity *before* logging and counter
+                updates. This lets escalation paths (e.g.
+                ``ApplicationErrorHandler.handle_critical``) ensure the error
+                is logged at the escalated level instead of at the original
+                level followed by a post-hoc mutation.
 
         Returns:
             ErrorReport: Detailed error report
@@ -258,6 +268,11 @@ class ErrorHandler:
             severity = self._determine_severity(error, category)
             error_context = context or {}
 
+        # Apply caller override BEFORE logging/counting so logs and stats
+        # both reflect the final severity from the start.
+        if severity_override is not None:
+            severity = severity_override
+
         # Create error report
         error_report = ErrorReport(
             error_id=self.generate_error_id(),
@@ -277,12 +292,12 @@ class ErrorHandler:
             ),
         )
 
-        # Log the error
+        # Log the error (now at the final, possibly overridden severity)
         self._log_error(error_report)
 
         # Store error report
         self.error_reports.append(error_report)
-        self._update_error_counts(category)
+        self._update_error_counts(category, severity)
 
         return error_report
 
@@ -381,33 +396,61 @@ class ErrorHandler:
                 f"[{error_report.error_id}] Traceback:\\n{error_report.traceback_str}"
             )
 
-    def _update_error_counts(self, category: ErrorCategory) -> None:
-        """Update error count statistics."""
-        key = category.value
-        self.error_counts[key] = self.error_counts.get(key, 0) + 1
+    def _update_error_counts(
+        self, category: ErrorCategory, severity: ErrorSeverity
+    ) -> None:
+        """Update nested error counters: category → severity → count.
+
+        ``error_counts`` is a ``Dict[str, Dict[str, int]]`` so callers can ask
+        e.g. how many TRADING_ERROR/HIGH events happened without having to
+        scan ``error_reports`` themselves. A flat per-category total is
+        available via :meth:`category_total` for callers that don't care
+        about severity breakdown.
+        """
+        cat_key = category.value
+        sev_key = severity.value
+        bucket = self.error_counts.setdefault(cat_key, {})
+        bucket[sev_key] = bucket.get(sev_key, 0) + 1
+
+    def category_total(self, category: ErrorCategory) -> int:
+        """Return total count for ``category`` across all severities."""
+        return sum(self.error_counts.get(category.value, {}).values())
 
     def get_error_summary(self) -> Dict[str, Any]:
-        """Get summary of error statistics."""
+        """Get summary of error statistics.
+
+        Returns a dict with:
+        - ``total_errors``: total handled
+        - ``categories``: flat category → count (sum across severities)
+        - ``severities``: flat severity → count (sum across categories)
+        - ``by_category_severity``: nested category → severity → count
+          (the raw structure of ``error_counts``)
+        """
         total_errors = len(self.error_reports)
         if total_errors == 0:
-            return {"total_errors": 0, "categories": {}, "severities": {}}
+            return {
+                "total_errors": 0,
+                "categories": {},
+                "severities": {},
+                "by_category_severity": {},
+            }
 
-        # Count by category
-        category_counts = {}
-        severity_counts = {}
-
-        for report in self.error_reports:
-            category_counts[report.category.value] = (
-                category_counts.get(report.category.value, 0) + 1
-            )
-            severity_counts[report.severity.value] = (
-                severity_counts.get(report.severity.value, 0) + 1
-            )
+        # Derive flat views from the nested error_counts so a single source
+        # of truth (the nested dict) drives every reporting surface.
+        category_counts: Dict[str, int] = {}
+        severity_counts: Dict[str, int] = {}
+        for cat_key, sev_bucket in self.error_counts.items():
+            category_counts[cat_key] = sum(sev_bucket.values())
+            for sev_key, count in sev_bucket.items():
+                severity_counts[sev_key] = severity_counts.get(sev_key, 0) + count
 
         return {
             "total_errors": total_errors,
             "categories": category_counts,
             "severities": severity_counts,
+            "by_category_severity": {
+                cat: dict(sev_bucket) for cat, sev_bucket in self.error_counts.items()
+            },
             "recent_errors": [
                 {
                     "id": report.error_id,

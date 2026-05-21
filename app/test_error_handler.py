@@ -1,7 +1,7 @@
 """Tests for pt_error_handler centralized error management system."""
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from pt_error_handler import (
     ApplicationErrorHandler,
@@ -163,18 +163,25 @@ class TestCallbacks(unittest.TestCase):
         on_critical(cb)
         get_handler().suppress_module("pt_trader")
 
-        # Build an exception that looks like it came from pt_trader:
-        # ErrorHandler captures the caller's frame, so we monkeypatch
-        # the report module after handle_error but before _fire_callbacks
-        # by wrapping _handler.handle_error.
-        original_handle_error = get_handler()._handler.handle_error
+        # ErrorHandler captures the test file's frame as report.module, so
+        # patch handle_error to override the module to simulate origin in
+        # the suppressed source file. Use patch.object so the override is
+        # restored via addCleanup regardless of test outcome (no manual
+        # try/finally, no leakage to other tests in this class).
+        original = get_handler()._handler.handle_error
 
-        def patched_handle_error(error, context=None):
-            report = original_handle_error(error, context=context)
-            report.module = "pt_trader"  # simulate origin in suppressed module
+        def patched(error, context=None, severity_override=None):
+            report = original(
+                error, context=context, severity_override=severity_override
+            )
+            report.module = "pt_trader.py"  # filename form, suppression normalizes
             return report
 
-        get_handler()._handler.handle_error = patched_handle_error
+        patcher = patch.object(
+            get_handler()._handler, "handle_error", side_effect=patched
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
         try:
             raise ValueError("from suppressed module")
@@ -182,6 +189,18 @@ class TestCallbacks(unittest.TestCase):
             get_handler().handle_critical(exc)
 
         cb.assert_not_called()
+
+    def test_suppress_module_accepts_filename_and_module_name(self):
+        """Suppression normalizes — passing either 'pt_trader' or 'pt_trader.py'
+        suppresses errors reported as either form."""
+        h = get_handler()
+        # Both spellings collapse to the same suppressed entry
+        h.suppress_module("pt_trader")
+        h.suppress_module("pt_trader.py")
+        self.assertTrue(h._is_module_suppressed("pt_trader"))
+        self.assertTrue(h._is_module_suppressed("pt_trader.py"))
+        h.unsuppress_module("pt_trader.py")
+        self.assertFalse(h._is_module_suppressed("pt_trader"))
 
 
 class TestQueryAPI(unittest.TestCase):

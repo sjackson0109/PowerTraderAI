@@ -119,17 +119,20 @@ class TestSecureCredentialManager(unittest.TestCase):
         pre_meta = self.mgr._load_metadata()
         self.assertIsNotNone(pre_meta)
 
-        # Corrupt the manager to force failure during encrypt
-        original = self.mgr._atomic_write_binary
+        # Corrupt the manager to force failure during encrypt. Both ciphertexts
+        # are staged via _stage_temp_binary; fail the second so the key rename
+        # has already committed and rollback must restore the previous key
+        # ciphertext.
+        original = self.mgr._stage_temp_binary
         call_count = [0]
 
-        def failing_write(path, data):
+        def failing_stage(path, data):
             call_count[0] += 1
             if call_count[0] >= 2:  # succeed on key, fail on secret
                 raise OSError("disk full")
             return original(path, data)
 
-        self.mgr._atomic_write_binary = failing_write
+        self.mgr._stage_temp_binary = failing_stage
         result = self.mgr.rotate_credentials(
             "NEW_KEY", "NEW_SECRET", rotation_interval_days=30
         )

@@ -174,8 +174,13 @@ class SecureCredentialManager:
                 pass
             raise
 
-    def _atomic_write_binary(self, filepath: str, content: bytes) -> None:
-        """Write binary file atomically via unique temp → rename."""
+    def _stage_temp_binary(self, filepath: str, content: bytes) -> str:
+        """Write ``content`` to a sibling temp file and return its path.
+
+        The temp file lives next to ``filepath`` (same filesystem) so the
+        subsequent ``os.replace`` is atomic. Caller is responsible for the
+        rename or for unlinking on failure.
+        """
         directory = os.path.dirname(filepath) or "."
         fd, tmp = tempfile.mkstemp(
             prefix=os.path.basename(filepath) + ".", suffix=".tmp", dir=directory
@@ -184,6 +189,18 @@ class SecureCredentialManager:
             with os.fdopen(fd, "wb") as f:
                 f.write(content)
             self._set_secure_permissions(tmp)
+            return tmp
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+
+    def _atomic_write_binary(self, filepath: str, content: bytes) -> None:
+        """Write binary file atomically via unique temp → rename."""
+        tmp = self._stage_temp_binary(filepath, content)
+        try:
             os.replace(tmp, filepath)
             self._set_secure_permissions(filepath)
         except Exception:
@@ -227,8 +244,12 @@ class SecureCredentialManager:
     ) -> bool:
         """
         Encrypt and persist credentials atomically.
-        Both ciphertext files are written via temp → rename so a mid-write
-        failure cannot leave a mismatched key/secret pair.
+
+        Two-phase commit: both ciphertexts are written to temp files first and
+        only then renamed into place. If the second os.replace fails after the
+        first has already swapped the key file, the previously-saved key file
+        is restored from an in-process backup so the vault never ends up with
+        a new key ciphertext paired with the old secret ciphertext.
         """
         with self._lock:
             try:
@@ -236,15 +257,69 @@ class SecureCredentialManager:
                 key = self._derive_key(self._get_machine_password(), salt)
                 cipher = Fernet(key)
 
-                # Atomic writes — both succeed or neither committed
-                self._atomic_write_binary(
-                    self.encrypted_key_file,
-                    cipher.encrypt(api_key.encode("utf-8")),
-                )
-                self._atomic_write_binary(
-                    self.encrypted_secret_file,
-                    cipher.encrypt(private_key_b64.encode("utf-8")),
-                )
+                key_ct = cipher.encrypt(api_key.encode("utf-8"))
+                secret_ct = cipher.encrypt(private_key_b64.encode("utf-8"))
+
+                # Phase 1: stage both ciphertexts on disk before committing
+                # either. If staging fails for one, neither gets renamed in.
+                key_tmp = self._stage_temp_binary(self.encrypted_key_file, key_ct)
+                try:
+                    secret_tmp = self._stage_temp_binary(
+                        self.encrypted_secret_file, secret_ct
+                    )
+                except Exception:
+                    try:
+                        os.remove(key_tmp)
+                    except OSError:
+                        pass
+                    raise
+
+                # Phase 2: commit both. If the second commit fails after the
+                # first has swapped the key file, restore the previous key
+                # ciphertext from a snapshot kept in memory.
+                prev_key_blob: Optional[bytes] = None
+                if os.path.exists(self.encrypted_key_file):
+                    try:
+                        with open(self.encrypted_key_file, "rb") as _f:
+                            prev_key_blob = _f.read()
+                    except OSError:
+                        prev_key_blob = None
+
+                try:
+                    os.replace(key_tmp, self.encrypted_key_file)
+                    self._set_secure_permissions(self.encrypted_key_file)
+                except Exception:
+                    try:
+                        os.remove(key_tmp)
+                    except OSError:
+                        pass
+                    try:
+                        os.remove(secret_tmp)
+                    except OSError:
+                        pass
+                    raise
+
+                try:
+                    os.replace(secret_tmp, self.encrypted_secret_file)
+                    self._set_secure_permissions(self.encrypted_secret_file)
+                except Exception:
+                    # Roll the key file back so callers don't see a mismatched
+                    # ciphertext pair after we return False.
+                    if prev_key_blob is not None:
+                        try:
+                            with open(self.encrypted_key_file, "wb") as _f:
+                                _f.write(prev_key_blob)
+                            self._set_secure_permissions(self.encrypted_key_file)
+                        except OSError:
+                            logger.error(
+                                "Rollback of key ciphertext failed after secret "
+                                "write error; vault may be inconsistent"
+                            )
+                    try:
+                        os.remove(secret_tmp)
+                    except OSError:
+                        pass
+                    raise
 
                 # Update metadata — keep interval consistent
                 existing = self._load_metadata()
@@ -519,8 +594,10 @@ class PermissionValidator:
                 has_required=False,
                 has_trading=False,
                 granted_permissions=[],
-                missing_required=list(REQUIRED_PERMISSIONS),
-                missing_trading=list(TRADING_PERMISSIONS) if require_trading else [],
+                missing_required=sorted(REQUIRED_PERMISSIONS),
+                missing_trading=(
+                    sorted(TRADING_PERMISSIONS) if require_trading else []
+                ),
                 audit_passed=False,
                 message=(
                     "No permission fetcher provided — unable to validate API permissions. "
@@ -538,8 +615,10 @@ class PermissionValidator:
                 has_required=False,
                 has_trading=False,
                 granted_permissions=[],
-                missing_required=list(REQUIRED_PERMISSIONS),
-                missing_trading=list(TRADING_PERMISSIONS) if require_trading else [],
+                missing_required=sorted(REQUIRED_PERMISSIONS),
+                missing_trading=(
+                    sorted(TRADING_PERMISSIONS) if require_trading else []
+                ),
                 audit_passed=False,
                 message=f"Permission fetch failed: {exc}",
             )
@@ -547,8 +626,10 @@ class PermissionValidator:
             logger.error("API permission validation failed: %s", exc)
             return result
 
-        missing_required = list(REQUIRED_PERMISSIONS - granted)
-        missing_trading = list(TRADING_PERMISSIONS - granted) if require_trading else []
+        missing_required = sorted(REQUIRED_PERMISSIONS - granted)
+        missing_trading = (
+            sorted(TRADING_PERMISSIONS - granted) if require_trading else []
+        )
         has_required = len(missing_required) == 0
         has_trading = len(missing_trading) == 0
         audit_passed = has_required and (has_trading if require_trading else True)
@@ -617,11 +698,22 @@ class PermissionValidator:
             return
         if line_count < self.MAX_AUDIT_LINES:
             return
-        # Rotate: active → .1 (overwrite older .1)
-        rotated = f"{self._audit_log}.1"
+        # Rotate: shift active → .1 → .2 → ... keep at most AUDIT_ROTATION_KEEP
+        # backups. Older generations are discarded.
+        keep = max(1, int(self.AUDIT_ROTATION_KEEP))
         try:
-            if os.path.exists(rotated):
-                os.remove(rotated)
+            # Drop the oldest generation beyond the retention window.
+            oldest = f"{self._audit_log}.{keep}"
+            if os.path.exists(oldest):
+                os.remove(oldest)
+            # Shift down: .N-1 → .N, ..., .1 → .2
+            for i in range(keep - 1, 0, -1):
+                src = f"{self._audit_log}.{i}"
+                dst = f"{self._audit_log}.{i + 1}"
+                if os.path.exists(src):
+                    os.replace(src, dst)
+            # Active log → .1
+            rotated = f"{self._audit_log}.1"
             os.replace(self._audit_log, rotated)
             try:
                 os.chmod(rotated, stat.S_IRUSR | stat.S_IWUSR)
@@ -702,15 +794,29 @@ class CredentialRotationScheduler:
 
     def _tick(self) -> None:
         """Single check + dedup-callback cycle. Extracted so tests can exercise
-        the real dedup path without simulating it."""
+        the real dedup path without simulating it.
+
+        ``_last_warning`` is updated *before* the callback fires so a failing
+        callback does not cause the scheduler to re-fire the same warning on
+        every subsequent tick. Callback exceptions are logged and isolated."""
         try:
             warning = self._manager.check_rotation_warning()
-            if warning and warning != self._last_warning:
-                logger.warning(warning)
-                self._callback(warning)
-            self._last_warning = warning
         except Exception as exc:
             logger.error("Rotation scheduler check failed: %s", exc)
+            return
+        if warning and warning != self._last_warning:
+            logger.warning(warning)
+            # Update dedup state first so a callback exception cannot cause
+            # the same warning to be re-fired on every subsequent tick.
+            self._last_warning = warning
+            try:
+                self._callback(warning)
+            except Exception as cb_exc:
+                logger.error(
+                    "Rotation notification callback raised: %s", cb_exc, exc_info=True
+                )
+            return
+        self._last_warning = warning
 
     def _run(self) -> None:
         while not self._stop_event.is_set():

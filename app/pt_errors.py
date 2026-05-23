@@ -205,8 +205,13 @@ class ErrorHandler:
     def __init__(self, logger: Optional[logging.Logger] = None):
         self.logger = logger or logging.getLogger(__name__)
         self.error_reports: List[ErrorReport] = []
-        # Nested counters: category.value -> severity.value -> count.
-        self.error_counts: Dict[str, Dict[str, int]] = {}
+        # Flat per-category total counter (preserved for backward compatibility
+        # with external callers that read this attribute directly).
+        self.error_counts: Dict[str, int] = {}
+        # Richer nested counter: category.value -> severity.value -> count.
+        # Both counters are updated atomically by _update_error_counts so they
+        # cannot drift out of sync.
+        self.error_counts_by_severity: Dict[str, Dict[str, int]] = {}
 
         # Recovery suggestions for common errors
         self.recovery_suggestions = {
@@ -399,32 +404,31 @@ class ErrorHandler:
     def _update_error_counts(
         self, category: ErrorCategory, severity: ErrorSeverity
     ) -> None:
-        """Update nested error counters: category → severity → count.
+        """Update both the flat per-category counter and the nested
+        category → severity → count counter in lockstep.
 
-        ``error_counts`` is a ``Dict[str, Dict[str, int]]`` so callers can ask
-        e.g. how many TRADING_ERROR/HIGH events happened without having to
-        scan ``error_reports`` themselves. A flat per-category total is
-        available via :meth:`category_total` for callers that don't care
-        about severity breakdown.
+        ``error_counts`` stays a ``Dict[str, int]`` to preserve backward
+        compatibility for external callers that read it directly. The richer
+        breakdown lives on ``error_counts_by_severity``.
         """
         cat_key = category.value
         sev_key = severity.value
-        bucket = self.error_counts.setdefault(cat_key, {})
+        self.error_counts[cat_key] = self.error_counts.get(cat_key, 0) + 1
+        bucket = self.error_counts_by_severity.setdefault(cat_key, {})
         bucket[sev_key] = bucket.get(sev_key, 0) + 1
 
     def category_total(self, category: ErrorCategory) -> int:
         """Return total count for ``category`` across all severities."""
-        return sum(self.error_counts.get(category.value, {}).values())
+        return self.error_counts.get(category.value, 0)
 
     def get_error_summary(self) -> Dict[str, Any]:
         """Get summary of error statistics.
 
         Returns a dict with:
         - ``total_errors``: total handled
-        - ``categories``: flat category → count (sum across severities)
+        - ``categories``: flat category → count
         - ``severities``: flat severity → count (sum across categories)
         - ``by_category_severity``: nested category → severity → count
-          (the raw structure of ``error_counts``)
         """
         total_errors = len(self.error_reports)
         if total_errors == 0:
@@ -435,21 +439,18 @@ class ErrorHandler:
                 "by_category_severity": {},
             }
 
-        # Derive flat views from the nested error_counts so a single source
-        # of truth (the nested dict) drives every reporting surface.
-        category_counts: Dict[str, int] = {}
         severity_counts: Dict[str, int] = {}
-        for cat_key, sev_bucket in self.error_counts.items():
-            category_counts[cat_key] = sum(sev_bucket.values())
+        for sev_bucket in self.error_counts_by_severity.values():
             for sev_key, count in sev_bucket.items():
                 severity_counts[sev_key] = severity_counts.get(sev_key, 0) + count
 
         return {
             "total_errors": total_errors,
-            "categories": category_counts,
+            "categories": dict(self.error_counts),
             "severities": severity_counts,
             "by_category_severity": {
-                cat: dict(sev_bucket) for cat, sev_bucket in self.error_counts.items()
+                cat: dict(sev_bucket)
+                for cat, sev_bucket in self.error_counts_by_severity.items()
             },
             "recent_errors": [
                 {

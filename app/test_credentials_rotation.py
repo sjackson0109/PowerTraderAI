@@ -7,7 +7,7 @@ import stat
 import tempfile
 import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from pt_credentials import (
     CredentialMetadata,
@@ -173,6 +173,45 @@ class TestSecureCredentialManager(unittest.TestCase):
         warning = self.mgr.check_rotation_warning()
         self.assertIsNotNone(warning)
         self.assertIn("day", warning)
+
+    def test_legacy_vault_auto_migrates_to_new_derivation(self):
+        """
+        Vaults encrypted under the legacy COMPUTERNAME/USERNAME derivation
+        must decrypt transparently AND be rewritten under the new
+        gethostname()/getuser() derivation on the same call, so the legacy
+        fallback path is one-shot per vault.
+        """
+        legacy_pw = "legacy_pw_fixed_for_test_0000000000000000"
+        new_pw = "new_pw_fixed_for_test_xxxxxxxxxxxxxxxxxxx"
+
+        # Step 1: encrypt as if the running version were still the legacy build.
+        with patch.object(self.mgr, "_get_machine_password", return_value=legacy_pw):
+            self.assertTrue(self.mgr.encrypt_credentials("KEY_LEG", "SECRET_LEG"))
+
+        # Sanity: cannot decrypt under new derivation alone (no legacy fallback).
+        with patch.object(
+            self.mgr, "_get_machine_password", return_value=new_pw
+        ), patch.object(self.mgr, "_get_legacy_machine_password", return_value=None):
+            self.assertIsNone(self.mgr.decrypt_credentials())
+
+        # Step 2: simulate the upgraded build — primary derivation is new_pw,
+        # legacy fallback exposes the same legacy_pw used in step 1.
+        with patch.object(
+            self.mgr, "_get_machine_password", return_value=new_pw
+        ), patch.object(
+            self.mgr, "_get_legacy_machine_password", return_value=legacy_pw
+        ):
+            creds = self.mgr.decrypt_credentials()
+            self.assertEqual(creds, ("KEY_LEG", "SECRET_LEG"))
+
+        # Step 3: vault was auto-rewritten under new_pw. Now decrypt with
+        # ONLY the new derivation available — legacy fallback returns None —
+        # and it must still succeed. Proves the rewrite happened.
+        with patch.object(
+            self.mgr, "_get_machine_password", return_value=new_pw
+        ), patch.object(self.mgr, "_get_legacy_machine_password", return_value=None):
+            creds = self.mgr.decrypt_credentials()
+            self.assertEqual(creds, ("KEY_LEG", "SECRET_LEG"))
 
     def test_migrate_from_plaintext(self):
         with open(os.path.join(self.tmpdir, "r_key.txt"), "w") as f:

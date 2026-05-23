@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import time
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Dict, List, Optional
 
 import requests
@@ -166,6 +167,10 @@ class BinanceExchange(AbstractExchange):
     def __init__(self, api_key: str = "", api_secret: str = "", **kwargs):
         super().__init__(api_key, api_secret, **kwargs)
         self.base_url = "https://api.binance.com"
+        # Per-symbol filter cache: {binance_symbol: {"stepSize": Decimal,
+        # "tickSize": Decimal, "minQty": Decimal, "minNotional": Decimal}}.
+        # Populated lazily by _get_symbol_filters() to avoid per-order REST.
+        self._symbol_filters: Dict[str, Dict[str, Decimal]] = {}
 
     def get_exchange_name(self) -> str:
         return "binance"
@@ -259,6 +264,73 @@ class BinanceExchange(AbstractExchange):
         return data
 
     # ------------------------------------------------------------------
+    # Symbol filter handling (LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL)
+    # ------------------------------------------------------------------
+
+    def _get_symbol_filters(self, binance_symbol: str) -> Dict[str, Decimal]:
+        """
+        Fetch and cache the trading filters for a symbol from
+        /api/v3/exchangeInfo. Subsequent calls hit the in-memory cache so
+        each order placement does not pay a REST round-trip.
+
+        Returns dict with keys: stepSize, tickSize, minQty, minNotional.
+        Missing filters are returned as Decimal("0") so callers can treat
+        them as "no constraint".
+        """
+        if binance_symbol in self._symbol_filters:
+            return self._symbol_filters[binance_symbol]
+
+        url = f"{self.base_url}/api/v3/exchangeInfo?symbol={binance_symbol}"
+        response = requests.get(url, timeout=10)
+        info = response.json()
+        if "symbols" not in info or not info["symbols"]:
+            raise RuntimeError(
+                f"Binance exchangeInfo returned no data for {binance_symbol}"
+            )
+
+        filters: Dict[str, Decimal] = {
+            "stepSize": Decimal("0"),
+            "tickSize": Decimal("0"),
+            "minQty": Decimal("0"),
+            "minNotional": Decimal("0"),
+        }
+        for f in info["symbols"][0].get("filters", []):
+            try:
+                if f["filterType"] == "LOT_SIZE":
+                    filters["stepSize"] = Decimal(f["stepSize"])
+                    filters["minQty"] = Decimal(f["minQty"])
+                elif f["filterType"] == "PRICE_FILTER":
+                    filters["tickSize"] = Decimal(f["tickSize"])
+                elif f["filterType"] in ("MIN_NOTIONAL", "NOTIONAL"):
+                    # Binance renamed MIN_NOTIONAL -> NOTIONAL in 2023;
+                    # support both so older and newer pairs both work.
+                    filters["minNotional"] = Decimal(
+                        f.get("minNotional", f.get("notional", "0"))
+                    )
+            except (InvalidOperation, KeyError):
+                # Unknown filter shape: skip rather than blowing up the order.
+                continue
+
+        self._symbol_filters[binance_symbol] = filters
+        return filters
+
+    @staticmethod
+    def _round_to_step(value: Decimal, step: Decimal) -> Decimal:
+        """
+        Round ``value`` *down* to the nearest multiple of ``step``.
+
+        Truncating (ROUND_DOWN) — never rounding up — keeps the submitted
+        quantity at or below the user's intent. Rounding up could exceed
+        available balance, overshoot a stop, or violate a per-trade cap.
+        """
+        if step == 0:
+            return value
+        quantised = (value / step).to_integral_value(rounding=ROUND_DOWN) * step
+        # Normalise away trailing zeros so Binance accepts e.g. "0.001"
+        # instead of "0.00100000" which can fail the PRICE_FILTER regex.
+        return quantised.normalize()
+
+    # ------------------------------------------------------------------
     # AbstractExchange implementation
     # ------------------------------------------------------------------
 
@@ -274,11 +346,17 @@ class BinanceExchange(AbstractExchange):
             amount: Quantity of base asset
             price: Limit price; None for market order
 
+        Quantity is rounded *down* to the symbol's LOT_SIZE step and the
+        limit price is rounded *down* to the PRICE_FILTER tick. After
+        rounding, the order is rejected locally with RuntimeError if
+        quantity < minQty or quantity * price < minNotional, so the user
+        sees a useful error instead of Binance's opaque -1013 / -1100.
+
         Returns:
             OrderResult. order_id uses 'SYMBOL:ID' format for later lookup.
 
         Raises:
-            RuntimeError: on missing credentials or API error
+            RuntimeError: on missing credentials, filter violation, or API error
         """
         if not self.api_key or not self.api_secret:
             raise RuntimeError("Binance API credentials required for order placement")
@@ -286,14 +364,34 @@ class BinanceExchange(AbstractExchange):
         binance_symbol = self._convert_symbol(symbol)
         order_type = "LIMIT" if price is not None else "MARKET"
 
+        # Apply LOT_SIZE / PRICE_FILTER / MIN_NOTIONAL before signing.
+        filters = self._get_symbol_filters(binance_symbol)
+        qty_dec = self._round_to_step(Decimal(str(amount)), filters["stepSize"])
+        price_dec: Optional[Decimal] = None
+        if price is not None:
+            price_dec = self._round_to_step(Decimal(str(price)), filters["tickSize"])
+
+        if filters["minQty"] > 0 and qty_dec < filters["minQty"]:
+            raise RuntimeError(
+                f"Binance {binance_symbol} order quantity {qty_dec} below "
+                f"minQty {filters['minQty']} after LOT_SIZE rounding"
+            )
+        if filters["minNotional"] > 0 and price_dec is not None:
+            notional = qty_dec * price_dec
+            if notional < filters["minNotional"]:
+                raise RuntimeError(
+                    f"Binance {binance_symbol} notional {notional} below "
+                    f"minNotional {filters['minNotional']}"
+                )
+
         params: Dict = {
             "symbol": binance_symbol,
             "side": side.upper(),
             "type": order_type,
-            "quantity": f"{amount:.8f}",
+            "quantity": format(qty_dec, "f"),
         }
         if order_type == "LIMIT":
-            params["price"] = f"{price:.8f}"
+            params["price"] = format(price_dec, "f")
             params["timeInForce"] = "GTC"
 
         data = self._signed_request("POST", "/api/v3/order", params)

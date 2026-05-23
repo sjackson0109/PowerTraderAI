@@ -54,9 +54,30 @@ class TestBinanceSign(unittest.TestCase):
         )
 
 
+def _seed_filters(
+    ex,
+    binance_symbol="BTCUSDT",
+    step="0.00001000",
+    tick="0.01000000",
+    min_qty="0.00001000",
+    min_notional="10.00000000",
+):
+    """Pre-seed the symbol filter cache so place_order does not hit /exchangeInfo."""
+    from decimal import Decimal as _D
+
+    ex._symbol_filters[binance_symbol] = {
+        "stepSize": _D(step),
+        "tickSize": _D(tick),
+        "minQty": _D(min_qty),
+        "minNotional": _D(min_notional),
+    }
+
+
 class TestBinancePlaceOrder(unittest.TestCase):
     def setUp(self):
         self.ex = _make_exchange()
+        _seed_filters(self.ex, "BTCUSDT")
+        _seed_filters(self.ex, "ETHUSDT")
 
     @patch("pt_exchanges.requests.post")
     def test_market_buy_success(self, mock_post):
@@ -108,8 +129,10 @@ class TestBinancePlaceOrder(unittest.TestCase):
             "code": -1013,
             "msg": "Filter failure: MIN_NOTIONAL",
         }
+        # 0.001 survives local LOT_SIZE/minQty checks so we exercise the
+        # Binance-side error propagation path.
         with self.assertRaises(RuntimeError) as ctx:
-            self.ex.place_order("BTC-USD", "buy", 0.000001)
+            self.ex.place_order("BTC-USD", "buy", 0.001)
         self.assertIn("-1013", str(ctx.exception))
 
     def test_missing_credentials_raises(self):
@@ -143,6 +166,82 @@ class TestBinancePlaceOrder(unittest.TestCase):
         self.ex.place_order("BTC-USD", "buy", 0.1)
         call_url = mock_post.call_args[0][0]
         self.assertIn("symbol=BTCUSDT", call_url)
+
+
+class TestBinanceFilterEnforcement(unittest.TestCase):
+    """Symbol filter rounding and rejection (LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL)."""
+
+    def setUp(self):
+        self.ex = _make_exchange()
+        _seed_filters(self.ex, "BTCUSDT")
+
+    @patch("pt_exchanges.requests.post")
+    def test_quantity_rounded_down_to_step(self, mock_post):
+        """0.0012345 with stepSize 0.00001 must send "0.00123" (truncated)."""
+        mock_post.return_value.json.return_value = {
+            "orderId": 1,
+            "status": "FILLED",
+            "executedQty": "0.00123",
+            "price": "0",
+            "transactTime": 1,
+        }
+        self.ex.place_order("BTC-USD", "buy", 0.0012345)
+        call_url = mock_post.call_args[0][0]
+        self.assertIn("quantity=0.00123", call_url)
+        # Must never round up
+        self.assertNotIn("quantity=0.00124", call_url)
+
+    @patch("pt_exchanges.requests.post")
+    def test_price_rounded_down_to_tick(self, mock_post):
+        """75000.999 with tickSize 0.01 must send "75000.99" (truncated)."""
+        mock_post.return_value.json.return_value = {
+            "orderId": 1,
+            "status": "NEW",
+            "executedQty": "0",
+            "price": "75000.99",
+            "transactTime": 1,
+        }
+        self.ex.place_order("BTC-USD", "sell", 0.001, price=75000.999)
+        call_url = mock_post.call_args[0][0]
+        self.assertIn("price=75000.99", call_url)
+
+    def test_quantity_below_min_qty_raises(self):
+        """Qty 0.0000001 rounds to 0, below minQty 0.00001 — reject locally."""
+        with self.assertRaises(RuntimeError) as ctx:
+            self.ex.place_order("BTC-USD", "buy", 0.0000001)
+        self.assertIn("minQty", str(ctx.exception))
+
+    def test_notional_below_min_notional_raises(self):
+        """Qty 0.00001 * price 1.00 = 0.00001 < minNotional 10 — reject locally."""
+        with self.assertRaises(RuntimeError) as ctx:
+            self.ex.place_order("BTC-USD", "buy", 0.00001, price=1.00)
+        self.assertIn("minNotional", str(ctx.exception))
+
+    @patch("pt_exchanges.requests.get")
+    def test_filters_fetched_and_cached(self, mock_get):
+        """First call fetches /exchangeInfo; second call uses cache."""
+        mock_get.return_value.json.return_value = {
+            "symbols": [
+                {
+                    "filters": [
+                        {
+                            "filterType": "LOT_SIZE",
+                            "stepSize": "0.001",
+                            "minQty": "0.001",
+                        },
+                        {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
+                        {"filterType": "NOTIONAL", "minNotional": "5"},
+                    ],
+                }
+            ],
+        }
+        fresh = _make_exchange()
+        f1 = fresh._get_symbol_filters("ETHUSDT")
+        f2 = fresh._get_symbol_filters("ETHUSDT")
+        self.assertEqual(mock_get.call_count, 1)  # cached on 2nd call
+        self.assertEqual(f1, f2)
+        self.assertEqual(str(f1["stepSize"]), "0.001")
+        self.assertEqual(str(f1["minNotional"]), "5")
 
 
 class TestBinanceGetBalance(unittest.TestCase):

@@ -6,17 +6,24 @@ All tests mock HTTP calls; no real Binance API credentials required.
 import hashlib
 import hmac
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import sys
 
 sys.path.insert(0, ".")
 
-from pt_exchanges import BinanceExchange
+from pt_exchanges import (
+    BinanceExchange,
+    BinanceRateLimitError,
+    BinanceTimestampError,
+)
 
 
-def _make_exchange(key="test_key", secret="test_secret"):
-    return BinanceExchange(api_key=key, api_secret=secret)
+def _make_exchange(key="test_key", secret="test_secret", testnet=False):
+    ex = BinanceExchange(api_key=key, api_secret=secret, testnet=testnet)
+    # Skip /api/v3/time round-trip in tests; offset stays at 0 (good enough).
+    ex._time_synced = True
+    return ex
 
 
 def _sign(secret: str, params: str) -> str:
@@ -366,6 +373,467 @@ class TestBinanceCancelOrder(unittest.TestCase):
         }
         with self.assertRaises(RuntimeError):
             self.ex.cancel_order("BTCUSDT:123")
+
+
+class TestBinanceTestnet(unittest.TestCase):
+    """Testnet flag flips REST + WebSocket base URLs."""
+
+    def test_default_is_production(self):
+        ex = BinanceExchange(api_key="k", api_secret="s")
+        self.assertEqual(ex.base_url, "https://api.binance.com")
+        self.assertEqual(ex.ws_base, "wss://stream.binance.com:9443/ws")
+        self.assertFalse(ex.testnet)
+
+    def test_testnet_flag_switches_urls(self):
+        ex = BinanceExchange(api_key="k", api_secret="s", testnet=True)
+        self.assertEqual(ex.base_url, "https://testnet.binance.vision")
+        self.assertEqual(ex.ws_base, "wss://stream.testnet.binance.vision/ws")
+        self.assertTrue(ex.testnet)
+
+    def test_recv_window_clamped_to_max(self):
+        ex = BinanceExchange(api_key="k", api_secret="s", recv_window=99999)
+        self.assertEqual(ex.recv_window, 60000)
+
+    def test_recv_window_clamped_to_min(self):
+        ex = BinanceExchange(api_key="k", api_secret="s", recv_window=0)
+        self.assertEqual(ex.recv_window, 1)
+
+
+class TestBinanceServerTimeSync(unittest.TestCase):
+    """sync_time + _now_ms offset behaviour."""
+
+    @patch("pt_exchanges.requests.get")
+    def test_sync_time_sets_positive_offset(self, mock_get):
+        mock_get.return_value.json.return_value = {
+            "serverTime": int(__import__("time").time() * 1000) + 5000
+        }
+        ex = _make_exchange()
+        ex._time_synced = False  # force a real sync
+        offset = ex.sync_time()
+        self.assertGreaterEqual(offset, 4000)  # ~5000 ms
+        self.assertTrue(ex._time_synced)
+
+    @patch("pt_exchanges.requests.get")
+    def test_sync_time_bad_response_raises(self, mock_get):
+        mock_get.return_value.json.return_value = {"unexpected": "shape"}
+        ex = _make_exchange()
+        ex._time_synced = False
+        with self.assertRaises(RuntimeError):
+            ex.sync_time()
+
+    def test_now_ms_applies_offset(self):
+        ex = _make_exchange()
+        ex._time_offset_ms = 1234
+        import time as _t
+
+        actual = ex._now_ms()
+        expected = int(_t.time() * 1000) + 1234
+        self.assertAlmostEqual(actual, expected, delta=200)
+
+    @patch("pt_exchanges.requests.post")
+    @patch("pt_exchanges.requests.get")
+    def test_minus_1021_persists_raises_timestamp_error(self, mock_get, mock_post):
+        """Two consecutive -1021 responses (resync + retry both fail) → BinanceTimestampError."""
+        mock_get.return_value.json.return_value = {
+            "serverTime": int(__import__("time").time() * 1000)
+        }
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.headers = {}
+        resp.json.return_value = {"code": -1021, "msg": "Timestamp drift"}
+        mock_post.return_value = resp
+        ex = _make_exchange()
+        _seed_filters(ex, "BTCUSDT")
+        with self.assertRaises(BinanceTimestampError):
+            ex.place_order("BTC-USD", "buy", 0.001)
+
+    @patch("pt_exchanges.requests.post")
+    @patch("pt_exchanges.requests.get")
+    def test_minus_1021_triggers_resync_and_retry(self, mock_get, mock_post):
+        """First POST returns -1021. After /api/v3/time resync, retry succeeds."""
+        # /api/v3/time response when resync triggers
+        mock_get.return_value.json.return_value = {
+            "serverTime": int(__import__("time").time() * 1000)
+        }
+        # POST fails once then succeeds
+        first = MagicMock()
+        first.status_code = 200
+        first.headers = {}
+        first.json.return_value = {"code": -1021, "msg": "Timestamp drift"}
+        second = MagicMock()
+        second.status_code = 200
+        second.headers = {}
+        second.json.return_value = {
+            "orderId": 1,
+            "status": "FILLED",
+            "executedQty": "0.001",
+            "price": "0",
+            "transactTime": 1000,
+        }
+        mock_post.side_effect = [first, second]
+
+        ex = _make_exchange()
+        _seed_filters(ex, "BTCUSDT")
+        result = ex.place_order("BTC-USD", "buy", 0.001)
+        self.assertEqual(result.status, "filled")
+        # Retried exactly once
+        self.assertEqual(mock_post.call_count, 2)
+
+
+class TestBinanceRateLimit(unittest.TestCase):
+    """HTTP 429/418 raise BinanceRateLimitError with Retry-After."""
+
+    @patch("pt_exchanges.requests.post")
+    def test_429_raises_rate_limit_error(self, mock_post):
+        resp = MagicMock()
+        resp.status_code = 429
+        resp.headers = {"Retry-After": "12", "X-MBX-USED-WEIGHT-1M": "1200"}
+        resp.json.return_value = {"code": -1003, "msg": "Too many requests"}
+        mock_post.return_value = resp
+
+        ex = _make_exchange()
+        _seed_filters(ex, "BTCUSDT")
+        with self.assertRaises(BinanceRateLimitError) as ctx:
+            ex.place_order("BTC-USD", "buy", 0.001)
+        self.assertEqual(ctx.exception.status_code, 429)
+        self.assertEqual(ctx.exception.retry_after, 12.0)
+        self.assertEqual(ex.last_rate_limit_headers.get("X-MBX-USED-WEIGHT-1M"), "1200")
+
+    @patch("pt_exchanges.requests.post")
+    def test_418_raises_rate_limit_error(self, mock_post):
+        resp = MagicMock()
+        resp.status_code = 418
+        resp.headers = {"Retry-After": "300"}
+        resp.json.return_value = {"code": -1003, "msg": "IP banned"}
+        mock_post.return_value = resp
+        ex = _make_exchange()
+        _seed_filters(ex, "BTCUSDT")
+        with self.assertRaises(BinanceRateLimitError) as ctx:
+            ex.place_order("BTC-USD", "buy", 0.001)
+        self.assertEqual(ctx.exception.status_code, 418)
+
+    @patch("pt_exchanges.requests.post")
+    def test_used_weight_headers_captured(self, mock_post):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.headers = {
+            "X-MBX-USED-WEIGHT-1M": "42",
+            "X-MBX-ORDER-COUNT-10S": "3",
+            "Content-Type": "application/json",
+        }
+        resp.json.return_value = {
+            "orderId": 1,
+            "status": "FILLED",
+            "executedQty": "0.001",
+            "price": "0",
+            "transactTime": 1,
+        }
+        mock_post.return_value = resp
+        ex = _make_exchange()
+        _seed_filters(ex, "BTCUSDT")
+        ex.place_order("BTC-USD", "buy", 0.001)
+        self.assertIn("X-MBX-USED-WEIGHT-1M", ex.last_rate_limit_headers)
+        self.assertIn("X-MBX-ORDER-COUNT-10S", ex.last_rate_limit_headers)
+        # Non-rate-limit headers excluded
+        self.assertNotIn("Content-Type", ex.last_rate_limit_headers)
+
+
+class TestBinanceExtendedOrderTypes(unittest.TestCase):
+    """STOP_LOSS_LIMIT, TAKE_PROFIT_LIMIT, LIMIT_MAKER, quoteOrderQty, etc."""
+
+    def setUp(self):
+        self.ex = _make_exchange()
+        _seed_filters(self.ex, "BTCUSDT")
+
+    @patch("pt_exchanges.requests.post")
+    def test_stop_loss_limit_sends_stop_price(self, mock_post):
+        mock_post.return_value.json.return_value = {
+            "orderId": 1,
+            "status": "NEW",
+            "executedQty": "0",
+            "price": "70000",
+            "transactTime": 1,
+        }
+        self.ex.place_order(
+            "BTC-USD",
+            "sell",
+            0.001,
+            order_type="STOP_LOSS_LIMIT",
+            price=70000.0,
+            stop_price=70500.0,
+            time_in_force="GTC",
+        )
+        url = mock_post.call_args[0][0]
+        self.assertIn("type=STOP_LOSS_LIMIT", url)
+        self.assertIn("stopPrice=", url)
+        self.assertIn("timeInForce=GTC", url)
+
+    @patch("pt_exchanges.requests.post")
+    def test_take_profit_limit_sends_stop_and_price(self, mock_post):
+        mock_post.return_value.json.return_value = {
+            "orderId": 2,
+            "status": "NEW",
+            "executedQty": "0",
+            "price": "80000",
+            "transactTime": 1,
+        }
+        self.ex.place_order(
+            "BTC-USD",
+            "sell",
+            0.001,
+            order_type="TAKE_PROFIT_LIMIT",
+            price=80000.0,
+            stop_price=79500.0,
+        )
+        url = mock_post.call_args[0][0]
+        self.assertIn("type=TAKE_PROFIT_LIMIT", url)
+        self.assertIn("stopPrice=", url)
+
+    @patch("pt_exchanges.requests.post")
+    def test_limit_maker_sends_price_no_stop(self, mock_post):
+        mock_post.return_value.json.return_value = {
+            "orderId": 3,
+            "status": "NEW",
+            "executedQty": "0",
+            "price": "75000",
+            "transactTime": 1,
+        }
+        self.ex.place_order(
+            "BTC-USD",
+            "sell",
+            0.001,
+            order_type="LIMIT_MAKER",
+            price=75000.0,
+        )
+        url = mock_post.call_args[0][0]
+        self.assertIn("type=LIMIT_MAKER", url)
+        self.assertNotIn("stopPrice", url)
+
+    @patch("pt_exchanges.requests.post")
+    def test_market_with_quote_order_qty(self, mock_post):
+        mock_post.return_value.json.return_value = {
+            "orderId": 4,
+            "status": "FILLED",
+            "executedQty": "0",
+            "price": "0",
+            "transactTime": 1,
+        }
+        # quoteOrderQty path: amount=0 to bypass the both-given guard
+        self.ex.place_order(
+            "BTC-USD",
+            "buy",
+            0,
+            order_type="MARKET",
+            quote_order_qty=100.0,
+        )
+        url = mock_post.call_args[0][0]
+        self.assertIn("quoteOrderQty=", url)
+        self.assertNotIn("quantity=", url)
+
+    @patch("pt_exchanges.requests.post")
+    def test_trailing_delta_sent_as_int(self, mock_post):
+        mock_post.return_value.json.return_value = {
+            "orderId": 5,
+            "status": "NEW",
+            "executedQty": "0",
+            "price": "70000",
+            "transactTime": 1,
+        }
+        self.ex.place_order(
+            "BTC-USD",
+            "sell",
+            0.001,
+            order_type="STOP_LOSS_LIMIT",
+            price=70000.0,
+            trailing_delta=500,
+        )
+        url = mock_post.call_args[0][0]
+        self.assertIn("trailingDelta=500", url)
+
+    @patch("pt_exchanges.requests.post")
+    def test_client_order_id_forwarded(self, mock_post):
+        mock_post.return_value.json.return_value = {
+            "orderId": 6,
+            "status": "FILLED",
+            "executedQty": "0.001",
+            "price": "0",
+            "transactTime": 1,
+        }
+        self.ex.place_order(
+            "BTC-USD",
+            "buy",
+            0.001,
+            client_order_id="my-custom-id-123",
+        )
+        url = mock_post.call_args[0][0]
+        self.assertIn("newClientOrderId=my-custom-id-123", url)
+
+    def test_invalid_order_type_raises(self):
+        with self.assertRaises(ValueError):
+            self.ex.place_order("BTC-USD", "buy", 0.001, order_type="FUTURES_BRACKET")
+
+    def test_limit_without_price_raises(self):
+        with self.assertRaises(ValueError):
+            self.ex.place_order("BTC-USD", "buy", 0.001, order_type="LIMIT")
+
+    def test_stop_loss_limit_without_stop_raises(self):
+        with self.assertRaises(ValueError):
+            self.ex.place_order(
+                "BTC-USD",
+                "sell",
+                0.001,
+                order_type="STOP_LOSS_LIMIT",
+                price=70000.0,
+            )
+
+    def test_market_with_both_qty_and_quote_raises(self):
+        with self.assertRaises(ValueError):
+            self.ex.place_order(
+                "BTC-USD",
+                "buy",
+                0.001,
+                order_type="MARKET",
+                quote_order_qty=100.0,
+            )
+
+
+class TestBinanceOCO(unittest.TestCase):
+    def setUp(self):
+        self.ex = _make_exchange()
+        _seed_filters(self.ex, "BTCUSDT")
+
+    @patch("pt_exchanges.requests.post")
+    def test_place_oco_uses_above_below_schema(self, mock_post):
+        mock_post.return_value.json.return_value = {
+            "orderListId": 42,
+            "contingencyType": "OCO",
+            "orders": [{"orderId": 1}, {"orderId": 2}],
+        }
+        result = self.ex.place_oco_order(
+            "BTC-USD",
+            "sell",
+            0.001,
+            above_type="STOP_LOSS_LIMIT",
+            above_price=69000.0,
+            above_stop_price=68500.0,
+            above_time_in_force="GTC",
+            below_type="LIMIT_MAKER",
+            below_price=80000.0,
+        )
+        url = mock_post.call_args[0][0]
+        self.assertIn("/api/v3/orderList/oco", url)
+        self.assertIn("aboveType=STOP_LOSS_LIMIT", url)
+        self.assertIn("belowType=LIMIT_MAKER", url)
+        self.assertIn("abovePrice=", url)
+        self.assertIn("aboveStopPrice=", url)
+        self.assertIn("belowPrice=", url)
+        self.assertEqual(result["orderListId"], 42)
+
+    @patch("pt_exchanges.requests.delete")
+    def test_cancel_order_list_by_id(self, mock_del):
+        mock_del.return_value.json.return_value = {"orderListId": 42}
+        self.ex.cancel_order_list("BTC-USD", order_list_id=42)
+        url = mock_del.call_args[0][0]
+        self.assertIn("/api/v3/orderList", url)
+        self.assertIn("orderListId=42", url)
+
+    def test_cancel_order_list_requires_some_id(self):
+        with self.assertRaises(ValueError):
+            self.ex.cancel_order_list("BTC-USD")
+
+    def test_oco_missing_credentials_raises(self):
+        ex = BinanceExchange(api_key="", api_secret="")
+        with self.assertRaises(RuntimeError):
+            ex.place_oco_order(
+                "BTC-USD",
+                "sell",
+                0.001,
+                above_type="STOP_LOSS_LIMIT",
+                below_type="LIMIT_MAKER",
+            )
+
+
+class TestBinanceListenKey(unittest.TestCase):
+    def setUp(self):
+        self.ex = _make_exchange()
+
+    @patch("pt_exchanges.requests.post")
+    def test_create_returns_listen_key(self, mock_post):
+        mock_post.return_value.content = b'{"listenKey":"abc123"}'
+        mock_post.return_value.json.return_value = {"listenKey": "abc123"}
+        key = self.ex.create_listen_key()
+        self.assertEqual(key, "abc123")
+        url = mock_post.call_args[0][0]
+        self.assertIn("/api/v3/userDataStream", url)
+        # X-MBX-APIKEY required, no signature for listenKey endpoints
+        headers = mock_post.call_args[1]["headers"]
+        self.assertEqual(headers["X-MBX-APIKEY"], "test_key")
+
+    @patch("pt_exchanges.requests.put")
+    def test_keepalive_puts_with_key_param(self, mock_put):
+        mock_put.return_value.content = b"{}"
+        mock_put.return_value.json.return_value = {}
+        self.ex.keepalive_listen_key("xyz789")
+        url = mock_put.call_args[0][0]
+        self.assertIn("listenKey=xyz789", url)
+
+    @patch("pt_exchanges.requests.delete")
+    def test_close_deletes_with_key_param(self, mock_del):
+        mock_del.return_value.content = b"{}"
+        mock_del.return_value.json.return_value = {}
+        self.ex.close_listen_key("xyz789")
+        url = mock_del.call_args[0][0]
+        self.assertIn("listenKey=xyz789", url)
+
+    def test_user_data_stream_url_prod(self):
+        url = self.ex.user_data_stream_url("k1")
+        self.assertEqual(url, "wss://stream.binance.com:9443/ws/k1")
+
+    def test_user_data_stream_url_testnet(self):
+        ex = _make_exchange(testnet=True)
+        url = ex.user_data_stream_url("k2")
+        self.assertEqual(url, "wss://stream.testnet.binance.vision/ws/k2")
+
+    def test_create_without_key_raises(self):
+        ex = BinanceExchange(api_key="", api_secret="")
+        with self.assertRaises(RuntimeError):
+            ex.create_listen_key()
+
+
+class TestBinanceBrokerSelectorHelpers(unittest.TestCase):
+    """Hooks consumed by the broker-selector UI in #96."""
+
+    def test_masked_api_key_shows_last_four(self):
+        ex = BinanceExchange(api_key="abcdefghij1234", api_secret="x")
+        self.assertEqual(ex.get_masked_api_key(), "****1234")
+
+    def test_masked_api_key_short_key(self):
+        ex = BinanceExchange(api_key="ab", api_secret="x")
+        self.assertEqual(ex.get_masked_api_key(), "****ab")
+
+    def test_masked_api_key_empty(self):
+        ex = BinanceExchange(api_key="", api_secret="")
+        self.assertEqual(ex.get_masked_api_key(), "Not configured")
+
+    def test_test_connection_no_creds_returns_false(self):
+        ex = BinanceExchange(api_key="", api_secret="")
+        self.assertFalse(ex.test_connection())
+
+    @patch("pt_exchanges.requests.get")
+    def test_test_connection_success(self, mock_get):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.headers = {}
+        resp.json.return_value = {"balances": [], "canTrade": True}
+        mock_get.return_value = resp
+        ex = _make_exchange()
+        self.assertTrue(ex.test_connection())
+
+    @patch("pt_exchanges.requests.get")
+    def test_test_connection_swallows_errors(self, mock_get):
+        mock_get.side_effect = Exception("network down")
+        ex = _make_exchange()
+        self.assertFalse(ex.test_connection())
 
 
 if __name__ == "__main__":

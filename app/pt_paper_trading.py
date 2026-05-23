@@ -5,7 +5,6 @@ Simulated trading environment for testing strategies with live market data
 without risking real capital.
 """
 
-import asyncio
 import json
 import os
 import random
@@ -591,59 +590,8 @@ class PaperTradingAccount:
         ]
 
 
-# Example usage and testing
-async def demo_paper_trading():
-    """Demonstrate paper trading functionality."""
-    print("PowerTraderAI+ Paper Trading Demo")
-    print("=" * 40)
-
-    # Create account
-    account = PaperTradingAccount(initial_balance=Decimal("10000"))
-
-    # Display initial state
-    summary = account.get_account_summary()
-    print(f"Initial Balance: ${summary['cash_balance']:.2f}")
-
-    # Place some test orders
-    print("\nPlacing test orders...")
-
-    # Buy BTC
-    btc_order = account.place_order(
-        symbol="BTC",
-        order_type=OrderType.MARKET,
-        side=OrderSide.BUY,
-        quantity=Decimal("0.1"),
-    )
-    print(f"BTC Buy Order: {btc_order}")
-
-    # Buy ETH
-    eth_order = account.place_order(
-        symbol="ETH",
-        order_type=OrderType.MARKET,
-        side=OrderSide.BUY,
-        quantity=Decimal("2.0"),
-    )
-    print(f"ETH Buy Order: {eth_order}")
-
-    # Wait a bit and update prices
-    await asyncio.sleep(1)
-    account.update_market_prices()
-
-    # Show updated portfolio
-    print("\nPortfolio after purchases:")
-    summary = account.get_account_summary()
-    print(f"Cash: ${summary['cash_balance']:.2f}")
-    print(f"Total Value: ${summary['total_value']:.2f}")
-    print(f"P&L: ${summary['total_pnl']:.2f} ({summary['total_return_pct']:.2f}%)")
-
-    for symbol, pos_data in summary["positions"].items():
-        print(
-            f"  {symbol}: {pos_data['quantity']:.4f} @ ${pos_data['avg_price']:.2f} "
-            f"(Value: ${pos_data['market_value']:.2f}, "
-            f"P&L: ${pos_data['unrealized_pnl']:.2f})"
-        )
-
-
-if __name__ == "__main__":
-    # Run demo
-    asyncio.run(demo_paper_trading())
+# Note: the standalone async `demo_paper_trading()` previously living here was
+# removed in favour of the in-hub "Run sample" button (see pt_paper_mode.py).
+# Keeping the demo as a standalone script duplicated the buy/sell scenario and
+# encouraged running paper trades outside the GUI - exactly the workflow PR #90
+# was asked to stop supporting.

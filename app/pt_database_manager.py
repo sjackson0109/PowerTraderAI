@@ -17,6 +17,7 @@ import sqlite3
 import time
 import threading
 from contextlib import contextmanager
+from enum import Enum
 from typing import Any, Callable, Generator, Optional
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,21 @@ class DatabaseCorruptionError(DatabaseError):
 
 class DBConnectionError(DatabaseError):
     """Raised when a database connection cannot be established."""
+
+
+class IntegrityStatus(Enum):
+    """Result of a database integrity check.
+
+    Distinguishes true corruption (``PRAGMA integrity_check`` returned a
+    value other than ``"ok"``) from availability problems (missing file,
+    IO error, connection error) so callers can react appropriately. Only
+    ``CORRUPT`` should trigger emergency-stop behaviour; ``UNAVAILABLE``
+    is usually transient and warrants a retry or alert.
+    """
+
+    OK = "ok"
+    CORRUPT = "corrupt"
+    UNAVAILABLE = "unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -132,32 +148,51 @@ class DatabaseConnectionPool:
                 pass
             self._local.conn = None
 
-    def check_health(self) -> bool:
-        """Run PRAGMA integrity_check on a fresh connection. Returns True if OK."""
+    def check_integrity(self) -> IntegrityStatus:
+        """Run PRAGMA integrity_check and return a status distinguishing
+        true corruption from availability problems.
+
+        - ``OK``: integrity_check returned "ok"
+        - ``CORRUPT``: integrity_check returned anything else
+        - ``UNAVAILABLE``: file missing or sqlite3 connection/IO error
+
+        Use this when the caller needs to react differently to corruption
+        (fire emergency stop) vs availability (warn and retry).
+        """
         if not os.path.exists(self.db_path):
             logger.warning("Database file missing: %s", self.db_path)
             with self._stats_lock:
                 self._health_failures += 1
-            return False
+            return IntegrityStatus.UNAVAILABLE
         try:
             conn = sqlite3.connect(self.db_path, timeout=5)
             try:
                 result = conn.execute("PRAGMA integrity_check").fetchone()
             finally:
                 conn.close()
-            healthy = result and result[0] == "ok"
-            with self._stats_lock:
-                if not healthy:
-                    self._health_failures += 1
-                    logger.error("DB integrity check FAILED: %s", result)
-                else:
+            if result and result[0] == "ok":
+                with self._stats_lock:
                     self._health_failures = 0
-            return healthy
+                return IntegrityStatus.OK
+            with self._stats_lock:
+                self._health_failures += 1
+            logger.error("DB integrity check FAILED: %s", result)
+            return IntegrityStatus.CORRUPT
         except sqlite3.Error as exc:
             with self._stats_lock:
                 self._health_failures += 1
-            logger.error("DB health check error: %s", exc)
-            return False
+            logger.error("DB availability error during integrity check: %s", exc)
+            return IntegrityStatus.UNAVAILABLE
+
+    def check_health(self) -> bool:
+        """Run PRAGMA integrity_check and return True if OK (back-compat shim).
+
+        New code should call :meth:`check_integrity` which distinguishes
+        corruption from availability problems. This method conflates both
+        into a single boolean and is preserved only so existing callers
+        (tests, monitor's old code paths) continue to work.
+        """
+        return self.check_integrity() == IntegrityStatus.OK
 
     def get_stats(self) -> dict:
         with self._stats_lock:
@@ -182,6 +217,16 @@ def atomic_transaction(
     Context manager for atomic SQLite transactions with exponential-backoff
     retry on SQLITE_BUSY / SQLITE_LOCKED.
 
+    **Retry scope** (important):
+        Retry is only applied to ``BEGIN IMMEDIATE`` (transaction start) and
+        ``COMMIT`` contention. ``sqlite3.OperationalError`` raised by user
+        statements *inside* the ``with`` block - including busy/locked - is
+        rolled back and re-raised unchanged. This is a hard limit of
+        :func:`contextlib.contextmanager`: a generator-based CM can only
+        ``yield`` once, so the user body cannot be safely re-executed by the
+        retry loop. Callers that need to retry contention on statements
+        inside the block must wrap their own call in a retry loop.
+
     Usage:
         with atomic_transaction(conn) as c:
             c.execute("INSERT INTO orders ...")
@@ -190,12 +235,14 @@ def atomic_transaction(
 
     Args:
         conn: SQLite connection with isolation_level=None (manual control)
-        max_retries: Retry limit on busy/locked errors
+        max_retries: Retry limit for BEGIN IMMEDIATE / COMMIT contention
         base_delay: Starting retry delay in seconds (exponential backoff)
 
     Raises:
-        TransactionError: When max_retries exceeded on contention
-        Exception: Any non-retryable exception from within the block
+        TransactionError: When max_retries exceeded on BEGIN/COMMIT contention
+        Exception: Any exception raised inside the ``with`` block (after
+            ROLLBACK). Includes busy/locked from body statements, which are
+            *not* retried (see "Retry scope" above).
     """
     attempt = 0
     delay = base_delay
@@ -362,13 +409,19 @@ class InputSanitizer:
 # ---------------------------------------------------------------------------
 class DatabaseHealthMonitor:
     """
-    Background daemon thread that periodically runs integrity_check and
-    fires a callback when corruption is detected.
+    Background daemon thread that periodically runs integrity_check.
+
+    Fires ``on_corrupt`` only when ``PRAGMA integrity_check`` returns a
+    non-"ok" result (true corruption). Availability problems (file
+    missing, transient sqlite3 IO/connection errors) fire the separate
+    ``on_unavailable`` callback if provided, so the caller can react with
+    an alert/retry instead of triggering emergency-stop behaviour.
 
     Usage:
         monitor = DatabaseHealthMonitor(
             db_path="order_management.db",
             on_corrupt=lambda: trigger_emergency_stop(),
+            on_unavailable=lambda: alert_ops("DB unreachable"),
         )
         monitor.start()
     """
@@ -378,14 +431,17 @@ class DatabaseHealthMonitor:
         db_path: str,
         on_corrupt: Optional[Callable[[], None]] = None,
         check_interval: float = INTEGRITY_CHECK_INTERVAL,
+        on_unavailable: Optional[Callable[[], None]] = None,
     ):
         self.db_path = db_path
         self._on_corrupt = on_corrupt
+        self._on_unavailable = on_unavailable
         self._interval = check_interval
         self._pool = DatabaseConnectionPool(db_path)
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._last_check_ok: Optional[bool] = None
+        self._last_status: Optional[IntegrityStatus] = None
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -412,26 +468,42 @@ class DatabaseHealthMonitor:
     def _run(self) -> None:
         while not self._stop_event.is_set():
             try:
-                healthy = self._pool.check_health()
-                self._last_check_ok = healthy
-                if not healthy and self._on_corrupt:
+                status = self._pool.check_integrity()
+                self._last_status = status
+                self._last_check_ok = status == IntegrityStatus.OK
+                if status == IntegrityStatus.CORRUPT and self._on_corrupt:
                     logger.critical(
-                        "DB corruption detected — firing on_corrupt callback"
+                        "DB corruption detected - firing on_corrupt callback"
                     )
                     self._on_corrupt()
+                elif status == IntegrityStatus.UNAVAILABLE and self._on_unavailable:
+                    logger.warning(
+                        "DB unavailable (missing file or IO error) - "
+                        "firing on_unavailable callback"
+                    )
+                    self._on_unavailable()
             except Exception as exc:
                 logger.error("DB health monitor error: %s", exc)
             self._stop_event.wait(timeout=self._interval)
 
     def check_now(self) -> bool:
-        healthy = self._pool.check_health()
-        self._last_check_ok = healthy
-        return healthy
+        """Backwards-compatible boolean check. Use check_now_status() for
+        the richer IntegrityStatus."""
+        return self.check_now_status() == IntegrityStatus.OK
+
+    def check_now_status(self) -> IntegrityStatus:
+        status = self._pool.check_integrity()
+        self._last_status = status
+        self._last_check_ok = status == IntegrityStatus.OK
+        return status
 
     def get_status(self) -> dict:
         return {
             "db_path": self.db_path,
             "last_check_ok": self._last_check_ok,
+            "last_status": (
+                self._last_status.value if self._last_status is not None else None
+            ),
             "monitor_running": bool(self._thread and self._thread.is_alive()),
             "pool_stats": self._pool.get_stats(),
         }

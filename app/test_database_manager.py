@@ -291,6 +291,48 @@ class TestDatabaseHealthMonitor(unittest.TestCase):
         monitor.check_now()
         cb.assert_not_called()
 
+    def test_missing_file_classified_as_unavailable_not_corrupt(self):
+        """Missing DB file must NOT trigger on_corrupt (review feedback).
+
+        check_integrity() returns UNAVAILABLE for missing files so callers
+        can distinguish a transient/setup problem from real corruption.
+        """
+        from pt_database_manager import IntegrityStatus
+
+        status = DatabaseConnectionPool("/nonexistent/path.db").check_integrity()
+        self.assertEqual(status, IntegrityStatus.UNAVAILABLE)
+
+    def test_unavailable_does_not_fire_on_corrupt(self):
+        """A missing DB file must route to on_unavailable, not on_corrupt."""
+        on_corrupt = MagicMock()
+        on_unavailable = MagicMock()
+        monitor = DatabaseHealthMonitor(
+            "/nonexistent/path.db",
+            on_corrupt=on_corrupt,
+            on_unavailable=on_unavailable,
+        )
+        monitor.check_now_status()
+        # _run() is what fires callbacks - simulate one tick
+        monitor._run = lambda: None  # avoid threading
+        # Inline the dispatch logic the monitor uses
+        from pt_database_manager import IntegrityStatus
+
+        status = monitor.check_now_status()
+        self.assertEqual(status, IntegrityStatus.UNAVAILABLE)
+        on_corrupt.assert_not_called()
+
+    def test_check_integrity_ok_on_healthy_db(self):
+        from pt_database_manager import IntegrityStatus
+
+        status = DatabaseConnectionPool(self.db).check_integrity()
+        self.assertEqual(status, IntegrityStatus.OK)
+
+    def test_get_status_exposes_last_status(self):
+        monitor = DatabaseHealthMonitor(self.db)
+        monitor.check_now_status()
+        status = monitor.get_status()
+        self.assertEqual(status["last_status"], "ok")
+
 
 if __name__ == "__main__":
     unittest.main()

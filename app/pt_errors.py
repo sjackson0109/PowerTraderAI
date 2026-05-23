@@ -432,11 +432,14 @@ class ErrorHandler:
         """
         total_errors = len(self.error_reports)
         if total_errors == 0:
+            # Always include `recent_errors` so the API shape stays consistent
+            # and callers can iterate without a special case for empty state.
             return {
                 "total_errors": 0,
                 "categories": {},
                 "severities": {},
                 "by_category_severity": {},
+                "recent_errors": [],
             }
 
         severity_counts: Dict[str, int] = {}

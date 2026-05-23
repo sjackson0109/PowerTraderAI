@@ -16,9 +16,13 @@ Usage:
     except Exception as exc:
         handle(exc, context={"operation": "risky_operation"})
 
-    # Or via the global handler directly
-    handler = get_handler()
-    handler.handle(exc)
+    # Or via the global handler directly. The exception variable is only
+    # bound inside the `except` block on Python 3 (PEP 3134), so callers
+    # must invoke handle/handle_error from within that block.
+    try:
+        risky_operation()
+    except Exception as exc:
+        get_handler().handle(exc)
 """
 
 import logging

@@ -213,6 +213,44 @@ class TestSecureCredentialManager(unittest.TestCase):
             creds = self.mgr.decrypt_credentials()
             self.assertEqual(creds, ("KEY_LEG", "SECRET_LEG"))
 
+    def test_legacy_migration_preserves_rotation_metadata(self):
+        """Derivation migration must NOT reset last_rotated_at /
+        rotation_due_at. Without this, a one-shot derivation upgrade would
+        masquerade as a real rotation and silently push the next rotation
+        warning out by a full interval — defeating the rotation scheduler
+        for any vault that triggers the legacy fallback."""
+        legacy_pw = "legacy_pw_fixed_for_test_0000000000000000"
+        new_pw = "new_pw_fixed_for_test_xxxxxxxxxxxxxxxxxxx"
+
+        # Encrypt under legacy derivation.
+        with patch.object(self.mgr, "_get_machine_password", return_value=legacy_pw):
+            self.assertTrue(self.mgr.encrypt_credentials("KEY_LEG", "SECRET_LEG"))
+
+        # Backdate metadata so we can detect any reset.
+        original = self.mgr._load_metadata()
+        self.assertIsNotNone(original)
+        backdated_last = time.time() - 30 * 86400  # rotated 30d ago
+        backdated_due = time.time() + 60 * 86400  # next due in 60d
+        original.last_rotated_at = backdated_last
+        original.rotation_due_at = backdated_due
+        self.mgr._save_metadata(original)
+
+        # Trigger derivation migration via decrypt path.
+        with patch.object(
+            self.mgr, "_get_machine_password", return_value=new_pw
+        ), patch.object(
+            self.mgr, "_get_legacy_machine_password", return_value=legacy_pw
+        ):
+            self.assertEqual(
+                self.mgr.decrypt_credentials(), ("KEY_LEG", "SECRET_LEG")
+            )
+
+        # Rotation timestamps must be unchanged after the migration.
+        migrated = self.mgr._load_metadata()
+        self.assertIsNotNone(migrated)
+        self.assertAlmostEqual(migrated.last_rotated_at, backdated_last, places=1)
+        self.assertAlmostEqual(migrated.rotation_due_at, backdated_due, places=1)
+
     def test_migrate_from_plaintext(self):
         with open(os.path.join(self.tmpdir, "r_key.txt"), "w") as f:
             f.write("PLAIN_KEY\n")
@@ -348,7 +386,11 @@ class TestCredentialRotationScheduler(unittest.TestCase):
         cb.assert_not_called()
 
     def test_callback_fires_when_overdue(self):
-        """Scheduler must call callback when overdue metadata is seeded."""
+        """Scheduler must invoke the user callback via _tick() when overdue
+        metadata is seeded. Exercises the real callback dispatch path
+        (_tick → _run → cb) rather than only the synchronous check_now()
+        helper, so a regression that broke the tick→callback wiring would
+        be caught here."""
         cb = MagicMock()
         mgr = SecureCredentialManager(self.tmpdir)
         # Seed overdue metadata
@@ -362,10 +404,18 @@ class TestCredentialRotationScheduler(unittest.TestCase):
         sched = CredentialRotationScheduler(
             cb, check_interval_hours=24, base_dir=self.tmpdir
         )
-        # Direct check_now proves warning is returned
+
+        # check_now() returns the warning string for direct callers.
         warning = sched.check_now()
         self.assertIsNotNone(warning)
         self.assertIn("OVERDUE", warning)
+
+        # _tick() is the scheduler's real dispatch path; it must actually
+        # call the callback with the same overdue warning.
+        sched._tick()
+        cb.assert_called_once()
+        (delivered,), _ = cb.call_args
+        self.assertIn("OVERDUE", delivered)
 
     def test_dedup_callback_not_repeated(self):
         """Same warning should not trigger callback twice. Exercises the

@@ -392,8 +392,22 @@ class SecureCredentialManager:
                 "Decrypted vault using legacy machine-password derivation. "
                 "Re-encrypting with new derivation."
             )
+            # Snapshot rotation metadata so the derivation migration does not
+            # masquerade as a real credential rotation. encrypt_credentials()
+            # otherwise resets last_rotated_at / rotation_due_at and would
+            # silently push the next rotation warning out by a full interval.
+            prior_meta = self._load_metadata()
             try:
-                self.encrypt_credentials(api_key, private_key)
+                if self.encrypt_credentials(api_key, private_key) and prior_meta:
+                    refreshed = self._load_metadata()
+                    if refreshed is not None:
+                        refreshed.last_rotated_at = prior_meta.last_rotated_at
+                        refreshed.rotation_due_at = prior_meta.rotation_due_at
+                        refreshed.rotation_interval_days = (
+                            prior_meta.rotation_interval_days
+                        )
+                        refreshed.created_at = prior_meta.created_at
+                        self._save_metadata(refreshed)
             except Exception as exc:
                 logger.warning("Re-encrypt after legacy decrypt failed: %s", exc)
             return api_key, private_key

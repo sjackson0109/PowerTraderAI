@@ -171,6 +171,14 @@ backups/
 app_stdout*.log
 app_stderr*.log
 
+# Runtime security/audit logs (must never be committed)
+security_audit.jsonl
+security_audit.jsonl.*
+**/security_audit.jsonl
+**/security_audit.jsonl.*
+app/security_audit.jsonl
+app/security_audit.jsonl.*
+
 # Database files (SQLite, etc.)
 *.db
 *.db-shm

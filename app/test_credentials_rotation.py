@@ -241,9 +241,7 @@ class TestSecureCredentialManager(unittest.TestCase):
         ), patch.object(
             self.mgr, "_get_legacy_machine_password", return_value=legacy_pw
         ):
-            self.assertEqual(
-                self.mgr.decrypt_credentials(), ("KEY_LEG", "SECRET_LEG")
-            )
+            self.assertEqual(self.mgr.decrypt_credentials(), ("KEY_LEG", "SECRET_LEG"))
 
         # Rotation timestamps must be unchanged after the migration.
         migrated = self.mgr._load_metadata()

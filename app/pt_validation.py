@@ -1,16 +1,25 @@
 """
 Input validation and sanitization for PowerTraderAI+.
-Provides comprehensive validation for external data sources and user inputs.
+Provides comprehensive validation for external data sources, user inputs,
+and data corruption/anomaly detection.
 """
 
+import hashlib
 import json
+import math
 import re
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 class ValidationError(Exception):
     """Custom exception for validation errors."""
+
+    pass
+
+
+class DataCorruptionError(Exception):
+    """Raised when data integrity/corruption is detected."""
 
     pass
 
@@ -348,6 +357,189 @@ class InputValidator:
                 )
 
         return validated
+
+
+# ---------------------------------------------------------------------------
+# DataIntegrityValidator — corruption detection (Issue #63)
+# ---------------------------------------------------------------------------
+class DataIntegrityValidator:
+    """
+    Detects data corruption and anomalies in trading and market data.
+
+    Checks:
+    - NaN / Infinity values in numeric fields
+    - OHLCV cross-field consistency (high >= low, close within range, etc.)
+    - Price spike detection (configurable Z-score threshold)
+    - Missing required fields
+    - SHA-256 checksum verification for serialized data blobs
+    """
+
+    # Default anomaly thresholds
+    PRICE_SPIKE_Z_SCORE = 5.0  # Flag if value deviates > 5 std devs from series mean
+    MAX_MISSING_FIELD_RATIO = 0.1  # Allow at most 10% missing fields in a batch
+
+    @staticmethod
+    def has_nan_or_inf(value: Any) -> bool:
+        """True if value is float NaN or +/-Infinity."""
+        if isinstance(value, float):
+            return math.isnan(value) or math.isinf(value)
+        if isinstance(value, Decimal):
+            return not value.is_finite()
+        return False
+
+    @staticmethod
+    def check_ohlcv_consistency(candle: Dict[str, Any]) -> List[str]:
+        """
+        Check OHLCV candle for internal consistency.
+        Returns list of violation messages (empty = clean).
+        """
+        violations = []
+        fields = {}
+        for f in ("open", "high", "low", "close"):
+            if f in candle:
+                try:
+                    fields[f] = float(candle[f])
+                    if DataIntegrityValidator.has_nan_or_inf(fields[f]):
+                        violations.append(f"NaN/Inf in field '{f}'")
+                except (ValueError, TypeError):
+                    violations.append(f"Non-numeric value in field '{f}'")
+
+        if len(fields) < 4:
+            return violations  # Can't do cross-checks with missing fields
+
+        high, low, open_, close = (
+            fields.get("high"),
+            fields.get("low"),
+            fields.get("open"),
+            fields.get("close"),
+        )
+
+        if high is not None and low is not None and high < low:
+            violations.append(f"high ({high}) < low ({low})")
+        if high is not None and open_ is not None and open_ > high:
+            violations.append(f"open ({open_}) > high ({high})")
+        if (
+            high is not None and close is not None and close > high * 1.001
+        ):  # 0.1% tolerance
+            violations.append(f"close ({close}) > high ({high})")
+        if low is not None and open_ is not None and open_ < low * 0.999:
+            violations.append(f"open ({open_}) < low ({low})")
+        if low is not None and close is not None and close < low * 0.999:
+            violations.append(f"close ({close}) < low ({low})")
+
+        # Volume check
+        if "volume" in candle:
+            try:
+                vol = float(candle["volume"])
+                if vol < 0:
+                    violations.append(f"Negative volume: {vol}")
+                if DataIntegrityValidator.has_nan_or_inf(vol):
+                    violations.append("NaN/Inf volume")
+            except (ValueError, TypeError):
+                violations.append("Non-numeric volume")
+
+        return violations
+
+    @staticmethod
+    def detect_price_spikes(
+        prices: List[float],
+        z_threshold: float = PRICE_SPIKE_Z_SCORE,
+    ) -> List[Tuple[int, float]]:
+        """
+        Detect price spikes using Z-score.
+        Returns list of (index, value) tuples for anomalous entries.
+        """
+        if len(prices) < 3:
+            return []
+        import statistics
+
+        try:
+            mean = statistics.mean(prices)
+            std = statistics.stdev(prices)
+        except statistics.StatisticsError:
+            return []
+        if std == 0:
+            return []
+        return [
+            (i, v) for i, v in enumerate(prices) if abs((v - mean) / std) > z_threshold
+        ]
+
+    @staticmethod
+    def validate_numeric_fields(
+        data: Dict[str, Any], numeric_fields: List[str]
+    ) -> List[str]:
+        """
+        Validate that specified fields are finite numeric values.
+        Returns list of violation messages.
+        """
+        violations = []
+        for field in numeric_fields:
+            if field not in data:
+                violations.append(f"Missing field: '{field}'")
+                continue
+            val = data[field]
+            if val is None:
+                violations.append(f"Null value in field '{field}'")
+                continue
+            try:
+                fval = float(val)
+                if DataIntegrityValidator.has_nan_or_inf(fval):
+                    violations.append(f"NaN/Inf in field '{field}': {val}")
+            except (ValueError, TypeError):
+                violations.append(f"Non-numeric value in field '{field}': {val!r}")
+        return violations
+
+    @staticmethod
+    def compute_checksum(data: Union[str, bytes, Dict]) -> str:
+        """Compute SHA-256 checksum of data (for integrity tracking)."""
+        if isinstance(data, dict):
+            raw = json.dumps(data, sort_keys=True, default=str).encode("utf-8")
+        elif isinstance(data, str):
+            raw = data.encode("utf-8")
+        else:
+            raw = data
+        return hashlib.sha256(raw).hexdigest()
+
+    @staticmethod
+    def verify_checksum(data: Union[str, bytes, Dict], expected: str) -> bool:
+        """Verify data matches expected checksum."""
+        return DataIntegrityValidator.compute_checksum(data) == expected
+
+    @staticmethod
+    def check_batch_integrity(
+        records: List[Dict[str, Any]],
+        required_fields: List[str],
+    ) -> Dict[str, Any]:
+        """
+        Check a batch of records for integrity issues.
+        Returns summary: total, clean, corrupt, missing_field_count, anomalies.
+        """
+        total = len(records)
+        corrupt_indices = []
+        issues: Dict[int, List[str]] = {}
+
+        for i, record in enumerate(records):
+            record_issues = []
+            # NaN/Inf scan
+            for k, v in record.items():
+                if DataIntegrityValidator.has_nan_or_inf(v):
+                    record_issues.append(f"NaN/Inf in '{k}'")
+            # Missing fields
+            for f in required_fields:
+                if f not in record or record[f] is None:
+                    record_issues.append(f"Missing/null '{f}'")
+            if record_issues:
+                corrupt_indices.append(i)
+                issues[i] = record_issues
+
+        return {
+            "total": total,
+            "clean": total - len(corrupt_indices),
+            "corrupt": len(corrupt_indices),
+            "corrupt_indices": corrupt_indices,
+            "issues": issues,
+            "integrity_ok": len(corrupt_indices) == 0,
+        }
 
 
 def safe_json_loads(json_str: str, max_size: int = 1024 * 1024) -> Dict[str, Any]:

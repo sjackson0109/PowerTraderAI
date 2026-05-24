@@ -1,5 +1,5 @@
 """
-PowerTraderAI+ Centralized Error Management System
+PowerTraderAI Centralized Error Management System
 Single application-wide error handler with notification routing and
 classification. All modules should use `get_handler()` instead of
 creating their own ErrorHandler instances.
@@ -82,6 +82,11 @@ class ApplicationErrorHandler:
             }
             self._suppressed_modules: set = set()
             self._cb_lock = threading.Lock()
+            # Guards mutation/read of the underlying ErrorHandler state
+            # (error_reports, error_counts, error_counts_by_severity) so
+            # concurrent handle()/clear_history()/get_summary() calls can't
+            # lose increments or observe partially-updated counters.
+            self._state_lock = threading.Lock()
             self._initialised = True
 
     # ------------------------------------------------------------------
@@ -149,7 +154,8 @@ class ApplicationErrorHandler:
             ErrorReport with full classification and metadata
         """
         self._ensure_init()
-        report = self._handler.handle_error(error, context=context)
+        with self._state_lock:
+            report = self._handler.handle_error(error, context=context)
         self._fire_callbacks(report)
         if reraise:
             # If error is the currently active exception (called from inside an except
@@ -176,11 +182,12 @@ class ApplicationErrorHandler:
         severity consistently.
         """
         self._ensure_init()
-        report = self._handler.handle_error(
-            error,
-            context=context,
-            severity_override=ErrorSeverity.CRITICAL,
-        )
+        with self._state_lock:
+            report = self._handler.handle_error(
+                error,
+                context=context,
+                severity_override=ErrorSeverity.CRITICAL,
+            )
         self._fire_callbacks(report)
         return report
 
@@ -217,25 +224,37 @@ class ApplicationErrorHandler:
     # ------------------------------------------------------------------
     def get_summary(self) -> Dict:
         self._ensure_init()
-        return self._handler.get_error_summary()
+        with self._state_lock:
+            return self._handler.get_error_summary()
 
     def get_recent_errors(self, limit: int = 20) -> List[ErrorReport]:
         self._ensure_init()
-        return self._handler.error_reports[-limit:]
+        with self._state_lock:
+            return self._handler.error_reports[-limit:]
 
     def get_critical_errors(self) -> List[ErrorReport]:
         self._ensure_init()
-        return [
-            r
-            for r in self._handler.error_reports
-            if r.severity == ErrorSeverity.CRITICAL
-        ]
+        with self._state_lock:
+            return [
+                r
+                for r in self._handler.error_reports
+                if r.severity == ErrorSeverity.CRITICAL
+            ]
 
     def clear_history(self) -> None:
-        """Clear in-memory error history (does NOT affect log files)."""
+        """Clear in-memory error history (does NOT affect log files).
+
+        Resets every accumulator on the underlying ErrorHandler so that
+        subsequent ``get_summary()`` calls don't return stale severity totals
+        from the cleared run. Without clearing ``error_counts_by_severity``,
+        ``severities`` and ``by_category_severity`` would compound forever
+        across clears.
+        """
         self._ensure_init()
-        self._handler.error_reports.clear()
-        self._handler.error_counts.clear()
+        with self._state_lock:
+            self._handler.error_reports.clear()
+            self._handler.error_counts.clear()
+            self._handler.error_counts_by_severity.clear()
 
     @classmethod
     def reset_singleton(cls) -> None:

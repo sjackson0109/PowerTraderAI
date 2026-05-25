@@ -18,7 +18,7 @@ Usage:
 
     # Or via the global handler directly. The exception variable is only
     # bound inside the `except` block on Python 3 (PEP 3134), so callers
-    # must invoke handle/handle_error from within that block.
+    # must invoke handle()/get_handler().handle() from within that block.
     try:
         risky_operation()
     except Exception as exc:

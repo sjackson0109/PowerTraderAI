@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import time
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Dict, List, Optional
 
 import requests
@@ -160,15 +161,112 @@ class KrakenExchange(AbstractExchange):
         return symbol_map.get(symbol, symbol.replace("-", ""))
 
 
-class BinanceExchange(AbstractExchange):
-    """Binance API implementation"""
+_BINANCE_PROD_REST = "https://api.binance.com"
+_BINANCE_TESTNET_REST = "https://testnet.binance.vision"
+_BINANCE_PROD_WS = "wss://stream.binance.com:9443/ws"
+_BINANCE_TESTNET_WS = "wss://stream.testnet.binance.vision/ws"
 
-    def __init__(self, api_key: str = "", api_secret: str = "", **kwargs):
+# Limit/stop order types per Binance spot docs
+_BINANCE_SPOT_ORDER_TYPES = {
+    "MARKET",
+    "LIMIT",
+    "STOP_LOSS",
+    "STOP_LOSS_LIMIT",
+    "TAKE_PROFIT",
+    "TAKE_PROFIT_LIMIT",
+    "LIMIT_MAKER",
+}
+_BINANCE_LIMIT_TYPES = {
+    "LIMIT",
+    "STOP_LOSS_LIMIT",
+    "TAKE_PROFIT_LIMIT",
+    "LIMIT_MAKER",
+}
+_BINANCE_STOP_TYPES = {
+    "STOP_LOSS",
+    "STOP_LOSS_LIMIT",
+    "TAKE_PROFIT",
+    "TAKE_PROFIT_LIMIT",
+}
+
+
+class BinanceRateLimitError(RuntimeError):
+    """Raised on HTTP 429/418 from Binance. Carries retry-after (seconds)."""
+
+    def __init__(self, status_code: int, retry_after: float, message: str = ""):
+        super().__init__(
+            f"Binance rate limit ({status_code}): retry after {retry_after}s. {message}"
+        )
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+class BinanceTimestampError(RuntimeError):
+    """Raised on -1021 (timestamp outside recvWindow) after auto-resync retry."""
+
+
+class BinanceExchange(AbstractExchange):
+    """Binance Spot API implementation.
+
+    Covers signed order placement (all spot types), OCO, balance, order
+    status/cancel, exchange-filter enforcement, server-time sync, rate-limit
+    awareness, and user-data-stream listenKey lifecycle. Production + testnet
+    base URLs are selected via the ``testnet`` constructor flag so the
+    multi-broker selector (#96) can flip the toggle per user preference.
+    """
+
+    def __init__(
+        self,
+        api_key: str = "",
+        api_secret: str = "",
+        testnet: bool = False,
+        recv_window: int = 5000,
+        **kwargs,
+    ):
         super().__init__(api_key, api_secret, **kwargs)
-        self.base_url = "https://api.binance.com"
+        self.testnet = bool(testnet)
+        self.base_url = _BINANCE_TESTNET_REST if self.testnet else _BINANCE_PROD_REST
+        self.ws_base = _BINANCE_TESTNET_WS if self.testnet else _BINANCE_PROD_WS
+        # Per Binance docs: default 5000ms, max 60000ms
+        self.recv_window = max(1, min(int(recv_window), 60000))
+        # Per-symbol filter cache: {binance_symbol: {"stepSize": Decimal,
+        # "tickSize": Decimal, "minQty": Decimal, "minNotional": Decimal}}.
+        # Populated lazily by _get_symbol_filters() to avoid per-order REST.
+        self._symbol_filters: Dict[str, Dict[str, Decimal]] = {}
+        # Server-time offset in ms: server_ms - local_ms. Refreshed lazily and
+        # again on -1021 retry. Keeps timestamps inside recvWindow without a
+        # round-trip on every order.
+        self._time_offset_ms: int = 0
+        self._time_synced: bool = False
+        # Last-seen rate-limit headers, keyed by header name (e.g.
+        # "X-MBX-USED-WEIGHT-1M"). Exposed for monitoring; not consulted to
+        # decide throttling — Binance's 429 + Retry-After is authoritative.
+        self.last_rate_limit_headers: Dict[str, str] = {}
 
     def get_exchange_name(self) -> str:
         return "binance"
+
+    def get_masked_api_key(self) -> str:
+        """Return ``****<last4>`` for display by the broker selector UI."""
+        if not self.api_key:
+            return "Not configured"
+        suffix = self.api_key[-4:] if len(self.api_key) >= 4 else self.api_key
+        return f"****{suffix}"
+
+    def test_connection(self) -> bool:
+        """Probe credentials by hitting the account endpoint.
+
+        Returns True on success, False on any auth/credential/network failure.
+        Used by the broker selector (#96) for the per-row "Test connection"
+        button without raising into the GUI thread.
+        """
+        if not self.api_key or not self.api_secret:
+            return False
+        try:
+            self._signed_request("GET", "/api/v3/account")
+            return True
+        except Exception:
+            return False
 
     def get_current_price(self, symbol: str) -> float:
         binance_symbol = self._convert_symbol(symbol)
@@ -208,19 +306,640 @@ class BinanceExchange(AbstractExchange):
             exchange="binance",
         )
 
+    # ------------------------------------------------------------------
+    # Server-time sync
+    # ------------------------------------------------------------------
+
+    def sync_time(self) -> int:
+        """Fetch /api/v3/time and cache the local-vs-server offset (ms).
+
+        Called lazily before the first signed request and again on a -1021
+        ("timestamp for this request was 1000ms ahead of the server's time")
+        retry. Returns the offset for tests/diagnostics.
+        """
+        response = requests.get(f"{self.base_url}/api/v3/time", timeout=10)
+        data = response.json()
+        if "serverTime" not in data:
+            raise RuntimeError(f"Binance /api/v3/time unexpected response: {data}")
+        self._time_offset_ms = int(data["serverTime"]) - int(time.time() * 1000)
+        self._time_synced = True
+        return self._time_offset_ms
+
+    def _now_ms(self) -> int:
+        """Local wall clock corrected by the cached server-time offset."""
+        return int(time.time() * 1000) + self._time_offset_ms
+
+    # ------------------------------------------------------------------
+    # Authenticated helpers
+    # ------------------------------------------------------------------
+
+    def _sign(self, params: str) -> str:
+        """Generate HMAC-SHA256 signature for Binance signed endpoints."""
+        return hmac.new(
+            self.api_secret.encode("utf-8"),
+            params.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _signed_request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[Dict] = None,
+        _retried_on_timestamp: bool = False,
+    ) -> Dict:
+        """
+        Make a signed request to a Binance private endpoint.
+
+        Injects ``timestamp`` (corrected by the cached server-time offset) and
+        ``recvWindow``, signs the canonical query with HMAC-SHA256, and posts
+        with the ``X-MBX-APIKEY`` header. On HTTP 429/418 raises
+        :class:`BinanceRateLimitError` honouring ``Retry-After``. On Binance
+        error -1021 (timestamp drift), resyncs and retries exactly once.
+
+        Raises:
+            BinanceRateLimitError: on HTTP 429 (weight) or 418 (IP ban).
+            BinanceTimestampError: -1021 still failing after a resync retry.
+            RuntimeError: any other Binance error (negative ``code`` field).
+            requests.RequestException: network failure.
+        """
+        if not self._time_synced:
+            # Best-effort; if /api/v3/time fails the unsynced timestamp will
+            # still work for users whose clocks are within recvWindow.
+            try:
+                self.sync_time()
+            except Exception:
+                pass
+
+        params = params or {}
+        params.setdefault("recvWindow", self.recv_window)
+        params["timestamp"] = self._now_ms()
+        query = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+        signature = self._sign(query)
+        query += f"&signature={signature}"
+
+        url = f"{self.base_url}{path}?{query}"
+        headers = {"X-MBX-APIKEY": self.api_key}
+
+        send = {
+            "GET": requests.get,
+            "POST": requests.post,
+            "DELETE": requests.delete,
+            "PUT": requests.put,
+        }.get(method.upper())
+        if send is None:
+            raise ValueError(f"Unsupported HTTP method: {method}")
+
+        response = send(url, headers=headers, timeout=10)
+
+        # Capture rate-limit headers regardless of status. Header names are
+        # case-insensitive and follow X-MBX-USED-WEIGHT-(intervalNum)(letter)
+        # / X-MBX-ORDER-COUNT-* per Binance spec.
+        try:
+            self.last_rate_limit_headers = {
+                k: v
+                for k, v in response.headers.items()
+                if k.upper().startswith(("X-MBX-USED-WEIGHT", "X-MBX-ORDER-COUNT"))
+            }
+        except Exception:
+            pass
+
+        status = response.status_code
+        if status in (429, 418):
+            retry_after = float(response.headers.get("Retry-After", "0") or 0)
+            msg = ""
+            try:
+                msg = response.json().get("msg", "")
+            except Exception:
+                pass
+            raise BinanceRateLimitError(status, retry_after, msg)
+
+        data = response.json()
+        if isinstance(data, dict) and "code" in data and data["code"] < 0:
+            # -1021: timestamp outside recvWindow. Resync and retry once.
+            if data["code"] == -1021 and not _retried_on_timestamp:
+                try:
+                    self.sync_time()
+                except Exception:
+                    raise BinanceTimestampError(
+                        f"Binance -1021 and /api/v3/time resync failed: "
+                        f"{data.get('msg', '')}"
+                    )
+                return self._signed_request(
+                    method,
+                    path,
+                    params={
+                        k: v
+                        for k, v in params.items()
+                        if k not in ("timestamp", "signature")
+                    },
+                    _retried_on_timestamp=True,
+                )
+            if data["code"] == -1021:
+                raise BinanceTimestampError(
+                    f"Binance -1021 after resync retry: {data.get('msg', '')}"
+                )
+            raise RuntimeError(
+                f"Binance API error {data['code']}: {data.get('msg', '')}"
+            )
+        return data
+
+    def _public_request(
+        self, method: str, path: str, headers: Optional[Dict] = None
+    ) -> Dict:
+        """Unsigned API-key request (e.g. POST /api/v3/userDataStream).
+
+        These endpoints need ``X-MBX-APIKEY`` but no signature.
+        """
+        send = {
+            "GET": requests.get,
+            "POST": requests.post,
+            "PUT": requests.put,
+            "DELETE": requests.delete,
+        }.get(method.upper())
+        if send is None:
+            raise ValueError(f"Unsupported HTTP method: {method}")
+        merged = {"X-MBX-APIKEY": self.api_key}
+        if headers:
+            merged.update(headers)
+        response = send(f"{self.base_url}{path}", headers=merged, timeout=10)
+        data = response.json() if response.content else {}
+        if isinstance(data, dict) and "code" in data and data["code"] < 0:
+            raise RuntimeError(
+                f"Binance API error {data['code']}: {data.get('msg', '')}"
+            )
+        return data
+
+    # ------------------------------------------------------------------
+    # Symbol filter handling (LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL)
+    # ------------------------------------------------------------------
+
+    def _get_symbol_filters(self, binance_symbol: str) -> Dict[str, Decimal]:
+        """
+        Fetch and cache the trading filters for a symbol from
+        /api/v3/exchangeInfo. Subsequent calls hit the in-memory cache so
+        each order placement does not pay a REST round-trip.
+
+        Returns dict with keys: stepSize, tickSize, minQty, minNotional.
+        Missing filters are returned as Decimal("0") so callers can treat
+        them as "no constraint".
+        """
+        if binance_symbol in self._symbol_filters:
+            return self._symbol_filters[binance_symbol]
+
+        url = f"{self.base_url}/api/v3/exchangeInfo?symbol={binance_symbol}"
+        response = requests.get(url, timeout=10)
+        info = response.json()
+        if "symbols" not in info or not info["symbols"]:
+            raise RuntimeError(
+                f"Binance exchangeInfo returned no data for {binance_symbol}"
+            )
+
+        filters: Dict[str, Decimal] = {
+            "stepSize": Decimal("0"),
+            "tickSize": Decimal("0"),
+            "minQty": Decimal("0"),
+            "minNotional": Decimal("0"),
+        }
+        for f in info["symbols"][0].get("filters", []):
+            try:
+                if f["filterType"] == "LOT_SIZE":
+                    filters["stepSize"] = Decimal(f["stepSize"])
+                    filters["minQty"] = Decimal(f["minQty"])
+                elif f["filterType"] == "PRICE_FILTER":
+                    filters["tickSize"] = Decimal(f["tickSize"])
+                elif f["filterType"] in ("MIN_NOTIONAL", "NOTIONAL"):
+                    # Binance renamed MIN_NOTIONAL -> NOTIONAL in 2023;
+                    # support both so older and newer pairs both work.
+                    filters["minNotional"] = Decimal(
+                        f.get("minNotional", f.get("notional", "0"))
+                    )
+            except (InvalidOperation, KeyError):
+                # Unknown filter shape: skip rather than blowing up the order.
+                continue
+
+        self._symbol_filters[binance_symbol] = filters
+        return filters
+
+    @staticmethod
+    def _round_to_step(value: Decimal, step: Decimal) -> Decimal:
+        """
+        Round ``value`` *down* to the nearest multiple of ``step``.
+
+        Truncating (ROUND_DOWN) — never rounding up — keeps the submitted
+        quantity at or below the user's intent. Rounding up could exceed
+        available balance, overshoot a stop, or violate a per-trade cap.
+        """
+        if step == 0:
+            return value
+        quantised = (value / step).to_integral_value(rounding=ROUND_DOWN) * step
+        # Normalise away trailing zeros so Binance accepts e.g. "0.001"
+        # instead of "0.00100000" which can fail the PRICE_FILTER regex.
+        return quantised.normalize()
+
+    # ------------------------------------------------------------------
+    # AbstractExchange implementation
+    # ------------------------------------------------------------------
+
     def place_order(
-        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: Optional[float] = None,
+        order_type: Optional[str] = None,
+        stop_price: Optional[float] = None,
+        time_in_force: Optional[str] = None,
+        iceberg_qty: Optional[float] = None,
+        quote_order_qty: Optional[float] = None,
+        client_order_id: Optional[str] = None,
+        trailing_delta: Optional[int] = None,
     ) -> OrderResult:
-        raise NotImplementedError("Binance order placement to be implemented")
+        """
+        Place a spot order on Binance via POST /api/v3/order.
+
+        Supports the full Binance spot type set: ``MARKET``, ``LIMIT``,
+        ``STOP_LOSS``, ``STOP_LOSS_LIMIT``, ``TAKE_PROFIT``,
+        ``TAKE_PROFIT_LIMIT``, ``LIMIT_MAKER``. ``order_type`` may be passed
+        explicitly; if omitted, the caller stays backwards compatible —
+        ``LIMIT`` when ``price`` is provided, else ``MARKET``.
+
+        Args:
+            symbol: Standard format e.g. 'BTC-USD' (converted to BTCUSDT)
+            side: 'buy' or 'sell'
+            amount: Quantity of base asset
+            price: Limit price (required for LIMIT/*_LIMIT/LIMIT_MAKER)
+            order_type: Override the auto-derived type
+            stop_price: Trigger price (required for STOP_* / TAKE_PROFIT*)
+            time_in_force: GTC/IOC/FOK (defaulted to GTC for limit types)
+            iceberg_qty: Visible portion for iceberg orders (GTC only)
+            quote_order_qty: Quote-asset spend (MARKET only; alt to amount)
+            client_order_id: User-supplied order id (newClientOrderId)
+            trailing_delta: BIPS for trailing stop (alternative to stop_price)
+
+        Quantity is rounded *down* to the symbol's LOT_SIZE step and any
+        price field is rounded *down* to the PRICE_FILTER tick. After
+        rounding, the order is rejected locally with RuntimeError if
+        quantity < minQty or quantity * price < minNotional, so the user
+        sees a useful error instead of Binance's opaque -1013 / -1100.
+
+        Returns:
+            OrderResult. order_id uses 'SYMBOL:ID' format for later lookup.
+
+        Raises:
+            ValueError: on unsupported order_type or missing required fields
+            RuntimeError: on missing credentials, filter violation, or API error
+        """
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError("Binance API credentials required for order placement")
+
+        binance_symbol = self._convert_symbol(symbol)
+        # Auto-derive: keeps the legacy (symbol, side, amount[, price]) signature
+        # behaving exactly as it did before this change.
+        if order_type is None:
+            otype = "LIMIT" if price is not None else "MARKET"
+        else:
+            otype = order_type.upper()
+        if otype not in _BINANCE_SPOT_ORDER_TYPES:
+            raise ValueError(
+                f"Unsupported Binance order type '{otype}'. "
+                f"Expected one of: {sorted(_BINANCE_SPOT_ORDER_TYPES)}"
+            )
+
+        # Per-type required-field guards. Matches Binance trading-endpoints
+        # spec so callers get a clean ValueError instead of -1102/-1106.
+        if otype in _BINANCE_LIMIT_TYPES and price is None:
+            raise ValueError(f"Binance {otype} requires price")
+        if (
+            otype in _BINANCE_STOP_TYPES
+            and stop_price is None
+            and trailing_delta is None
+        ):
+            raise ValueError(f"Binance {otype} requires stop_price or trailing_delta")
+        if otype == "MARKET" and quote_order_qty is not None and amount:
+            raise ValueError(
+                "Binance MARKET accepts amount OR quote_order_qty, not both"
+            )
+
+        # Apply LOT_SIZE / PRICE_FILTER / MIN_NOTIONAL before signing.
+        filters = self._get_symbol_filters(binance_symbol)
+        qty_dec = self._round_to_step(Decimal(str(amount)), filters["stepSize"])
+        price_dec: Optional[Decimal] = None
+        if price is not None:
+            price_dec = self._round_to_step(Decimal(str(price)), filters["tickSize"])
+        stop_dec: Optional[Decimal] = None
+        if stop_price is not None:
+            stop_dec = self._round_to_step(
+                Decimal(str(stop_price)), filters["tickSize"]
+            )
+
+        if filters["minQty"] > 0 and qty_dec < filters["minQty"] and amount:
+            raise RuntimeError(
+                f"Binance {binance_symbol} order quantity {qty_dec} below "
+                f"minQty {filters['minQty']} after LOT_SIZE rounding"
+            )
+        if filters["minNotional"] > 0 and price_dec is not None and amount:
+            notional = qty_dec * price_dec
+            if notional < filters["minNotional"]:
+                raise RuntimeError(
+                    f"Binance {binance_symbol} notional {notional} below "
+                    f"minNotional {filters['minNotional']}"
+                )
+
+        params: Dict = {
+            "symbol": binance_symbol,
+            "side": side.upper(),
+            "type": otype,
+        }
+        if quote_order_qty is not None and otype == "MARKET":
+            params["quoteOrderQty"] = format(Decimal(str(quote_order_qty)), "f")
+        else:
+            params["quantity"] = format(qty_dec, "f")
+
+        if otype in _BINANCE_LIMIT_TYPES:
+            params["price"] = format(price_dec, "f")
+            params["timeInForce"] = (time_in_force or "GTC").upper()
+        if otype in _BINANCE_STOP_TYPES and stop_dec is not None:
+            params["stopPrice"] = format(stop_dec, "f")
+        if trailing_delta is not None:
+            params["trailingDelta"] = int(trailing_delta)
+        if iceberg_qty is not None:
+            params["icebergQty"] = format(Decimal(str(iceberg_qty)), "f")
+        if client_order_id:
+            params["newClientOrderId"] = client_order_id
+
+        data = self._signed_request("POST", "/api/v3/order", params)
+
+        # Prefix order_id with symbol so get_order_status/cancel_order can use it
+        compound_id = f"{binance_symbol}:{data['orderId']}"
+
+        return OrderResult(
+            order_id=compound_id,
+            symbol=symbol,
+            side=side.lower(),
+            amount=float(data.get("executedQty", amount)),
+            price=float(data.get("price", price or 0)),
+            status=data.get("status", "UNKNOWN").lower(),
+            exchange="binance",
+            timestamp=data.get("transactTime", time.time() * 1000) / 1000,
+        )
+
+    # ------------------------------------------------------------------
+    # OCO (One-Cancels-the-Other) - POST /api/v3/orderList/oco
+    # ------------------------------------------------------------------
+
+    def place_oco_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        above_type: str,
+        below_type: str,
+        above_price: Optional[float] = None,
+        above_stop_price: Optional[float] = None,
+        above_time_in_force: Optional[str] = None,
+        below_price: Optional[float] = None,
+        below_stop_price: Optional[float] = None,
+        below_time_in_force: Optional[str] = None,
+        list_client_order_id: Optional[str] = None,
+    ) -> Dict:
+        """Place an OCO order list via the modern ``/api/v3/orderList/oco``.
+
+        Each leg is described with ``aboveType`` / ``belowType`` + the leg's
+        price/stopPrice/timeInForce — this is the new schema Binance moved to
+        in 2024, replacing the legacy flat ``/api/v3/order/oco`` shape.
+
+        Price restrictions are enforced server-side:
+            * SELL: LIMIT_MAKER price > last > STOP_LOSS_LIMIT stopPrice
+            * BUY:  LIMIT_MAKER price < last < STOP_LOSS_LIMIT stopPrice
+
+        Returns:
+            Raw Binance response dict (orderListId, contingencyType, orders, ...)
+        """
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError("Binance API credentials required for OCO placement")
+
+        binance_symbol = self._convert_symbol(symbol)
+        filters = self._get_symbol_filters(binance_symbol)
+        qty_dec = self._round_to_step(Decimal(str(quantity)), filters["stepSize"])
+
+        if filters["minQty"] > 0 and qty_dec < filters["minQty"]:
+            raise RuntimeError(
+                f"Binance OCO {binance_symbol} quantity {qty_dec} below "
+                f"minQty {filters['minQty']}"
+            )
+
+        params: Dict = {
+            "symbol": binance_symbol,
+            "side": side.upper(),
+            "quantity": format(qty_dec, "f"),
+            "aboveType": above_type.upper(),
+            "belowType": below_type.upper(),
+        }
+        if above_price is not None:
+            params["abovePrice"] = format(
+                self._round_to_step(Decimal(str(above_price)), filters["tickSize"]),
+                "f",
+            )
+        if above_stop_price is not None:
+            params["aboveStopPrice"] = format(
+                self._round_to_step(
+                    Decimal(str(above_stop_price)), filters["tickSize"]
+                ),
+                "f",
+            )
+        if above_time_in_force:
+            params["aboveTimeInForce"] = above_time_in_force.upper()
+        if below_price is not None:
+            params["belowPrice"] = format(
+                self._round_to_step(Decimal(str(below_price)), filters["tickSize"]),
+                "f",
+            )
+        if below_stop_price is not None:
+            params["belowStopPrice"] = format(
+                self._round_to_step(
+                    Decimal(str(below_stop_price)), filters["tickSize"]
+                ),
+                "f",
+            )
+        if below_time_in_force:
+            params["belowTimeInForce"] = below_time_in_force.upper()
+        if list_client_order_id:
+            params["listClientOrderId"] = list_client_order_id
+
+        return self._signed_request("POST", "/api/v3/orderList/oco", params)
+
+    def cancel_order_list(
+        self,
+        symbol: str,
+        order_list_id: Optional[int] = None,
+        list_client_order_id: Optional[str] = None,
+    ) -> Dict:
+        """Cancel an entire OCO list via DELETE ``/api/v3/orderList``.
+
+        Cancelling any single leg cancels the whole list per Binance spec, so
+        callers usually want this rather than two individual cancels.
+        """
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError("Binance API credentials required for OCO cancel")
+        if order_list_id is None and list_client_order_id is None:
+            raise ValueError(
+                "cancel_order_list requires order_list_id or list_client_order_id"
+            )
+        binance_symbol = self._convert_symbol(symbol)
+        params: Dict = {"symbol": binance_symbol}
+        if order_list_id is not None:
+            params["orderListId"] = int(order_list_id)
+        if list_client_order_id is not None:
+            params["listClientOrderId"] = list_client_order_id
+        return self._signed_request("DELETE", "/api/v3/orderList", params)
+
+    # ------------------------------------------------------------------
+    # User-data stream (listenKey lifecycle)
+    # ------------------------------------------------------------------
+
+    def create_listen_key(self) -> str:
+        """POST /api/v3/userDataStream — returns a 60-min-valid listenKey.
+
+        The caller is responsible for opening the WebSocket and calling
+        :meth:`keepalive_listen_key` every ~30 min. Closing via
+        :meth:`close_listen_key` is best practice but not required (Binance
+        expires the key automatically after 60 min of inactivity).
+        """
+        if not self.api_key:
+            raise RuntimeError("Binance API key required to create a listenKey")
+        data = self._public_request("POST", "/api/v3/userDataStream")
+        if "listenKey" not in data:
+            raise RuntimeError(f"Binance create_listen_key bad response: {data}")
+        return data["listenKey"]
+
+    def keepalive_listen_key(self, listen_key: str) -> None:
+        """PUT /api/v3/userDataStream?listenKey=X — extends the 60-min TTL.
+
+        Call every ~30 min from the WS consumer thread to keep the stream
+        alive. Silently no-ops on success (Binance returns ``{}``).
+        """
+        if not self.api_key:
+            raise RuntimeError("Binance API key required for keepalive")
+        self._public_request("PUT", f"/api/v3/userDataStream?listenKey={listen_key}")
+
+    def close_listen_key(self, listen_key: str) -> None:
+        """DELETE /api/v3/userDataStream?listenKey=X — closes the stream."""
+        if not self.api_key:
+            raise RuntimeError("Binance API key required to close listenKey")
+        self._public_request("DELETE", f"/api/v3/userDataStream?listenKey={listen_key}")
+
+    def user_data_stream_url(self, listen_key: str) -> str:
+        """WebSocket URL for the given listenKey (prod or testnet)."""
+        return f"{self.ws_base}/{listen_key}"
 
     def get_balance(self) -> Dict[str, float]:
-        raise NotImplementedError("Binance balance retrieval to be implemented")
+        """
+        Retrieve balances for all assets via GET /api/v3/account.
+
+        Returns:
+            Dict mapping asset symbol to free (spendable) balance.
+            Only assets with free > 0 OR locked > 0 are included.
+
+        Raises:
+            RuntimeError: on missing credentials or API error
+        """
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError("Binance API credentials required for balance retrieval")
+
+        data = self._signed_request("GET", "/api/v3/account")
+
+        return {
+            b["asset"]: float(b["free"])
+            for b in data.get("balances", [])
+            if float(b["free"]) > 0 or float(b["locked"]) > 0
+        }
 
     def get_order_status(self, order_id: str) -> OrderResult:
-        raise NotImplementedError("Binance order status to be implemented")
+        """
+        Get status of an existing order via GET /api/v3/order.
+
+        Args:
+            order_id: 'SYMBOL:NUMERIC_ID' as returned by place_order
+                      e.g. 'BTCUSDT:123456789'
+
+        Returns:
+            OrderResult with current status
+
+        Raises:
+            RuntimeError: on missing credentials or API error
+            ValueError: if order_id not in 'SYMBOL:ID' format
+        """
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError("Binance API credentials required for order status")
+
+        if ":" not in str(order_id):
+            raise ValueError(
+                "Binance order lookup requires 'SYMBOL:ORDER_ID' format "
+                "(as returned by place_order). Got: " + str(order_id)
+            )
+
+        binance_symbol, numeric_id = str(order_id).split(":", 1)
+
+        data = self._signed_request(
+            "GET",
+            "/api/v3/order",
+            {"symbol": binance_symbol, "orderId": int(numeric_id)},
+        )
+
+        symbol = binance_symbol.replace("USDT", "-USD")
+
+        return OrderResult(
+            order_id=order_id,
+            symbol=symbol,
+            side=data["side"].lower(),
+            amount=float(data.get("executedQty", 0)),
+            price=float(data.get("price", 0)),
+            status=data.get("status", "UNKNOWN").lower(),
+            exchange="binance",
+            timestamp=data.get("time", time.time() * 1000) / 1000,
+        )
 
     def cancel_order(self, order_id: str) -> bool:
-        raise NotImplementedError("Binance order cancellation to be implemented")
+        """
+        Cancel an open order via DELETE /api/v3/order.
+
+        Args:
+            order_id: 'SYMBOL:NUMERIC_ID' as returned by place_order
+
+        Returns:
+            True if successfully cancelled.
+            False if order already filled or unknown (error -2011).
+
+        Raises:
+            RuntimeError: on missing credentials or unexpected API error
+            ValueError: if order_id not in 'SYMBOL:ID' format
+        """
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError(
+                "Binance API credentials required for order cancellation"
+            )
+
+        if ":" not in str(order_id):
+            raise ValueError(
+                "Binance cancel requires 'SYMBOL:ORDER_ID' format. Got: "
+                + str(order_id)
+            )
+
+        binance_symbol, numeric_id = str(order_id).split(":", 1)
+
+        try:
+            data = self._signed_request(
+                "DELETE",
+                "/api/v3/order",
+                {"symbol": binance_symbol, "orderId": int(numeric_id)},
+            )
+            return data.get("status") in ("CANCELED", "CANCELLED")
+        except RuntimeError as exc:
+            if "-2011" in str(exc):
+                # Order unknown: already filled or previously cancelled
+                return False
+            raise
 
     def is_available_in_region(self, region: str) -> bool:
         return True  # Available globally (check local regulations)

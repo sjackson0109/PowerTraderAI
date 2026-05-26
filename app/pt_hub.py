@@ -17,6 +17,7 @@ import tkinter.font as tkfont
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from decimal import Decimal
 from io import BytesIO
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, List, Optional, Tuple
@@ -26,6 +27,20 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import blended_transform_factory
+
+from pt_paper_mode import (
+    PAPER_MODE_BALANCE_KEY,
+    PAPER_MODE_SETTING_KEY,
+    PaperBanner,
+    apply_palette_to_style,
+    attach_trading_section_label,
+    fetch_binance_btc_price,
+    get_palette,
+    install_classic_widget_defaults,
+    read_paper_mode_from_disk,
+    run_sample_scenario,
+    settings_path_for,
+)
 
 # Multi-exchange imports
 try:
@@ -589,6 +604,11 @@ DEFAULT_SETTINGS = {
         "enabled": True,  # Enable alert system
         "notification_methods": ["gui"],  # Notification methods: gui, email, webhook
     },
+    # --- Paper Trading Mode (issue #86) ---
+    # When True the hub paints blue (not black) and shows a PAPER TRADING
+    # banner + label so the user cannot mistake it for live trading.
+    PAPER_MODE_SETTING_KEY: False,
+    PAPER_MODE_BALANCE_KEY: 10000.0,
 }
 
 
@@ -1916,10 +1936,28 @@ class PowerTraderHub(tk.Tk):
         # Debounce map for panedwindow clamp operations
         self._paned_clamp_after_ids: Dict[str, str] = {}
 
-        # Force one and only one theme: dark mode everywhere.
+        # Paper-mode flag must be known BEFORE the first theme paint, otherwise
+        # the window flashes dark for one frame before settling on blue. Read
+        # it straight from disk - _load_settings() merges defaults later.
+        app_dir = os.path.abspath(os.path.dirname(__file__))
+        self._paper_mode = read_paper_mode_from_disk(
+            settings_path_for(app_dir, SETTINGS_FILE)
+        )
+
+        # Force one and only one theme: dark (or paper-blue when enabled).
         self._apply_forced_dark_mode()
 
         self.settings = self._load_settings()
+        # Keep _paper_mode in sync with merged settings in case the file was
+        # missing the key entirely (default = False is then authoritative).
+        self._paper_mode = bool(
+            self.settings.get(PAPER_MODE_SETTING_KEY, self._paper_mode)
+        )
+
+        # Banner widget; built on demand by _build_paper_banner.
+        self._paper_banner: Optional[PaperBanner] = None
+        self._paper_section_label: Optional[tk.Label] = None
+        self._paper_account = None  # lazy: only spun up when sample runs
 
         # Enhanced training status tracking with atomic operations
         def _write_training_status(coin: str, state: str, **kwargs) -> None:
@@ -2043,6 +2081,12 @@ class PowerTraderHub(tk.Tk):
 
         self._build_menu()
         self._build_layout()
+
+        # Paper-mode banner + trading-section label are packed AFTER the layout
+        # exists. _build_layout assigns self.trades_frame for us.
+        if self._paper_mode:
+            self._build_paper_banner()
+            self._attach_paper_section_label()
 
         # Refresh charts immediately when a timeframe is changed (don't wait for the 10s throttle).
         self.bind_all("<<TimeframeChanged>>", self._on_timeframe_changed)
@@ -2309,6 +2353,136 @@ class PowerTraderHub(tk.Tk):
             except Exception:
                 pass
 
+        # Paper-mode overlay: re-apply the palette-driven subset of the styles
+        # above using the paper (blue) palette. Done last so it wins.
+        if getattr(self, "_paper_mode", False):
+            palette = get_palette(True)
+            install_classic_widget_defaults(self, palette)
+            try:
+                apply_palette_to_style(self, style, palette)
+            except tk.TclError:
+                pass
+
+    # ---- paper mode ----
+
+    def _build_paper_banner(self) -> None:
+        """Pack the PAPER TRADING banner across the top of the window."""
+        if self._paper_banner is not None:
+            return
+        palette = get_palette(True)
+        self._paper_banner = PaperBanner(
+            self,
+            palette=palette,
+            on_run_sample=self._run_paper_sample,
+        )
+        self._paper_banner.pack(side="top", fill="x", before=self.winfo_children()[0])
+        # Refresh price on the banner immediately, non-blocking via after().
+        self.after(50, self._refresh_paper_price)
+
+    def _refresh_paper_price(self) -> None:
+        if not self._paper_banner:
+            return
+        price = fetch_binance_btc_price()
+        try:
+            self._paper_banner.set_price(price)
+        except tk.TclError:
+            pass
+
+    def _attach_paper_section_label(self) -> None:
+        """Drop a 'PAPER TRADING' label at the top of the trades panel."""
+        frame = getattr(self, "trades_frame", None)
+        if frame is None or self._paper_section_label is not None:
+            return
+        label = attach_trading_section_label(frame, get_palette(True))
+        label.pack(side="top", fill="x", before=frame.winfo_children()[0])
+        self._paper_section_label = label
+
+    def _remove_paper_widgets(self) -> None:
+        if self._paper_banner is not None:
+            try:
+                self._paper_banner.destroy()
+            except tk.TclError:
+                pass
+            self._paper_banner = None
+        if self._paper_section_label is not None:
+            try:
+                self._paper_section_label.destroy()
+            except tk.TclError:
+                pass
+            self._paper_section_label = None
+
+    def _toggle_paper_mode(self) -> None:
+        """File-menu callback. Persists the flag and prompts a restart so
+        matplotlib chart facecolors and option_add classic-widget defaults
+        pick up the new palette cleanly (those can't be re-skinned live)."""
+        new_value = bool(self._paper_mode_var.get())
+        self._paper_mode = new_value
+        self.settings[PAPER_MODE_SETTING_KEY] = new_value
+        try:
+            self._save_settings()
+        except Exception as exc:
+            messagebox.showerror(
+                "Paper mode",
+                f"Could not save paper-mode preference: {exc}",
+            )
+            # Roll back the var so the menu reflects reality.
+            self._paper_mode_var.set(not new_value)
+            self._paper_mode = not new_value
+            self.settings[PAPER_MODE_SETTING_KEY] = not new_value
+            return
+
+        # Immediate visible feedback - banner/label toggle without restart.
+        if new_value:
+            self._build_paper_banner()
+            self._attach_paper_section_label()
+        else:
+            self._remove_paper_widgets()
+            self._paper_account = None
+
+        messagebox.showinfo(
+            "Paper mode",
+            (
+                "Paper mode "
+                + ("enabled" if new_value else "disabled")
+                + ".\n\nRestart PowerTrader to fully repaint charts and "
+                "text panels in the matching palette."
+            ),
+        )
+
+    def _run_paper_sample(self) -> None:
+        """Banner button handler. Runs the live-BTC buy/sell scenario."""
+        if not self._paper_mode:
+            return
+        if self._paper_account is None:
+            try:
+                from pt_paper_trading import (  # local import: heavy module
+                    PaperTradingAccount as _PaperAcct,
+                )
+
+                balance = Decimal(
+                    str(self.settings.get(PAPER_MODE_BALANCE_KEY, 10000.0))
+                )
+                self._paper_account = _PaperAcct(initial_balance=balance)
+            except Exception as exc:
+                messagebox.showerror("Paper sample", f"Account init failed: {exc}")
+                return
+        try:
+            result = run_sample_scenario(self._paper_account)
+        except Exception as exc:
+            messagebox.showerror("Paper sample", f"Sample run failed: {exc}")
+            return
+        if self._paper_banner is not None:
+            self._paper_banner.set_price(
+                Decimal(str(result["live_price"]))
+                if result.get("live_price") is not None
+                else None
+            )
+            delta = result["final_balance"] - result["starting_balance"]
+            self._paper_banner.set_result(
+                f"buy ${result['buy_price']:,.2f} -> sell ${result['sell_price']:,.2f} "
+                f"({'+' if delta >= 0 else ''}${delta:,.4f})"
+            )
+
     # ---- settings ----
 
     def _load_settings(self) -> dict:
@@ -2425,6 +2599,16 @@ class PowerTraderHub(tk.Tk):
             activebackground=DARK_SELECT_BG,
             activeforeground=DARK_SELECT_FG,
         )
+        # Paper mode toggle (owner spec: File menu so users don't need the CLI).
+        self._paper_mode_var = tk.BooleanVar(value=self._paper_mode)
+        m_file.add_checkbutton(
+            label="Paper Mode",
+            onvalue=True,
+            offvalue=False,
+            variable=self._paper_mode_var,
+            command=self._toggle_paper_mode,
+        )
+        m_file.add_separator()
         m_file.add_command(label="Exit", command=self._on_close)
         menubar.add_cascade(label="File", menu=m_file)
 
@@ -3157,6 +3341,9 @@ class PowerTraderHub(tk.Tk):
 
         trades_frame = ttk.LabelFrame(trades_tab, text="Current Trades")
         trades_frame.pack(fill="both", expand=True, padx=6, pady=6)
+        # Exposed so the paper-mode hook can pack a "PAPER TRADING" label
+        # at the top of the trading section without re-walking the widget tree.
+        self.trades_frame = trades_frame
 
         cols = (
             "coin",

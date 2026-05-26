@@ -1,13 +1,15 @@
 """
 PowerTraderAI+ Security & Audit Logging
-Standalone security event logging module providing:
+Standalone security event logging module (does NOT extend pt_logging_system)
+providing:
 - Correlation ID context (thread-local, propagated through request chains)
 - Security event logging: API auth attempts, credential usage, suspicious activity
 - Dedicated audit log (separate file, rotation, secure permissions)
 - Structured JSON security events for SIEM integration
 
-Note: This module does NOT depend on pt_logging_system. It manages its own
-logging handler so security events are always written to a dedicated audit
+Note: This module does NOT extend, import, or depend on pt_logging_system in
+any way. It is fully self-contained and manages its own logging handler
+independently, so security events are always written to a dedicated audit
 file regardless of the application's root logger configuration.
 
 Usage:
@@ -45,7 +47,6 @@ logger = logging.getLogger(__name__)
 # Security event types
 # ---------------------------------------------------------------------------
 class SecurityEventType(Enum):
-    AUTH_ATTEMPT = "auth_attempt"  # API key authentication attempt
     AUTH_SUCCESS = "auth_success"  # Successful authentication
     AUTH_FAILURE = "auth_failure"  # Failed authentication
     CREDENTIAL_USE = "credential_use"  # Credential accessed/used
@@ -246,16 +247,20 @@ class SecurityLogger:
 
     def close(self) -> None:
         """Flush and close the underlying handler (call on shutdown).
-        Idempotent: safe to call multiple times."""
-        if self._handler is None:
-            return
-        handler = self._handler
-        self._handler = None
-        try:
-            handler.flush()
-            handler.close()
-        finally:
-            self._audit_logger.removeHandler(handler)
+        Idempotent: safe to call multiple times.
+
+        Acquires the same lock as ``_emit`` so a concurrent emit cannot
+        write to a handler that is mid-teardown."""
+        with self._lock:
+            if self._handler is None:
+                return
+            handler = self._handler
+            self._handler = None
+            try:
+                handler.flush()
+                handler.close()
+            finally:
+                self._audit_logger.removeHandler(handler)
 
     def _emit(self, event: SecurityEvent) -> None:
         """Write security event to audit log (thread-safe)."""
@@ -475,7 +480,11 @@ class SecurityLogger:
         message: str,
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Log a system lifecycle event (start, stop, config change, rate limit)."""
+        """Log a system event under the given ``event_type``.
+
+        Accepts any ``SecurityEventType`` (start/stop, config change, rate
+        limit, permission denied, etc.); the listed examples are illustrative,
+        not exhaustive."""
         self._emit(self._make_event(event_type, message, details=details))
 
     def get_recent_events(self, limit: int = 100) -> List[dict]:
@@ -497,13 +506,22 @@ class SecurityLogger:
             with open(self._audit_path, "r", encoding="utf-8") as f:
                 tail = collections.deque(f, maxlen=limit)
             events = []
+            corrupt = 0
             for line in tail:
                 line = line.strip()
                 if line:
                     try:
                         events.append(json.loads(line))
                     except json.JSONDecodeError:
-                        pass
+                        # Surface, don't hide: a malformed line in an audit
+                        # trail may indicate truncation or tampering.
+                        corrupt += 1
+            if corrupt:
+                logger.warning(
+                    "Skipped %d unparseable line(s) in audit log %s",
+                    corrupt,
+                    self._audit_path,
+                )
             return events
         except OSError:
             return []

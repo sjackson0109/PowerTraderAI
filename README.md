@@ -126,7 +126,7 @@ PowerTraderAI/
 │
 ├── app/                      # Main application code
 │   ├── pt_hub.py            # Core PowerTrader Hub (main entry point)
-│   ├── pt_server.py         # Headless server entry point (Docker/VPS)
+│   ├── pt_api_server.py     # Headless server entry point (Docker/VPS)
 │   ├── institutional_trading.py     # Enterprise trading engine
 │   ├── compliance_audit_system.py  # Regulatory compliance
 │   ├── portfolio_optimizer.py      # Modern Portfolio Theory

@@ -12,10 +12,9 @@
 ## 🚨 BEFORE YOU START - SAFETY FIRST
 
 ### ⚠️ Critical Actions Required
-1. **DISABLE LIVE TRADING** until Phase 1 complete
+1. **Verify paper trading mode** is active before making any code changes to trading logic
 2. **Backup current system** completely
-3. **Use paper trading mode only**
-4. **Create development environment** separate from any live systems
+3. **Create development environment** separate from any live systems
 
 ```bash
 # 1. Backup current system
@@ -68,17 +67,14 @@ python scripts/create_github_issues.py --token YOUR_TOKEN --owner YOUR_USERNAME 
 python scripts/create_github_issues.py --token YOUR_TOKEN --owner YOUR_USERNAME
 ```
 
-### Step 3: Start Phase 1 Development (NOW)
+### Step 3: Pick up the next Sprint task
 ```bash
-# Review Phase 1 priorities
-# Windows: type TODO.md | findstr /A /C:"Phase 1:"
-# Linux/Mac: cat TODO.md | grep -A 20 "Phase 1:"
-
-# Pick first critical task
-git checkout -b feature/secure-credential-management
-
-# Start with the highest priority security issue
-# Example: Replace plaintext credentials
+# Review the active sprint on the GitHub Project board:
+# https://github.com/users/sjackson0109/projects/11/views/1
+#
+# Filter by Status=Ready to find unassigned tasks.
+# Create a branch for the issue you pick up:
+git checkout -b feature/<short-description>
 ```
 
 ### Step 4: Follow Development Workflow

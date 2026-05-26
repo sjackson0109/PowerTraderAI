@@ -120,9 +120,9 @@ class ApplicationErrorHandler:
         """Suppress notification callbacks for errors originating from
         ``module_name``.
 
-        Pass the bare module name (``"pt_trader"``), not the filename —
-        :class:`ErrorReport` stores the filename (``"pt_trader.py"``) but
-        suppression normalizes both sides so either spelling works.
+        Accepts either the bare module name (``"pt_trader"``) or the filename
+        (``"pt_trader.py"``). :class:`ErrorReport` stores the filename, and
+        suppression normalizes both sides, so either spelling works.
         """
         self._ensure_init()
         with self._cb_lock:

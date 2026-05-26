@@ -223,6 +223,16 @@ class TestQueryAPI(unittest.TestCase):
         recent = get_handler().get_recent_errors(limit=3)
         self.assertEqual(len(recent), 3)
 
+    def test_get_recent_errors_non_positive_limit(self):
+        """limit <= 0 returns [] rather than a wrong negative-slice subset."""
+        for i in range(5):
+            try:
+                raise ValueError(f"error {i}")
+            except ValueError as exc:
+                handle(exc)
+        self.assertEqual(get_handler().get_recent_errors(limit=0), [])
+        self.assertEqual(get_handler().get_recent_errors(limit=-3), [])
+
     def test_get_critical_errors_filtered(self):
         try:
             raise ValueError("normal")

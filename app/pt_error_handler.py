@@ -229,6 +229,8 @@ class ApplicationErrorHandler:
 
     def get_recent_errors(self, limit: int = 20) -> List[ErrorReport]:
         self._ensure_init()
+        if limit <= 0:
+            return []
         with self._state_lock:
             return self._handler.error_reports[-limit:]
 

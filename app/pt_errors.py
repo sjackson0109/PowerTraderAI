@@ -209,8 +209,10 @@ class ErrorHandler:
         # with external callers that read this attribute directly).
         self.error_counts: Dict[str, int] = {}
         # Richer nested counter: category.value -> severity.value -> count.
-        # Both counters are updated atomically by _update_error_counts so they
-        # cannot drift out of sync.
+        # Both counters are bumped together in the single _update_error_counts
+        # call path, so they stay consistent for any one update. ErrorHandler
+        # is not itself thread-safe; concurrent callers must serialise access
+        # (the ApplicationErrorHandler wrapper does this via its _state_lock).
         self.error_counts_by_severity: Dict[str, Dict[str, int]] = {}
 
         # Recovery suggestions for common errors

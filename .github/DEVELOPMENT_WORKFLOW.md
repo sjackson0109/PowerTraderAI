@@ -4,7 +4,7 @@ This document outlines the development workflow for transitioning PowerTrader AI
 
 ## 🎯 Overview
 
-**Current State**: Advanced prototype (40-50% production ready)
+**Current State**: Phase 1 (Security Foundations) substantially complete
 **Target**: Production-grade enterprise trading platform
 **Timeline**: 16 weeks organized in 4 phases
 **Methodology**: Agile development with security-first approach
@@ -12,7 +12,7 @@ This document outlines the development workflow for transitioning PowerTrader AI
 ## 📋 Project Structure
 
 ### GitHub Project Organization
-- **Repository**: PowerTrader_AI
+- **Repository**: `sjackson0109/PowerTraderAI`
 - **Main Branch**: `main` (production-ready code)
 - **Development Branch**: `development-phase1` through `development-phase4`
 - **Feature Branches**: `feature/task-description`
@@ -276,8 +276,8 @@ This document outlines the development workflow for transitioning PowerTrader AI
 
 1. **Repository Setup**
    ```bash
-   git clone https://github.com/[username]/PowerTrader_AI.git
-   cd PowerTrader_AI
+   git clone https://github.com/sjackson0109/PowerTraderAI.git
+   cd PowerTraderAI
    python -m venv .venv
    source .venv/bin/activate  # or .venv\Scripts\activate on Windows
    pip install -r requirements.txt

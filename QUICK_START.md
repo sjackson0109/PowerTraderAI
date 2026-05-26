@@ -4,10 +4,10 @@
 
 ## 📍 Current Status Summary
 
-- **Current State:** Advanced prototype (40-50% production ready)
-- **Critical Issue:** System not safe for live trading due to security vulnerabilities
+- **Current State:** Phase 1 (Security Foundations) substantially complete — see GitHub issues for active backlog
+- **Active Backlog:** Feature issues #100–#106 raised (Personas, Multi-LLM, MCP, Macro Data, Sentiment, Risk Metrics, Docker)
 - **Development Plan:** 4-phase approach over 16 weeks
-- **Immediate Need:** Phase 1 security fixes before any live trading
+- **Immediate Need:** Phase 2 functional completeness
 
 ## 🚨 BEFORE YOU START - SAFETY FIRST
 
@@ -19,10 +19,16 @@
 
 ```bash
 # 1. Backup current system
-cp -r PowerTrader_AI PowerTrader_AI_BACKUP_$(date +%Y%m%d)
+# Windows (PowerShell):
+Copy-Item -Recurse PowerTraderAI "PowerTraderAI_BACKUP_$(Get-Date -Format yyyyMMdd)"
+# Linux/Mac:
+# cp -r PowerTraderAI PowerTraderAI_BACKUP_$(date +%Y%m%d)
 
 # 2. Verify no live trading is occurring
-grep -r "paper_trading.*False" app/ && echo "⚠️ LIVE TRADING ENABLED - DISABLE NOW"
+# Windows (PowerShell):
+Select-String -Path app\*.py -Pattern 'paper_trading.*False'
+# Linux/Mac:
+# grep -r "paper_trading.*False" app/ && echo "⚠️ LIVE TRADING ENABLED - DISABLE NOW"
 
 # 3. Create development branch
 git checkout -b development-phase1
@@ -33,7 +39,7 @@ git checkout -b development-phase1
 ### Step 1: Environment Setup (5 minutes)
 ```bash
 # Clone or navigate to repository
-cd PowerTrader_AI
+cd PowerTraderAI
 
 # Activate virtual environment
 .venv\Scripts\activate  # Windows
@@ -43,7 +49,7 @@ cd PowerTrader_AI
 pip install -r requirements.txt
 
 # Verify system status
-python app/pt_comprehensive_test.py
+python app/test_dependencies.py
 ```
 
 ### Step 2: GitHub Project Setup (10 minutes)
@@ -65,7 +71,8 @@ python scripts/create_github_issues.py --token YOUR_TOKEN --owner YOUR_USERNAME
 ### Step 3: Start Phase 1 Development (NOW)
 ```bash
 # Review Phase 1 priorities
-cat TODO.md | grep -A 20 "Phase 1:"
+# Windows: type TODO.md | findstr /A /C:"Phase 1:"
+# Linux/Mac: cat TODO.md | grep -A 20 "Phase 1:"
 
 # Pick first critical task
 git checkout -b feature/secure-credential-management

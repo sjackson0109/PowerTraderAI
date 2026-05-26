@@ -237,3 +237,6 @@ desktop.ini
 app/*.db-shm
 app/*.db-wal
 app/*.txt
+
+# Temporary scratch directories
+_brainstorming_tmp/

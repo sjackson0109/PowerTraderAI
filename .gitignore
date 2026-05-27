@@ -200,6 +200,9 @@ futures_*_onoff.txt
 *_dca_signal.txt
 neural_*.txt
 memory_*.txt
+memories_*.txt
+signals_dca_*.txt
+trainer_last_training_time.txt
 *.html
 alerts_version.txt
 
@@ -232,3 +235,14 @@ app/credential_audit.jsonl
 # Contributor working notes (not project docs)
 CLAUDE.md
 LEARNINGS.md
+
+# Local-only skills (not committed to repo)
+.github/skills/
+
+# Specific files to ignore
+app/*.db-shm
+app/*.db-wal
+app/*.txt
+
+# Temporary scratch directories
+_brainstorming_tmp/

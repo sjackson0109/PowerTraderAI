@@ -58,8 +58,8 @@ PowerTrader AI+ is a comprehensive, institutional-quality trading platform that 
 ### Installation
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd PowerTrader_AI
+git clone https://github.com/sjackson0109/PowerTraderAI
+cd PowerTraderAI
 
 # Create and activate virtual environment (STRONGLY recommended)
 python -m venv .venv
@@ -85,7 +85,7 @@ python pt_hub.py
 ### Quick Installation (One-Command Setup)
 ```bash
 # For experienced users - complete setup in one command
-git clone <repository-url> && cd PowerTrader_AI && python -m venv .venv && .venv\Scripts\activate && python install_dependencies.py && cd app && python pt_hub.py
+git clone https://github.com/sjackson0109/PowerTraderAI && cd PowerTraderAI && python -m venv .venv && .venv\Scripts\activate && python install_dependencies.py && cd app && python pt_hub.py
 ```
 
 ### Troubleshooting Installation
@@ -108,21 +108,25 @@ python install_dependencies.py
 ### Desktop Application
 
 ```bash
-# Launch the full desktop interface
-python app/pt_desktop_app.py
+# Windows: double-click start_powertrader.bat, or run directly:
+start_powertrader.bat
+
+# Alternatively, launch the hub directly:
+python app/pt_hub.py
 ```
 
 ## 📁 Project Structure
 
 ```
-PowerTrader_AI/
+PowerTraderAI/
 ├── README.md                 # Main project documentation (this file)
 ├── requirements.txt          # Python dependencies
 ├── LICENSE                   # Project license
+├── start_powertrader.bat     # Windows launcher
 │
 ├── app/                      # Main application code
-│   ├── pt_hub.py            # Core PowerTrader Hub interface
-│   ├── pt_desktop_app.py    # Desktop application launcher
+│   ├── pt_hub.py            # Core PowerTrader Hub (main entry point)
+│   ├── pt_api_server.py     # Headless server entry point (Docker/VPS)
 │   ├── institutional_trading.py     # Enterprise trading engine
 │   ├── compliance_audit_system.py  # Regulatory compliance
 │   ├── portfolio_optimizer.py      # Modern Portfolio Theory
@@ -149,9 +153,9 @@ PowerTrader_AI/
 
 ## 📋 System Requirements
 
-- **Python**: 3.8 or higher
-- **Operating System**: Windows, macOS, or Linux
-- **Memory**: 4GB RAM minimum (8GB recommended for institutional features)
+- **Python**: 3.11 or higher (3.13 recommended)
+- **Operating System**: Windows 10/11 (primary), macOS, or Linux
+- **Memory**: 8GB RAM minimum (16GB recommended)
 - **Storage**: 2GB free space
 - **Network**: Internet connection for market data
 

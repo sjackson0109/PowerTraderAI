@@ -200,6 +200,9 @@ futures_*_onoff.txt
 *_dca_signal.txt
 neural_*.txt
 memory_*.txt
+memories_*.txt
+signals_dca_*.txt
+trainer_last_training_time.txt
 *.html
 alerts_version.txt
 
@@ -226,3 +229,14 @@ app/AVAX/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local-only skills (not committed to repo)
+.github/skills/
+
+# Specific files to ignore
+app/*.db-shm
+app/*.db-wal
+app/*.txt
+
+# Temporary scratch directories
+_brainstorming_tmp/

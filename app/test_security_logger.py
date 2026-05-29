@@ -106,7 +106,7 @@ class TestSecurityEvent(unittest.TestCase):
     def test_to_dict_has_required_fields(self):
         event = SecurityEvent(
             event_id="SEC_001",
-            event_type=SecurityEventType.AUTH_ATTEMPT.value,
+            event_type=SecurityEventType.AUTH_SUCCESS.value,
             timestamp=time.time(),
             message="test",
             correlation_id=None,

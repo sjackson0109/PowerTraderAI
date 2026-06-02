@@ -731,16 +731,10 @@ class PermissionValidator:
                 details={"granted_permissions": result.granted_permissions},
             )
         if result.excess_permissions:
-            if hasattr(sec_logger, "log_permission_compliance_warning"):
-                sec_logger.log_permission_compliance_warning(
-                    "robinhood",
-                    result.excess_permissions,
-                )
-            else:
-                sec_logger.log_suspicious_activity(
-                    "excess_api_permissions",
-                    details={"excess_permissions": result.excess_permissions},
-                )
+            sec_logger.log_permission_compliance_warning(
+                "robinhood",
+                result.excess_permissions,
+            )
 
     def _log_audit(self, result: PermissionAuditResult) -> None:
         """Append audit result to JSONL log. Rotates when MAX_AUDIT_LINES is
@@ -923,11 +917,23 @@ def get_credentials() -> Optional[Tuple[str, str]]:
     """
     manager = SecureCredentialManager()
     sec_logger = _get_security_logger()
+    if sec_logger is None:
+        logger.warning(
+            "Security logger unavailable; credential access events will not be "
+            "recorded in security_audit.jsonl."
+        )
 
     if manager.has_encrypted_credentials():
         creds = manager.decrypt_credentials()
-        if creds and sec_logger is not None:
-            sec_logger.log_credential_use("robinhood", "get_credentials_vault")
+        if sec_logger is not None:
+            if creds:
+                sec_logger.log_credential_use("robinhood", "get_credentials_vault")
+            else:
+                sec_logger.log_auth_attempt(
+                    "robinhood",
+                    False,
+                    details={"operation": "get_credentials_vault"},
+                )
         return creds
 
     env_key = os.environ.get("POWERTRADER_ROBINHOOD_API_KEY")
@@ -940,8 +946,15 @@ def get_credentials() -> Optional[Tuple[str, str]]:
     if manager.has_plaintext_credentials():
         if manager.migrate_from_plaintext():
             creds = manager.decrypt_credentials()
-            if creds and sec_logger is not None:
-                sec_logger.log_credential_use("robinhood", "get_credentials_migrated")
+            if sec_logger is not None:
+                if creds:
+                    sec_logger.log_credential_use("robinhood", "get_credentials_migrated")
+                else:
+                    sec_logger.log_auth_attempt(
+                        "robinhood",
+                        False,
+                        details={"operation": "get_credentials_migrated"},
+                    )
             return creds
         logger.error(
             "SECURITY ALERT: Plaintext credentials were detected but migration "
@@ -972,6 +985,11 @@ def validate_credentials_on_startup(
     validator = PermissionValidator(base_dir)
     messages = []
     sec_logger = _get_security_logger()
+    if sec_logger is None:
+        logger.warning(
+            "Security logger unavailable during startup validation; credential "
+            "access audit events will not be recorded."
+        )
 
     env_key = os.environ.get("POWERTRADER_ROBINHOOD_API_KEY")
     env_secret = os.environ.get("POWERTRADER_ROBINHOOD_PRIVATE_KEY")
@@ -979,7 +997,14 @@ def validate_credentials_on_startup(
 
     if manager.has_encrypted_credentials():
         creds = manager.decrypt_credentials()
-        if not creds or not creds[0] or not creds[1]:
+        if creds is None:
+            return (
+                False,
+                "SECURITY ALERT: Encrypted credential vault is present but unreadable "
+                "or corrupt. Startup rejected.",
+            )
+        api_key, private_key = creds
+        if not api_key or not private_key:
             return (
                 False,
                 "SECURITY ALERT: Encrypted credential vault is present but unreadable "

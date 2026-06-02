@@ -426,7 +426,7 @@ class SecurityLogger:
                 SecurityEventType.PERMISSION_COMPLIANCE,
                 msg,
                 source=api_name,
-                success=False,
+                success=True,
                 details={
                     **(details or {}),
                     "excess_permissions": sorted(excess_permissions),

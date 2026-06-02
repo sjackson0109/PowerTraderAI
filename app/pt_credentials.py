@@ -35,6 +35,7 @@ def _get_security_logger():
     except Exception:
         return None
 
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -948,7 +949,9 @@ def get_credentials() -> Optional[Tuple[str, str]]:
             creds = manager.decrypt_credentials()
             if sec_logger is not None:
                 if creds:
-                    sec_logger.log_credential_use("robinhood", "get_credentials_migrated")
+                    sec_logger.log_credential_use(
+                        "robinhood", "get_credentials_migrated"
+                    )
                 else:
                     sec_logger.log_auth_attempt(
                         "robinhood",
@@ -1044,9 +1047,7 @@ def validate_credentials_on_startup(
             notify_rotation(warning)
 
     if permission_fetcher is None:
-        skip_msg = (
-            "Permission validation skipped: no permission_fetcher provided."
-        )
+        skip_msg = "Permission validation skipped: no permission_fetcher provided."
         logger.warning(skip_msg)
         messages.append(skip_msg)
         audit_passed = True

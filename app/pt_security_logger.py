@@ -54,8 +54,8 @@ class SecurityEventType(Enum):
     SUSPICIOUS_ACTIVITY = "suspicious_activity"  # Anomalous behavior detected
     PERMISSION_DENIED = "permission_denied"  # Insufficient API permissions
     PERMISSION_COMPLIANCE = (
-        "permission_compliance_warning"
-    )  # API key has excessive scope
+        "permission_compliance_warning"  # API key has excessive scope
+    )
     RATE_LIMIT = "rate_limit"  # Rate limit hit
     TRADE_EXECUTED = "trade_executed"  # Order placed
     TRADE_REJECTED = "trade_rejected"  # Order rejected

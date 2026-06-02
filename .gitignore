@@ -178,6 +178,12 @@ security_audit.jsonl.*
 **/security_audit.jsonl.*
 app/security_audit.jsonl
 app/security_audit.jsonl.*
+app/r_key.txt
+app/r_secret.txt
+app/r_key.enc
+app/r_secret.enc
+app/.pt_salt
+app/.pt_cred_meta
 
 # Database files (SQLite, etc.)
 *.db

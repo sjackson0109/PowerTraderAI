@@ -14,6 +14,8 @@ from pt_credentials import (
     CredentialRotationScheduler,
     PermissionValidator,
     SecureCredentialManager,
+    get_credentials,
+    validate_credentials_on_startup,
 )
 
 
@@ -313,6 +315,15 @@ class TestPermissionValidator(unittest.TestCase):
         self.assertFalse(result.audit_passed)
         self.assertIn("failed", result.message.lower())
 
+    def test_excess_permissions_warned(self):
+        result = self.validator.validate(
+            lambda: ["read_account", "read_positions", "buy", "sell", "withdraw"],
+            require_trading=True,
+        )
+        self.assertTrue(result.audit_passed)
+        self.assertIn("withdraw", result.excess_permissions)
+        self.assertIn("more permissions than required", result.message)
+
     def test_audit_log_written_and_secured(self):
         self.validator.validate(None)
         log_path = os.path.join(self.tmpdir, PermissionValidator.AUDIT_LOG_FILE)
@@ -464,6 +475,43 @@ class TestCredentialRotationScheduler(unittest.TestCase):
         )
         sched._tick()
         self.assertEqual(cb.call_count, 2)
+
+
+class TestStartupCredentialValidation(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.mgr = SecureCredentialManager(self.tmpdir)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_startup_rejects_missing_credentials(self):
+        with patch.dict(os.environ, {}, clear=True):
+            ok, msg = validate_credentials_on_startup(base_dir=self.tmpdir)
+        self.assertFalse(ok)
+        self.assertIn("Missing API credentials", msg)
+
+    def test_startup_rejects_corrupt_vault(self):
+        self.assertTrue(self.mgr.encrypt_credentials("KEY123", "SECRET123"))
+        with open(self.mgr.encrypted_key_file, "wb") as f:
+            f.write(b"corrupted")
+        ok, msg = validate_credentials_on_startup(base_dir=self.tmpdir)
+        self.assertFalse(ok)
+        self.assertIn("unreadable", msg)
+
+    def test_startup_passes_with_valid_vault_without_permission_fetcher(self):
+        self.assertTrue(self.mgr.encrypt_credentials("KEY123", "SECRET123"))
+        ok, msg = validate_credentials_on_startup(base_dir=self.tmpdir)
+        self.assertTrue(ok)
+        self.assertIn("Permission validation skipped", msg)
+
+    @patch("pt_credentials.SecureCredentialManager")
+    def test_get_credentials_refuses_plaintext_on_failed_migration(self, manager_cls):
+        manager = manager_cls.return_value
+        manager.has_encrypted_credentials.return_value = False
+        manager.has_plaintext_credentials.return_value = True
+        manager.migrate_from_plaintext.return_value = False
+        self.assertIsNone(get_credentials())
 
 
 if __name__ == "__main__":

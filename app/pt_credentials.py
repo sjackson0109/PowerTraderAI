@@ -15,7 +15,7 @@ import stat
 import tempfile
 import threading
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -24,6 +24,16 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 logger = logging.getLogger(__name__)
+
+
+def _get_security_logger():
+    """Return SecurityLogger singleton if available, else None."""
+    try:
+        from pt_security_logger import get_security_logger
+
+        return get_security_logger()
+    except Exception:
+        return None
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -90,6 +100,7 @@ class PermissionAuditResult:
     missing_trading: List[str]
     audit_passed: bool
     message: str
+    excess_permissions: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -369,6 +380,9 @@ class SecureCredentialManager:
                 cipher = Fernet(self._derive_key(self._get_machine_password(), salt))
                 api_key = cipher.decrypt(key_blob).decode("utf-8").strip()
                 private_key = cipher.decrypt(secret_blob).decode("utf-8").strip()
+                sec_logger = _get_security_logger()
+                if sec_logger is not None:
+                    sec_logger.log_credential_use("robinhood", "decrypt_credentials")
                 return api_key, private_key
             except Exception as exc:
                 logger.debug(
@@ -410,6 +424,12 @@ class SecureCredentialManager:
                         self._save_metadata(refreshed)
             except Exception as exc:
                 logger.warning("Re-encrypt after legacy decrypt failed: %s", exc)
+            sec_logger = _get_security_logger()
+            if sec_logger is not None:
+                sec_logger.log_credential_use(
+                    "robinhood",
+                    "decrypt_credentials_legacy_migration",
+                )
             return api_key, private_key
 
     # ------------------------------------------------------------------
@@ -483,12 +503,22 @@ class SecureCredentialManager:
                         except OSError:
                             pass
                     logger.info("Credentials rotated successfully")
+                    sec_logger = _get_security_logger()
+                    if sec_logger is not None:
+                        sec_logger.log_credential_rotation("robinhood", True)
                     return True
 
                 raise RuntimeError("encrypt_credentials returned False")
 
             except Exception as exc:
                 logger.error("Credential rotation failed: %s", exc)
+                sec_logger = _get_security_logger()
+                if sec_logger is not None:
+                    sec_logger.log_credential_rotation(
+                        "robinhood",
+                        False,
+                        details={"error": str(exc)},
+                    )
                 if backed_up:
                     try:
                         # os.replace is atomic (POSIX rename): no partial-restore window
@@ -644,6 +674,10 @@ class PermissionValidator:
         missing_trading = (
             sorted(TRADING_PERMISSIONS - granted) if require_trading else []
         )
+        required_now = set(REQUIRED_PERMISSIONS)
+        if require_trading:
+            required_now |= TRADING_PERMISSIONS
+        excess_permissions = sorted(granted - required_now)
         has_required = len(missing_required) == 0
         has_trading = len(missing_trading) == 0
         audit_passed = has_required and (has_trading if require_trading else True)
@@ -662,6 +696,13 @@ class PermissionValidator:
                 f"Live trading will be unavailable."
             )
             logger.warning(message)
+        if excess_permissions:
+            compliance = (
+                f"PERMISSION COMPLIANCE WARNING: API key has more permissions than "
+                f"required: {excess_permissions}. Least-privilege is recommended."
+            )
+            logger.warning(compliance)
+            message = f"{message} {compliance}"
 
         result = PermissionAuditResult(
             timestamp=now,
@@ -670,11 +711,36 @@ class PermissionValidator:
             granted_permissions=sorted(granted),
             missing_required=missing_required,
             missing_trading=missing_trading,
+            excess_permissions=excess_permissions,
             audit_passed=audit_passed,
             message=message,
         )
         self._log_audit(result)
+        self._log_security_audit(result)
         return result
+
+    def _log_security_audit(self, result: PermissionAuditResult) -> None:
+        sec_logger = _get_security_logger()
+        if sec_logger is None:
+            return
+        sec_logger.log_credential_use("robinhood", "permission_validation")
+        for permission in result.missing_required + result.missing_trading:
+            sec_logger.log_permission_denied(
+                "robinhood",
+                permission,
+                details={"granted_permissions": result.granted_permissions},
+            )
+        if result.excess_permissions:
+            if hasattr(sec_logger, "log_permission_compliance_warning"):
+                sec_logger.log_permission_compliance_warning(
+                    "robinhood",
+                    result.excess_permissions,
+                )
+            else:
+                sec_logger.log_suspicious_activity(
+                    "excess_api_permissions",
+                    details={"excess_permissions": result.excess_permissions},
+                )
 
     def _log_audit(self, result: PermissionAuditResult) -> None:
         """Append audit result to JSONL log. Rotates when MAX_AUDIT_LINES is
@@ -856,38 +922,32 @@ def get_credentials() -> Optional[Tuple[str, str]]:
     Returns (api_key, private_key_b64) or None.
     """
     manager = SecureCredentialManager()
+    sec_logger = _get_security_logger()
 
     if manager.has_encrypted_credentials():
-        return manager.decrypt_credentials()
+        creds = manager.decrypt_credentials()
+        if creds and sec_logger is not None:
+            sec_logger.log_credential_use("robinhood", "get_credentials_vault")
+        return creds
 
     env_key = os.environ.get("POWERTRADER_ROBINHOOD_API_KEY")
     env_secret = os.environ.get("POWERTRADER_ROBINHOOD_PRIVATE_KEY")
     if env_key and env_secret:
+        if sec_logger is not None:
+            sec_logger.log_credential_use("robinhood", "get_credentials_environment")
         return env_key.strip(), env_secret.strip()
 
     if manager.has_plaintext_credentials():
         if manager.migrate_from_plaintext():
-            return manager.decrypt_credentials()
-        # Plaintext fallback: migration failed (e.g. vault write permission
-        # denied). Return plaintext creds rather than locking the user out.
-        # Logged at error level so the degraded security posture is visible.
+            creds = manager.decrypt_credentials()
+            if creds and sec_logger is not None:
+                sec_logger.log_credential_use("robinhood", "get_credentials_migrated")
+            return creds
         logger.error(
-            "SECURITY DEGRADATION: encrypted vault write failed — returning "
-            "PLAINTEXT credentials. Callers cannot distinguish vault-backed "
-            "from plaintext via this API. Fix vault permissions and re-run "
-            "to migrate."
+            "SECURITY ALERT: Plaintext credentials were detected but migration "
+            "to encrypted storage failed. Refusing to use plaintext credentials."
         )
-        try:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            with open(os.path.join(base_dir, "r_key.txt"), "r", encoding="utf-8") as f:
-                api_key = f.read().strip()
-            with open(
-                os.path.join(base_dir, "r_secret.txt"), "r", encoding="utf-8"
-            ) as f:
-                private_key = f.read().strip()
-            return api_key, private_key
-        except OSError:
-            pass
+        return None
 
     return None
 
@@ -911,6 +971,46 @@ def validate_credentials_on_startup(
     manager = SecureCredentialManager(base_dir)
     validator = PermissionValidator(base_dir)
     messages = []
+    sec_logger = _get_security_logger()
+
+    env_key = os.environ.get("POWERTRADER_ROBINHOOD_API_KEY")
+    env_secret = os.environ.get("POWERTRADER_ROBINHOOD_PRIVATE_KEY")
+    has_env_credentials = bool(env_key and env_secret)
+
+    if manager.has_encrypted_credentials():
+        creds = manager.decrypt_credentials()
+        if not creds or not creds[0] or not creds[1]:
+            return (
+                False,
+                "SECURITY ALERT: Encrypted credential vault is present but unreadable "
+                "or corrupt. Startup rejected.",
+            )
+        if sec_logger is not None:
+            sec_logger.log_credential_use("robinhood", "startup_validation_vault")
+    elif manager.has_plaintext_credentials():
+        if not manager.migrate_from_plaintext():
+            return (
+                False,
+                "SECURITY ALERT: Plaintext credentials detected but migration failed. "
+                "Startup rejected to avoid insecure credential use.",
+            )
+        creds = manager.decrypt_credentials()
+        if not creds:
+            return (
+                False,
+                "SECURITY ALERT: Plaintext migration completed but encrypted vault "
+                "could not be read. Startup rejected.",
+            )
+        if sec_logger is not None:
+            sec_logger.log_credential_use("robinhood", "startup_validation_migrated")
+    elif not has_env_credentials:
+        return (
+            False,
+            "SECURITY ALERT: Missing API credentials. Configure encrypted credentials "
+            "or set POWERTRADER_ROBINHOOD_API_KEY / POWERTRADER_ROBINHOOD_PRIVATE_KEY.",
+        )
+    elif sec_logger is not None:
+        sec_logger.log_credential_use("robinhood", "startup_validation_environment")
 
     warning = manager.check_rotation_warning()
     if warning:
@@ -918,7 +1018,16 @@ def validate_credentials_on_startup(
         if notify_rotation:
             notify_rotation(warning)
 
-    audit = validator.validate(permission_fetcher, require_trading)
-    messages.append(audit.message)
+    if permission_fetcher is None:
+        skip_msg = (
+            "Permission validation skipped: no permission_fetcher provided."
+        )
+        logger.warning(skip_msg)
+        messages.append(skip_msg)
+        audit_passed = True
+    else:
+        audit = validator.validate(permission_fetcher, require_trading)
+        messages.append(audit.message)
+        audit_passed = audit.audit_passed
 
-    return audit.audit_passed, " | ".join(messages)
+    return audit_passed, " | ".join(messages)

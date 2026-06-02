@@ -52,7 +52,7 @@ PowerTraderAI+ now supports **dual credential modes** for different use cases:
 **Credential Loading Priority:**
 1. **Encrypted files** (desktop): `r_key.enc`, `r_secret.enc`
 2. **Environment variables** (CI/CD): `POWERTRADER_ROBINHOOD_API_KEY`, `POWERTRADER_ROBINHOOD_PRIVATE_KEY`
-3. **Plaintext files** (legacy): `r_key.txt`, `r_secret.txt`
+3. **Legacy migration only**: if `r_key.txt` / `r_secret.txt` are detected, startup migrates them to encrypted storage and deletes plaintext files. If migration fails, startup is rejected.
 
 ## ✅ **Verification**
 
@@ -64,7 +64,7 @@ PowerTraderAI+ now supports **dual credential modes** for different use cases:
 
 - **Desktop:** Credentials are encrypted with machine-specific keys
 - **CI/CD:** Secrets are encrypted by GitHub and only available during workflow execution
-- **Never commit** `.txt`, `.enc` credential files to git
+- **Never commit** `.txt`, `.enc`, `.pt_salt`, or `.pt_cred_meta` credential files to git
 - **Keep private keys secure** - they provide full trading access
 
 ## 🆘 **Troubleshooting**

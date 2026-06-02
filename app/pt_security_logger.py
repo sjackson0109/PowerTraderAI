@@ -53,6 +53,9 @@ class SecurityEventType(Enum):
     CREDENTIAL_ROTATION = "credential_rotation"  # Credential rotated
     SUSPICIOUS_ACTIVITY = "suspicious_activity"  # Anomalous behavior detected
     PERMISSION_DENIED = "permission_denied"  # Insufficient API permissions
+    PERMISSION_COMPLIANCE = (
+        "permission_compliance_warning"
+    )  # API key has excessive scope
     RATE_LIMIT = "rate_limit"  # Rate limit hit
     TRADE_EXECUTED = "trade_executed"  # Order placed
     TRADE_REJECTED = "trade_rejected"  # Order rejected
@@ -403,6 +406,31 @@ class SecurityLogger:
                 source=api_name,
                 success=False,
                 details={**(details or {}), "required_permission": required_permission},
+            )
+        )
+
+    def log_permission_compliance_warning(
+        self,
+        api_name: str,
+        excess_permissions: List[str],
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Log least-privilege non-compliance for API key scope."""
+        msg = (
+            f"Permission compliance warning on {api_name}: "
+            f"excess permissions {sorted(excess_permissions)}"
+        )
+        logger.warning("SECURITY: %s", msg)
+        self._emit(
+            self._make_event(
+                SecurityEventType.PERMISSION_COMPLIANCE,
+                msg,
+                source=api_name,
+                success=False,
+                details={
+                    **(details or {}),
+                    "excess_permissions": sorted(excess_permissions),
+                },
             )
         )
 

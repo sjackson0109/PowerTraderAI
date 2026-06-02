@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 import sys
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from pkg_resources import parse_version
 
@@ -290,6 +290,26 @@ def run_dependency_audit():
                 print(f"  ❌ {pkg}: NOT INSTALLED")
 
     return results
+
+
+def validate_startup_api_permissions(
+    permission_fetcher: Optional[Callable[[], List[str]]] = None,
+    require_trading: bool = True,
+    base_dir: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """
+    Security startup hook for credential + API permission validation.
+
+    Delegates to pt_credentials.validate_credentials_on_startup so callers of
+    this module can run startup checks from a security entry point.
+    """
+    from pt_credentials import validate_credentials_on_startup
+
+    return validate_credentials_on_startup(
+        permission_fetcher=permission_fetcher,
+        require_trading=require_trading,
+        base_dir=base_dir,
+    )
 
 
 if __name__ == "__main__":

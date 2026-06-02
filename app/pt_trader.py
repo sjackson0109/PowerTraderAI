@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from nacl.signing import SigningKey
 from pt_cost import CostManager, PerformanceTier
-from pt_credentials import get_credentials
+from pt_credentials import get_credentials, validate_credentials_on_startup
 from pt_logging import get_logger
 from pt_risk import RiskManager
 from pt_validation import InputValidator, ValidationError, validate_api_response
@@ -254,6 +254,14 @@ def _load_credentials_if_needed():
         API_KEY = ""
         BASE64_PRIVATE_KEY = ""
         return
+
+    startup_ok, startup_message = validate_credentials_on_startup(require_trading=True)
+    if startup_message:
+        print(f"[PowerTrader][Security] {startup_message}")
+    if not startup_ok:
+        API_KEY = ""
+        BASE64_PRIVATE_KEY = ""
+        return False
 
     try:
         credentials = get_credentials()

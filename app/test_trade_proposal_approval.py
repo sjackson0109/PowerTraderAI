@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from pt_paper_trading import OrderSide, OrderStatus, OrderType, PaperTradingAccount
 from trade_proposal_approval import (
+    ApprovalGatedPaperTradingAccount,
     PayloadDigestMismatchError,
     ProposalExpiredError,
     ProposalNotFoundError,
@@ -28,6 +31,21 @@ class SpyPaperAccount:
     def place_order(self, **kwargs):
         self.calls.append(kwargs)
         return self.next_order_id
+
+
+class SlowSpyPaperAccount(SpyPaperAccount):
+    def place_order(self, **kwargs):
+        time.sleep(0.02)
+        return super().place_order(**kwargs)
+
+
+class RecordingCircuitBreaker:
+    def __init__(self):
+        self.calls = 0
+
+    def call(self, func):
+        self.calls += 1
+        return func()
 
 
 def make_payload(**overrides):
@@ -134,6 +152,35 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         self.assertEqual(proposal.state, TradeProposalState.EXECUTED)
         self.assertEqual(proposal.executed_order_id, "paper-order-1")
 
+    def test_concurrent_execute_calls_only_place_one_order(self):
+        proposal = self.gate.propose_trade(self.payload, self.risk)
+        self.gate.approve(proposal.proposal_id, approver_id="human-1")
+        account = SlowSpyPaperAccount()
+        results = []
+        errors = []
+
+        def execute_once():
+            try:
+                results.append(
+                    self.gate.execute_paper_trade(
+                        proposal.proposal_id, self.payload, account
+                    )
+                )
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=execute_once) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(results, ["paper-order-1"])
+        self.assertEqual(len(account.calls), 1)
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], ProposalStateError)
+        self.assertEqual(proposal.state, TradeProposalState.EXECUTED)
+
     def test_changed_symbol_requires_new_approval(self):
         self._assert_changed_payload_blocked(symbol="ETH")
 
@@ -188,6 +235,29 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         self.assertEqual(account.calls, [])
         self.assertEqual(proposal.state, TradeProposalState.EXPIRED)
 
+    def test_timezone_aware_expired_proposal_cannot_execute(self):
+        expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        proposal = self.gate.propose_trade(
+            self.payload, self.risk, expires_at=expires_at
+        )
+        account = SpyPaperAccount()
+
+        with self.assertRaises(ProposalExpiredError):
+            self.gate.execute_paper_trade(proposal.proposal_id, self.payload, account)
+
+        self.assertEqual(account.calls, [])
+        self.assertEqual(proposal.state, TradeProposalState.EXPIRED)
+
+    def test_audit_timestamps_are_utc_aware(self):
+        proposal = self.gate.propose_trade(self.payload, self.risk)
+        self.gate.approve(proposal.proposal_id, approver_id="human-1")
+
+        audit = self.gate.get_audit_log(proposal.proposal_id)
+
+        self.assertTrue(all(entry.at.tzinfo is timezone.utc for entry in audit))
+        self.assertIs(proposal.proposed_at.tzinfo, timezone.utc)
+        self.assertIs(proposal.approved_at.tzinfo, timezone.utc)
+
     def test_failed_risk_result_cannot_be_approved(self):
         risk = passing_risk(
             approved=False,
@@ -230,6 +300,61 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         )
 
         self.assertEqual(account.get_order_status(order_id), OrderStatus.FILLED)
+
+    def test_approval_gated_paper_account_executes_through_gate(self):
+        account = PaperTradingAccount(initial_balance=Decimal("10000"))
+        breaker = RecordingCircuitBreaker()
+        adapter = ApprovalGatedPaperTradingAccount(
+            account,
+            gate=self.gate,
+            circuit_breaker=breaker,
+        )
+
+        proposal = adapter.propose_order(
+            "BTC",
+            OrderType.MARKET,
+            OrderSide.BUY,
+            Decimal("0.001"),
+            proposer_id="agent-1",
+        )
+        adapter.approve_order(proposal.proposal_id, approver_id="human-1")
+        order_id = adapter.place_order(proposal.proposal_id)
+
+        self.assertEqual(account.get_order_status(order_id), OrderStatus.FILLED)
+        self.assertEqual(breaker.calls, 1)
+        audit_events = [
+            entry.event_type for entry in self.gate.get_audit_log(proposal.proposal_id)
+        ]
+        self.assertEqual(audit_events, ["proposed", "approved", "executed"])
+
+    def test_approval_gated_paper_account_blocks_unapproved_order(self):
+        account = PaperTradingAccount(initial_balance=Decimal("10000"))
+        adapter = ApprovalGatedPaperTradingAccount(account, gate=self.gate)
+        proposal = adapter.propose_order(
+            "BTC",
+            OrderType.MARKET,
+            OrderSide.BUY,
+            Decimal("0.001"),
+        )
+
+        with self.assertRaises(ProposalStateError):
+            adapter.place_order(proposal.proposal_id)
+
+        self.assertEqual(account.orders, {})
+
+    def test_external_audit_sink_receives_lifecycle_events(self):
+        audit_entries = []
+        gate = TradeProposalApprovalGate(audit_sink=audit_entries.append)
+        proposal = gate.propose_trade(self.payload, self.risk, proposer_id="agent-1")
+        gate.reject(proposal.proposal_id, actor_id="human-1", reason="not now")
+
+        self.assertEqual(
+            [entry.event_type for entry in audit_entries],
+            [
+                "proposed",
+                "rejected",
+            ],
+        )
 
     def _assert_changed_payload_blocked(self, **overrides):
         proposal = self.gate.propose_trade(self.payload, self.risk)

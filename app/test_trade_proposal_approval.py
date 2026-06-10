@@ -72,9 +72,7 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         )
 
         self.assertEqual(proposal.state, TradeProposalState.PROPOSED)
-        self.assertEqual(
-            proposal.payload_digest, compute_payload_digest(self.payload)
-        )
+        self.assertEqual(proposal.payload_digest, compute_payload_digest(self.payload))
         self.assertTrue(proposal.risk_result.approved)
         self.assertEqual(proposal.risk_result.policy_id, "paper-tier-3")
 
@@ -100,9 +98,7 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         proposal = self.gate.propose_trade(self.payload, self.risk)
 
         approved = self.gate.approve(proposal.proposal_id, approver_id="human-1")
-        executable = self.gate.assert_executable(
-            proposal.proposal_id, self.payload
-        )
+        executable = self.gate.assert_executable(proposal.proposal_id, self.payload)
 
         self.assertEqual(approved.state, TradeProposalState.APPROVED)
         self.assertEqual(executable.payload_digest, proposal.payload_digest)
@@ -117,9 +113,7 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         account = SpyPaperAccount()
 
         with self.assertRaises(ProposalStateError):
-            self.gate.execute_paper_trade(
-                proposal.proposal_id, self.payload, account
-            )
+            self.gate.execute_paper_trade(proposal.proposal_id, self.payload, account)
 
         self.assertEqual(account.calls, [])
 
@@ -164,9 +158,7 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         account = SpyPaperAccount()
 
         with self.assertRaises(ProposalStateError):
-            self.gate.execute_paper_trade(
-                proposal.proposal_id, self.payload, account
-            )
+            self.gate.execute_paper_trade(proposal.proposal_id, self.payload, account)
 
         self.assertEqual(account.calls, [])
         self.assertEqual(proposal.state, TradeProposalState.REJECTED)
@@ -178,9 +170,7 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         account = SpyPaperAccount()
 
         with self.assertRaises(ProposalStateError):
-            self.gate.execute_paper_trade(
-                proposal.proposal_id, self.payload, account
-            )
+            self.gate.execute_paper_trade(proposal.proposal_id, self.payload, account)
 
         self.assertEqual(account.calls, [])
         self.assertEqual(proposal.state, TradeProposalState.CANCELLED)
@@ -193,9 +183,7 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         account = SpyPaperAccount()
 
         with self.assertRaises(ProposalExpiredError):
-            self.gate.execute_paper_trade(
-                proposal.proposal_id, self.payload, account
-            )
+            self.gate.execute_paper_trade(proposal.proposal_id, self.payload, account)
 
         self.assertEqual(account.calls, [])
         self.assertEqual(proposal.state, TradeProposalState.EXPIRED)
@@ -218,18 +206,14 @@ class TestTradeProposalApprovalGate(unittest.TestCase):
         account = SpyPaperAccount()
 
         with self.assertRaises(ProposalNotFoundError):
-            self.gate.execute_paper_trade(
-                "missing-proposal", self.payload, account
-            )
+            self.gate.execute_paper_trade("missing-proposal", self.payload, account)
 
         self.assertEqual(account.calls, [])
 
     def test_terminal_state_writes_audit_entry(self):
         proposal = self.gate.propose_trade(self.payload, self.risk)
 
-        self.gate.reject(
-            proposal.proposal_id, actor_id="human-1", reason="not now"
-        )
+        self.gate.reject(proposal.proposal_id, actor_id="human-1", reason="not now")
 
         audit = self.gate.get_audit_log(proposal.proposal_id)
         self.assertEqual(audit[-1].event_type, "rejected")

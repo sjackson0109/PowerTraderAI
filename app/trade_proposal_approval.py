@@ -213,9 +213,7 @@ class TradeProposalApprovalGate:
                 f"Proposal {proposal_id} is {proposal.state.value}, not proposed"
             )
         if not proposal.risk_result.approved:
-            raise RiskCheckFailedError(
-                f"Proposal {proposal_id} failed risk approval"
-            )
+            raise RiskCheckFailedError(f"Proposal {proposal_id} failed risk approval")
 
         proposal.state = TradeProposalState.APPROVED
         proposal.approved_by = approver_id
@@ -280,9 +278,7 @@ class TradeProposalApprovalGate:
                 f"Proposal {proposal_id} is {proposal.state.value}, not approved"
             )
         if not proposal.risk_result.approved:
-            raise RiskCheckFailedError(
-                f"Proposal {proposal_id} failed risk approval"
-            )
+            raise RiskCheckFailedError(f"Proposal {proposal_id} failed risk approval")
 
         execution_digest = compute_payload_digest(payload)
         if execution_digest != proposal.payload_digest:
@@ -309,14 +305,10 @@ class TradeProposalApprovalGate:
         )
         return order_id
 
-    def get_audit_log(
-        self, proposal_id: Optional[str] = None
-    ) -> List[AuditEntry]:
+    def get_audit_log(self, proposal_id: Optional[str] = None) -> List[AuditEntry]:
         if proposal_id is None:
             return list(self._audit_log)
-        return [
-            entry for entry in self._audit_log if entry.proposal_id == proposal_id
-        ]
+        return [entry for entry in self._audit_log if entry.proposal_id == proposal_id]
 
     def _get_proposal(self, proposal_id: str) -> TradeProposal:
         try:
@@ -326,9 +318,7 @@ class TradeProposalApprovalGate:
                 f"Proposal {proposal_id} was not found"
             ) from exc
 
-    def _mark_expired_if_needed(
-        self, proposal: TradeProposal, now: datetime
-    ) -> None:
+    def _mark_expired_if_needed(self, proposal: TradeProposal, now: datetime) -> None:
         if proposal.expires_at is None:
             return
         if proposal.state in (
@@ -340,9 +330,7 @@ class TradeProposalApprovalGate:
             return
         if proposal.expires_at <= now:
             proposal.state = TradeProposalState.EXPIRED
-            self._record_audit(
-                "expired", proposal=proposal, actor_id="system", at=now
-            )
+            self._record_audit("expired", proposal=proposal, actor_id="system", at=now)
 
     def _record_audit(
         self,

@@ -155,8 +155,14 @@ credential store, never in a file.
 in the program folder (`app/pt_config.json`, `app/trading_config.json`, `app/hub_data/`, the Robinhood key
 files, ...) to the new locations. It never overwrites anything already there, writes a
 `migration-report.md` to the config folder, and changes or deletes nothing in the old location until you
-press **Remove old files** and confirm. To import a config file from somewhere else (for example a
-backup): `python app/pt_migrate.py --from <path>`.
+press **Remove old files** (or run `python app/pt_migrate.py --remove-old-files`) and confirm. Even then
+it deletes an old file only if the file is unchanged since it was copied, its copy still exists in the
+new location and it is not read-only. A database goes together with its `-wal`/`-shm`/`-journal` files; if one of
+them cannot be deleted, the database is kept. Every file it keeps is listed with the reason. In a git
+checkout `app/pt_config.json` and `app/gui_settings.json` are always kept, because other branches still
+use them. Files in the folders PowerTrader uses now (for example `data/` and `logs/` when
+`POWERTRADER_HOME` is the install root) are never treated as old files. To import a config file from
+somewhere else (for example a backup): `python app/pt_migrate.py --from <path>`.
 
 ## 📁 Project Structure
 

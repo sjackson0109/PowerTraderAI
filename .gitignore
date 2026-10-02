@@ -280,3 +280,8 @@ app/backup/
 app/temp/
 app/data/
 data/*_training_results.json
+
+# "Remove old files" renames each old file to <name>.pt-removing just before it
+# deletes it. One it could not delete or put back keeps that name, and its
+# content (it may hold API keys in plain text). Never commit it.
+*.pt-removing

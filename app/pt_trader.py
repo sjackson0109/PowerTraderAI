@@ -17,6 +17,8 @@ from trading_mode import (
     OrderTarget,
     TradingModeError,
     configure_paper_exchange,
+    read_emergency_drawdown_pct,
+    read_paper_settings,
     read_trading_settings,
     resolve_order_target,
 )
@@ -261,8 +263,11 @@ class _TraderRiskAdapter:
     thresholds RiskManager already defines (warning / critical / emergency).
     """
 
-    def __init__(self, manager: Optional[RiskManager] = None):
+    def __init__(
+        self, manager: Optional[RiskManager] = None, settings_source: Any = None
+    ):
         self.manager = manager or RiskManager(RiskLimits())
+        self.settings_source = settings_source
         self.peak_value = 0.0
         self.error_count = 0
 
@@ -288,7 +293,9 @@ class _TraderRiskAdapter:
             return {"emergency_stop": False, "reason": "", "warnings": warnings}
 
         drawdown = (self.peak_value - float(portfolio_value)) / self.peak_value
-        limits = self.manager.risk_thresholds["portfolio_drawdown"]
+        limits = dict(self.manager.risk_thresholds["portfolio_drawdown"])
+        # risk.emergency_drawdown_pct (default 8.0, valid 1-50) sets the stop
+        limits["emergency"] = read_emergency_drawdown_pct(self.settings_source) / 100.0
         if drawdown >= limits["emergency"]:
             return {
                 "emergency_stop": True,
@@ -331,7 +338,8 @@ class CryptoAPITrading:
         if not self._settings.is_live:
             # Keep the paper book across restarts so it matches the paper ledger
             configure_paper_exchange(
-                state_path=os.path.join(self.data_dir, "paper_account.json")
+                state_path=os.path.join(self.data_dir, "paper_account.json"),
+                settings_source=self._settings_source,
             )
 
         # Resolve the trading target once at start-up. In live mode without a
@@ -386,12 +394,29 @@ class CryptoAPITrading:
             float(self.pm_start_pct_with_dca),
         )
 
+        # Price-integrity bookkeeping (paper mode): degraded events seen in the
+        # last hour, seeded from the ledger so a restart doesn't hide them
+        self._degraded_events: list = []
+        self._warn_ts: Dict[str, float] = {}
+        self._last_price_summary_ts = 0.0
+        if not self._target.is_live:
+            hour_ago = time.time() - 3600.0
+            for row in self._read_trade_history():
+                try:
+                    if (
+                        row.get("price_source") in self._DEGRADED_PRICE_EVENTS
+                        and float(row.get("ts", 0.0)) >= hour_ago
+                    ):
+                        self._degraded_events.append(float(row["ts"]))
+                except (TypeError, ValueError):
+                    continue
+
         # GUI hub persistence
         self._pnl_ledger = self._load_pnl_ledger()
         self._reconcile_pending_orders()
 
         # Initialize Risk and Cost Management
-        self.risk_manager = _TraderRiskAdapter()
+        self.risk_manager = _TraderRiskAdapter(settings_source=self._settings_source)
         self.cost_manager = CostManager(PerformanceTier.PROFESSIONAL)
 
         # Cost basis comes from the local ledger; DCA stages from local history
@@ -407,6 +432,7 @@ class CryptoAPITrading:
         self._dca_buy_ts = {}  # { "BTC": [ts, ts, ...] } (DCA buys only)
         self._dca_last_sell_ts = {}  # { "BTC": ts_of_last_sell }
         self._seed_dca_window_from_history()
+        self._log_price_summary()
 
     def _atomic_write_json(self, path: str, data: dict) -> None:
         try:
@@ -598,6 +624,7 @@ class CryptoAPITrading:
                             buying_power_before=bp_before,
                             buying_power_after=bp_after,
                             buying_power_delta=bp_delta,
+                            **self._provenance(order, self._target),
                         )
 
                         # Clear pending now that we recorded it
@@ -628,6 +655,9 @@ class CryptoAPITrading:
         buying_power_before: Optional[float] = None,
         buying_power_after: Optional[float] = None,
         buying_power_delta: Optional[float] = None,
+        price_source: Optional[str] = None,
+        quote_ts: Optional[float] = None,
+        age_s: Optional[float] = None,
     ) -> None:
         """
         Minimal local ledger for GUI:
@@ -772,6 +802,12 @@ class CryptoAPITrading:
                 float(position_cost_after) if position_cost_after is not None else None
             ),
         }
+        if price_source is not None:
+            # Paper fills record where their price came from (live/stale/simulated)
+            entry["price_source"] = price_source
+            entry["quote_ts"] = quote_ts
+            entry["age_s"] = age_s
+            self._note_price_event(price_source, ts)
         self._append_jsonl(self.trade_history_path, entry)
 
     def _write_trader_status(self, status: dict) -> None:
@@ -922,10 +958,67 @@ class CryptoAPITrading:
                     except Exception:
                         continue
                     if isinstance(obj, dict):
+                        if not self._target.is_live:
+                            # Rows written before FDS-096b have no provenance columns
+                            obj.setdefault("price_source", "unknown")
+                            obj.setdefault("quote_ts", None)
+                            obj.setdefault("age_s", None)
                         entries.append(obj)
         except Exception:
             pass
         return entries
+
+    # --- price integrity (paper mode, FDS-096b) -----------------------------
+
+    # Price events that mean "this was not a live price" (or no price at all)
+    _DEGRADED_PRICE_EVENTS = ("stale", "simulated", "unavailable")
+
+    def _note_price_event(self, source: str, ts: Optional[float] = None) -> None:
+        if source in self._DEGRADED_PRICE_EVENTS:
+            self._degraded_events.append(float(ts if ts is not None else time.time()))
+
+    def _degraded_last_hour(self) -> int:
+        cutoff = time.time() - 3600.0
+        self._degraded_events = [t for t in self._degraded_events if t >= cutoff]
+        return len(self._degraded_events)
+
+    def _fills_by_source(self) -> Dict[str, int]:
+        counts: Dict[str, int] = {}
+        for row in self._read_trade_history():
+            source = str(row.get("price_source", "unknown"))
+            counts[source] = counts.get(source, 0) + 1
+        return counts
+
+    def _price_integrity_status(self) -> Optional[dict]:
+        """Status block for the hub's mode strip; None outside paper mode."""
+        if self._target.is_live:
+            return None
+        degraded = self._degraded_last_hour()
+        return {
+            "state": "degraded" if degraded else "live",
+            "degraded_last_hour": degraded,
+            "policy": read_paper_settings(self._settings_source).price_fallback_policy,
+            "fills_by_source": self._fills_by_source(),
+        }
+
+    def _log_price_summary(self) -> None:
+        """One line: paper fills by price_source (start-up and hourly)."""
+        if self._target.is_live:
+            return
+        counts = self._fills_by_source()
+        summary = " ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "none"
+        logger.info(
+            f"Paper fills by price_source: {summary} (total {sum(counts.values())}); "
+            f"degraded events in last hour: {self._degraded_last_hour()}"
+        )
+        self._last_price_summary_ts = time.time()
+
+    def _warn_throttled(self, key: str, message: str, every: float = 60.0) -> None:
+        """WARNING at most once per ``every`` seconds per key (the loop runs 2x/s)."""
+        now = time.time()
+        if now - self._warn_ts.get(key, 0.0) >= every:
+            self._warn_ts[key] = now
+            logger.warning(message)
 
     def initialize_dca_levels(self):
         """
@@ -1191,8 +1284,14 @@ class CryptoAPITrading:
                 market_data = self._target.get_market_data(symbol)
                 ask = float(market_data.ask)
                 bid = float(market_data.bid)
-            except Exception:
-                pass
+            except Exception as exc:
+                if not self._target.is_live:
+                    # Paper: say why there is no price (e.g. PRICE_UNAVAILABLE)
+                    self._note_price_event("unavailable")
+                    self._warn_throttled(
+                        f"price:{symbol}",
+                        f"No usable paper price for {symbol}: {exc}; retrying next cycle",
+                    )
 
             if ask > 0.0 and bid > 0.0:
                 buy_prices[symbol] = ask
@@ -1208,6 +1307,11 @@ class CryptoAPITrading:
             else:
                 # Fallback to cached bid/ask so account value never drops due to a transient miss
                 cached = self._last_good_bid_ask.get(symbol)
+                if cached and not self._target.is_live:
+                    # Paper never trades on a price older than max_quote_age_s
+                    max_age = read_paper_settings(self._settings_source).max_quote_age_s
+                    if time.time() - float(cached.get("ts", 0.0)) > max_age:
+                        cached = None
                 if cached:
                     ask = float(cached.get("ask", 0.0) or 0.0)
                     bid = float(cached.get("bid", 0.0) or 0.0)
@@ -1290,6 +1394,17 @@ class CryptoAPITrading:
 
         order_id = result.order_id
 
+        if str(result.status).lower().strip() == "rejected" and result.reason:
+            # e.g. PRICE_UNAVAILABLE: nothing was filled, nothing is pending; the
+            # next cycle simply tries again.
+            self._note_price_event("unavailable")
+            print(f"{Fore.YELLOW}ORDER REJECTED ({symbol} {side}): {result.reason}{Style.RESET_ALL}")
+            logger.warning(
+                f"Order rejected ({symbol} {side} via {target.key}): {result.reason}; "
+                "will retry next cycle"
+            )
+            return None
+
         # Persist the pre-order buying power so restarts can reconcile precisely
         try:
             if order_id:
@@ -1356,6 +1471,7 @@ class CryptoAPITrading:
             buying_power_before=buying_power_before,
             buying_power_after=buying_power_after,
             buying_power_delta=buying_power_delta,
+            **self._provenance(final, target),
         )
         self._clear_pending(order_id)
 
@@ -1367,6 +1483,17 @@ class CryptoAPITrading:
             "quantity": float(filled_qty),
             "price": float(fill_price) if fill_price is not None else None,
             "mode": target.key,
+        }
+
+    @staticmethod
+    def _provenance(order: OrderResult, target: OrderTarget) -> dict:
+        """Ledger columns for where a paper fill's price came from ({} for live)."""
+        if target.is_live:
+            return {}
+        return {
+            "price_source": order.price_source or "unknown",
+            "quote_ts": order.quote_ts,
+            "age_s": order.age_s,
         }
 
     def _clear_pending(self, order_id: str) -> None:
@@ -1500,6 +1627,9 @@ class CryptoAPITrading:
             )
             time.sleep(5)
             return
+
+        if time.time() - self._last_price_summary_ts >= 3600.0:
+            self._log_price_summary()
 
         # Fetch account details
         account = self.get_account()
@@ -2131,6 +2261,9 @@ class CryptoAPITrading:
                 },
                 "positions": positions,
             }
+            price_integrity = self._price_integrity_status()
+            if price_integrity is not None:
+                status["price_integrity"] = price_integrity
             self._append_jsonl(
                 self.account_value_history_path,
                 {"ts": status["timestamp"], "total_account_value": total_account_value},

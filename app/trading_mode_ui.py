@@ -54,16 +54,47 @@ class TradingModeIndicator(tk.Label):
             padx=14,
             pady=3,
         )
-        self.update_settings(settings)
+        self._settings = settings
+        self._price_integrity: Optional[dict] = None
+        self._render()
 
     def update_settings(self, settings: TradingSettings) -> None:
+        self._settings = settings
+        self._price_integrity = None  # belongs to the previous mode's trader
+        self._render()
+
+    def update_price_integrity(self, price_integrity: Optional[dict]) -> None:
+        """Latest ``price_integrity`` block from trader_status.json (paper only)."""
+        if price_integrity != self._price_integrity:
+            self._price_integrity = price_integrity
+            self._render()
+
+    def _render(self) -> None:
+        settings = self._settings
         if not settings.is_live:
             bg, fg = PAPER_BG, PAPER_FG
         elif settings.uses_testnet:
             bg, fg = TESTNET_BG, TESTNET_FG
         else:
             bg, fg = LIVE_BG, LIVE_FG
-        self.configure(text=settings.label, bg=bg, fg=fg)
+        text = settings.label
+        if not settings.is_live:
+            text += price_note(self._price_integrity)
+        self.configure(text=text, bg=bg, fg=fg)
+
+
+def price_note(price_integrity: Optional[dict]) -> str:
+    """"  ·  PRICES: LIVE" / "  ·  PRICES: DEGRADED (n in last hour)" for the paper
+    strip; empty until the trader has reported (no claim without data)."""
+    if not isinstance(price_integrity, dict):
+        return ""
+    try:
+        degraded = int(price_integrity.get("degraded_last_hour", 0) or 0)
+    except (TypeError, ValueError):
+        return ""
+    if degraded > 0 or price_integrity.get("state") == "degraded":
+        return f" · PRICES: DEGRADED ({degraded} in last hour)"
+    return " · PRICES: LIVE"
 
 
 class TradingModeDialog(tk.Toplevel):

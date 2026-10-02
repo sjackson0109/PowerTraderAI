@@ -26,8 +26,10 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal
+from email.utils import parsedate_to_datetime
 from enum import Enum
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
@@ -45,12 +47,26 @@ from pt_paper_trading import (
     PaperTradingAccount,
     Position,
 )
+from pt_logging import get_logger
 from pt_settings_manager import (
+    DEFAULT_EMERGENCY_DRAWDOWN_PCT,
+    DEFAULT_MAX_QUOTE_AGE_S,
+    DEFAULT_PRICE_FALLBACK_POLICY,
+    EMERGENCY_DRAWDOWN_KEY,
+    EMERGENCY_DRAWDOWN_RANGE,
+    MAX_QUOTE_AGE_RANGE,
+    PAPER_MAX_QUOTE_AGE_KEY,
+    PAPER_POLICY_KEY,
+    PRICE_FALLBACK_POLICIES,
     SETTINGS_FILE,
     TRADING_ACTIVE_BROKER_KEY,
     TRADING_MODE_KEY,
     trading_testnet_key,
 )
+
+logger = get_logger("trading_mode")
+
+PRICE_UNAVAILABLE = "PRICE_UNAVAILABLE"
 
 # Brokers whose exchange class accepts a ``testnet`` constructor flag. The
 # ``trading.<broker>_testnet`` setting is only forwarded to these.
@@ -208,29 +224,152 @@ def read_trading_settings(settings: Any = None) -> TradingSettings:
     return TradingSettings(mode=mode, active_broker=broker, testnet=testnet)
 
 
+# --- Paper price-integrity settings (FDS-096b) -------------------------------
+
+
+@dataclass(frozen=True)
+class PaperSettings:
+    price_fallback_policy: str  # "pause" | "simulate_and_flag"
+    max_quote_age_s: float
+
+
+def _in_range(value: Any, bounds: Tuple[float, float]) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value == value
+        and bounds[0] <= value <= bounds[1]
+    )
+
+
+def _settings_mapping(settings: Any) -> Any:
+    if settings is None:
+        return _read_settings_file(default_settings_path())
+    if isinstance(settings, (str, os.PathLike)):
+        return _read_settings_file(os.fspath(settings))
+    return settings
+
+
+def read_paper_settings(settings: Any = None) -> PaperSettings:
+    """Fail closed: an unknown policy is "pause"; a bad max age is the default."""
+    settings = _settings_mapping(settings)
+    policy = _lookup(settings, PAPER_POLICY_KEY)
+    if policy not in PRICE_FALLBACK_POLICIES:
+        if policy is not None:
+            logger.warning(
+                f"Invalid {PAPER_POLICY_KEY}={policy!r}; using "
+                f"'{DEFAULT_PRICE_FALLBACK_POLICY}'"
+            )
+        policy = DEFAULT_PRICE_FALLBACK_POLICY
+    max_age = _lookup(settings, PAPER_MAX_QUOTE_AGE_KEY)
+    if not _in_range(max_age, MAX_QUOTE_AGE_RANGE):
+        if max_age is not None:
+            logger.warning(
+                f"Invalid {PAPER_MAX_QUOTE_AGE_KEY}={max_age!r}; using "
+                f"{DEFAULT_MAX_QUOTE_AGE_S}"
+            )
+        max_age = DEFAULT_MAX_QUOTE_AGE_S
+    return PaperSettings(price_fallback_policy=policy, max_quote_age_s=float(max_age))
+
+
+def read_emergency_drawdown_pct(settings: Any = None) -> float:
+    """``risk.emergency_drawdown_pct`` (1-50); anything invalid is 8.0, logged."""
+    value = _lookup(_settings_mapping(settings), EMERGENCY_DRAWDOWN_KEY)
+    if _in_range(value, EMERGENCY_DRAWDOWN_RANGE):
+        return float(value)
+    if value is not None:
+        logger.warning(
+            f"Invalid {EMERGENCY_DRAWDOWN_KEY}={value!r} (valid "
+            f"{EMERGENCY_DRAWDOWN_RANGE[0]:g}-{EMERGENCY_DRAWDOWN_RANGE[1]:g}); using "
+            f"{DEFAULT_EMERGENCY_DRAWDOWN_PCT}"
+        )
+    return DEFAULT_EMERGENCY_DRAWDOWN_PCT
+
+
+# --- Quotes with provenance --------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Quote:
+    """A raw bid/ask as received from a price feed."""
+
+    bid: float
+    ask: float
+    quote_ts: Optional[float]  # exchange timestamp (epoch s, UTC); None if unknown
+    fetched_ts: float  # local time the quote was fetched (epoch s, UTC)
+
+    @property
+    def age_s(self) -> Optional[float]:
+        return None if self.quote_ts is None else self.fetched_ts - self.quote_ts
+
+
+@dataclass(frozen=True)
+class PricedQuote:
+    """A quote plus where it came from: live | stale | simulated."""
+
+    bid: float
+    ask: float
+    price_source: str
+    quote_ts: Optional[float]
+    fetched_ts: float
+    age_s: Optional[float]
+
+
+class PriceUnavailable(RuntimeError):
+    """No live price and the policy is ``pause``."""
+
+    reason = PRICE_UNAVAILABLE
+
+
+def classify_quote(quote: Optional[Quote], max_age_s: float, now: float) -> str:
+    """"live" if fresh; "stale" if older than ``max_age_s`` (or its age is
+    unknown, which is treated as stale); "simulated" if there is no quote."""
+    if quote is None:
+        return "simulated"
+    age = quote.age_s
+    if age is None or age > max_age_s or (now - quote.fetched_ts) > max_age_s:
+        return "stale"
+    return "live"
+
+
 # --- Public quote feed (paper pricing only; never an order call) -------------
 
 _QUOTE_URL = "https://api.binance.com/api/v3/ticker/bookTicker?symbol={symbol}"
 _QUOTE_TTL_SECONDS = 2.0
-_quote_cache: Dict[str, Tuple[float, Tuple[float, float]]] = {}
+_quote_cache: Dict[str, Quote] = {}
 
 
-def fetch_public_quote(base: str, timeout: float = 3.0) -> Optional[Tuple[float, float]]:
-    """(bid, ask) for ``base``/USDT from Binance's public book ticker, or None."""
+def fetch_public_quote(base: str, timeout: float = 3.0) -> Optional[Quote]:
+    """
+    Binance public book ticker for ``base``/USDT, or None if unreachable.
+
+    The book ticker carries no timestamp of its own, so ``quote_ts`` is the
+    server time of the response (HTTP ``Date`` header, 1 s resolution). A
+    response without a usable Date header has ``quote_ts=None`` and is treated
+    as stale.
+    """
     now = time.time()
     cached = _quote_cache.get(base)
-    if cached and now - cached[0] < _QUOTE_TTL_SECONDS:
-        return cached[1]
+    if cached and now - cached.fetched_ts < _QUOTE_TTL_SECONDS:
+        return cached
     try:
         url = _QUOTE_URL.format(symbol=f"{base}USDT")
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
-        quote = (float(payload["bidPrice"]), float(payload["askPrice"]))
+            date_header = resp.headers.get("Date") if resp.headers else None
+        bid, ask = float(payload["bidPrice"]), float(payload["askPrice"])
     except (urllib.error.URLError, ValueError, KeyError, TypeError, OSError):
         return None
-    if quote[0] <= 0 or quote[1] <= 0:
+    if bid <= 0 or ask <= 0:
         return None
-    _quote_cache[base] = (now, quote)
+    quote_ts: Optional[float] = None
+    if date_header:
+        try:
+            quote_ts = parsedate_to_datetime(date_header).timestamp()
+        except (TypeError, ValueError):
+            quote_ts = None
+    quote = Quote(bid=bid, ask=ask, quote_ts=quote_ts, fetched_ts=time.time())
+    _quote_cache[base] = quote
     return quote
 
 
@@ -260,9 +399,19 @@ def _base_asset(symbol: str) -> str:
 class PaperExchange(AbstractExchange):
     """``PaperTradingAccount`` behind the ``AbstractExchange`` interface.
 
-    Needs no credentials. ``price_feed(base) -> (bid, ask) | None`` supplies
-    real prices; without one (or when it returns None) the account's own market
-    simulator prices the fills.
+    Needs no credentials. ``price_feed(base) -> Quote | None`` supplies real
+    prices. Every price used is classified ``live`` / ``stale`` / ``simulated``
+    (see ``classify_quote``) and, per ``paper.price_fallback_policy``:
+
+    * ``pause`` (default): a market order on a stale/simulated price is
+      rejected with reason ``PRICE_UNAVAILABLE`` and price reads raise
+      ``PriceUnavailable`` - nothing is faked.
+    * ``simulate_and_flag``: the order fills (at the stale quote, or at the
+      account's own simulator price when there is no quote), and the fill is
+      marked with its ``price_source`` and logged at WARNING.
+
+    ``settings_source`` is where the policy and max quote age are read from
+    (None = the settings file, re-read on every use).
     """
 
     # Offline fallback spread around the simulator price.
@@ -272,8 +421,10 @@ class PaperExchange(AbstractExchange):
         self,
         account: Optional[PaperTradingAccount] = None,
         initial_balance: Decimal = Decimal("10000"),
-        price_feed: Optional[Callable[[str], Optional[Tuple[float, float]]]] = None,
+        price_feed: Optional[Callable[[str], Optional[Quote]]] = None,
         state_path: Optional[str] = None,
+        settings_source: Any = None,
+        clock: Callable[[], float] = time.time,
         **kwargs: Any,
     ) -> None:
         super().__init__("", "", **kwargs)
@@ -282,7 +433,11 @@ class PaperExchange(AbstractExchange):
         self.account.market_simulator = self._simulator
         self._price_feed = price_feed
         self._state_path = state_path
+        self.settings_source = settings_source
+        self._clock = clock
         self._lock = threading.RLock()
+        self._rejections: Dict[str, OrderResult] = {}
+        self.last_quotes: Dict[str, PricedQuote] = {}
         if state_path:
             self.load_state(state_path)
 
@@ -294,26 +449,66 @@ class PaperExchange(AbstractExchange):
 
     # -- quotes --
 
-    def _quote(self, base: str) -> Tuple[float, float]:
+    def _priced_quote(self, base: str) -> PricedQuote:
+        """The best available price for ``base`` with its provenance, per policy.
+        Raises ``PriceUnavailable`` when it is not live and the policy is pause."""
+        paper = read_paper_settings(self.settings_source)
+        now = self._clock()
         quote = self._price_feed(base) if self._price_feed else None
-        if quote:
-            return float(quote[0]), float(quote[1])
-        mid = float(self._simulator.get_current_price(base))
-        return mid * (1 - self._SIM_HALF_SPREAD), mid * (1 + self._SIM_HALF_SPREAD)
+        source = classify_quote(quote, paper.max_quote_age_s, now)
+
+        if source == "live":
+            priced = PricedQuote(
+                quote.bid, quote.ask, "live", quote.quote_ts, quote.fetched_ts, quote.age_s
+            )
+        elif paper.price_fallback_policy != "simulate_and_flag":
+            logger.warning(
+                f"Paper price for {base} is {source} (policy=pause): "
+                f"{PRICE_UNAVAILABLE}; no fill"
+            )
+            raise PriceUnavailable(f"{PRICE_UNAVAILABLE}: {base} price is {source}")
+        elif source == "stale":
+            logger.warning(
+                f"Paper price for {base} is stale (age_s={quote.age_s}, max "
+                f"{paper.max_quote_age_s:g}); filling on it and flagging (policy="
+                "simulate_and_flag)"
+            )
+            priced = PricedQuote(
+                quote.bid, quote.ask, "stale", quote.quote_ts, quote.fetched_ts, quote.age_s
+            )
+        else:
+            mid = float(MarketDataSimulator.get_current_price(self._simulator, base))
+            logger.warning(
+                f"No live price for {base}; SIMULATED price {mid:.8g} (policy="
+                "simulate_and_flag)"
+            )
+            priced = PricedQuote(
+                mid * (1 - self._SIM_HALF_SPREAD),
+                mid * (1 + self._SIM_HALF_SPREAD),
+                "simulated",
+                None,
+                now,
+                None,
+            )
+        self.last_quotes[base] = priced
+        return priced
+
+    def get_quote(self, symbol: str) -> PricedQuote:
+        """Price with provenance for ``symbol`` (may raise ``PriceUnavailable``)."""
+        return self._priced_quote(_base_asset(symbol))
 
     def get_current_price(self, symbol: str) -> float:
-        return self._quote(_base_asset(symbol))[1]
+        return self.get_quote(symbol).ask
 
     def get_market_data(self, symbol: str) -> MarketData:
-        base = _base_asset(symbol)
-        bid, ask = self._quote(base)
+        priced = self.get_quote(symbol)
         return MarketData(
             symbol=symbol,
-            price=(bid + ask) / 2,
-            bid=bid,
-            ask=ask,
+            price=(priced.bid + priced.ask) / 2,
+            bid=priced.bid,
+            ask=priced.ask,
             volume=0.0,
-            timestamp=time.time(),
+            timestamp=priced.quote_ts if priced.quote_ts is not None else priced.fetched_ts,
             exchange="paper",
         )
 
@@ -329,11 +524,15 @@ class PaperExchange(AbstractExchange):
         base = _base_asset(symbol)
 
         with self._lock:
+            priced: Optional[PricedQuote] = None
             if price is None:
                 # Market order: fill at the ask when buying, the bid when selling.
-                bid, ask = self._quote(base)
+                try:
+                    priced = self._priced_quote(base)
+                except PriceUnavailable:
+                    return self._reject(symbol, side_l, amount, PRICE_UNAVAILABLE)
                 self._simulator.anchors[base] = Decimal(
-                    str(ask if order_side is OrderSide.BUY else bid)
+                    str(priced.ask if order_side is OrderSide.BUY else priced.bid)
                 )
                 order_id = self.account.place_order(
                     symbol=base,
@@ -342,6 +541,7 @@ class PaperExchange(AbstractExchange):
                     quantity=Decimal(str(amount)),
                 )
             else:
+                # Limit order: the price is the caller's, no feed involved.
                 order_id = self.account.place_order(
                     symbol=base,
                     order_type=OrderType.LIMIT,
@@ -349,8 +549,41 @@ class PaperExchange(AbstractExchange):
                     quantity=Decimal(str(amount)),
                     price=Decimal(str(price)),
                 )
+            self._stamp_provenance(order_id, priced)
             self._save_state()
             return self._order_result(order_id)
+
+    def _reject(self, symbol: str, side: str, amount: float, reason: str) -> OrderResult:
+        result = OrderResult(
+            order_id=f"rejected-{uuid.uuid4().hex[:12]}",
+            symbol=f"{_base_asset(symbol)}-USD",
+            side=side,
+            amount=0.0,
+            price=0.0,
+            status="rejected",
+            exchange="paper",
+            timestamp=time.time(),
+            reason=reason,
+            price_source="n/a",
+        )
+        self._rejections[result.order_id] = result
+        return result
+
+    def _stamp_provenance(self, order_id: str, priced: Optional[PricedQuote]) -> None:
+        """Record where a fill's price came from on the order (and its trade)."""
+        order = self.account.orders[order_id]
+        if priced is None:
+            order.price_source = "n/a"  # limit order: caller-supplied price
+        else:
+            order.price_source = priced.price_source
+            order.quote_ts = priced.quote_ts
+            order.age_s = priced.age_s
+        for trade in reversed(self.account.trade_history):
+            if trade.order_id == order_id:
+                trade.price_source = order.price_source
+                trade.quote_ts = order.quote_ts
+                trade.age_s = order.age_s
+                break
 
     def get_balance(self) -> Dict[str, float]:
         with self._lock:
@@ -361,6 +594,8 @@ class PaperExchange(AbstractExchange):
             return balances
 
     def get_order_status(self, order_id: str) -> OrderResult:
+        if order_id in self._rejections:
+            return self._rejections[order_id]
         if order_id not in self.account.orders:
             raise LookupError(f"Unknown paper order id: {order_id}")
         return self._order_result(order_id)
@@ -380,6 +615,9 @@ class PaperExchange(AbstractExchange):
             status=order.status.value,
             exchange="paper",
             timestamp=time.time(),
+            price_source=order.price_source,
+            quote_ts=order.quote_ts,
+            age_s=order.age_s,
         )
 
     # -- persistence (so the paper book survives a trader restart) --
@@ -437,7 +675,8 @@ _paper_lock = threading.Lock()
 def configure_paper_exchange(
     state_path: Optional[str] = None,
     initial_balance: Decimal = Decimal("10000"),
-    price_feed: Optional[Callable[[str], Optional[Tuple[float, float]]]] = fetch_public_quote,
+    price_feed: Optional[Callable[[str], Optional[Quote]]] = fetch_public_quote,
+    settings_source: Any = None,
 ) -> PaperExchange:
     """(Re)create the process-wide paper exchange. Call once at trader start-up."""
     global _paper_exchange
@@ -446,6 +685,7 @@ def configure_paper_exchange(
             initial_balance=initial_balance,
             price_feed=price_feed,
             state_path=state_path,
+            settings_source=settings_source,
         )
         return _paper_exchange
 
@@ -585,10 +825,12 @@ def resolve_order_target(settings: Any = None) -> OrderTarget:
     ts = read_trading_settings(settings)
 
     if not ts.is_live:
+        paper = get_paper_exchange()
+        paper.settings_source = settings  # price policy follows the same settings
         return OrderTarget(
             mode=TradingMode.PAPER,
             broker=None,
-            exchange=get_paper_exchange(),
+            exchange=paper,
             key=ts.key,
         )
 

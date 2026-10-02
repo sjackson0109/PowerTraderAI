@@ -18,6 +18,26 @@ TRADING_MODE_KEY = "trading.mode"
 TRADING_ACTIVE_BROKER_KEY = "trading.active_broker"
 TRADING_MODES = ("paper", "live")
 
+PAPER_POLICY_KEY = "paper.price_fallback_policy"
+PAPER_MAX_QUOTE_AGE_KEY = "paper.max_quote_age_s"
+EMERGENCY_DRAWDOWN_KEY = "risk.emergency_drawdown_pct"
+PRICE_FALLBACK_POLICIES = ("pause", "simulate_and_flag")
+DEFAULT_PRICE_FALLBACK_POLICY = "pause"
+DEFAULT_MAX_QUOTE_AGE_S = 30.0
+DEFAULT_EMERGENCY_DRAWDOWN_PCT = 8.0
+EMERGENCY_DRAWDOWN_RANGE = (1.0, 50.0)
+MAX_QUOTE_AGE_RANGE = (1.0, 3600.0)
+
+
+def _is_number_in(value: Any, bounds: tuple) -> bool:
+    """True for a real number (not bool) within bounds, inclusive."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value == value  # not NaN
+        and bounds[0] <= value <= bounds[1]
+    )
+
 
 def trading_testnet_key(broker: str) -> str:
     """Settings key holding the testnet/sandbox flag for ``broker``."""
@@ -58,6 +78,16 @@ DEFAULT_SETTINGS = {
         "mode": "paper",
         "active_broker": None,
         "binance_testnet": True,
+    },
+    # Paper-fill price integrity (FDS-096b). "pause" never fills on a stale or
+    # simulated price; "simulate_and_flag" fills but marks the fill.
+    "paper": {
+        "price_fallback_policy": "pause",
+        "max_quote_age_s": 30,
+    },
+    # Account drawdown (from the peak the trader has seen) that halts trading.
+    "risk": {
+        "emergency_drawdown_pct": 8.0,
     },
     "neural_config": {
         "training_epochs": 100,
@@ -188,6 +218,26 @@ class SettingsValidator:
             _is_valid_broker_id,
             "Active broker must be null or a supported exchange id",
             lambda v: None,
+        )
+
+        # Paper price integrity + drawdown stop (invalid -> safe default)
+        self.add_rule(
+            PAPER_POLICY_KEY,
+            lambda v: isinstance(v, str) and v in PRICE_FALLBACK_POLICIES,
+            "Price fallback policy must be 'pause' or 'simulate_and_flag'",
+            lambda v: DEFAULT_PRICE_FALLBACK_POLICY,
+        )
+        self.add_rule(
+            PAPER_MAX_QUOTE_AGE_KEY,
+            lambda v: _is_number_in(v, MAX_QUOTE_AGE_RANGE),
+            "Max quote age must be between 1 and 3600 seconds",
+            lambda v: DEFAULT_MAX_QUOTE_AGE_S,
+        )
+        self.add_rule(
+            EMERGENCY_DRAWDOWN_KEY,
+            lambda v: _is_number_in(v, EMERGENCY_DRAWDOWN_RANGE),
+            "Emergency drawdown must be between 1 and 50 percent",
+            lambda v: DEFAULT_EMERGENCY_DRAWDOWN_PCT,
         )
 
         # Neural config validation
@@ -518,6 +568,18 @@ class SettingsManager:
     def get_testnet(self, broker: str) -> bool:
         """Testnet flag for ``broker``; defaults to True (the safe choice)."""
         return bool(self.get(trading_testnet_key(broker), True))
+
+    def get_price_fallback_policy(self) -> str:
+        """"simulate_and_flag" only when explicitly set; anything else is "pause"."""
+        policy = self.get(PAPER_POLICY_KEY, DEFAULT_PRICE_FALLBACK_POLICY)
+        return policy if policy in PRICE_FALLBACK_POLICIES else DEFAULT_PRICE_FALLBACK_POLICY
+
+    def set_price_fallback_policy(self, policy: str, persist: bool = True) -> bool:
+        if policy not in PRICE_FALLBACK_POLICIES:
+            return False
+        if not self.set(PAPER_POLICY_KEY, policy):
+            return False
+        return self.save_settings() if persist else True
 
     def set_active_broker(self, broker: Optional[str], persist: bool = True) -> bool:
         """Select the broker used when trading live (None clears it)."""

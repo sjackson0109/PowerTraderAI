@@ -328,9 +328,17 @@ class ApplyModeTests(unittest.TestCase):
         self.assertFalse(self.manager.get_testnet("binance"))
 
 
+def fresh_quote(bid=99.0, ask=101.0):
+    now = time.time()
+    return tm.Quote(bid=bid, ask=ask, quote_ts=now, fetched_ts=now)
+
+
+SIMULATE = {"paper": {"price_fallback_policy": "simulate_and_flag"}}
+
+
 class PaperExchangeTests(unittest.TestCase):
     def make(self, **kwargs):
-        return tm.PaperExchange(price_feed=lambda base: (99.0, 101.0), **kwargs)
+        return tm.PaperExchange(price_feed=lambda base: fresh_quote(), **kwargs)
 
     def test_buy_fills_at_ask_and_sell_at_bid(self):
         ex = self.make()
@@ -363,11 +371,17 @@ class PaperExchangeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.make().place_order("BTC-USD", "hold", 1.0)
 
-    def test_needs_no_credentials_and_works_offline(self):
-        ex = tm.PaperExchange()  # no feed: simulator prices
+    def test_needs_no_credentials_and_can_simulate_when_explicitly_allowed(self):
+        ex = tm.PaperExchange(settings_source=SIMULATE)  # no feed: simulator prices
         md = ex.get_market_data("BTC-USD")
         self.assertGreater(md.ask, md.bid)
-        self.assertEqual(ex.place_order("BTC-USD", "buy", 0.01).status, "filled")
+        fill = ex.place_order("BTC-USD", "buy", 0.01)
+        self.assertEqual((fill.status, fill.price_source), ("filled", "simulated"))
+
+    def test_without_a_feed_nothing_fills_by_default(self):
+        ex = tm.PaperExchange(settings_source={})  # default policy: pause
+        result = ex.place_order("BTC-USD", "buy", 0.01)
+        self.assertEqual((result.status, result.reason), ("rejected", "PRICE_UNAVAILABLE"))
 
     def test_state_survives_a_restart(self):
         with tempfile.TemporaryDirectory() as d:
@@ -380,9 +394,9 @@ class PaperExchangeTests(unittest.TestCase):
             self.assertEqual(second.get_balance()["BTC"], 1.0)
             self.assertAlmostEqual(second.get_balance()["USD"], cash)
 
-    def test_quote_feed_failure_falls_back_to_simulator(self):
-        ex = tm.PaperExchange(price_feed=lambda base: None)
-        self.assertEqual(ex.place_order("BTC-USD", "buy", 0.01).status, "filled")
+    def test_quote_feed_failure_is_never_silently_simulated(self):
+        ex = tm.PaperExchange(price_feed=lambda base: None, settings_source={})
+        self.assertEqual(ex.place_order("BTC-USD", "buy", 0.01).status, "rejected")
 
 
 class TraderGateTests(unittest.TestCase):
@@ -422,7 +436,7 @@ class TraderGateTests(unittest.TestCase):
         return t
 
     def use_fake_quotes(self, bid=99.0, ask=101.0):
-        tm.get_paper_exchange()._price_feed = lambda base: (bid, ask)
+        tm.get_paper_exchange()._price_feed = lambda base: fresh_quote(bid, ask)
 
     # --- paper -------------------------------------------------------------
 

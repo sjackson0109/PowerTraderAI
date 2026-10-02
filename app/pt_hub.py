@@ -6334,6 +6334,7 @@ Platform: {sys.platform}
 
         # trader status -> current trades table (now mtime-cached inside)
         self._refresh_trader_status()
+        self._refresh_price_note()
 
         # pnl ledger -> realized profit (now mtime-cached inside)
         self._refresh_pnl()
@@ -6445,6 +6446,30 @@ Platform: {sys.platform}
         self.after(
             int(float(self.settings.get("ui_refresh_seconds", 1.0)) * 1000), self._tick
         )
+
+    def _refresh_price_note(self) -> None:
+        """Paper mode: show PRICES: LIVE / DEGRADED on the mode strip, from the
+        trader's price_integrity status. Only a fresh status counts, so a stopped
+        trader never leaves a stale "LIVE" claim on screen."""
+        indicator = getattr(self, "_mode_indicator", None)
+        if indicator is None or self._trading.is_live:
+            return
+        try:
+            mtime = os.path.getmtime(self.trader_status_path)
+        except Exception:
+            mtime = None
+        if mtime != getattr(self, "_price_note_mtime", object()):
+            self._price_note_mtime = mtime
+            data = _safe_read_json(self.trader_status_path) if mtime else None
+            if not isinstance(data, dict):
+                data = {}
+            self._price_note_data = data.get("price_integrity")
+            self._price_note_ts = data.get("timestamp")
+        try:
+            fresh = time.time() - float(self._price_note_ts) <= 120.0
+        except (TypeError, ValueError):
+            fresh = False
+        indicator.update_price_integrity(self._price_note_data if fresh else None)
 
     def _refresh_trader_status(self) -> None:
         # mtime cache: rebuilding the whole tree every tick is expensive with many rows

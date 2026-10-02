@@ -277,8 +277,7 @@ connector still raise `NotImplementedError`. No code under `app/trading_mode.py`
 1. **`app/trading_config.json` holds credentials in plain text and is a tracked file.** You have an uncommitted modification to
    it. I never opened it and never staged it (hash unchanged across all runs). If a Coinbase key was ever saved through the GUI
    it is in that file: do not commit it, consider `git update-index --skip-worktree app/trading_config.json` (or untracking it and
-   storing credentials elsewhere), and rotate the key if the file has ever been committed, pushed or shared. Also: the key you
-   pasted into the GUI while testing was only ever in this file or in memory, but treat it as exposed if in doubt.
+   storing credentials elsewhere), and rotate the key if the file has ever been committed, pushed or shared. I cannot tell from here whether the key you tested with was ever saved there.
 2. **Coinbase cannot trade live yet** (orders/balances unimplemented) and **has no testnet in the gate**:
    `trading.coinbase_testnet`/`coinbase_testnet: true` in `pt_config.json` is ignored, so a future live+coinbase would be real
    money. Do not implement order placement without also deciding how that is gated.

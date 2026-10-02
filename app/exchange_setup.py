@@ -9,6 +9,7 @@ import sys
 from typing import List, Optional
 
 from pt_exchange_abstraction import ExchangeType
+import pt_secrets
 from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
 
 
@@ -136,13 +137,17 @@ def setup_exchange_credentials(
             print("❌ Passphrase is required for KuCoin")
             return False
 
-    # Update configuration
-    config_manager.update_exchange_credentials(
-        exchange_name, api_key, api_secret, passphrase
-    )
+    # Update configuration (credentials go to the OS keyring via pt_secrets)
+    try:
+        config_manager.update_exchange_credentials(
+            exchange_name, api_key, api_secret, passphrase
+        )
+    except pt_secrets.SecretsError as exc:
+        print(f"❌ {exc}")
+        return False
     config_manager.enable_exchange(exchange_name, True)
 
-    print(f"✅ {exchange_name.title()} credentials saved and enabled")
+    print(f"✅ {exchange_name.title()} credentials saved in the OS credential store and enabled")
     return True
 
 

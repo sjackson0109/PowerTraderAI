@@ -3,6 +3,8 @@
 
 colorama>=0.4.6
 cryptography>=41.0.0
+# OS credential store for API keys (pt_secrets.py); never a plaintext file
+keyring>=24.0.0
 kucoin-python>=1.0.20
 matplotlib>=3.7.0
 # Standard per-user config/data/log/cache folders (pt_paths.py)

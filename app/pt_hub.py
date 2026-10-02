@@ -92,12 +92,14 @@ except ImportError:
     DEPENDENCY_CHECKER_AVAILABLE = False
     print("Warning: Dependency checker not available.")
 
-# Secure credential manager (encrypted vault for API key + secret)
+# Robinhood credentials live in the OS credential store (pt_secrets / keyring)
 try:
-    from pt_credentials import SecureCredentialManager
+    import pt_secrets
+    from pt_credentials import KeyringCredentialManager
 except ImportError:
-    SecureCredentialManager = None  # type: ignore[assignment]
-    print("Warning: pt_credentials not available — encrypted vault disabled.")
+    pt_secrets = None  # type: ignore[assignment]
+    KeyringCredentialManager = None  # type: ignore[assignment]
+    print("Warning: pt_credentials not available — Robinhood credential setup disabled.")
 
 # API Server imports
 try:
@@ -7689,120 +7691,60 @@ Platform: {sys.platform}
         add_row(r, "pt_trader.py path:", trader_script_var)
         r += 1
 
-        # --- Robinhood API setup (writes r_key.txt + r_secret.txt used by pt_trader.py) ---
-        def _api_paths() -> Tuple[str, str]:
-            key_path = os.path.join(self.project_dir, "r_key.txt")
-            secret_path = os.path.join(self.project_dir, "r_secret.txt")
-            return key_path, secret_path
-
-        def _read_api_files() -> Tuple[str, str]:
-            # Try encrypted vault first; only fall back to plaintext when no
-            # vault exists (legacy install). If the vault exists but is
-            # unreadable, surface the error rather than silently returning
-            # empty credentials (plaintext files may already be deleted).
-            _logger = logging.getLogger(__name__)
-            if SecureCredentialManager is not None:
-                mgr = SecureCredentialManager(self.project_dir)
-                if mgr.has_encrypted_credentials():
-                    try:
-                        creds = mgr.decrypt_credentials()
-                        if creds:
-                            return creds[0], creds[1]
-                        raise RuntimeError(
-                            "Credential vault exists but decrypt_credentials returned None. "
-                            "The vault may be corrupted or was encrypted on a different machine."
-                        )
-                    except RuntimeError:
-                        raise  # surface vault-broken error to caller
-                    except Exception as exc:
-                        _logger.warning("Encrypted vault read failed: %s", exc)
-                        raise RuntimeError(
-                            f"Credential vault is present but unreadable: {exc}"
-                        ) from exc
-            # Plaintext fallback for legacy installs (no vault present)
-            key_path, secret_path = _api_paths()
-            try:
-                with open(key_path, "r", encoding="utf-8") as f:
-                    k = (f.read() or "").strip()
-            except Exception:
-                k = ""
-            try:
-                with open(secret_path, "r", encoding="utf-8") as f:
-                    s = (f.read() or "").strip()
-            except Exception:
-                s = ""
-            return k, s
+        # --- Robinhood API setup (OS credential store via pt_secrets; no files) ---
+        def _read_saved_credentials() -> Tuple[str, str]:
+            """Saved Robinhood (api_key, private_key_b64): environment variables
+            first, then the OS keyring. ("", "") when none."""
+            if KeyringCredentialManager is None:
+                return "", ""
+            creds = KeyringCredentialManager().decrypt_credentials()
+            return (creds[0], creds[1]) if creds else ("", "")
 
         api_status_var = tk.StringVar(value="")
 
         def _refresh_api_status() -> None:
-            key_path, secret_path = _api_paths()
-            k, s = _read_api_files()
-
-            missing = []
-            if not k:
-                missing.append("r_key.txt (API Key)")
-            if not s:
-                missing.append("r_secret.txt (PRIVATE key)")
-
-            if missing:
-                api_status_var.set(
-                    "Not configured ❌ (missing " + ", ".join(missing) + ")"
-                )
-            else:
-                api_status_var.set("Configured ✅ (credentials found)")
-
-        def _open_api_folder() -> None:
-            """Open the folder where r_key.txt / r_secret.txt live."""
-            try:
-                folder = os.path.abspath(self.project_dir)
-                if os.name == "nt":
-                    os.startfile(folder)  # type: ignore[attr-defined]
-                    return
-                if sys.platform == "darwin":
-                    subprocess.Popen(["open", folder])
-                    return
-                subprocess.Popen(["xdg-open", folder])
-            except Exception as e:
-                messagebox.showerror(
-                    "Couldn't open folder",
-                    f"Tried to open:\n{self.project_dir}\n\nError:\n{e}",
-                )
+            k, s = _read_saved_credentials()
+            if not (k and s):
+                api_status_var.set("Not configured ❌ (no API key / private key saved)")
+                return
+            source = pt_secrets.credential_source("robinhood") if pt_secrets else None
+            where = (
+                "environment variables"
+                if source == pt_secrets.SOURCE_ENV
+                else "OS credential store"
+            )
+            api_status_var.set(f"Configured ✅ (from {where})")
 
         def _clear_api_files() -> None:
-            """Delete r_key.txt / r_secret.txt (with a big confirmation)."""
-            key_path, secret_path = _api_paths()
+            """Remove the Robinhood credentials from the OS keyring (with a confirmation)."""
+            if KeyringCredentialManager is None:
+                return
             if not messagebox.askyesno(
                 "Delete API credentials?",
-                "This will delete:\n"
-                f"  {key_path}\n"
-                f"  {secret_path}\n\n"
+                "This removes your Robinhood API key and private key from the "
+                "operating system's credential store.\n\n"
                 "After deleting, the trader can NOT authenticate until you run the setup wizard again.\n\n"
-                "Are you sure you want to delete these files?",
+                "Are you sure?",
             ):
                 return
 
-            try:
-                if os.path.isfile(key_path):
-                    os.remove(key_path)
-                if os.path.isfile(secret_path):
-                    os.remove(secret_path)
-            except Exception as e:
-                messagebox.showerror(
-                    "Delete failed", f"Couldn't delete the files:\n\n{e}"
-                )
-                return
-
+            KeyringCredentialManager().delete_credentials()
             _refresh_api_status()
-            messagebox.showinfo("Deleted", "Deleted r_key.txt and r_secret.txt.")
+            note = ""
+            if pt_secrets and pt_secrets.credential_source("robinhood") == pt_secrets.SOURCE_ENV:
+                note = (
+                    "\n\nPOWERTRADER_ROBINHOOD_API_KEY / _PRIVATE_KEY are still set in the "
+                    "environment and will keep being used until you unset them."
+                )
+            messagebox.showinfo("Deleted", "Robinhood credentials removed." + note)
 
         def _open_robinhood_api_wizard() -> None:
             """
             Beginner-friendly wizard that creates + stores Robinhood Crypto Trading API credentials.
 
-            What we store:
-              - r_key.txt    = your Robinhood *API Key* (safe-ish to store, still treat as sensitive)
-              - r_secret.txt = your *PRIVATE key* (treat like a password — never share it)
+            Both values go to the operating system's credential store (Windows
+            Credential Manager / macOS Keychain / Secret Service) through
+            pt_secrets. Nothing is written to a file.
             """
             import base64
             import platform
@@ -7915,26 +7857,10 @@ Platform: {sys.platform}
                 "<Button-5>", lambda _e: wiz_canvas.yview_scroll(3, "units"), add="+"
             )  # Linux
 
-            key_path, secret_path = _api_paths()
-
-            # Load any existing credentials so users can update without re-generating keys.
-            existing_api_key, existing_private_b64 = _read_api_files()
+            # Load any existing credentials so users can update without re-generating
+            # keys. The private key stays in memory only; it is never shown.
+            existing_api_key, existing_private_b64 = _read_saved_credentials()
             private_b64_state = {"value": (existing_private_b64 or "").strip()}
-
-            def _backup_existing_credentials() -> None:
-                """Create timestamped backups of existing credentials before changes."""
-                try:
-                    from datetime import datetime
-
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    if os.path.isfile(key_path):
-                        backup_key = f"{key_path}.bak_{ts}"
-                        shutil.copy2(key_path, backup_key)
-                    if os.path.isfile(secret_path):
-                        backup_secret = f"{secret_path}.bak_{ts}"
-                        shutil.copy2(secret_path, backup_secret)
-                except Exception:
-                    pass
 
             def _validate_api_key(api_key: str) -> Tuple[bool, str]:
                 """Enhanced API key validation with user-friendly feedback."""
@@ -7953,23 +7879,8 @@ Platform: {sys.platform}
                 return True, "API key format looks correct"
 
             # -----------------------------
-            # Helpers (open folder, copy, etc.)
+            # Helpers
             # -----------------------------
-            def _open_in_file_manager(path: str) -> None:
-                try:
-                    p = os.path.abspath(path)
-                    if os.name == "nt":
-                        os.startfile(p)  # type: ignore[attr-defined]
-                        return
-                    if sys.platform == "darwin":
-                        subprocess.Popen(["open", p])
-                        return
-                    subprocess.Popen(["xdg-open", p])
-                except Exception as e:
-                    messagebox.showerror(
-                        "Couldn't open folder", f"Tried to open:\n{path}\n\nError:\n{e}"
-                    )
-
             def _copy_to_clipboard(txt: str, title: str = "Copied") -> None:
                 try:
                     wiz.clipboard_clear()
@@ -7977,12 +7888,6 @@ Platform: {sys.platform}
                     messagebox.showinfo(title, "Copied to clipboard.")
                 except Exception:
                     pass
-
-            def _mask_path(p: str) -> str:
-                try:
-                    return os.path.abspath(p)
-                except Exception:
-                    return p
 
             # -----------------------------
             # Big, beginner-friendly instructions
@@ -8005,9 +7910,9 @@ Platform: {sys.platform}
                 "  G) Permissions: this TRADER needs READ + TRADE. (READ-only cannot place orders.)\n"
                 "  H) Click Save. Robinhood shows your API Key — copy it right away (it may only show once).\n\n"
                 "📱 Mobile note: if you can't find API Trading in the app, use robinhood.com in a browser.\n\n"
-                "This wizard will save two files in the same folder as pt_hub.py:\n"
-                "  - r_key.txt    (your API Key)\n"
-                "  - r_secret.txt (your PRIVATE key in base64)  ← keep this secret like a password\n"
+                "When you click Save, both your API Key and your PRIVATE key are stored in your\n"
+                "operating system's credential store (Windows Credential Manager, macOS Keychain\n"
+                "or the Linux Secret Service). Nothing is written to a file.\n"
             )
 
             intro_lbl = ttk.Label(container, text=intro, justify="left")
@@ -8032,11 +7937,6 @@ Platform: {sys.platform}
                 command=lambda: webbrowser.open(
                     "https://docs.robinhood.com/crypto/trading/"
                 ),
-            ).pack(side="left", padx=8)
-            ttk.Button(
-                top_btns,
-                text="Open Folder With r_key.txt / r_secret.txt",
-                command=lambda: _open_in_file_manager(self.project_dir),
             ).pack(side="left", padx=8)
 
             # -----------------------------
@@ -8202,20 +8102,6 @@ Platform: {sys.platform}
                     ):
                         return
 
-                # Create backup of existing credentials before saving new ones
-                try:
-                    from datetime import datetime
-
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    if os.path.isfile(key_path):
-                        backup_key = f"{key_path}.bak_{ts}"
-                        shutil.copy2(key_path, backup_key)
-                    if os.path.isfile(secret_path):
-                        backup_secret = f"{secret_path}.bak_{ts}"
-                        shutil.copy2(secret_path, backup_secret)
-                except Exception:
-                    pass  # Non-critical backup failure
-
                 # Safe test: market-data endpoint (no trading)
                 base_url = "https://trading.robinhood.com"
                 path = "/api/v1/crypto/marketdata/best_bid_ask/?symbol=BTC-USD"
@@ -8244,7 +8130,7 @@ Platform: {sys.platform}
                 except Exception as e:
                     messagebox.showerror(
                         "Bad private key",
-                        f"Couldn't use your private key (r_secret.txt).\n\nError:\n{e}",
+                        f"Couldn't use your private key.\n\nError:\n{e}",
                     )
                     return
 
@@ -8307,14 +8193,16 @@ Platform: {sys.platform}
             # -----------------------------
             # Step 3 — Save
             # -----------------------------
-            step3 = ttk.LabelFrame(container, text="Step 3 — Save to files (required)")
+            step3 = ttk.LabelFrame(
+                container, text="Step 3 — Save to the OS credential store (required)"
+            )
             step3.grid(row=4, column=0, sticky="nsew")
             step3.columnconfigure(0, weight=1)
 
             ack_var = tk.BooleanVar(value=False)
             ack = ttk.Checkbutton(
                 step3,
-                text="I understand r_secret.txt is PRIVATE and I will not share it.",
+                text="I understand my PRIVATE key is secret and I will not share it.",
                 variable=ack_var,
             )
             ack.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 6))
@@ -8334,7 +8222,7 @@ Platform: {sys.platform}
 
                 # Normalize private key so pt_thinker.py can load it:
                 # - Accept 32 bytes (seed) OR 64 bytes (seed+pub) from older hub versions
-                # - Save ONLY base64(seed32) to r_secret.txt
+                # - Save ONLY base64(seed32)
                 try:
                     raw = base64.b64decode(priv_b64)
                     if len(raw) == 64:
@@ -8366,7 +8254,7 @@ Platform: {sys.platform}
                 if not bool(ack_var.get()):
                     messagebox.showwarning(
                         "Please confirm",
-                        "For safety, please check the box confirming you understand r_secret.txt is private.",
+                        "For safety, please check the box confirming you understand your private key is secret.",
                     )
                     return
 
@@ -8378,65 +8266,29 @@ Platform: {sys.platform}
                     ):
                         return
 
-                # Back up existing files (so user can undo mistakes)
                 try:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    if os.path.isfile(key_path):
-                        shutil.copy2(key_path, f"{key_path}.bak_{ts}")
-                    if os.path.isfile(secret_path):
-                        shutil.copy2(secret_path, f"{secret_path}.bak_{ts}")
-                except Exception:
-                    pass
-
-                try:
-                    # Encrypt credentials via SecureCredentialManager
-                    # (replaces plaintext r_key.txt / r_secret.txt writes)
-                    if SecureCredentialManager is None:
+                    # Store via pt_secrets in the OS credential store (no file is written)
+                    if KeyringCredentialManager is None:
                         raise RuntimeError(
                             "pt_credentials module not available — "
-                            "cannot encrypt credentials."
+                            "cannot store credentials."
                         )
-                    mgr = SecureCredentialManager(self.project_dir)
-                    if not mgr.encrypt_credentials(api_key, priv_b64):
-                        raise RuntimeError(
-                            "Encryption failed - check disk space and permissions."
-                        )
+                    KeyringCredentialManager().encrypt_credentials(api_key, priv_b64)
                 except Exception as e:
+                    # pt_secrets messages never contain the values; a missing
+                    # keyring names the environment variables to use instead.
                     messagebox.showerror(
                         "Save failed",
-                        f"Couldn't save credentials.\n\nError:\n{e}",
+                        f"Couldn't save credentials.\n\n{e}",
                     )
                     return
-
-                # Secure-erase stale plaintext files before unlinking
-                _hub_logger = logging.getLogger(__name__)
-                for stale_path in (key_path, secret_path):
-                    if not os.path.isfile(stale_path):
-                        continue
-                    try:
-                        size = os.path.getsize(stale_path)
-                        with open(stale_path, "r+b") as sf:
-                            sf.write(b"\x00" * size)
-                            sf.flush()
-                            os.fsync(sf.fileno())
-                    except OSError:
-                        pass  # best-effort; still remove
-                    try:
-                        os.remove(stale_path)
-                    except OSError as rm_exc:
-                        _hub_logger.warning(
-                            "Could not remove stale plaintext credential %s: %s",
-                            stale_path,
-                            rm_exc,
-                        )
 
                 _refresh_api_status()
                 messagebox.showinfo(
                     "Saved",
                     "✅ Saved!\n\n"
-                    "The trader will automatically read these files next time it starts:\n"
-                    f"  API Key → {_mask_path(key_path)}\n"
-                    f"  Private Key → {_mask_path(secret_path)}\n\n"
+                    "Your API Key and Private Key are in the operating system's credential "
+                    "store. The trader reads them from there when it starts.\n\n"
                     "Next steps:\n"
                     "  1) Close this window\n"
                     "  2) Start the trader (pt_trader.py)\n"
@@ -8463,11 +8315,8 @@ Platform: {sys.platform}
         ttk.Button(
             api_row, text="Setup Wizard", command=_open_robinhood_api_wizard
         ).grid(row=0, column=1, sticky="e", padx=(10, 0))
-        ttk.Button(api_row, text="Open Folder", command=_open_api_folder).grid(
-            row=0, column=2, sticky="e", padx=(8, 0)
-        )
         ttk.Button(api_row, text="Clear", command=_clear_api_files).grid(
-            row=0, column=3, sticky="e", padx=(8, 0)
+            row=0, column=2, sticky="e", padx=(8, 0)
         )
 
         r += 1

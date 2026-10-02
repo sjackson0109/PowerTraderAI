@@ -5,10 +5,18 @@ Supports all major cryptocurrency exchanges with unified interface
 
 import abc
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
+
+import pt_secrets
+
+logger = logging.getLogger("pt_exchange_abstraction")
+
+# Constructor arguments that carry credentials (see pt_secrets.secret_fields).
+_CREDENTIAL_KWARGS = ("api_key", "api_secret", "passphrase", "private_key")
 
 
 class ExchangeType(Enum):
@@ -299,50 +307,74 @@ class ExchangeFactory:
 
     @classmethod
     def load_credentials(cls, config_path: str = None):
-        """Load credentials for all exchanges from config"""
+        """Load per-exchange constructor options (e.g. ``sandbox``) from
+        ``exchange_config.json``. Credentials are NOT read from it: they come
+        from ``pt_secrets`` only. Credential fields found in the file are
+        ignored with a warning."""
         if config_path is None:
             config_path = os.path.join(
                 os.path.dirname(__file__), "exchange_config.json"
             )
 
-        if os.path.exists(config_path):
-            with open(config_path, "r") as f:
-                cls._credentials = json.load(f)
+        if not os.path.exists(config_path):
+            return
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        options = {}
+        for exchange, settings in (data.items() if isinstance(data, dict) else ()):
+            if not isinstance(settings, dict):
+                continue
+            kept = {}
+            for key, value in settings.items():
+                if pt_secrets.is_secret_key(key):
+                    if value:
+                        logger.warning(
+                            "%s holds a credential field (%s.%s); it is ignored. "
+                            "Credentials are read from environment variables or the OS "
+                            "keyring only (run pt_migrate.py to move it).",
+                            os.path.basename(config_path),
+                            exchange,
+                            key,
+                        )
+                    continue
+                kept[key] = value
+            options[exchange] = kept
+        cls._credentials = options
 
     @classmethod
     def get_exchange(cls, exchange_type: ExchangeType, **kwargs) -> AbstractExchange:
-        """Create exchange instance with credentials"""
+        """Create an exchange instance.
+
+        Credentials passed in ``kwargs`` (``api_key``, ``api_secret``, ...) are
+        used as given. Otherwise they come from ``pt_secrets`` (environment
+        variables, then the OS keyring). The two are never combined, so a
+        credential supplied in two places can no longer raise "multiple values
+        for keyword argument" and silently drop the exchange.
+        """
         if exchange_type not in cls._exchanges:
             raise ValueError(f"Exchange {exchange_type.value} not registered")
 
-        # Get credentials from config or environment
-        creds = cls._get_credentials(exchange_type)
-
-        # Allow public access for market data feeds (no credentials needed)
-        if not creds:
-            print(f"Using public access for {exchange_type.value} (market data only)")
+        options = dict(cls._credentials.get(exchange_type.value, {}))
+        if any(key in kwargs for key in _CREDENTIAL_KWARGS):
             creds = {}
+        else:
+            creds = cls._get_credentials(exchange_type)
+            # Allow public access for market data feeds (no credentials needed)
+            if not creds:
+                print(f"Using public access for {exchange_type.value} (market data only)")
+                creds = {}
 
         exchange_class = cls._exchanges[exchange_type]
-        return exchange_class(**creds, **kwargs)
+        return exchange_class(**{**options, **creds, **kwargs})
 
     @classmethod
     def _get_credentials(cls, exchange_type: ExchangeType) -> Optional[Dict[str, str]]:
-        """Get credentials for exchange from config or environment"""
-        exchange_name = exchange_type.value.upper()
-
-        # Try environment variables first
-        api_key = os.environ.get(f"POWERTRADER_{exchange_name}_API_KEY")
-        api_secret = os.environ.get(f"POWERTRADER_{exchange_name}_API_SECRET")
-
-        if api_key and api_secret:
-            return {"api_key": api_key, "api_secret": api_secret}
-
-        # Try config file
-        if exchange_type.value in cls._credentials:
-            return cls._credentials[exchange_type.value]
-
-        return None
+        """Credentials from ``pt_secrets``: environment variables first, then
+        the OS keyring. ``exchange_config.json`` never supplies credentials."""
+        try:
+            return pt_secrets.get_credentials(exchange_type.value)
+        except pt_secrets.SecretsError:
+            return None
 
     @classmethod
     def get_available_exchanges(cls, region: str = None) -> List[ExchangeType]:

@@ -4,10 +4,12 @@ Handles multi-exchange setup, credentials, and region-based selection
 """
 
 import json
+import logging
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+import pt_secrets
 from pt_exchange_abstraction import (
     ConnectionStatus,
     ConnectionTestResult,
@@ -17,21 +19,48 @@ from pt_exchange_abstraction import (
 )
 from pt_exchanges import *
 
+logger = logging.getLogger("pt_multi_exchange")
 
 EXAMPLE_CONFIG_NAME = "trading_config.example.json"
+
+# ExchangeConfig attributes that are credentials: kept in the OS keyring through
+# pt_secrets, never in trading_config.json.
+CREDENTIAL_ATTRS = ("api_key", "api_secret", "passphrase")
 
 
 @dataclass
 class ExchangeConfig:
-    """Configuration for a single exchange"""
+    """Configuration for a single exchange.
+
+    ``api_key``/``api_secret``/``passphrase`` are filled in memory from
+    ``pt_secrets`` when the config is loaded and are never written to the
+    config file; ``repr`` never shows them.
+    """
 
     exchange_type: str
     enabled: bool
     region_preference: int  # 1=primary, 2=secondary, etc.
-    api_key: str = ""
-    api_secret: str = ""
-    passphrase: str = ""  # For KuCoin
+    api_key: str = field(default="", repr=False)
+    api_secret: str = field(default="", repr=False)
+    passphrase: str = field(default="", repr=False)  # For KuCoin
     sandbox: bool = False
+    # Where the credentials above came from ("environment", "keyring" or "").
+    credential_source: str = field(default="", repr=False, compare=False)
+
+
+# The ExchangeConfig attributes written to trading_config.json.
+_FILE_FIELDS = ("exchange_type", "enabled", "region_preference", "sandbox")
+
+
+def _fill_credentials(ex: ExchangeConfig) -> None:
+    """Set ``ex``'s credential attributes from pt_secrets (environment, then keyring)."""
+    try:
+        creds = pt_secrets.get_credentials(ex.exchange_type)
+    except pt_secrets.SecretsError:
+        creds = None
+    for attr in CREDENTIAL_ATTRS:
+        setattr(ex, attr, (creds or {}).get(attr, ""))
+    ex.credential_source = creds.source if creds else ""
 
 
 @dataclass
@@ -45,15 +74,25 @@ class TradingConfig:
     auto_best_price: bool = False
 
 
+def _credential_field(exchange: str, attr: str) -> Optional[str]:
+    """pt_secrets field behind an ExchangeConfig credential attribute
+    (Coinbase ``api_key`` -> ``key_name``), or None if the exchange has none."""
+    try:
+        return pt_secrets.field_for_kwarg(exchange, attr)
+    except pt_secrets.SecretsError:
+        return None
+
+
 class ExchangeConfigManager:
-    """Manages exchange configuration and credentials"""
+    """Manages exchange configuration. Credentials go through ``pt_secrets``:
+    the config file holds no secret, the in-memory ``ExchangeConfig`` objects
+    carry the credentials read from the environment or the OS keyring."""
 
     def __init__(self, config_dir: str = None):
         if config_dir is None:
             config_dir = os.path.dirname(os.path.abspath(__file__))
 
-        # trading_config.json holds API keys in plain text and is git-ignored; a
-        # fresh clone only has the example, which load_config falls back to.
+        # A fresh clone only has the example, which load_config falls back to.
         self.config_file = os.path.join(config_dir, "trading_config.json")
         self.example_file = os.path.join(config_dir, EXAMPLE_CONFIG_NAME)
         self.config: Optional[TradingConfig] = None
@@ -66,15 +105,20 @@ class ExchangeConfigManager:
         config to edit; the real file is only created by ``save_config``. A
         real file that exists but cannot be read is NOT replaced by the example
         (that would hide the problem and a later save would overwrite it).
+
+        Credential fields found in the file are ignored (with a warning) and
+        never written back; credentials come from ``pt_secrets``.
         """
         for path in (self.config_file, self.example_file):
             if not os.path.exists(path):
                 continue
             try:
-                with open(path, "r") as f:
+                with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
 
-                exchanges = [ExchangeConfig(**ex) for ex in data.get("exchanges", [])]
+                exchanges = [
+                    self._exchange_from_file(ex, path) for ex in data.get("exchanges", [])
+                ]
 
                 self.config = TradingConfig(
                     user_region=data.get("user_region", "GLOBAL"),
@@ -90,20 +134,57 @@ class ExchangeConfigManager:
 
         return None
 
+    @staticmethod
+    def _exchange_from_file(raw: dict, path: str) -> ExchangeConfig:
+        settings = {}
+        for key, value in raw.items():
+            if pt_secrets.is_secret_key(key):
+                if value:
+                    logger.warning(
+                        "%s holds a credential field (%s.%s); it is ignored and will "
+                        "not be written back. Re-enter it in the exchange setup window "
+                        "or run the migration (pt_migrate.py).",
+                        os.path.basename(path),
+                        raw.get("exchange_type", "?"),
+                        key,
+                    )
+                continue
+            if key in _FILE_FIELDS:
+                settings[key] = value
+        ex = ExchangeConfig(**settings)
+        _fill_credentials(ex)
+        return ex
+
     def save_config(self, config: TradingConfig):
-        """Save trading configuration to file"""
+        """Save trading configuration: settings to the file, credentials to the
+        OS keyring (``pt_secrets``). Raises ``pt_secrets.KeyringUnavailable``
+        (after saving the settings) when credentials cannot be stored securely."""
         self.config = config
 
         data = {
             "user_region": config.user_region,
             "primary_exchange": config.primary_exchange,
-            "exchanges": [asdict(ex) for ex in config.exchanges],
+            "exchanges": [
+                {key: getattr(ex, key) for key in _FILE_FIELDS} for ex in config.exchanges
+            ],
             "price_comparison_enabled": config.price_comparison_enabled,
             "auto_best_price": config.auto_best_price,
         }
 
-        with open(self.config_file, "w") as f:
+        with open(self.config_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+
+        for ex in config.exchanges:
+            if ex.credential_source == pt_secrets.SOURCE_ENV:
+                continue  # never copy environment credentials into the keyring
+            values = {}
+            for attr in CREDENTIAL_ATTRS:
+                name = _credential_field(ex.exchange_type, attr)
+                if name and getattr(ex, attr):
+                    values[name] = getattr(ex, attr)
+            if values:
+                pt_secrets.set_credentials(ex.exchange_type, values)
+                ex.credential_source = pt_secrets.SOURCE_KEYRING
 
     def create_default_config(self, user_region: str = "GLOBAL") -> TradingConfig:
         """Create default configuration based on user region"""
@@ -181,17 +262,25 @@ class ExchangeConfigManager:
     def update_exchange_credentials(
         self, exchange_name: str, api_key: str, api_secret: str, passphrase: str = ""
     ):
-        """Update credentials for an exchange"""
+        """Store credentials for an exchange in the OS keyring (empty values
+        remove them). Raises ``pt_secrets.KeyringUnavailable`` /
+        ``pt_secrets.SecretTooLarge`` without storing anything."""
         if not self.config:
             return
 
-        for ex in self.config.exchanges:
-            if ex.exchange_type == exchange_name:
-                ex.api_key = api_key
-                ex.api_secret = api_secret
-                ex.passphrase = passphrase
-                break
+        given = {"api_key": api_key, "api_secret": api_secret, "passphrase": passphrase}
+        values = {}
+        for attr, value in given.items():
+            name = _credential_field(exchange_name, attr)
+            if name:
+                values[name] = value or ""
+        pt_secrets.set_credentials(exchange_name, values)
 
+        ex = self.get_exchange_config(exchange_name)
+        if ex is None:
+            ex = ExchangeConfig(exchange_name, False, len(self.config.exchanges) + 1)
+            self.config.exchanges.append(ex)
+        _fill_credentials(ex)
         self.save_config(self.config)
 
     def enable_exchange(self, exchange_name: str, enabled: bool = True):
@@ -399,33 +488,12 @@ class MultiExchangeManager:
     def _get_exchange_credentials(
         self, exchange_config: ExchangeConfig
     ) -> Optional[Dict[str, str]]:
-        """Get credentials for exchange from config or environment"""
-        # Check config first
-        if exchange_config.api_key and exchange_config.api_secret:
-            creds = {
-                "api_key": exchange_config.api_key,
-                "api_secret": exchange_config.api_secret,
-            }
-            if exchange_config.passphrase:
-                creds["passphrase"] = exchange_config.passphrase
-            return creds
-
-        # Check environment variables
-        exchange_name = exchange_config.exchange_type.upper()
-        api_key = os.environ.get(f"POWERTRADER_{exchange_name}_API_KEY")
-        api_secret = os.environ.get(f"POWERTRADER_{exchange_name}_API_SECRET")
-
-        if api_key and api_secret:
-            creds = {"api_key": api_key, "api_secret": api_secret}
-
-            # Check for passphrase (KuCoin)
-            passphrase = os.environ.get(f"POWERTRADER_{exchange_name}_PASSPHRASE")
-            if passphrase:
-                creds["passphrase"] = passphrase
-
-            return creds
-
-        return None
+        """Credentials for the exchange from ``pt_secrets`` (environment first,
+        then the OS keyring) -- the same source the live gate uses."""
+        try:
+            return pt_secrets.get_credentials(exchange_config.exchange_type)
+        except pt_secrets.SecretsError:
+            return None
 
 
 # Global instance for easy access

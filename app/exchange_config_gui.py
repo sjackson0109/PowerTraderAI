@@ -13,6 +13,7 @@ from tkinter import font, messagebox, ttk
 from typing import Dict, Optional
 
 import coinbase_auth
+import pt_secrets
 from pt_exchange_abstraction import (
     ConnectionStatus,
     ConnectionTestResult,
@@ -33,10 +34,25 @@ EXCHANGE_FIELDS = {
     },
 }
 SAVED_SECRET_HINT = "A private key is already saved. Leave this box empty to keep it."
+ENV_CREDENTIALS_HINT = (
+    "Credentials for this exchange come from environment variables ({names}); "
+    "they take precedence over anything saved here."
+)
 
 
 def exchange_fields(exchange_name: str) -> dict:
     return EXCHANGE_FIELDS.get(exchange_name, DEFAULT_FIELDS)
+
+
+def saved_secret_hint(exchange_name: str, source: str) -> str:
+    """Shown instead of a saved secret, which is never echoed into the form."""
+    if source == pt_secrets.SOURCE_ENV:
+        return ENV_CREDENTIALS_HINT.format(names=", ".join(pt_secrets.env_var_names(exchange_name)))
+    fields = exchange_fields(exchange_name)
+    if fields["multiline"]:
+        return SAVED_SECRET_HINT
+    label = fields["secret_label"].rstrip(":")
+    return f"{label} is already saved. Leave the box empty to keep it."
 
 
 STATUS_HEADLINES = {
@@ -823,11 +839,11 @@ class ExchangeConfigGUI:
             self.passphrase_label.grid_remove()
             self.passphrase_entry.grid_remove()
 
-        # Load existing credentials
+        # Load existing credentials (pt_secrets: environment, then OS keyring)
         config = self.config_manager.load_config()
         api_key = ""
         api_secret = ""
-        passphrase = ""
+        source = ""
 
         if config and hasattr(config, "exchanges"):
             # Dataclass structure
@@ -838,22 +854,16 @@ class ExchangeConfigGUI:
                 ):
                     api_key = ex_config.api_key or ""
                     api_secret = ex_config.api_secret or ""
-                    passphrase = ex_config.passphrase or ""
+                    source = ex_config.credential_source
                     break
-        elif config and isinstance(config, dict):
-            # Dictionary structure
-            exchange_config = config.get("exchanges", {}).get(exchange_name, {})
-            api_key = exchange_config.get("api_key", "")
-            api_secret = exchange_config.get("api_secret", "")
-            passphrase = exchange_config.get("passphrase", "")
 
+        # The key name / API key identifies the key and is shown; a saved secret,
+        # private key or passphrase is never echoed back into the form.
         self.api_key_var.set(api_key)
-        self.passphrase_var.set(passphrase)
-        multiline = exchange_fields(exchange_name)["multiline"]
-        self.api_secret_var.set("" if multiline else api_secret)
-        # Never echo a saved private key into a readable text box.
+        self.passphrase_var.set("")
+        self.api_secret_var.set("")
         self.api_secret_text.delete("1.0", tk.END)
-        self._apply_field_layout(exchange_name, has_saved_secret=multiline and bool(api_secret))
+        self._apply_field_layout(exchange_name, has_saved_secret=bool(api_secret), source=source)
 
     def get_exchange_instructions(self, exchange_name: str) -> str:
         """Get setup instructions for an exchange"""
@@ -1152,7 +1162,7 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             return
 
         try:
-            # Save credentials
+            # Save credentials (OS keyring via pt_secrets; never to a file)
             self.config_manager.update_exchange_credentials(
                 exchange_name, api_key, api_secret, passphrase
             )
@@ -1161,17 +1171,29 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             self.config_manager.enable_exchange(exchange_name, True)
 
             messagebox.showinfo(
-                "Success", f"{exchange_name.title()} configuration saved!"
+                "Success",
+                f"{exchange_name.title()} configuration saved!\n\n"
+                "The credentials are in your operating system's credential store.",
             )
-            if exchange_fields(exchange_name)["multiline"]:
-                # Don't leave a private key sitting readable in the form.
-                self.api_secret_text.delete("1.0", tk.END)
-                self.secret_hint_var.set(SAVED_SECRET_HINT)
+            # Don't leave a secret sitting in the form.
+            self.api_secret_text.delete("1.0", tk.END)
+            self.api_secret_var.set("")
+            self.passphrase_var.set("")
+            saved = self._saved_credentials(exchange_name)
+            self.secret_hint_var.set(
+                saved_secret_hint(exchange_name, saved.credential_source if saved else "")
+            )
             self.refresh_exchange_list()
             self.status_var.set(f"Saved configuration for {exchange_name.title()}")
 
+        except pt_secrets.KeyringUnavailable as e:
+            messagebox.showerror("No secure credential store", str(e))
+        except pt_secrets.SecretsError as e:
+            messagebox.showerror("Credentials not saved", str(e))
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to save configuration: {e}")
+            messagebox.showerror(
+                "Error", f"Failed to save configuration ({type(e).__name__})."
+            )
 
     def _typed_secret(self, exchange_name: str) -> str:
         if exchange_fields(exchange_name)["multiline"]:
@@ -1186,18 +1208,21 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
 
     def _form_credentials(self):
         """What is currently typed in the setup form: (api_key, api_secret, passphrase).
-        Blank key AND secret mean "use the saved credentials". For a multi-line
-        secret the saved value is never shown, so a blank box next to a typed key
-        means "keep the saved secret"."""
+        Blank key AND secret mean "use the saved credentials". A saved secret or
+        passphrase is never shown, so a blank box next to a typed key means
+        "keep the saved one"."""
         exchange_name = self.exchange_var.get()
         api_key = self.api_key_var.get().strip()
         api_secret = self._typed_secret(exchange_name)
-        if exchange_fields(exchange_name)["multiline"] and api_key and not api_secret:
+        passphrase = self.passphrase_var.get().strip()
+        if api_key and (not api_secret or not passphrase):
             saved = self._saved_credentials(exchange_name)
-            api_secret = (saved.api_secret if saved else "") or ""
-        return api_key, api_secret, self.passphrase_var.get().strip()
+            if saved is not None:
+                api_secret = api_secret or saved.api_secret or ""
+                passphrase = passphrase or saved.passphrase or ""
+        return api_key, api_secret, passphrase
 
-    def _apply_field_layout(self, exchange_name: str, has_saved_secret: bool):
+    def _apply_field_layout(self, exchange_name: str, has_saved_secret: bool, source: str = ""):
         """Labels and input widget for this exchange's credential shape."""
         fields = exchange_fields(exchange_name)
         self.api_key_label.configure(text=fields["key_label"])
@@ -1205,12 +1230,13 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
         if fields["multiline"]:
             self.api_secret_entry.grid_remove()
             self.api_secret_text.grid(row=1, column=1, padx=(10, 0), pady=2, sticky="we")
-            self.secret_hint_label.grid(row=3, column=1, padx=(10, 0), sticky="w")
-            self.secret_hint_var.set(SAVED_SECRET_HINT if has_saved_secret else "")
         else:
             self.api_secret_text.grid_remove()
-            self.secret_hint_label.grid_remove()
             self.api_secret_entry.grid(row=1, column=1, padx=(10, 0), pady=2)
+        self.secret_hint_label.grid(row=3, column=1, padx=(10, 0), sticky="w")
+        self.secret_hint_var.set(
+            saved_secret_hint(exchange_name, source) if has_saved_secret else ""
+        )
 
     def _append_result(self, text: str):
         self.results_text.insert(tk.END, text)

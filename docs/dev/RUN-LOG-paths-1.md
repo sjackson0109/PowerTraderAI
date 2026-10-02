@@ -112,3 +112,53 @@ Suite: documentation-only commit; not re-run (identical to baseline).
 Suite (run on exactly this commit's files in a scratch worktree): baseline + `test_pt_paths` 11 passed;
 `test_trading_mode` 50 passed (baseline 49 + 1 skipped: a Tk test that intermittently cannot initialise Tk).
 Same 11 known failures, no new ones.
+
+## Phase 2 — Secrets module
+
+* `app/pt_secrets.py` is the only module that reads or writes credentials: `keyring`, service
+  `SJackson.PowerTraderAI`, entries `<exchange>:<field>` (`coinbase:key_name`, `coinbase:private_key`,
+  `robinhood:api_key`, `robinhood:private_key`, `<x>:api_key|api_secret|passphrase`, DeFi
+  `<x>:private_key`). API: `get_secret`, `set_secret`, `delete_secret`, `has_credentials`, plus
+  `set_credentials`, `get_credentials` (connector kwargs), `credential_source`, `delete_credentials`.
+* Precedence defined once: environment variables, then keyring. A source counts only when it holds every
+  required field (values are never mixed); both full -> environment wins and one warning per exchange
+  names the source (never a value). The env-var table is in the module docstring; the existing names
+  (`POWERTRADER_<X>_API_KEY/_API_SECRET/_PASSPHRASE`, `POWERTRADER_ROBINHOOD_PRIVATE_KEY`) are kept, so
+  the Coinbase gate tests' environment set-up still works unchanged.
+* No plaintext fallback: `fail`/`null` backends and every `keyrings.alt` (file) backend are refused; a
+  chained backend is narrowed to its first acceptable member so a write cannot fall through to a file.
+  Without a backend `set_secret` raises `KeyringUnavailable` naming the env vars and saying the app stays
+  in paper mode; nothing is written.
+* Redaction: `Secret` (repr/str/format `***`, no pickle/JSON) and `Credentials` (a dict with a redacted
+  repr). Backend errors are re-raised `from None` so a traceback cannot carry a value.
+* Size: the Windows backend stores the value as UTF-16 (`win32ctypes` `create_unicode_buffer`), so the
+  2,560-byte `CRED_MAX_CREDENTIAL_BLOB_SIZE` is about 1,280 characters. A Coinbase EC PEM is about 230
+  characters (SEC1 and PKCS#8 both tested); a Robinhood seed is 44. `SecretTooLarge` is raised above the
+  limit on every platform, before anything is written. Checked from library source only; the real
+  Credential Manager was never written to or read.
+* One store: `ExchangeConfigManager` keeps exchange settings in `trading_config.json` and credentials in
+  the keyring (loaded configs carry them in memory; `repr=False`); credential fields found in the file are
+  ignored with a warning and never written back. `MultiExchangeManager`, `ExchangeFactory` (the live gate)
+  and the setup window all read through `pt_secrets`. `exchange_config.json` now only supplies
+  non-secret constructor options. `ExchangeFactory._credentials`/`load_credentials` keep their names (the
+  gate tests patch them).
+* Latent bug fixed: `ExchangeFactory.get_exchange` uses caller-supplied credentials *or* stored ones,
+  never both, so the duplicate-kwarg `TypeError` that silently dropped an exchange cannot happen.
+* Robinhood: `KeyringCredentialManager` (same method names as the old vault, so `pt_hub.py` still calls
+  `encrypt_credentials`/`decrypt_credentials` and `test_credential_audit` passes unchanged) stores in the
+  keyring; only rotation dates go to `robinhood_rotation.json` in the config folder. `get_credentials()`
+  = env then keyring; it no longer reads or auto-migrates the old vault or plaintext files (Phase 4 does).
+  The hub's Robinhood window no longer makes plaintext `*.bak_<ts>` copies, no longer wipes legacy files
+  by itself, and "Clear" removes the keyring entries; the "Open Folder" buttons are gone.
+* GUI: a saved secret, private key or passphrase is never echoed into the setup form (a hint says it is
+  saved and blank keeps it). The API key / Coinbase key name is still shown: it identifies the key, and
+  the existing `test_reselecting_never_echoes_the_saved_private_key` asserts it is displayed.
+* Tests: `test_pt_secrets.py` (24), `test_credentials_single_source.py` (15: GUI-saved key is what the
+  live gate builds; paper never builds it; no secret in the config file; legacy plaintext ignored;
+  env+keyring keeps the exchange; explicit + stored creds don't collide; Robinhood keyring/env/no-file;
+  no-keyring refusal; setup window never echoes), `test_isolation_guard.py` (6).
+* `keyring>=24.0.0` added to both requirements files.
+
+Suite (this commit's files in the scratch worktree): baseline + 56 new tests passing; the same 11 known
+failures; the paper/live gate tests (`test_trading_mode`, `test_paper_mode`, `test_coinbase_paper_gate`)
+unchanged and green.

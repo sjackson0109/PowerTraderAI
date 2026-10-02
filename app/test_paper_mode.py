@@ -17,7 +17,6 @@ from unittest import mock
 
 from pt_paper_mode import (
     DARK_PALETTE,
-    PAPER_MODE_SETTING_KEY,
     PAPER_PALETTE,
     fetch_binance_btc_price,
     get_palette,
@@ -43,29 +42,49 @@ class TestPalette(unittest.TestCase):
 
 
 class TestSettingsPersistence(unittest.TestCase):
-    def test_read_paper_mode_from_missing_file_is_false(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertFalse(read_paper_mode_from_disk(os.path.join(d, "x.json")))
+    """Paper mode now derives from `trading.mode` (paper unless explicitly live)."""
 
-    def test_read_paper_mode_from_disk_true(self):
+    def _write(self, directory, data):
+        path = settings_path_for(directory, "pt_config.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        return path
+
+    def test_read_paper_mode_from_missing_file_is_paper(self):
         with tempfile.TemporaryDirectory() as d:
-            path = settings_path_for(d, "gui_settings.json")
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump({PAPER_MODE_SETTING_KEY: True}, f)
+            self.assertTrue(read_paper_mode_from_disk(os.path.join(d, "x.json")))
+
+    def test_read_paper_mode_from_disk_paper(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write(d, {"trading": {"mode": "paper"}})
             self.assertTrue(read_paper_mode_from_disk(path))
 
-    def test_read_paper_mode_from_disk_garbage_is_false(self):
+    def test_read_paper_mode_from_disk_live_is_not_paper(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write(
+                d, {"trading": {"mode": "live", "active_broker": "kraken"}}
+            )
+            self.assertFalse(read_paper_mode_from_disk(path))
+
+    def test_read_paper_mode_from_disk_garbage_is_paper(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "bad.json")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("{not json")
-            self.assertFalse(read_paper_mode_from_disk(path))
+            self.assertTrue(read_paper_mode_from_disk(path))
+
+    def test_legacy_paper_mode_enabled_flag_is_ignored(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = self._write(d, {"paper_mode_enabled": False})
+            self.assertTrue(read_paper_mode_from_disk(path))
 
     def test_is_paper_mode_helper(self):
-        self.assertFalse(is_paper_mode(None))
-        self.assertFalse(is_paper_mode({}))
-        self.assertFalse(is_paper_mode({PAPER_MODE_SETTING_KEY: False}))
-        self.assertTrue(is_paper_mode({PAPER_MODE_SETTING_KEY: True}))
+        self.assertTrue(is_paper_mode({}))
+        self.assertTrue(is_paper_mode({"trading": {"mode": "paper"}}))
+        self.assertTrue(is_paper_mode({"trading": {"mode": "bogus"}}))
+        self.assertFalse(
+            is_paper_mode({"trading": {"mode": "live", "active_broker": "kraken"}})
+        )
 
 
 class TestBinanceTickerFetch(unittest.TestCase):

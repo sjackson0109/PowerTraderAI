@@ -111,6 +111,15 @@ async def fetch_market_data():
 - **Auto-Recovery**: Invalid settings automatically corrected
 - **Nested Configuration**: Dot notation for structured settings access
 - **Change Notifications**: Callback system for configuration updates
+- **Trading Mode**: `trading.mode` (`paper`|`live`, default `paper`), `trading.active_broker` and `trading.<broker>_testnet` persist in `pt_config.json`
+
+#### Trading-Mode Gate (`trading_mode.py`)
+Every order passes through `resolve_order_target(settings)` before it can reach an exchange:
+- **Paper (default / any ambiguity)**: the order goes to `PaperExchange`, an `AbstractExchange` adapter over `PaperTradingAccount`. No credentials, no live venue.
+- **Live without an active broker**: refused (`LiveTradingRefused`); nothing is sent anywhere.
+- **Live with a broker**: `ExchangeFactory.get_exchange(ExchangeType(active_broker))`.
+
+`pt_trader.py` has no broker-specific REST code; it uses the target's `place_order`, `get_balance`, `get_order_status` and `get_market_data`. The trader is pinned to the mode it started in and refuses orders if `trading.mode`/broker changes underneath it. Each mode keeps its own ledger and history under the hub data directory (`paper/`, `testnet/`, or the base directory for live). The hub shows the active mode in an always-visible header strip, and switching to Live (File > Trading Mode...) requires choosing a broker and ticking "Yes, I understand real money is at risk".
 
 ### UI/UX Enhancement
 

@@ -1,5 +1,3 @@
-import base64
-import datetime
 import json
 import math
 import os
@@ -9,29 +7,40 @@ import uuid
 from typing import Any, Dict, Optional
 
 import colorama
-import requests
 from colorama import Fore, Style
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519
-from nacl.signing import SigningKey
 from pt_cost import CostManager, PerformanceTier
-from pt_credentials import get_credentials
+from pt_exchange_abstraction import OrderResult
 from pt_logging import get_logger
-from pt_risk import RiskManager
-from pt_validation import InputValidator, ValidationError, validate_api_response
+from pt_risk import RiskLimits, RiskManager
+from pt_validation import InputValidator, ValidationError
+from trading_mode import (
+    OrderTarget,
+    TradingModeError,
+    configure_paper_exchange,
+    read_trading_settings,
+    resolve_order_target,
+)
 
 # -----------------------------
 # GUI HUB OUTPUTS
 # -----------------------------
+# Base directory shared with the hub. Each trading mode keeps its own ledger and
+# history in a sub-directory (see TradingSettings.data_subdir) so paper and
+# testnet fills never mix into the live books.
 HUB_DATA_DIR = os.environ.get(
     "POWERTRADER_HUB_DIR", os.path.join(os.path.dirname(__file__), "hub_data")
 )
 os.makedirs(HUB_DATA_DIR, exist_ok=True)
 
-TRADER_STATUS_PATH = os.path.join(HUB_DATA_DIR, "trader_status.json")
-TRADE_HISTORY_PATH = os.path.join(HUB_DATA_DIR, "trade_history.jsonl")
-PNL_LEDGER_PATH = os.path.join(HUB_DATA_DIR, "pnl_ledger.json")
-ACCOUNT_VALUE_HISTORY_PATH = os.path.join(HUB_DATA_DIR, "account_value_history.jsonl")
+# Assets that are cash, not positions
+CASH_ASSETS = frozenset({"USD", "ZUSD", "USDT", "USDC", "BUSD"})
+# Balance entries that count as buying power, in order of preference
+BUYING_POWER_ASSETS = ("USD", "USDT")
+
+# Order states after which nothing further will change
+TERMINAL_ORDER_STATES = frozenset(
+    {"filled", "canceled", "cancelled", "rejected", "failed", "error", "expired"}
+)
 
 
 # Initialize colorama
@@ -237,67 +246,126 @@ def _refresh_paths_and_symbols():
     base_paths = _build_base_paths(main_dir, crypto_symbols)
 
 
-# API STUFF - Initialize as None, load when needed
-API_KEY = None
-BASE64_PRIVATE_KEY = None
-
-
-def _load_credentials_if_needed():
-    """Load credentials only when actually needed for trading operations"""
-    global API_KEY, BASE64_PRIVATE_KEY
-
-    if API_KEY is not None and BASE64_PRIVATE_KEY is not None:
-        return  # Already loaded
-
-    # Check if we're in test/CI environment
-    if os.environ.get("POWERTRADER_ENV") == "test":
-        API_KEY = ""
-        BASE64_PRIVATE_KEY = ""
-        return
-
-    try:
-        credentials = get_credentials()
-        if credentials:
-            API_KEY, BASE64_PRIVATE_KEY = credentials
-        else:
-            API_KEY = ""
-            BASE64_PRIVATE_KEY = ""
-    except Exception as e:
-        print(f"[PowerTrader] Error loading credentials: Credential system error")
-        API_KEY = ""
-        BASE64_PRIVATE_KEY = ""
-
-    if not API_KEY or not BASE64_PRIVATE_KEY:
-        print(
-            "\n[PowerTrader] Robinhood API credentials not found.\n"
-            "Open the GUI and go to Settings -> Robinhood API -> Setup / Update.\n"
-            "That wizard will generate your keypair, tell you where to paste the public key on Robinhood,\n"
-            "and will save encrypted credential files so this trader can authenticate securely.\n"
-        )
-        # Don't exit during import - let the calling code handle the error
-        return False
-
-    return True
-
-
 # Initialize secure logging
 logger = get_logger(__name__)
 logger.info("PowerTrader Crypto Trader initialized")
 
 
+class _TraderRiskAdapter:
+    """
+    The trader's view of risk management, backed by pt_risk.RiskManager.
+
+    RiskManager exposes ``validate_trade`` / flag attributes; the trader wants a
+    per-order approve/block answer and a per-cycle drawdown check. Drawdown is
+    measured against the peak account value seen by this trader, using the
+    thresholds RiskManager already defines (warning / critical / emergency).
+    """
+
+    def __init__(self, manager: Optional[RiskManager] = None):
+        self.manager = manager or RiskManager(RiskLimits())
+        self.peak_value = 0.0
+        self.error_count = 0
+
+    def is_trading_halted(self) -> bool:
+        return bool(
+            self.manager.is_trading_halted or self.manager.emergency_stop_triggered
+        )
+
+    def update_portfolio_value(self, value: float) -> None:
+        self.manager.portfolio_value = float(value)
+        self.peak_value = max(self.peak_value, float(value))
+
+    def validate_order(self, order: dict, portfolio_value: float) -> dict:
+        self.manager.portfolio_value = float(portfolio_value)
+        approved, reason = self.manager.validate_trade(
+            order["symbol"], float(order["quantity"]), float(order["price"])
+        )
+        return {"approved": approved, "reason": reason}
+
+    def check_emergency_conditions(self, portfolio_value: float) -> dict:
+        warnings = []
+        if self.peak_value <= 0.0:
+            return {"emergency_stop": False, "reason": "", "warnings": warnings}
+
+        drawdown = (self.peak_value - float(portfolio_value)) / self.peak_value
+        limits = self.manager.risk_thresholds["portfolio_drawdown"]
+        if drawdown >= limits["emergency"]:
+            return {
+                "emergency_stop": True,
+                "reason": f"Account drawdown {drawdown:.1%} reached the {limits['emergency']:.0%} emergency limit",
+                "warnings": warnings,
+            }
+        for level in ("critical", "warning"):
+            if drawdown >= limits[level]:
+                warnings.append(f"Account drawdown {drawdown:.1%} ({level} level)")
+                break
+        return {"emergency_stop": False, "reason": "", "warnings": warnings}
+
+    def emergency_stop(self) -> None:
+        self.manager.emergency_stop()
+
+    def record_error(self, message: str) -> None:
+        self.error_count += 1
+        logger.error(f"Trader loop error #{self.error_count}: {message}")
+
+
 class CryptoAPITrading:
-    def __init__(self):
-        # Load credentials only when the class is actually instantiated
-        if not _load_credentials_if_needed():
-            raise RuntimeError("Robinhood API credentials not available")
+    def __init__(self, settings_source: Any = None):
+        """
+        ``settings_source`` is where the trading-mode gate reads trading.mode /
+        trading.active_broker from (None = the settings file, re-read fresh on
+        every order; a dict or SettingsManager is accepted for tests).
+        """
+        self._settings_source = settings_source
+
+        # This mode's own ledger / history / status files
+        self._settings = read_trading_settings(self._settings_source)
+        self.data_dir = os.path.join(HUB_DATA_DIR, self._settings.data_subdir)
+        os.makedirs(self.data_dir, exist_ok=True)
+        self.trader_status_path = os.path.join(self.data_dir, "trader_status.json")
+        self.trade_history_path = os.path.join(self.data_dir, "trade_history.jsonl")
+        self.pnl_ledger_path = os.path.join(self.data_dir, "pnl_ledger.json")
+        self.account_value_history_path = os.path.join(
+            self.data_dir, "account_value_history.jsonl"
+        )
+        if not self._settings.is_live:
+            # Keep the paper book across restarts so it matches the paper ledger
+            configure_paper_exchange(
+                state_path=os.path.join(self.data_dir, "paper_account.json")
+            )
+
+        # Resolve the trading target once at start-up. In live mode without a
+        # broker this raises (LiveTradingRefused) and the trader does not start.
+        # The trader is pinned to this target for its whole run: every order
+        # re-runs the gate and is refused if the mode/broker has since changed.
+        self._target: OrderTarget = resolve_order_target(self._settings_source)
+        if self._target.key != self._settings.key:
+            raise TradingModeError(
+                "Trading settings changed while the trader was starting; try again."
+            )
+
+        print(f"[PowerTrader] Trading target: {self._settings.label}")
+        logger.info(f"Trader pinned to target '{self._target.key}'")
+
+        # How long to wait for an order to reach a final state
+        self._order_wait_seconds = 60.0
+        self._order_poll_seconds = 1.0
+        self._reconcile_wait_seconds = 10.0
 
         # keep a copy of the folder map (same idea as trader.py)
         self.path_map = dict(base_paths)
 
-        self.api_key = API_KEY
-        private_key_seed = base64.b64decode(BASE64_PRIVATE_KEY)
-        self.private_key = SigningKey(private_key_seed)
-        self.base_url = "https://trading.robinhood.com"
+        # Cache last known bid/ask per symbol so transient API misses don't zero out account value
+        self._last_good_bid_ask = {}
+
+        # Cache last *complete* account snapshot so transient holdings/price misses can't write a bogus low value
+        self._last_good_account_snapshot = {
+            "total_account_value": None,
+            "buying_power": None,
+            "holdings_sell_value": None,
+            "holdings_buy_value": None,
+            "percent_in_trade": None,
+        }
 
         self.dca_levels_triggered = {}  # Track DCA levels for each crypto
         self.dca_levels = list(DCA_LEVELS)  # Hard DCA triggers (percent PnL)
@@ -318,30 +386,19 @@ class CryptoAPITrading:
             float(self.pm_start_pct_with_dca),
         )
 
-        self.cost_basis = (
-            self.calculate_cost_basis()
-        )  # Initialize cost basis at startup
-        self.initialize_dca_levels()  # Initialize DCA levels based on historical buy orders
-
         # GUI hub persistence
         self._pnl_ledger = self._load_pnl_ledger()
         self._reconcile_pending_orders()
 
         # Initialize Risk and Cost Management
-        self.risk_manager = RiskManager()
+        self.risk_manager = _TraderRiskAdapter()
         self.cost_manager = CostManager(PerformanceTier.PROFESSIONAL)
 
-        # Cache last known bid/ask per symbol so transient API misses don't zero out account value
-        self._last_good_bid_ask = {}
-
-        # Cache last *complete* account snapshot so transient holdings/price misses can't write a bogus low value
-        self._last_good_account_snapshot = {
-            "total_account_value": None,
-            "buying_power": None,
-            "holdings_sell_value": None,
-            "holdings_buy_value": None,
-            "percent_in_trade": None,
-        }
+        # Cost basis comes from the local ledger; DCA stages from local history
+        self.cost_basis = (
+            self.calculate_cost_basis()
+        )  # Initialize cost basis at startup
+        self.initialize_dca_levels()  # Initialize DCA levels based on recorded buys
 
         # --- DCA rate-limit (per trade, per coin, rolling 24h window) ---
         self.max_dca_buys_per_24h = int(MAX_DCA_BUYS_PER_24H)
@@ -369,8 +426,8 @@ class CryptoAPITrading:
 
     def _load_pnl_ledger(self) -> dict:
         try:
-            if os.path.isfile(PNL_LEDGER_PATH):
-                with open(PNL_LEDGER_PATH, "r", encoding="utf-8") as f:
+            if os.path.isfile(self.pnl_ledger_path):
+                with open(self.pnl_ledger_path, "r", encoding="utf-8") as f:
                     data = json.load(f) or {}
                 if not isinstance(data, dict):
                     data = {}
@@ -394,7 +451,7 @@ class CryptoAPITrading:
     def _save_pnl_ledger(self) -> None:
         try:
             self._pnl_ledger["last_updated_ts"] = time.time()
-            self._atomic_write_json(PNL_LEDGER_PATH, self._pnl_ledger)
+            self._atomic_write_json(self.pnl_ledger_path, self._pnl_ledger)
         except Exception:
             pass
 
@@ -402,9 +459,9 @@ class CryptoAPITrading:
         try:
             if not order_id:
                 return False
-            if not os.path.isfile(TRADE_HISTORY_PATH):
+            if not os.path.isfile(self.trade_history_path):
                 return False
-            with open(TRADE_HISTORY_PATH, "r", encoding="utf-8") as f:
+            with open(self.trade_history_path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = (line or "").strip()
                     if not line:
@@ -428,100 +485,60 @@ class CryptoAPITrading:
             pass
         return 0.0
 
-    def _get_order_by_id(self, symbol: str, order_id: str) -> Optional[dict]:
+    @staticmethod
+    def _extract_fill_from_order(order: OrderResult) -> tuple:
+        """Returns (filled_qty, fill_price). fill_price is None when the exchange
+        doesn't report one (e.g. market orders on some brokers)."""
         try:
-            orders = self.get_orders(symbol)
-            results = orders.get("results", []) if isinstance(orders, dict) else []
-            for o in results:
-                try:
-                    if o.get("id") == order_id:
-                        return o
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        return None
-
-    def _extract_fill_from_order(self, order: dict) -> tuple:
-        """Returns (filled_qty, avg_fill_price). avg_fill_price may be None."""
-        try:
-            execs = order.get("executions", []) or []
-            total_qty = 0.0
-            total_notional = 0.0
-            for ex in execs:
-                try:
-                    q = float(ex.get("quantity", 0.0) or 0.0)
-                    p = float(ex.get("effective_price", 0.0) or 0.0)
-                    if q > 0.0 and p > 0.0:
-                        total_qty += q
-                        total_notional += q * p
-                except Exception:
-                    continue
-
-            avg_price = (
-                (total_notional / total_qty)
-                if (total_qty > 0.0 and total_notional > 0.0)
-                else None
-            )
-
-            # Fallbacks if executions are not populated yet
-            if total_qty <= 0.0:
-                for k in (
-                    "filled_asset_quantity",
-                    "filled_quantity",
-                    "asset_quantity",
-                    "quantity",
-                ):
-                    if k in order:
-                        try:
-                            v = float(order.get(k) or 0.0)
-                            if v > 0.0:
-                                total_qty = v
-                                break
-                        except Exception:
-                            continue
-
-            if avg_price is None:
-                for k in ("average_price", "avg_price", "price", "effective_price"):
-                    if k in order:
-                        try:
-                            v = float(order.get(k) or 0.0)
-                            if v > 0.0:
-                                avg_price = v
-                                break
-                        except Exception:
-                            continue
-
-            return float(total_qty), (
-                float(avg_price) if avg_price is not None else None
-            )
-        except Exception:
+            qty = float(order.amount or 0.0)
+            price = float(order.price or 0.0)
+        except (TypeError, ValueError):
             return 0.0, None
+        return (qty if qty > 0.0 else 0.0), (price if price > 0.0 else None)
 
-    def _wait_for_order_terminal(self, symbol: str, order_id: str) -> Optional[dict]:
-        """Blocks until order is filled/canceled/rejected, then returns the order dict."""
-        terminal = {"filled", "canceled", "cancelled", "rejected", "failed", "error"}
+    def _wait_for_order_terminal(
+        self,
+        target: OrderTarget,
+        order_id: str,
+        initial: Optional[OrderResult] = None,
+        timeout: Optional[float] = None,
+    ) -> Optional[OrderResult]:
+        """
+        Polls ``target.get_order_status`` until the order is filled / canceled /
+        rejected and returns that OrderResult. Returns None if the order can't be
+        confirmed within ``timeout`` (or the broker can't report order status).
+        """
+        deadline = time.time() + float(
+            self._order_wait_seconds if timeout is None else timeout
+        )
+        result = initial
         while True:
-            o = self._get_order_by_id(symbol, order_id)
-            if not o:
-                time.sleep(1)
-                continue
-            st = str(o.get("state", "")).lower().strip()
-            if st in terminal:
-                return o
-            time.sleep(1)
+            if result is not None and (
+                str(result.status).lower().strip() in TERMINAL_ORDER_STATES
+            ):
+                return result
+            if time.time() >= deadline:
+                return None
+            time.sleep(self._order_poll_seconds)
+            try:
+                result = target.get_order_status(order_id)
+            except (NotImplementedError, LookupError):
+                return None
+            except Exception:
+                result = None  # transient; keep polling until the deadline
 
     def _reconcile_pending_orders(self) -> None:
         """
         If the hub/trader restarts mid-order, we keep the pre-order buying_power on disk and
-        finish the accounting once the order shows as terminal in Robinhood.
+        finish the accounting once the order shows as terminal on the exchange. Orders
+        that can't be confirmed in time stay pending and are retried on the next start.
         """
         try:
             pending = self._pnl_ledger.get("pending_orders", {})
             if not isinstance(pending, dict) or not pending:
                 return
 
-            # Loop until everything pending is resolved (matches your design: bot waits here).
+            # Keep sweeping while a pass resolves something; stop once a pass is stuck.
             while True:
                 pending = self._pnl_ledger.get("pending_orders", {})
                 if not isinstance(pending, dict) or not pending:
@@ -548,11 +565,15 @@ class CryptoAPITrading:
                             progressed = True
                             continue
 
-                        order = self._wait_for_order_terminal(symbol, order_id)
+                        order = self._wait_for_order_terminal(
+                            self._target,
+                            order_id,
+                            timeout=self._reconcile_wait_seconds,
+                        )
                         if not order:
-                            continue
+                            continue  # unconfirmed: stays pending for the next start
 
-                        state = str(order.get("state", "")).lower().strip()
+                        state = str(order.status).lower().strip()
                         if state != "filled":
                             # Not filled -> no trade to record, clear pending.
                             self._pnl_ledger["pending_orders"].pop(order_id, None)
@@ -588,7 +609,7 @@ class CryptoAPITrading:
                         continue
 
                 if not progressed:
-                    time.sleep(1)
+                    break
 
         except Exception:
             pass
@@ -751,14 +772,10 @@ class CryptoAPITrading:
                 float(position_cost_after) if position_cost_after is not None else None
             ),
         }
-        self._append_jsonl(TRADE_HISTORY_PATH, entry)
+        self._append_jsonl(self.trade_history_path, entry)
 
     def _write_trader_status(self, status: dict) -> None:
-        self._atomic_write_json(TRADER_STATUS_PATH, status)
-
-    @staticmethod
-    def _get_current_timestamp() -> int:
-        return int(datetime.datetime.now(tz=datetime.timezone.utc).timestamp())
+        self._atomic_write_json(self.trader_status_path, status)
 
     @staticmethod
     def _fmt_price(price: float) -> str:
@@ -889,101 +906,81 @@ class CryptoAPITrading:
         except Exception:
             return []
 
+    def _read_trade_history(self) -> list:
+        """All entries of this mode's local trade_history.jsonl (oldest first)."""
+        entries = []
+        if not os.path.isfile(self.trade_history_path):
+            return entries
+        try:
+            with open(self.trade_history_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = (line or "").strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(obj, dict):
+                        entries.append(obj)
+        except Exception:
+            pass
+        return entries
+
     def initialize_dca_levels(self):
         """
-        Initializes the DCA levels_triggered dictionary based on the number of buy orders
-        that have occurred after the first buy order following the most recent sell order
-        for each cryptocurrency.
+        Initializes the DCA levels_triggered dictionary from the local trade history:
+        for each held asset, the number of buys after the first buy that followed
+        the most recent sell.
         """
         holdings = self.get_holdings()
         if not holdings or "results" not in holdings:
             print("No holdings found. Skipping DCA levels initialization.")
             return
 
+        history = self._read_trade_history()
+
         for holding in holdings.get("results", []):
             symbol = holding["asset_code"]
-
             full_symbol = f"{symbol}-USD"
-            orders = self.get_orders(full_symbol)
 
-            if not orders or "results" not in orders:
-                print(f"No orders found for {full_symbol}. Skipping.")
+            fills = []
+            for entry in history:
+                try:
+                    if str(entry.get("symbol", "")).upper().strip() != full_symbol:
+                        continue
+                    side = str(entry.get("side", "")).lower().strip()
+                    if side in ("buy", "sell"):
+                        fills.append((float(entry.get("ts")), side))
+                except (TypeError, ValueError):
+                    continue
+
+            if not fills:
+                print(f"No recorded trades for {full_symbol}. Skipping.")
                 continue
 
-            # Filter for filled buy and sell orders
-            filled_orders = [
-                order
-                for order in orders["results"]
-                if order["state"] == "filled" and order["side"] in ["buy", "sell"]
-            ]
-
-            if not filled_orders:
-                print(f"No filled buy or sell orders for {full_symbol}. Skipping.")
+            # Buys after the most recent sell belong to the current trade
+            last_sell_ts = max((ts for ts, side in fills if side == "sell"), default=None)
+            current_buys = sorted(
+                ts
+                for ts, side in fills
+                if side == "buy" and (last_sell_ts is None or ts > last_sell_ts)
+            )
+            if not current_buys:
+                print(f"No buys after the most recent sell for {full_symbol}.")
+                self.dca_levels_triggered[symbol] = []
                 continue
 
-            # Sort orders by creation time in ascending order (oldest first)
-            filled_orders.sort(key=lambda x: x["created_at"])
-
-            # Find the timestamp of the most recent sell order
-            most_recent_sell_time = None
-            for order in reversed(filled_orders):
-                if order["side"] == "sell":
-                    most_recent_sell_time = order["created_at"]
-                    break
-
-            # Determine the cutoff time for buy orders
-            if most_recent_sell_time:
-                # Find all buy orders after the most recent sell
-                relevant_buy_orders = [
-                    order
-                    for order in filled_orders
-                    if order["side"] == "buy"
-                    and order["created_at"] > most_recent_sell_time
-                ]
-                if not relevant_buy_orders:
-                    print(
-                        f"No buy orders after the most recent sell for {full_symbol}."
-                    )
-                    self.dca_levels_triggered[symbol] = []
-                    continue
-                print(f"Most recent sell for {full_symbol} at {most_recent_sell_time}.")
-            else:
-                # If no sell orders, consider all buy orders
-                relevant_buy_orders = [
-                    order for order in filled_orders if order["side"] == "buy"
-                ]
-                if not relevant_buy_orders:
-                    print(f"No buy orders for {full_symbol}. Skipping.")
-                    self.dca_levels_triggered[symbol] = []
-                    continue
-                print(
-                    f"No sell orders found for {full_symbol}. Considering all buy orders."
-                )
-
-            # Ensure buy orders are sorted by creation time ascending
-            relevant_buy_orders.sort(key=lambda x: x["created_at"])
-
-            # Identify the first buy order in the relevant list
-            first_buy_order = relevant_buy_orders[0]
-            first_buy_time = first_buy_order["created_at"]
-
-            # Count the number of buy orders after the first buy
-            buy_orders_after_first = [
-                order
-                for order in relevant_buy_orders
-                if order["created_at"] > first_buy_time
-            ]
-
-            triggered_levels_count = len(buy_orders_after_first)
-
-            # Track DCA by stage index (0, 1, 2, ...) rather than % values.
-            # This makes neural-vs-hardcoded clean, and allows repeating the -50% stage indefinitely.
+            # Every buy after the first one is a DCA stage. Track by stage index
+            # (0, 1, 2, ...) rather than % values so neural-vs-hardcoded stays clean
+            # and the -50% stage can repeat indefinitely.
+            triggered_levels_count = len(current_buys) - 1
             self.dca_levels_triggered[symbol] = list(range(triggered_levels_count))
             print(f"Initialized DCA stages for {symbol}: {triggered_levels_count}")
 
     def _seed_dca_window_from_history(self) -> None:
         """
-        Seeds in-memory DCA buy timestamps from TRADE_HISTORY_PATH so the 24h limit
+        Seeds in-memory DCA buy timestamps from this mode's trade history so the 24h limit
         works across restarts.
 
         Uses the local GUI trade history (tag == "DCA") and resets per trade at the most recent sell.
@@ -994,11 +991,11 @@ class CryptoAPITrading:
         self._dca_buy_ts = {}
         self._dca_last_sell_ts = {}
 
-        if not os.path.isfile(TRADE_HISTORY_PATH):
+        if not os.path.isfile(self.trade_history_path):
             return
 
         try:
-            with open(TRADE_HISTORY_PATH, "r", encoding="utf-8") as f:
+            with open(self.trade_history_path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = (line or "").strip()
                     if not line:
@@ -1078,191 +1075,106 @@ class CryptoAPITrading:
             self._dca_last_sell_ts[base] = float(ts if ts is not None else time.time())
         self._dca_buy_ts[base] = []
 
-    def make_api_request(self, method: str, path: str, body: Optional[str] = "") -> Any:
-        timestamp = self._get_current_timestamp()
-        headers = self.get_authorization_header(method, path, body, timestamp)
-        url = self.base_url + path
+    # ------------------------------------------------------------------
+    # Exchange access.
+    #
+    # Everything below talks to the AbstractExchange interface through the
+    # OrderTarget handed out by the trading-mode gate
+    # (trading_mode.resolve_order_target). There is deliberately no direct
+    # broker REST code in this module: balances, prices and orders all go
+    # through self._target / the target the gate returns for an order.
+    # ------------------------------------------------------------------
 
-        try:
-            if method == "GET":
-                response = requests.get(url, headers=headers, timeout=10)
-            elif method == "POST":
-                response = requests.post(
-                    url, headers=headers, json=json.loads(body), timeout=10
-                )
+    def _resolve_target_for_order(self) -> OrderTarget:
+        """
+        The gate. Must be called before every order and its result is the only
+        thing an order may be sent to. Raises TradingModeError when live trading
+        is refused, or when the mode/broker changed since this trader started
+        (this trader's ledger and history belong to the mode it started in).
+        """
+        target = resolve_order_target(self._settings_source)
+        if target.key != self._target.key:
+            raise TradingModeError(
+                f"Trading mode changed from '{self._target.key}' to "
+                f"'{target.key}' since the trader started. Restart the trader "
+                "to apply it."
+            )
+        return target
 
-            response.raise_for_status()
-            return response.json()
-        except requests.HTTPError as http_err:
-            try:
-                # Parse and return sanitized error response
-                error_response = response.json()
-                # Remove potentially sensitive fields from error response
-                sanitized_error = {}
-                safe_fields = ["error", "message", "code", "type", "detail"]
-                if isinstance(error_response, dict):
-                    for field in safe_fields:
-                        if field in error_response:
-                            sanitized_error[field] = str(error_response[field])[
-                                :200
-                            ]  # Limit length
-                return sanitized_error
-            except Exception:
-                return {"error": "API request failed", "code": response.status_code}
-        except requests.RequestException:
-            return {"error": "Network request failed"}
-        except Exception:
-            return {"error": "Request processing failed"}
+    def _trading_mode_unchanged(self) -> bool:
+        """Cheap per-tick check (builds no exchange)."""
+        return read_trading_settings(self._settings_source).key == self._target.key
 
-    def get_authorization_header(
-        self, method: str, path: str, body: str, timestamp: int
-    ) -> Dict[str, str]:
-        message_to_sign = f"{self.api_key}{timestamp}{path}{method}{body}"
-        signed = self.private_key.sign(message_to_sign.encode("utf-8"))
+    @staticmethod
+    def _describe_exchange_error(exc: Exception, what: str, broker: str) -> str:
+        if isinstance(exc, NotImplementedError):
+            return f"Broker '{broker}' does not implement {what} yet"
+        return f"{what} failed: {str(exc)[:200]}"
 
-        return {
-            "x-api-key": self.api_key,
-            "x-signature": base64.b64encode(signed.signature).decode("utf-8"),
-            "x-timestamp": str(timestamp),
-        }
+    @staticmethod
+    def _buying_power_from(balances: Dict[str, float]) -> float:
+        for asset in BUYING_POWER_ASSETS:
+            if asset in balances:
+                return float(balances[asset] or 0.0)
+        return 0.0
 
     def get_account(self) -> Any:
-        path = "/api/v1/crypto/trading/accounts/"
-        return self.make_api_request("GET", path)
+        try:
+            balances = self._target.get_balance()
+        except Exception as exc:
+            return {
+                "error": self._describe_exchange_error(
+                    exc, "balance retrieval", self._target.key
+                )
+            }
+        return {"buying_power": self._buying_power_from(balances)}
 
     def get_holdings(self) -> Any:
-        path = "/api/v1/crypto/trading/holdings/"
-        response = self.make_api_request("GET", path)
-
-        if not response or isinstance(response, dict) and "error" in response:
-            return response
-
         try:
-            # Validate response structure
-            validated_response = validate_api_response(response, ["results"])
+            balances = self._target.get_balance()
+        except Exception as exc:
+            return {
+                "error": self._describe_exchange_error(
+                    exc, "balance retrieval", self._target.key
+                )
+            }
 
-            # Validate each holding entry
-            if "results" in validated_response and isinstance(
-                validated_response["results"], list
-            ):
-                validated_holdings = []
-                for holding in validated_response["results"]:
-                    if isinstance(holding, dict):
-                        try:
-                            # Validate currency symbol
-                            if "currency" in holding:
-                                holding["currency"] = (
-                                    InputValidator.validate_crypto_symbol(
-                                        holding["currency"]
-                                    )
-                                )
-
-                            # Validate quantities and values
-                            for field in ["quantity", "total_cost", "market_value"]:
-                                if field in holding and holding[field] is not None:
-                                    holding[field] = InputValidator.validate_volume(
-                                        holding[field], field
-                                    )
-
-                            validated_holdings.append(holding)
-                        except ValidationError:
-                            continue  # Skip invalid holdings
-
-                validated_response["results"] = validated_holdings
-
-            return validated_response
-        except ValidationError:
-            return {"error": "Invalid holdings data received"}
+        results = []
+        for asset, qty in balances.items():
+            code = str(asset).upper().strip()
+            if code in CASH_ASSETS:
+                continue
+            try:
+                code = InputValidator.validate_crypto_symbol(code)
+                quantity = float(qty)
+            except (ValidationError, TypeError, ValueError):
+                continue  # skip assets we can't price/trade safely
+            if quantity > 0.0:
+                results.append({"asset_code": code, "total_quantity": quantity})
+        return {"results": results}
 
     def get_trading_pairs(self) -> Any:
-        path = "/api/v1/crypto/trading/trading_pairs/"
-        response = self.make_api_request("GET", path)
-
-        if not response or "results" not in response:
-            return []
-
-        trading_pairs = response.get("results", [])
-        if not trading_pairs:
-            return []
-
-        return trading_pairs
-
-    def get_orders(self, symbol: str) -> Any:
-        try:
-            # Validate input symbol
-            validated_symbol = InputValidator.validate_trading_pair(symbol)
-
-            path = f"/api/v1/crypto/trading/orders/?symbol={validated_symbol}"
-            response = self.make_api_request("GET", path)
-
-            if not response or isinstance(response, dict) and "error" in response:
-                return response
-
-            # Validate response and order data
-            try:
-                validated_response = validate_api_response(response)
-                return validated_response
-            except ValidationError:
-                return {"error": "Invalid order data received"}
-
-        except ValidationError as e:
-            return {"error": str(e)}
+        # AbstractExchange has no pair listing; trade the configured coins.
+        return [f"{str(s).upper().strip()}-USD" for s in crypto_symbols if str(s).strip()]
 
     def calculate_cost_basis(self):
-        holdings = self.get_holdings()
-        if not holdings or "results" not in holdings:
-            return {}
-
-        active_assets = {
-            holding["asset_code"] for holding in holdings.get("results", [])
-        }
-        current_quantities = {
-            holding["asset_code"]: float(holding["total_quantity"])
-            for holding in holdings.get("results", [])
-        }
-
+        """
+        Per-unit cost basis from the local P&L ledger (the ledger is updated on
+        every fill, whichever exchange or paper account it came from). Assets
+        bought outside this trader have no ledger entry and get no cost basis,
+        so no take-profit / DCA decisions are made on them.
+        """
+        open_positions = (self._pnl_ledger or {}).get("open_positions", {})
         cost_basis = {}
-
-        for asset_code in active_assets:
-            orders = self.get_orders(f"{asset_code}-USD")
-            if not orders or "results" not in orders:
+        if not isinstance(open_positions, dict):
+            return cost_basis
+        for asset_code, pos in open_positions.items():
+            try:
+                qty = float(pos.get("qty", 0.0) or 0.0)
+                usd_cost = float(pos.get("usd_cost", 0.0) or 0.0)
+            except (AttributeError, TypeError, ValueError):
                 continue
-
-            # Get all filled buy orders, sorted from most recent to oldest
-            buy_orders = [
-                order
-                for order in orders["results"]
-                if order["side"] == "buy" and order["state"] == "filled"
-            ]
-            buy_orders.sort(key=lambda x: x["created_at"], reverse=True)
-
-            remaining_quantity = current_quantities[asset_code]
-            total_cost = 0.0
-
-            for order in buy_orders:
-                for execution in order.get("executions", []):
-                    quantity = float(execution["quantity"])
-                    price = float(execution["effective_price"])
-
-                    if remaining_quantity <= 0:
-                        break
-
-                    # Use only the portion of the quantity needed to match the current holdings
-                    if quantity > remaining_quantity:
-                        total_cost += remaining_quantity * price
-                        remaining_quantity = 0
-                    else:
-                        total_cost += quantity * price
-                        remaining_quantity -= quantity
-
-                if remaining_quantity <= 0:
-                    break
-
-            if current_quantities[asset_code] > 0:
-                cost_basis[asset_code] = total_cost / current_quantities[asset_code]
-            else:
-                cost_basis[asset_code] = 0.0
-
+            cost_basis[asset_code] = (usd_cost / qty) if qty > 0.0 else 0.0
         return cost_basis
 
     def get_price(self, symbols: list) -> Dict[str, float]:
@@ -1274,35 +1186,28 @@ class CryptoAPITrading:
             if symbol == "USDC-USD":
                 continue
 
-            path = f"/api/v1/crypto/marketdata/best_bid_ask/?symbol={symbol}"
-            response = self.make_api_request("GET", path)
+            ask = bid = 0.0
+            try:
+                market_data = self._target.get_market_data(symbol)
+                ask = float(market_data.ask)
+                bid = float(market_data.bid)
+            except Exception:
+                pass
 
-            if response and "results" in response:
-                result = response["results"][0]
-                ask = float(result["ask_inclusive_of_buy_spread"])
-                bid = float(result["bid_inclusive_of_sell_spread"])
-
+            if ask > 0.0 and bid > 0.0:
                 buy_prices[symbol] = ask
                 sell_prices[symbol] = bid
                 valid_symbols.append(symbol)
 
                 # Update cache for transient failures later
-                try:
-                    self._last_good_bid_ask[symbol] = {
-                        "ask": ask,
-                        "bid": bid,
-                        "ts": time.time(),
-                    }
-                except Exception:
-                    pass
+                self._last_good_bid_ask[symbol] = {
+                    "ask": ask,
+                    "bid": bid,
+                    "ts": time.time(),
+                }
             else:
                 # Fallback to cached bid/ask so account value never drops due to a transient miss
-                cached = None
-                try:
-                    cached = self._last_good_bid_ask.get(symbol)
-                except Exception:
-                    cached = None
-
+                cached = self._last_good_bid_ask.get(symbol)
                 if cached:
                     ask = float(cached.get("ask", 0.0) or 0.0)
                     bid = float(cached.get("bid", 0.0) or 0.0)
@@ -1312,6 +1217,165 @@ class CryptoAPITrading:
                         valid_symbols.append(symbol)
 
         return buy_prices, sell_prices, valid_symbols
+
+    def _get_account_value(self) -> Optional[float]:
+        """Last complete account snapshot value, or None before the first one."""
+        value = (self._last_good_account_snapshot or {}).get("total_account_value")
+        return float(value) if value is not None else None
+
+    def _risk_check(self, symbol: str, side: str, quantity: float, price: float):
+        """Shared pre-order risk gate. Returns True when the order may proceed."""
+        if self.risk_manager.is_trading_halted():
+            print(
+                f"{Fore.RED}RISK HALT: Trading is currently halted by risk management system{Style.RESET_ALL}"
+            )
+            return False
+
+        portfolio_value = self._get_account_value()
+        if portfolio_value is None:
+            portfolio_value = self._get_buying_power()
+        self.risk_manager.update_portfolio_value(portfolio_value)
+
+        validation = self.risk_manager.validate_order(
+            {
+                "symbol": symbol,
+                "side": side,
+                "quantity": quantity,
+                "price": price,
+                "order_value": quantity * price,
+            },
+            portfolio_value,
+        )
+        if not validation["approved"]:
+            print(f"{Fore.YELLOW}RISK BLOCK: {validation['reason']}{Style.RESET_ALL}")
+            return False
+        return True
+
+    def _gate_or_refuse(self) -> Optional[OrderTarget]:
+        """Run the gate; on refusal report it and return None (no order may follow)."""
+        try:
+            return self._resolve_target_for_order()
+        except TradingModeError as exc:
+            print(f"{Fore.RED}ORDER REFUSED: {exc}{Style.RESET_ALL}")
+            logger.error(f"Order refused by trading-mode gate: {exc}")
+            return None
+
+    def _place_gated_order(
+        self,
+        target: OrderTarget,
+        side: str,
+        symbol: str,
+        asset_quantity: float,
+        expected_price: Optional[float],
+        avg_cost_basis: Optional[float],
+        pnl_pct: Optional[float],
+        tag: Optional[str],
+    ) -> Any:
+        """
+        Place one market order on ``target`` (obtained from the trading-mode
+        gate) and do the accounting once it is filled. Returns a small order
+        dict on a fill, None when the order was rejected, not filled or
+        unconfirmed.
+        """
+        # --- exact profit tracking snapshot (BEFORE placing order) ---
+        buying_power_before = self._get_buying_power()
+
+        try:
+            result = target.place_order(symbol, side, asset_quantity)
+        except Exception as exc:
+            msg = self._describe_exchange_error(exc, "order placement", target.key)
+            print(f"{Fore.RED}ORDER FAILED ({symbol} {side}): {msg}{Style.RESET_ALL}")
+            logger.error(f"Order failed ({symbol} {side} via {target.key}): {msg}")
+            return None
+
+        order_id = result.order_id
+
+        # Persist the pre-order buying power so restarts can reconcile precisely
+        try:
+            if order_id:
+                self._pnl_ledger.setdefault("pending_orders", {})
+                self._pnl_ledger["pending_orders"][order_id] = {
+                    "symbol": symbol,
+                    "side": side,
+                    "buying_power_before": float(buying_power_before),
+                    "avg_cost_basis": (
+                        float(avg_cost_basis) if avg_cost_basis is not None else None
+                    ),
+                    "pnl_pct": float(pnl_pct) if pnl_pct is not None else None,
+                    "tag": tag,
+                    "created_ts": time.time(),
+                }
+                self._save_pnl_ledger()
+        except Exception:
+            pass
+
+        # Wait until the order is complete, then account from what actually filled
+        final = self._wait_for_order_terminal(target, order_id, initial=result)
+        if final is None:
+            # Left in pending_orders; _reconcile_pending_orders() settles it on restart.
+            logger.warning(f"Order {order_id} ({symbol} {side}) not confirmed in time")
+            print(f"  Order {order_id} not confirmed yet; will reconcile on restart.")
+            return None
+
+        if str(final.status).lower().strip() != "filled":
+            # Not filled -> clear pending and do not record a trade
+            self._clear_pending(order_id)
+            return None
+
+        filled_qty, fill_price = self._extract_fill_from_order(final)
+        if filled_qty <= 0.0:
+            filled_qty = float(asset_quantity)
+        if fill_price is None and expected_price is not None:
+            fill_price = float(expected_price)
+
+        # If we managed to get a fill price, update the displayed PnL% too
+        if side == "sell" and avg_cost_basis is not None and fill_price is not None:
+            try:
+                acb = float(avg_cost_basis)
+                if acb > 0:
+                    pnl_pct = ((float(fill_price) - acb) / acb) * 100.0
+            except Exception:
+                pass
+
+        # --- exact profit tracking snapshot (AFTER the order is complete) ---
+        buying_power_after = self._get_buying_power()
+        buying_power_delta = float(buying_power_after) - float(buying_power_before)
+
+        self._record_trade(
+            side=side,
+            symbol=symbol,
+            qty=float(filled_qty),
+            price=float(fill_price) if fill_price is not None else None,
+            avg_cost_basis=(
+                float(avg_cost_basis) if avg_cost_basis is not None else None
+            ),
+            pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
+            tag=tag,
+            order_id=order_id,
+            fees_usd=None,
+            buying_power_before=buying_power_before,
+            buying_power_after=buying_power_after,
+            buying_power_delta=buying_power_delta,
+        )
+        self._clear_pending(order_id)
+
+        return {
+            "id": order_id,
+            "state": "filled",
+            "symbol": symbol,
+            "side": side,
+            "quantity": float(filled_qty),
+            "price": float(fill_price) if fill_price is not None else None,
+            "mode": target.key,
+        }
+
+    def _clear_pending(self, order_id: str) -> None:
+        try:
+            if order_id:
+                self._pnl_ledger.get("pending_orders", {}).pop(order_id, None)
+                self._save_pnl_ledger()
+        except Exception:
+            pass
 
     def place_buy_order(
         self,
@@ -1324,172 +1388,33 @@ class CryptoAPITrading:
         pnl_pct: Optional[float] = None,
         tag: Optional[str] = None,
     ) -> Any:
+        # Gate first: a refused order must not cost a single price lookup.
+        target = self._gate_or_refuse()
+        if target is None:
+            return None
+
         # Fetch the current price of the asset (for sizing only)
-        current_buy_prices, current_sell_prices, valid_symbols = self.get_price(
-            [symbol]
+        current_buy_prices, _, _ = self.get_price([symbol])
+        current_price = current_buy_prices.get(symbol)
+        if not current_price:
+            print(f"  No price available for {symbol}; skipping buy.")
+            return None
+        asset_quantity = round(amount_in_usd / current_price, 8)
+
+        # --- Risk Management Checks ---
+        if not self._risk_check(symbol, side, asset_quantity, current_price):
+            return None
+
+        return self._place_gated_order(
+            target,
+            side=side,
+            symbol=symbol,
+            asset_quantity=asset_quantity,
+            expected_price=current_price,
+            avg_cost_basis=avg_cost_basis,
+            pnl_pct=pnl_pct,
+            tag=tag,
         )
-        current_price = current_buy_prices[symbol]
-        asset_quantity = amount_in_usd / current_price
-
-        max_retries = 5
-        retries = 0
-
-        while retries < max_retries:
-            retries += 1
-            response = None
-            try:
-                # Default precision to 8 decimals initially
-                rounded_quantity = round(asset_quantity, 8)
-
-                body = {
-                    "client_order_id": client_order_id,
-                    "side": side,
-                    "type": order_type,
-                    "symbol": symbol,
-                    "market_order_config": {
-                        "asset_quantity": f"{rounded_quantity:.8f}"  # Start with 8 decimal places
-                    },
-                }
-
-                path = "/api/v1/crypto/trading/orders/"
-
-                # --- exact profit tracking snapshot (BEFORE placing order) ---
-                buying_power_before = self._get_buying_power()
-
-                # --- Risk Management Checks ---
-                # Check if we should halt trading due to risk controls
-                if self.risk_manager.is_trading_halted():
-                    print(
-                        f"{Fore.RED}RISK HALT: Trading is currently halted by risk management system{Style.RESET_ALL}"
-                    )
-                    return None
-
-                # Validate the order against risk limits
-                current_portfolio_value = self._get_account_value()
-                order_validation = self.risk_manager.validate_order(
-                    {
-                        "symbol": symbol,
-                        "side": side,
-                        "quantity": asset_quantity,
-                        "price": current_price,
-                        "order_value": amount_in_usd,
-                    },
-                    current_portfolio_value,
-                )
-
-                if not order_validation["approved"]:
-                    print(
-                        f"{Fore.YELLOW}RISK BLOCK: {order_validation['reason']}{Style.RESET_ALL}"
-                    )
-                    return None
-
-                response = self.make_api_request("POST", path, json.dumps(body))
-                if response and "errors" not in response:
-                    order_id = response.get("id", None)
-
-                    # Persist the pre-order buying power so restarts can reconcile precisely
-                    try:
-                        if order_id:
-                            self._pnl_ledger.setdefault("pending_orders", {})
-                            self._pnl_ledger["pending_orders"][order_id] = {
-                                "symbol": symbol,
-                                "side": "buy",
-                                "buying_power_before": float(buying_power_before),
-                                "avg_cost_basis": (
-                                    float(avg_cost_basis)
-                                    if avg_cost_basis is not None
-                                    else None
-                                ),
-                                "pnl_pct": (
-                                    float(pnl_pct) if pnl_pct is not None else None
-                                ),
-                                "tag": tag,
-                                "created_ts": time.time(),
-                            }
-                            self._save_pnl_ledger()
-                    except Exception:
-                        pass
-
-                    # Wait until the order is actually complete in the system, then use order history executions
-                    if order_id:
-                        order = self._wait_for_order_terminal(symbol, order_id)
-                        state = (
-                            str(order.get("state", "")).lower().strip()
-                            if isinstance(order, dict)
-                            else ""
-                        )
-                        if state != "filled":
-                            # Not filled -> clear pending and do not record a trade
-                            try:
-                                self._pnl_ledger.get("pending_orders", {}).pop(
-                                    order_id, None
-                                )
-                                self._save_pnl_ledger()
-                            except Exception:
-                                pass
-                            return None
-
-                        filled_qty, avg_fill_price = self._extract_fill_from_order(
-                            order
-                        )
-
-                        buying_power_after = self._get_buying_power()
-                        buying_power_delta = float(buying_power_after) - float(
-                            buying_power_before
-                        )
-
-                        # Record for GUI history (ACTUAL fill from order history)
-                        self._record_trade(
-                            side="buy",
-                            symbol=symbol,
-                            qty=float(filled_qty),
-                            price=(
-                                float(avg_fill_price)
-                                if avg_fill_price is not None
-                                else None
-                            ),
-                            avg_cost_basis=(
-                                float(avg_cost_basis)
-                                if avg_cost_basis is not None
-                                else None
-                            ),
-                            pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
-                            tag=tag,
-                            order_id=order_id,
-                            buying_power_before=buying_power_before,
-                            buying_power_after=buying_power_after,
-                            buying_power_delta=buying_power_delta,
-                        )
-
-                        # Clear pending now that it is recorded
-                        try:
-                            self._pnl_ledger.get("pending_orders", {}).pop(
-                                order_id, None
-                            )
-                            self._save_pnl_ledger()
-                        except Exception:
-                            pass
-
-                    return response  # Successfully placed (and fully filled) order
-
-            except Exception:
-                pass  # print(traceback.format_exc())
-
-            # Check for precision errors
-            if response and "errors" in response:
-                for error in response["errors"]:
-                    if "has too much precision" in error.get("detail", ""):
-                        # Extract required precision directly from the error message
-                        detail = error["detail"]
-                        nearest_value = detail.split("nearest ")[1].split(" ")[0]
-
-                        decimal_places = len(nearest_value.split(".")[1].rstrip("0"))
-                        asset_quantity = round(asset_quantity, decimal_places)
-                        break
-                    elif "must be greater than or equal to" in error.get("detail", ""):
-                        return None
-
-        return None
 
     def place_sell_order(
         self,
@@ -1503,199 +1428,34 @@ class CryptoAPITrading:
         pnl_pct: Optional[float] = None,
         tag: Optional[str] = None,
     ) -> Any:
-        body = {
-            "client_order_id": client_order_id,
-            "side": side,
-            "type": order_type,
-            "symbol": symbol,
-            "market_order_config": {"asset_quantity": f"{asset_quantity:.8f}"},
-        }
-
-        path = "/api/v1/crypto/trading/orders/"
-
-        # --- exact profit tracking snapshot (BEFORE placing order) ---
-        buying_power_before = self._get_buying_power()
-
-        # --- Risk Management Checks ---
-        # Check if we should halt trading due to risk controls
-        if self.risk_manager.is_trading_halted():
-            print(
-                f"{Fore.RED}RISK HALT: Trading is currently halted by risk management system{Style.RESET_ALL}"
-            )
+        # Gate first: a refused order must not cost a single price lookup.
+        target = self._gate_or_refuse()
+        if target is None:
             return None
 
         # Get current price for validation
-        current_buy_prices, current_sell_prices, valid_symbols = self.get_price(
-            [symbol]
-        )
-        current_price = current_sell_prices[symbol]
-        order_value = asset_quantity * current_price
-
-        # Validate the sell order against risk limits
-        current_portfolio_value = self._get_account_value()
-        order_validation = self.risk_manager.validate_order(
-            {
-                "symbol": symbol,
-                "side": side,
-                "quantity": asset_quantity,
-                "price": current_price,
-                "order_value": order_value,
-            },
-            current_portfolio_value,
-        )
-
-        if not order_validation["approved"]:
-            print(
-                f"{Fore.YELLOW}RISK BLOCK: {order_validation['reason']}{Style.RESET_ALL}"
-            )
+        _, current_sell_prices, _ = self.get_price([symbol])
+        current_price = current_sell_prices.get(symbol)
+        if not current_price:
+            print(f"  No price available for {symbol}; skipping sell.")
             return None
 
-        response = self.make_api_request("POST", path, json.dumps(body))
+        # --- Risk Management Checks ---
+        if not self._risk_check(symbol, side, asset_quantity, current_price):
+            return None
 
-        if response and isinstance(response, dict) and "errors" not in response:
-            order_id = response.get("id", None)
-
-            # Persist the pre-order buying power so restarts can reconcile precisely
-            try:
-                if order_id:
-                    self._pnl_ledger.setdefault("pending_orders", {})
-                    self._pnl_ledger["pending_orders"][order_id] = {
-                        "symbol": symbol,
-                        "side": "sell",
-                        "buying_power_before": float(buying_power_before),
-                        "avg_cost_basis": (
-                            float(avg_cost_basis)
-                            if avg_cost_basis is not None
-                            else None
-                        ),
-                        "pnl_pct": float(pnl_pct) if pnl_pct is not None else None,
-                        "tag": tag,
-                        "created_ts": time.time(),
-                    }
-                    self._save_pnl_ledger()
-            except Exception:
-                pass
-
-            # Best-effort: pull actual avg fill price + fees from order executions
-            actual_price = float(expected_price) if expected_price is not None else None
-            actual_qty = float(asset_quantity)
-            fees_usd = None
-
-            def _fee_to_float(v: Any) -> float:
-                try:
-                    if v is None:
-                        return 0.0
-                    if isinstance(v, (int, float)):
-                        return float(v)
-                    if isinstance(v, str):
-                        return float(v)
-                    if isinstance(v, dict):
-                        # common shapes: {"amount": "0.12"}, {"value": 0.12}, etc.
-                        for k in ("amount", "value", "usd_amount", "fee", "quantity"):
-                            if k in v:
-                                try:
-                                    return float(v[k])
-                                except Exception:
-                                    continue
-                    return 0.0
-                except Exception:
-                    return 0.0
-
-            try:
-                if order_id:
-                    match = self._wait_for_order_terminal(symbol, order_id)
-                    if not match:
-                        return response
-
-                    if str(match.get("state", "")).lower() != "filled":
-                        # Not filled -> clear pending and do not record a trade
-                        try:
-                            self._pnl_ledger.get("pending_orders", {}).pop(
-                                order_id, None
-                            )
-                            self._save_pnl_ledger()
-                        except Exception:
-                            pass
-                        return response
-
-                    execs = match.get("executions", []) or []
-                    total_qty = 0.0
-                    total_notional = 0.0
-                    fee_total = 0.0
-
-                    for ex in execs:
-                        try:
-                            q = float(ex.get("quantity", 0.0) or 0.0)
-                            p = float(ex.get("effective_price", 0.0) or 0.0)
-                            total_qty += q
-                            total_notional += q * p
-
-                            # Fees can show up under different keys; handle the common ones.
-                            for fk in (
-                                "fee",
-                                "fees",
-                                "fee_amount",
-                                "fee_usd",
-                                "fee_in_usd",
-                            ):
-                                if fk in ex:
-                                    fee_total += _fee_to_float(ex.get(fk))
-                        except Exception:
-                            continue
-
-                    # Some payloads include order-level fee fields too
-                    for fk in ("fee", "fees", "fee_amount", "fee_usd", "fee_in_usd"):
-                        if fk in match:
-                            fee_total += _fee_to_float(match.get(fk))
-
-                    if total_qty > 0.0 and total_notional > 0.0:
-                        actual_qty = total_qty
-                        actual_price = total_notional / total_qty
-
-                    fees_usd = float(fee_total) if fee_total else 0.0
-
-            except Exception:
-                pass  # print(traceback.format_exc())
-
-            # If we managed to get a better fill price, update the displayed PnL% too
-            if avg_cost_basis is not None and actual_price is not None:
-                try:
-                    acb = float(avg_cost_basis)
-                    if acb > 0:
-                        pnl_pct = ((float(actual_price) - acb) / acb) * 100.0
-                except Exception:
-                    pass
-
-            # --- exact profit tracking snapshot (AFTER the order is complete) ---
-            buying_power_after = self._get_buying_power()
-            buying_power_delta = float(buying_power_after) - float(buying_power_before)
-
-            self._record_trade(
-                side="sell",
-                symbol=symbol,
-                qty=float(actual_qty),
-                price=float(actual_price) if actual_price is not None else None,
-                avg_cost_basis=(
-                    float(avg_cost_basis) if avg_cost_basis is not None else None
-                ),
-                pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
-                tag=tag,
-                order_id=order_id,
-                fees_usd=float(fees_usd) if fees_usd is not None else None,
-                buying_power_before=buying_power_before,
-                buying_power_after=buying_power_after,
-                buying_power_delta=buying_power_delta,
-            )
-
-            # Clear pending now that it is recorded
-            try:
-                if order_id:
-                    self._pnl_ledger.get("pending_orders", {}).pop(order_id, None)
-                    self._save_pnl_ledger()
-            except Exception:
-                pass
-
-        return response
+        return self._place_gated_order(
+            target,
+            side=side,
+            symbol=symbol,
+            asset_quantity=asset_quantity,
+            expected_price=(
+                float(expected_price) if expected_price is not None else current_price
+            ),
+            avg_cost_basis=avg_cost_basis,
+            pnl_pct=pnl_pct,
+            tag=tag,
+        )
 
     def manage_trades(self):
         trades_made = False  # Flag to track if any trade was made in this iteration
@@ -1730,6 +1490,17 @@ class CryptoAPITrading:
         except Exception:
             pass
 
+        # The trader is pinned to the mode/broker it started in. If the setting
+        # changed underneath it, stop touching the exchange until it is restarted.
+        if not self._trading_mode_unchanged():
+            print(
+                f"{Fore.YELLOW}Trading mode changed since start-up (started as "
+                f"'{self._target.key}'). No orders will be placed; restart the "
+                f"trader to apply it.{Style.RESET_ALL}"
+            )
+            time.sleep(5)
+            return
+
         # Fetch account details
         account = self.get_account()
         # Fetch holdings
@@ -1757,6 +1528,8 @@ class CryptoAPITrading:
 
         # buying power
         try:
+            if isinstance(account, dict) and "error" in account:
+                raise ValueError(account["error"])  # transient/unsupported: not a $0 balance
             buying_power = float(account.get("buying_power", 0))
         except Exception:
             buying_power = 0.0
@@ -2340,6 +2113,7 @@ class CryptoAPITrading:
         try:
             status = {
                 "timestamp": time.time(),
+                "trading_mode": self._target.key,
                 "account": {
                     "total_account_value": total_account_value,
                     "buying_power": buying_power,
@@ -2358,7 +2132,7 @@ class CryptoAPITrading:
                 "positions": positions,
             }
             self._append_jsonl(
-                ACCOUNT_VALUE_HISTORY_PATH,
+                self.account_value_history_path,
                 {"ts": status["timestamp"], "total_account_value": total_account_value},
             )
             self._write_trader_status(status)
@@ -2368,28 +2142,32 @@ class CryptoAPITrading:
     def run(self):
         while True:
             try:
-                # Risk monitoring at start of each cycle
+                # Risk monitoring at start of each cycle (needs a complete account
+                # snapshot, so it starts after the first manage_trades() pass)
                 current_portfolio_value = self._get_account_value()
-                self.risk_manager.update_portfolio_value(current_portfolio_value)
+                if current_portfolio_value is not None:
+                    self.risk_manager.update_portfolio_value(current_portfolio_value)
 
-                # Check for emergency conditions
-                risk_status = self.risk_manager.check_emergency_conditions(
-                    current_portfolio_value
-                )
-                if risk_status["emergency_stop"]:
-                    print(
-                        f"{Fore.RED}EMERGENCY STOP: {risk_status['reason']}{Style.RESET_ALL}"
+                    # Check for emergency conditions
+                    risk_status = self.risk_manager.check_emergency_conditions(
+                        current_portfolio_value
                     )
-                    print(
-                        f"{Fore.RED}Trading halted until manual intervention{Style.RESET_ALL}"
-                    )
-                    self.risk_manager.emergency_stop()
-                    break
+                    if risk_status["emergency_stop"]:
+                        print(
+                            f"{Fore.RED}EMERGENCY STOP: {risk_status['reason']}{Style.RESET_ALL}"
+                        )
+                        print(
+                            f"{Fore.RED}Trading halted until manual intervention{Style.RESET_ALL}"
+                        )
+                        self.risk_manager.emergency_stop()
+                        break
 
-                # Log risk warnings
-                if risk_status["warnings"]:
-                    for warning in risk_status["warnings"]:
-                        print(f"{Fore.YELLOW}RISK WARNING: {warning}{Style.RESET_ALL}")
+                    # Log risk warnings
+                    if risk_status["warnings"]:
+                        for warning in risk_status["warnings"]:
+                            print(
+                                f"{Fore.YELLOW}RISK WARNING: {warning}{Style.RESET_ALL}"
+                            )
 
                 self.manage_trades()
                 time.sleep(0.5)
@@ -2397,8 +2175,13 @@ class CryptoAPITrading:
                 print(traceback.format_exc())
                 # Log the error with risk system
                 self.risk_manager.record_error(str(e))
+                time.sleep(5)  # don't hammer a failing exchange every half second
 
 
 if __name__ == "__main__":
-    trading_bot = CryptoAPITrading()
+    try:
+        trading_bot = CryptoAPITrading()
+    except TradingModeError as exc:
+        print(f"{Fore.RED}Trader not started: {exc}{Style.RESET_ALL}")
+        raise SystemExit(2)
     trading_bot.run()

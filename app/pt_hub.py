@@ -30,17 +30,16 @@ from matplotlib.transforms import blended_transform_factory
 
 from pt_paper_mode import (
     PAPER_MODE_BALANCE_KEY,
-    PAPER_MODE_SETTING_KEY,
     PaperBanner,
     apply_palette_to_style,
     attach_trading_section_label,
     fetch_binance_btc_price,
     get_palette,
     install_classic_widget_defaults,
-    read_paper_mode_from_disk,
     run_sample_scenario,
-    settings_path_for,
 )
+from trading_mode import TradingSettings, read_trading_settings
+from trading_mode_ui import TradingModeDialog, TradingModeIndicator, pack_at_top
 
 # Multi-exchange imports
 try:
@@ -605,9 +604,9 @@ DEFAULT_SETTINGS = {
         "notification_methods": ["gui"],  # Notification methods: gui, email, webhook
     },
     # --- Paper Trading Mode (issue #86) ---
-    # When True the hub paints blue (not black) and shows a PAPER TRADING
+    # The mode itself is `trading.mode` in pt_config.json (see trading_mode.py).
+    # While paper, the hub paints blue (not black) and shows a PAPER TRADING
     # banner + label so the user cannot mistake it for live trading.
-    PAPER_MODE_SETTING_KEY: False,
     PAPER_MODE_BALANCE_KEY: 10000.0,
 }
 
@@ -1936,25 +1935,19 @@ class PowerTraderHub(tk.Tk):
         # Debounce map for panedwindow clamp operations
         self._paned_clamp_after_ids: Dict[str, str] = {}
 
-        # Paper-mode flag must be known BEFORE the first theme paint, otherwise
-        # the window flashes dark for one frame before settling on blue. Read
-        # it straight from disk - _load_settings() merges defaults later.
-        app_dir = os.path.abspath(os.path.dirname(__file__))
-        self._paper_mode = read_paper_mode_from_disk(
-            settings_path_for(app_dir, SETTINGS_FILE)
-        )
+        # Trading mode must be known BEFORE the first theme paint, otherwise
+        # the window flashes dark for one frame before settling on blue. It is
+        # `trading.mode` from pt_config.json (paper unless explicitly live).
+        self._trading: TradingSettings = read_trading_settings()
+        self._paper_mode = not self._trading.is_live
 
         # Force one and only one theme: dark (or paper-blue when enabled).
         self._apply_forced_dark_mode()
 
         self.settings = self._load_settings()
-        # Keep _paper_mode in sync with merged settings in case the file was
-        # missing the key entirely (default = False is then authoritative).
-        self._paper_mode = bool(
-            self.settings.get(PAPER_MODE_SETTING_KEY, self._paper_mode)
-        )
 
-        # Banner widget; built on demand by _build_paper_banner.
+        # Header strip + banner widgets; built after the layout exists.
+        self._mode_indicator: Optional[TradingModeIndicator] = None
         self._paper_banner: Optional[PaperBanner] = None
         self._paper_section_label: Optional[tk.Label] = None
         self._paper_account = None  # lazy: only spun up when sample runs
@@ -1997,12 +1990,15 @@ class PowerTraderHub(tk.Tk):
         self.hub_dir = os.path.abspath(hub_dir)
         _ensure_dir(self.hub_dir)
 
-        # file paths written by pt_trader.py (after edits below)
-        self.trader_status_path = os.path.join(self.hub_dir, "trader_status.json")
-        self.trade_history_path = os.path.join(self.hub_dir, "trade_history.jsonl")
-        self.pnl_ledger_path = os.path.join(self.hub_dir, "pnl_ledger.json")
+        # file paths written by pt_trader.py. The trader keeps each trading mode's
+        # books in its own sub-directory (paper / testnet / live), so show the ones
+        # for the mode this hub started in.
+        trader_dir = os.path.join(self.hub_dir, self._trading.data_subdir)
+        self.trader_status_path = os.path.join(trader_dir, "trader_status.json")
+        self.trade_history_path = os.path.join(trader_dir, "trade_history.jsonl")
+        self.pnl_ledger_path = os.path.join(trader_dir, "pnl_ledger.json")
         self.account_value_history_path = os.path.join(
-            self.hub_dir, "account_value_history.jsonl"
+            trader_dir, "account_value_history.jsonl"
         )
 
         # file written by pt_thinker.py (runner readiness gate used for Start All)
@@ -2087,6 +2083,10 @@ class PowerTraderHub(tk.Tk):
         if self._paper_mode:
             self._build_paper_banner()
             self._attach_paper_section_label()
+
+        # Always-visible MODE strip, packed above everything else (incl. banner).
+        self._mode_indicator = TradingModeIndicator(self, self._trading)
+        pack_at_top(self._mode_indicator, self)
 
         # Refresh charts immediately when a timeframe is changed (don't wait for the 10s throttle).
         self.bind_all("<<TimeframeChanged>>", self._on_timeframe_changed)
@@ -2375,7 +2375,7 @@ class PowerTraderHub(tk.Tk):
             palette=palette,
             on_run_sample=self._run_paper_sample,
         )
-        self._paper_banner.pack(side="top", fill="x", before=self.winfo_children()[0])
+        pack_at_top(self._paper_banner, self)
         # Refresh price on the banner immediately, non-blocking via after().
         self.after(50, self._refresh_paper_price)
 
@@ -2394,7 +2394,7 @@ class PowerTraderHub(tk.Tk):
         if frame is None or self._paper_section_label is not None:
             return
         label = attach_trading_section_label(frame, get_palette(True))
-        label.pack(side="top", fill="x", before=frame.winfo_children()[0])
+        pack_at_top(label, frame)
         self._paper_section_label = label
 
     def _remove_paper_widgets(self) -> None:
@@ -2411,42 +2411,62 @@ class PowerTraderHub(tk.Tk):
                 pass
             self._paper_section_label = None
 
-    def _toggle_paper_mode(self) -> None:
-        """File-menu callback. Persists the flag and prompts a restart so
-        matplotlib chart facecolors and option_add classic-widget defaults
-        pick up the new palette cleanly (those can't be re-skinned live)."""
-        new_value = bool(self._paper_mode_var.get())
-        self._paper_mode = new_value
-        self.settings[PAPER_MODE_SETTING_KEY] = new_value
+    def _brokers_for_selector(self) -> List[str]:
+        """Broker ids offered in the Trading Mode dialog: the exchanges that have
+        an implementation registered, else every known exchange id."""
         try:
-            self._save_settings()
-        except Exception as exc:
-            messagebox.showerror(
-                "Paper mode",
-                f"Could not save paper-mode preference: {exc}",
-            )
-            # Roll back the var so the menu reflects reality.
-            self._paper_mode_var.set(not new_value)
-            self._paper_mode = not new_value
-            self.settings[PAPER_MODE_SETTING_KEY] = not new_value
-            return
+            import pt_exchanges  # noqa: F401  (registers exchange classes)
+            from pt_exchange_abstraction import ExchangeFactory, ExchangeType
+
+            registered = [e.value for e in ExchangeFactory.get_available_exchanges()]
+            if registered:
+                return registered
+            return [e.value for e in ExchangeType]
+        except Exception:
+            return []
+
+    def _open_trading_mode_dialog(self) -> None:
+        """File > Trading Mode...: choose paper/live and the broker."""
+        TradingModeDialog(
+            self,
+            current=read_trading_settings(),
+            brokers=self._brokers_for_selector(),
+            on_applied=self._on_trading_mode_applied,
+        )
+
+    def _on_trading_mode_applied(self, new_settings: TradingSettings) -> None:
+        """The mode was persisted. Update the header immediately; the trader and
+        the matching palette/books pick it up on restart (the running trader
+        refuses orders until then, so nothing can trade in the wrong mode)."""
+        self._trading = new_settings
+        self._paper_mode = not new_settings.is_live
+        if self._mode_indicator is not None:
+            self._mode_indicator.update_settings(new_settings)
 
         # Immediate visible feedback - banner/label toggle without restart.
-        if new_value:
+        if self._paper_mode:
             self._build_paper_banner()
             self._attach_paper_section_label()
         else:
             self._remove_paper_widgets()
             self._paper_account = None
+        if self._mode_indicator is not None:
+            pack_at_top(self._mode_indicator, self)  # keep the MODE strip topmost
 
+        trader_running = bool(
+            self.proc_trader.proc and self.proc_trader.proc.poll() is None
+        )
         messagebox.showinfo(
-            "Paper mode",
-            (
-                "Paper mode "
-                + ("enabled" if new_value else "disabled")
-                + ".\n\nRestart PowerTrader to fully repaint charts and "
-                "text panels in the matching palette."
-            ),
+            "Trading mode",
+            f"{new_settings.label}\n\n"
+            + (
+                "The running trader keeps the mode it started in and will "
+                "refuse orders until it is restarted.\n\n"
+                if trader_running
+                else ""
+            )
+            + "Restart PowerTrader to fully repaint charts and text panels in "
+            "the matching palette and to show this mode's trade history.",
         )
 
     def _run_paper_sample(self) -> None:
@@ -2599,14 +2619,10 @@ class PowerTraderHub(tk.Tk):
             activebackground=DARK_SELECT_BG,
             activeforeground=DARK_SELECT_FG,
         )
-        # Paper mode toggle (owner spec: File menu so users don't need the CLI).
-        self._paper_mode_var = tk.BooleanVar(value=self._paper_mode)
-        m_file.add_checkbutton(
-            label="Paper Mode",
-            onvalue=True,
-            offvalue=False,
-            variable=self._paper_mode_var,
-            command=self._toggle_paper_mode,
+        # Trading mode (owner spec: File menu so users don't need the CLI).
+        # Paper is the default; Live needs a broker and an explicit confirmation.
+        m_file.add_command(
+            label="Trading Mode...", command=self._open_trading_mode_dialog
         )
         m_file.add_separator()
         m_file.add_command(label="Exit", command=self._on_close)

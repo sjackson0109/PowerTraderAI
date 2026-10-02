@@ -246,3 +246,7 @@ app/*.txt
 
 # Temporary scratch directories
 _brainstorming_tmp/
+
+# Runtime settings written by the settings manager (trading mode, broker, ...)
+app/pt_config.json
+app/pt_config.json.*

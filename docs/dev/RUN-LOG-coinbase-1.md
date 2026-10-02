@@ -222,3 +222,71 @@ Live mode:
   So today Coinbase cannot trade live, whatever the settings.
 
 Suite vs baseline: same 11 known failures, no new ones; new Coinbase files 21 + 27 + 12 + 15 passed.
+
+## Task 5 — Report
+
+### What was broken
+1. **The Test button called a method that never existed.** `ExchangeConfigGUI.test_exchange_connection` called
+   `MultiExchangeManager.test_exchange_connection`; the manager has no such method (missing implementation, not a rename),
+   so the error fired before anything reached Coinbase. `test_all_exchanges` was broken separately (`.get` on a dataclass).
+2. **Even with the method, the test would have meant nothing.** The button ignored the typed key, and `CoinbaseExchange`
+   never authenticated: tickers came from the unauthenticated Coinbase Exchange host, and orders/balances were
+   `NotImplementedError`.
+3. **The setup UI and docs described the retired scheme** (key + secret + passphrase / "Coinbase Pro"), with a single-line
+   secret box that cannot hold a PEM.
+
+### What changed (4 commits after the baseline/diagnosis commit)
+| Commit | Change |
+|---|---|
+| 1 `f480e87` | Baseline + diagnosis (this log). |
+| 2 `3251ada` | `MultiExchangeManager.test_exchange_connection` → `AbstractExchange.check_connection`; Coinbase does one `GET /api/v3/brokerage/key_permissions`; distinct OK / invalid-credentials / auth / permission / network / endpoint / unsupported results; GUI tests what is typed, off the UI thread; `test_all_exchanges` repaired; ES256 JWT signer `coinbase_auth.py`. |
+| 3 `932614a` | Audit vs. current CDP docs; key-name + EC-key validation and paste normalisation; setup form (Key name / multi-line Private key), saved key never echoed; instructions and docs rewritten; "Coinbase Pro" display labels renamed. |
+| 4 `69c8760` | Paper-gate tests for Coinbase asserted at the HTTP layer. |
+
+No order, preview or cancel request exists anywhere in the new code path; `place_order`/`cancel_order` on the Coinbase
+connector still raise `NotImplementedError`. No code under `app/trading_mode.py` or `pt_trader.py` was changed.
+
+### Test results vs baseline (per-file runner, Python 3.13 venv)
+* Baseline and final: **the same 11 failures** — `test_expired_proposal_cannot_execute`, the two `test_integration` hub tests,
+  and eight `test_suite` tests (identical names). Every other pre-existing file has the same pass count.
+* Added: `test_coinbase_auth` 21, `test_coinbase_connection` 27, `test_coinbase_gui` 12, `test_coinbase_paper_gate` 15 —
+  **75 new tests, all passing** (GUI file was run 10× in a row after a Tk-start flake fix; no failures).
+* One run mid-way showed `test_integration` as 1 failed + 1 skipped instead of 2 failed (display-dependent, same flip noted in
+  the batch-1 log); the final run is 2 failed / 8 passed, equal to baseline.
+* No existing test was modified, skipped or deleted.
+
+### Could not verify
+* **Nothing was sent to Coinbase, by design.** So these are unverified end to end: that Coinbase accepts the JWTs this code
+  builds; that `key_permissions` returns exactly the documented fields for your key; which of 401/403 Coinbase returns for
+  an IP-allowlist violation or a clock-skewed token (the messages mention both causes rather than asserting one). The JWT
+  is verified against the documented header/claims and its signature is verified with `cryptography` (and PyJWT where installed),
+  which proves it is well-formed, not that Coinbase will accept it.
+* The `uri` claim's treatment of query strings is not stated in the docs I fetched; the signer refuses a query string
+  rather than guess. The one endpoint used has none.
+* The exact CDP portal path: the docs page says *API Keys → Secret API Keys* (`portal.cdp.coinbase.com/api-keys/secret`), a
+  search summary gave `/projects/api-keys`. The setup text gives the portal root plus the menu names.
+* The hub flow (Settings → Exchange provider settings → Configure exchange APIs → Setup) was exercised through the
+  `ExchangeConfigGUI` window in tests, not clicked through by hand in the running hub.
+* The suite ran in a scratch venv on Python 3.13; the machine's Python 3.14 lacks matplotlib/scipy and cannot reproduce the
+  documented baseline. PyJWT is not in the 3.13 environment (the cross-check test skips there); `requirements.txt` is unchanged
+  because the signer only needs `cryptography`.
+* Pre-existing tests (`test_exchanges.py` etc.) read the real `app/trading_config.json` and may make unauthenticated public
+  market-data requests; they were part of the baseline too. No credentials are sent by them (the Coinbase price path is public).
+
+### Things you should know / follow up
+1. **`app/trading_config.json` holds credentials in plain text and is a tracked file.** You have an uncommitted modification to
+   it. I never opened it and never staged it (hash unchanged across all runs). If a Coinbase key was ever saved through the GUI
+   it is in that file: do not commit it, consider `git update-index --skip-worktree app/trading_config.json` (or untracking it and
+   storing credentials elsewhere), and rotate the key if the file has ever been committed, pushed or shared. Also: the key you
+   pasted into the GUI while testing was only ever in this file or in memory, but treat it as exposed if in doubt.
+2. **Coinbase cannot trade live yet** (orders/balances unimplemented) and **has no testnet in the gate**:
+   `trading.coinbase_testnet`/`coinbase_testnet: true` in `pt_config.json` is ignored, so a future live+coinbase would be real
+   money. Do not implement order placement without also deciding how that is gated.
+3. **Credential stores disagree:** the GUI writes `trading_config.json`; the live gate's `ExchangeFactory` reads
+   `POWERTRADER_<EXCHANGE>_*` env vars or `exchange_config.json`. A key saved through the GUI is not what a live Coinbase
+   target would use. Moot today, needed before order support.
+4. **Latent bug, not touched:** `MultiExchangeManager.initialize` passes credentials as kwargs while `ExchangeFactory.get_exchange`
+   also injects env credentials; with both present Python raises "multiple values for keyword argument" and the exchange is
+   silently not added.
+5. The internal data-source id `coinbase_pro` in `real_time_market_data*.py` (public WebSocket feed, no credentials) was left as is.
+6. The baseline run (and any run) of the suite creates an untracked `config/` directory at the repo root; it is not part of this work.

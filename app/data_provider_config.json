@@ -22,7 +22,7 @@
         },
         "coinbase": {
           "data_feeds": true,
-          "name": "Coinbase Pro",
+          "name": "Coinbase",
           "regions": [
             "US",
             "EU",

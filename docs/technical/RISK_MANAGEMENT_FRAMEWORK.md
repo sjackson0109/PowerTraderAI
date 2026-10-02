@@ -54,7 +54,7 @@ RISK_ALERTS = {
 ```yaml
 Exchange APIs:
   primary: KuCoin
-  backup: Binance, Coinbase Pro
+  backup: Binance, Coinbase
   rate_limit_buffer: 20%         # Stay 20% below rate limits
   timeout_settings: 10s          # API call timeout
   retry_policy: exponential_backoff

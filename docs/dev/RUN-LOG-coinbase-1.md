@@ -136,3 +136,57 @@ or manager) and the GUI is calling the right object — the manager simply never
   the manager neither saves typed credentials nor claims success for unsupported exchanges.
 * Suite vs baseline: no regressions. `test_integration` showed 1 failed + 1 skipped instead of 2 failed
   (display-dependent, same flip noted in the batch-1 log); all other files identical; new file 27 passed.
+
+## Task 3 — Authentication audit and fix (done)
+
+**Sources fetched this session (not from memory):**
+[CDP API key authentication](https://docs.cdp.coinbase.com/coinbase-app/authentication-authorization/api-key-authentication),
+[Advanced Trade REST endpoints](https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/rest-api),
+[Get API key permissions](https://docs.cdp.coinbase.com/api-reference/advanced-trade-api/rest-api/data-api/get-api-key-permissions),
+[Advanced Trade FAQ](https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/faq).
+
+**Current scheme (per those docs):** key = *key name* `organizations/{org_id}/apiKeys/{key_id}` + EC private key
+(PEM). Per request, an **ES256** JWT: header `{alg: ES256, typ: JWT, kid: <key name>, nonce}`; claims
+`{sub: <key name>, iss: "cdp", nbf: now, exp: now+120, uri: "<METHOD> <host><path>"}`; sent as
+`Authorization: Bearer <jwt>` to `https://api.coinbase.com/api/v3/brokerage/...`. Keys must be created with
+signature algorithm **ECDSA** — Ed25519 is not supported by the Coinbase App / Advanced Trade SDKs. Coinbase Pro
+"has been disabled for use and all customers have been migrated as of December 1, 2023"; Pro API keys cannot be
+used with Advanced Trade.
+
+**What the connector did before:** nothing authenticated (see Task 1 finding 3). It used the unauthenticated Coinbase
+Exchange host for tickers and never signed or sent the key; the setup text told the user to "Copy API Key and Secret"
+into a single-line secret box; `docs/exchanges/coinbase-setup.md` documented the retired key + secret + passphrase
+scheme (and a `credentials/coinbase_config.json` that nothing reads, and a `test_exchanges.py --exchange=coinbase`
+flag that does not exist). So: not "the wrong auth", but no auth, plus instructions for a scheme that no longer works.
+
+**Changes:**
+* `coinbase_auth.py` (introduced in the Task 2 commit, hardened here): strict key-name check (a short legacy key or a
+  Pro key gets a message saying that scheme is retired); `normalise_private_key` accepts a real multi-line paste, literal
+  `\n` escapes (the downloaded JSON form), CRLF, quotes, and a body flattened onto one line — BEGIN/END lines required;
+  `load_private_key` accepts SEC1 and PKCS#8 EC keys on P-256 only and gives specific errors for Ed25519, other
+  curves, encrypted keys and garbage, none of which echo the input. The signer uses `cryptography` (already a
+  requirement) rather than adding PyJWT. The `uri` claim refuses a query string instead of guessing (see "not verified").
+* GUI: for Coinbase the labels become **Key name** / **Private key (PEM)** and the secret is a multi-line box;
+  every other exchange is unchanged. Save validates a Coinbase key (name format, key type/curve) and stores the cleaned
+  PEM, refusing junk. A saved private key is **never echoed back** into the box (a hint says one is saved; blank box +
+  key name means "use the saved one"); the box is cleared after a successful Save. Setup text rewritten (CDP portal →
+  Secret API Keys, ECDSA, View/Trade/no Transfer, IP allowlist, paste both values, Test then Save).
+* Labels naming the retired product: `data_provider_config.json` display name "Coinbase Pro" → "Coinbase" (this is
+  the name in the exchange list); the feed-status label in `real_time_market_data_gui.py` → "Coinbase".
+  Docs: `coinbase-setup.md` Steps 2–4 and troubleshooting rewritten, `QUICK_REFERENCE.md` env vars corrected to the real
+  `POWERTRADER_COINBASE_API_KEY/_API_SECRET` names, `exchanges/README.md` and `RISK_MANAGEMENT_FRAMEWORK.md` labels.
+* Not renamed on purpose: the internal data-source identifier `coinbase_pro` / `DataSource.COINBASE_PRO` in
+  `real_time_market_data*.py` (shown as a value in two market-data dropdowns). It is a key for a *public*
+  `wss://ws-feed.exchange.coinbase.com` market-data feed that carries no credentials, and renaming it would change a
+  persisted/selected identifier. Flagged for a follow-up.
+* GUI worker threads now only touch a `queue.Queue`; Tk is only called from the UI thread (my first cut called
+  `window.after` from the worker, which failed under test and is unsafe in general).
+* Tests: `test_coinbase_auth.py` (21) — header/claims match the documented fields exactly, `exp = nbf + 120`, uri claim
+  format, raw 64-byte `r||s` signature verified with `cryptography`, tamper/wrong-key rejected, fresh nonce per
+  request, PyJWT cross-check (runs only where PyJWT is installed; it was in the scratch venv), every paste format, and
+  each rejection reason. `test_coinbase_gui.py` (12) — labels, multi-line box, instructions, no "Coinbase Pro" in the
+  list, Save rejects bad input and stores nothing, normalised storage, saved key never echoed, Test button end to end
+  for 200/401/403/500/bad-credentials with mocked HTTP, `test_all_exchanges`. It uses one Tk root per class: the first
+  version created 13 roots and hit an intermittent `init.tcl` load failure in `tk.Tk()` on this machine.
+* Suite vs baseline: same 11 known failures, nothing new; new files 21 + 12 passed. `test_integration` 2 failed /
+  8 passed, identical to baseline.

@@ -6,17 +6,37 @@ GUI-based tool for setting up and managing cryptocurrency exchanges
 
 import json
 import os
+import queue
 import threading
 import tkinter as tk
 from tkinter import font, messagebox, ttk
 from typing import Dict, Optional
 
+import coinbase_auth
 from pt_exchange_abstraction import (
     ConnectionStatus,
     ConnectionTestResult,
     ExchangeType,
 )
 from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
+
+
+# Exchanges whose credentials are not a plain "API key + secret" pair. Anything not
+# listed uses the default labels and a single-line secret.
+DEFAULT_FIELDS = {"key_label": "API Key:", "secret_label": "API Secret:", "multiline": False}
+EXCHANGE_FIELDS = {
+    # CDP API key: key *name* + EC *private key* (PEM, several lines).
+    "coinbase": {
+        "key_label": "Key name:",
+        "secret_label": "Private key (PEM):",
+        "multiline": True,
+    },
+}
+SAVED_SECRET_HINT = "A private key is already saved. Leave this box empty to keep it."
+
+
+def exchange_fields(exchange_name: str) -> dict:
+    return EXCHANGE_FIELDS.get(exchange_name, DEFAULT_FIELDS)
 
 
 STATUS_HEADLINES = {
@@ -516,8 +536,8 @@ class ExchangeConfigGUI:
         creds_frame.pack(fill=tk.X, padx=10, pady=10)
 
         # API Key
-        api_key_label = ttk.Label(creds_frame, text="API Key:")
-        api_key_label.grid(row=0, column=0, sticky="w", pady=2)
+        self.api_key_label = ttk.Label(creds_frame, text=DEFAULT_FIELDS["key_label"])
+        self.api_key_label.grid(row=0, column=0, sticky="w", pady=2)
         self.api_key_var = tk.StringVar()
         self.api_key_entry = ttk.Entry(
             creds_frame, textvariable=self.api_key_var, width=50
@@ -525,13 +545,34 @@ class ExchangeConfigGUI:
         self.api_key_entry.grid(row=0, column=1, padx=(10, 0), pady=2)
 
         # API Secret
-        api_secret_label = ttk.Label(creds_frame, text="API Secret:")
-        api_secret_label.grid(row=1, column=0, sticky="w", pady=2)
+        self.api_secret_label = ttk.Label(
+            creds_frame, text=DEFAULT_FIELDS["secret_label"]
+        )
+        self.api_secret_label.grid(row=1, column=0, sticky="nw", pady=2)
         self.api_secret_var = tk.StringVar()
         self.api_secret_entry = ttk.Entry(
             creds_frame, textvariable=self.api_secret_var, width=50, show="*"
         )
         self.api_secret_entry.grid(row=1, column=1, padx=(10, 0), pady=2)
+
+        # Multi-line secret (Coinbase private key). Shown instead of the entry above.
+        self.api_secret_text = tk.Text(
+            creds_frame,
+            width=50,
+            height=7,
+            wrap=tk.NONE,
+            bg=self.DARK_PANEL,
+            fg=self.DARK_FG,
+            font=("Consolas", 9),
+            insertbackground=self.DARK_ACCENT,
+            borderwidth=1,
+            relief="solid",
+            highlightthickness=0,
+        )
+        self.secret_hint_var = tk.StringVar()
+        self.secret_hint_label = ttk.Label(
+            creds_frame, textvariable=self.secret_hint_var, wraplength=480
+        )
 
         # Passphrase (for KuCoin)
         self.passphrase_label = ttk.Label(creds_frame, text="Passphrase:")
@@ -807,8 +848,12 @@ class ExchangeConfigGUI:
             passphrase = exchange_config.get("passphrase", "")
 
         self.api_key_var.set(api_key)
-        self.api_secret_var.set(api_secret)
         self.passphrase_var.set(passphrase)
+        multiline = exchange_fields(exchange_name)["multiline"]
+        self.api_secret_var.set("" if multiline else api_secret)
+        # Never echo a saved private key into a readable text box.
+        self.api_secret_text.delete("1.0", tk.END)
+        self._apply_field_layout(exchange_name, has_saved_secret=multiline and bool(api_secret))
 
     def get_exchange_instructions(self, exchange_name: str) -> str:
         """Get setup instructions for an exchange"""
@@ -841,12 +886,19 @@ KuCoin API Setup:
 Note: All three fields are required for KuCoin
             """,
             "coinbase": """
-Coinbase Advanced Trade API Setup:
-1. Go to: https://www.coinbase.com/settings/api
-2. Create new API key for Advanced Trade
-3. Enable trading permissions
-4. Set appropriate permissions for your needs
-5. Copy API Key and Secret
+Coinbase (Advanced Trade) API setup:
+1. Sign in to the Coinbase Developer Platform: https://portal.cdp.coinbase.com
+   -> API Keys -> Secret API Keys -> Create API key
+2. Under Advanced Settings choose signature algorithm ECDSA
+   (Ed25519 keys are not supported)
+3. Permissions: View is enough to test and for paper mode. Add Trade only if
+   you will trade live. Leave Transfer OFF. An IP allowlist is recommended.
+4. Paste the two values Coinbase gives you:
+   - Key name:    organizations/<org-id>/apiKeys/<key-id>
+   - Private key: the whole block, including the -----BEGIN EC PRIVATE KEY-----
+     and -----END EC PRIVATE KEY----- lines (several lines)
+5. Press Test Connection (read-only, never places an order), then Save.
+Old Coinbase Pro keys and key + secret + passphrase keys no longer work.
             """,
             "bybit": """
 Bybit API Setup:
@@ -1074,13 +1126,26 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             messagebox.showwarning("No Exchange", "Please select an exchange first")
             return
 
-        api_key = self.api_key_var.get().strip()
-        api_secret = self.api_secret_var.get().strip()
-        passphrase = self.passphrase_var.get().strip()
+        api_key, api_secret, passphrase = self._form_credentials()
 
         if not api_key or not api_secret:
-            messagebox.showerror("Missing Fields", "API Key and Secret are required")
+            fields = exchange_fields(exchange_name)
+            messagebox.showerror(
+                "Missing Fields",
+                f"{fields['key_label'].rstrip(':')} and "
+                f"{fields['secret_label'].rstrip(':')} are required",
+            )
             return
+
+        if exchange_name == "coinbase":
+            # Refuse to save something that could never authenticate.
+            try:
+                api_key = coinbase_auth.validate_key_name(api_key)
+                coinbase_auth.load_private_key(api_secret)
+                api_secret = coinbase_auth.normalise_private_key(api_secret)
+            except coinbase_auth.CoinbaseCredentialError as exc:
+                messagebox.showerror("Invalid Coinbase credentials", str(exc))
+                return
 
         if exchange_name == "kucoin" and not passphrase:
             messagebox.showerror("Missing Field", "Passphrase is required for KuCoin")
@@ -1098,24 +1163,107 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             messagebox.showinfo(
                 "Success", f"{exchange_name.title()} configuration saved!"
             )
+            if exchange_fields(exchange_name)["multiline"]:
+                # Don't leave a private key sitting readable in the form.
+                self.api_secret_text.delete("1.0", tk.END)
+                self.secret_hint_var.set(SAVED_SECRET_HINT)
             self.refresh_exchange_list()
             self.status_var.set(f"Saved configuration for {exchange_name.title()}")
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save configuration: {e}")
 
+    def _typed_secret(self, exchange_name: str) -> str:
+        if exchange_fields(exchange_name)["multiline"]:
+            return self.api_secret_text.get("1.0", tk.END).strip()
+        return self.api_secret_var.get().strip()
+
+    def _saved_credentials(self, exchange_name: str):
+        """The saved ExchangeConfig for ``exchange_name``, or None."""
+        if self.config_manager.config is None:
+            self.config_manager.load_config()
+        return self.config_manager.get_exchange_config(exchange_name)
+
     def _form_credentials(self):
         """What is currently typed in the setup form: (api_key, api_secret, passphrase).
-        Blank key AND secret mean "use the saved credentials"."""
-        return (
-            self.api_key_var.get().strip(),
-            self.api_secret_var.get().strip(),
-            self.passphrase_var.get().strip(),
-        )
+        Blank key AND secret mean "use the saved credentials". For a multi-line
+        secret the saved value is never shown, so a blank box next to a typed key
+        means "keep the saved secret"."""
+        exchange_name = self.exchange_var.get()
+        api_key = self.api_key_var.get().strip()
+        api_secret = self._typed_secret(exchange_name)
+        if exchange_fields(exchange_name)["multiline"] and api_key and not api_secret:
+            saved = self._saved_credentials(exchange_name)
+            api_secret = (saved.api_secret if saved else "") or ""
+        return api_key, api_secret, self.passphrase_var.get().strip()
+
+    def _apply_field_layout(self, exchange_name: str, has_saved_secret: bool):
+        """Labels and input widget for this exchange's credential shape."""
+        fields = exchange_fields(exchange_name)
+        self.api_key_label.configure(text=fields["key_label"])
+        self.api_secret_label.configure(text=fields["secret_label"])
+        if fields["multiline"]:
+            self.api_secret_entry.grid_remove()
+            self.api_secret_text.grid(row=1, column=1, padx=(10, 0), pady=2, sticky="we")
+            self.secret_hint_label.grid(row=3, column=1, padx=(10, 0), sticky="w")
+            self.secret_hint_var.set(SAVED_SECRET_HINT if has_saved_secret else "")
+        else:
+            self.api_secret_text.grid_remove()
+            self.secret_hint_label.grid_remove()
+            self.api_secret_entry.grid(row=1, column=1, padx=(10, 0), pady=2)
 
     def _append_result(self, text: str):
         self.results_text.insert(tk.END, text)
         self.results_text.see(tk.END)
+
+    def _run_in_background(self, job, on_item, on_done=None):
+        """Run ``job(emit)`` on a worker thread. Tk is only ever touched from the UI
+        thread: the worker puts results on a queue and the UI polls it."""
+        results: queue.Queue = queue.Queue()
+
+        def worker():
+            try:
+                job(lambda item: results.put(("item", item)))
+            except Exception as exc:  # never leave the user without an answer
+                results.put(("error", exc))
+            results.put(("done", None))
+
+        def poll():
+            finished = False
+            try:
+                while True:
+                    kind, value = results.get_nowait()
+                    if kind == "item":
+                        on_item(value)
+                    elif kind == "error":
+                        on_item(None)
+                    else:
+                        finished = True
+                        break
+            except queue.Empty:
+                pass
+            if finished:
+                if on_done:
+                    on_done()
+            else:
+                self.window.after(50, poll)
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.window.after(50, poll)
+
+    def _test_one(self, exchange_name, *credentials):
+        """One connection test as a ConnectionTestResult; a connector bug becomes a
+        result, not an exception."""
+        try:
+            return self.multi_exchange.test_exchange_connection(
+                exchange_name, *credentials
+            )
+        except Exception as exc:
+            return ConnectionTestResult(
+                exchange_name,
+                ConnectionStatus.ENDPOINT_ERROR,
+                f"The test failed unexpectedly ({type(exc).__name__}).",
+            )
 
     def test_exchange_connection(self):
         """Test the credentials typed in the form (or the saved ones if the form is
@@ -1125,36 +1273,30 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             messagebox.showwarning("No Exchange", "Please select an exchange first")
             return
 
-        api_key, api_secret, passphrase = self._form_credentials()
-        if not api_key and not api_secret:
-            api_key = api_secret = passphrase = None  # fall back to saved credentials
+        credentials = self._form_credentials()
+        if not credentials[0] and not credentials[1]:
+            credentials = (None, None, None)  # fall back to saved credentials
 
         self.notebook.select(2)
         self._append_result(f"\n🧪 Testing {exchange_name.title()} connection...\n")
         self.status_var.set(f"Testing {exchange_name.title()}...")
 
-        def worker():
-            try:
-                result = self.multi_exchange.test_exchange_connection(
-                    exchange_name, api_key, api_secret, passphrase
-                )
-            except Exception as exc:  # never leave the user without an answer
+        def job(emit):
+            emit(self._test_one(exchange_name, *credentials))
+
+        def on_item(result):
+            if result is None:  # job itself failed
                 result = ConnectionTestResult(
-                    exchange_name,
-                    ConnectionStatus.ENDPOINT_ERROR,
-                    f"The test failed unexpectedly ({type(exc).__name__}).",
+                    exchange_name, ConnectionStatus.ENDPOINT_ERROR, "The test failed unexpectedly."
                 )
-            self.window.after(0, lambda: self._show_test_result(exchange_name, result))
+            self._append_result(format_test_result(exchange_name, result) + "\n")
+            self.status_var.set(
+                f"{exchange_name.title()} connection successful"
+                if result.ok
+                else f"{exchange_name.title()} test: {STATUS_HEADLINES[result.status]}"
+            )
 
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _show_test_result(self, exchange_name: str, result: ConnectionTestResult):
-        self._append_result(format_test_result(exchange_name, result) + "\n")
-        self.status_var.set(
-            f"{exchange_name.title()} connection successful"
-            if result.ok
-            else f"{exchange_name.title()} test: {STATUS_HEADLINES[result.status]}"
-        )
+        self._run_in_background(job, on_item)
 
     def test_all_exchanges(self):
         """Test every enabled exchange that has saved credentials (read-only)."""
@@ -1167,31 +1309,26 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             for ex in (config.exchanges if config else [])
             if ex.enabled and ex.api_key
         ]
+        tally = {"ok": 0}
 
-        def worker():
-            ok = 0
+        def job(emit):
             for name in targets:
-                try:
-                    result = self.multi_exchange.test_exchange_connection(name)
-                except Exception as exc:
-                    result = ConnectionTestResult(
-                        name,
-                        ConnectionStatus.ENDPOINT_ERROR,
-                        f"The test failed unexpectedly ({type(exc).__name__}).",
-                    )
-                ok += 1 if result.ok else 0
-                line = format_test_result(name, result) + "\n"
-                self.window.after(0, lambda line=line: self._append_result(line))
-            summary = f"\n📊 Summary: {ok}/{len(targets)} exchanges tested successfully\n"
-            self.window.after(0, lambda: self._append_result(summary))
-            self.window.after(
-                0,
-                lambda: self.status_var.set(
-                    f"Tested {len(targets)} exchanges, {ok} successful"
-                ),
-            )
+                emit((name, self._test_one(name)))
 
-        threading.Thread(target=worker, daemon=True).start()
+        def on_item(item):
+            if item is None:
+                return
+            name, result = item
+            tally["ok"] += 1 if result.ok else 0
+            self._append_result(format_test_result(name, result) + "\n")
+
+        def on_done():
+            self._append_result(
+                f"\n📊 Summary: {tally['ok']}/{len(targets)} exchanges tested successfully\n"
+            )
+            self.status_var.set(f"Tested {len(targets)} exchanges, {tally['ok']} successful")
+
+        self._run_in_background(job, on_item, on_done)
 
     def run(self):
         """Start the GUI"""

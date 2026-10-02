@@ -122,8 +122,15 @@ def load_private_key(raw_pem: str) -> ec.EllipticCurvePrivateKey:
 
 
 def build_uri_claim(method: str, host: str, path: str) -> str:
-    """``"GET api.coinbase.com/api/v3/brokerage/accounts"`` — no scheme, no query string."""
-    return f"{method.upper()} {host}{path.split('?', 1)[0]}"
+    """``"GET api.coinbase.com/api/v3/brokerage/accounts"`` - no scheme.
+
+    Paths with a query string are refused: the CDP docs show the claim as
+    ``METHOD host path`` and do not say how a query is treated, so signing one
+    would be a guess. Every call this app makes has a plain path.
+    """
+    if "?" in path:
+        raise ValueError("uri claim paths must not contain a query string")
+    return f"{method.upper()} {host}{path}"
 
 
 def build_jwt(

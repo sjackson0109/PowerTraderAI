@@ -53,6 +53,8 @@ def register(strategy_id: str) -> Callable[[type], type]:
             raise CatalogueError(f"{strategy_id} is registered twice")
         _REGISTRY[strategy_id] = cls
         cls.strategy_id = strategy_id  # type: ignore[attr-defined]
+        if hasattr(cls, "overlay_id"):  # risk overlays carry the id as overlay_id
+            cls.overlay_id = strategy_id  # type: ignore[attr-defined]
         return cls
 
     return deco
@@ -189,6 +191,7 @@ def load_entries(path: str = CATALOGUE_PATH) -> List[dict]:
 from strategies import builtin as _builtin  # noqa: E402,F401
 from strategies import trend_crossover as _trend_crossover  # noqa: E402,F401
 from strategies import supertrend as _supertrend  # noqa: E402,F401
+from strategies import overlays as _overlays  # noqa: E402,F401
 
 CATALOGUE: Dict[str, dict] = build_catalogue(load_entries(), _REGISTRY)
 

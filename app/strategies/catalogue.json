@@ -63,4 +63,71 @@
       "confirm_bars": {"min": 0, "max": 3}
     },
     "version": "1.0.0"
+  },
+  {
+    "strategy_id": "OVL-RATCHET",
+    "strategy_name": "Ratchet Stop",
+    "family": "risk_overlay",
+    "class_type": "risk_overlay",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1h",
+    "entry_logic_summary": "No entry logic; does not gate entries.",
+    "exit_logic_summary": "Once the gain reaches trigger_pct the stop is entry*(1+lock_pct); each further step_pct of gain raises it by step_pct. The stop never lowers.",
+    "dependencies_indicators": [],
+    "default_params": {"trigger_pct": 2.0, "lock_pct": 0.5, "step_pct": 1.0},
+    "param_bounds": {
+      "trigger_pct": {"min": 0.1, "max": 50.0},
+      "lock_pct": {"min": 0.0, "max": 50.0},
+      "step_pct": {"min": 0.1, "max": 50.0}
+    },
+    "version": "1.0.0"
+  },
+  {
+    "strategy_id": "OVL-ATR",
+    "strategy_name": "ATR Trailing Stop",
+    "family": "risk_overlay",
+    "class_type": "risk_overlay",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1h",
+    "entry_logic_summary": "No entry logic; does not gate entries.",
+    "exit_logic_summary": "Stop = highest close since entry - mult x ATR(atr_len); never lowers.",
+    "dependencies_indicators": ["ATR"],
+    "default_params": {"atr_len": 14, "mult": 2.5},
+    "param_bounds": {
+      "atr_len": {"min": 5, "max": 50},
+      "mult": {"min": 0.5, "max": 10.0}
+    },
+    "version": "1.0.0"
+  },
+  {
+    "strategy_id": "OVL-PLOCK",
+    "strategy_name": "Progressive Profit Lock",
+    "family": "risk_overlay",
+    "class_type": "risk_overlay",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1h",
+    "entry_logic_summary": "No entry logic; does not gate entries.",
+    "exit_logic_summary": "Staged locks [gain_pct, lock_pct]: when the gain passes a stage the stop is at least entry*(1+lock_pct).",
+    "dependencies_indicators": [],
+    "default_params": {"stages": [[3, 1], [6, 3], [10, 6]]},
+    "param_bounds": {"stages": {"type": "stages"}},
+    "version": "1.0.0"
+  },
+  {
+    "strategy_id": "OVL-COOLDOWN",
+    "strategy_name": "Entry Cooldown",
+    "family": "risk_overlay",
+    "class_type": "risk_overlay",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1h",
+    "entry_logic_summary": "Blocks new entries on a symbol for bars_after_exit bars after an exit, or bars_after_loss bars after a losing exit (whichever is longer); optionally across all symbols.",
+    "exit_logic_summary": "No exit logic.",
+    "dependencies_indicators": [],
+    "default_params": {"bars_after_exit": 3, "bars_after_loss": 12, "global": false},
+    "param_bounds": {
+      "bars_after_exit": {"min": 0, "max": 500},
+      "bars_after_loss": {"min": 0, "max": 500},
+      "global": {"type": "bool"}
+    },
+    "version": "1.0.0"
   }]

@@ -159,6 +159,15 @@ backtest and a paper run cannot disagree.
 fixed-fraction sizing; nothing opened during warm-up; first 70% of bars in-sample and last 30% out-of-sample,
 reported separately; buy-and-hold over the same window and fee model as the benchmark. The random-price example in
 `backtesting_engine.py` is labelled `DEMO ONLY - SYNTHETIC DATA`.
+**Risk overlays (FDS-129).** `OVL-RATCHET`, `OVL-ATR`, `OVL-PLOCK` and `OVL-COOLDOWN` attach to any strategy via
+`strategy.overlays: [{"id": "OVL-ATR", "params": {...}}]` (or `--overlays` in the backtester). `StrategyRunner`
+composes them identically in backtest and paper: the effective stop is the **max** of all overlay stops, a stop only
+ever moves **up**, an exit fires on any overlay `exit_now`, a close below the effective stop, or the strategy's own
+exit (the rule that fired is recorded, e.g. `stop:OVL-ATR`), and an entry needs the strategy **and** every overlay
+gate. Everything is evaluated on closed bars and exits fill at the next open. The trader persists open positions and
+overlay state (stops, cooldown timers) to `strategy_state.json` next to its ledger, so a restart mid-position keeps its
+stop; each cycle prints and logs the effective stop, its owning overlay and each overlay's state, and the hub's
+trail-line column shows the stop and its owner with the active overlay ids in the heading.
 ### UI/UX Enhancement
 
 #### Theme Management (`pt_theme_manager.py`)

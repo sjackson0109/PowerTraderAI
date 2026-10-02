@@ -21,8 +21,8 @@ so strategy and benchmark are measured on the same footing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -100,6 +100,7 @@ def run_backtest(
     if not 0 <= start_index < n <= len(candles):
         raise ValueError("invalid trading window")
     tf_seconds = timeframe_seconds(tf)
+    runner.set_timeframe(tf_seconds)  # overlays that count bars (cooldowns) need the bar length
     fee_rate = cost.fee_bps / 1e4
 
     open_ = candles["open"].to_numpy(dtype=float)

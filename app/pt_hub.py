@@ -6750,6 +6750,23 @@ Platform: {sys.platform}
             next_dca = pos.get("next_dca_display", "")
 
             trail_line = pos.get("trail_line", 0.0)
+            trail_cell = _fmt_price(trail_line)  # trail line is a price level
+
+            # Catalogue engine: this column shows the strategy's effective stop (the
+            # tightest overlay stop) and which overlay owns it; the heading lists the
+            # active overlays. Text only.
+            overlay_ids = pos.get("overlays")
+            if overlay_ids is not None:
+                stop = pos.get("effective_stop")
+                owner = pos.get("stop_owner")
+                trail_cell = f"{_fmt_price(stop)} ({owner})" if stop else "no stop yet"
+                try:
+                    self.trades_tree.heading(
+                        "trail_line",
+                        text="Stop (" + (", ".join(overlay_ids) or "no overlays") + ")",
+                    )
+                except Exception:
+                    pass
 
             self.trades_tree.insert(
                 "",
@@ -6766,7 +6783,7 @@ Platform: {sys.platform}
                     dca_stages,
                     dca_24h_display,
                     next_dca,
-                    _fmt_price(trail_line),  # trail line is a price level
+                    trail_cell,
                 ),
             )
 

@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, Optional, Sequence
 
 import numpy as np
-import pandas as pd
 
 SECONDS_PER_YEAR = 365.25 * 24 * 3600
 

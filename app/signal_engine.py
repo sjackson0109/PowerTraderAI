@@ -20,6 +20,8 @@ the bar time.
 
 from __future__ import annotations
 
+import json
+import os
 import time
 from typing import Callable, Dict, Optional, Tuple
 
@@ -29,7 +31,6 @@ from market_data.candles import BinanceKlines, CandleDataError, get_candles
 from market_data.timeframes import timeframe_seconds
 from pt_logging import get_logger
 from strategies.base import Action
-from strategies.catalogue import CatalogueError, ParamError
 from strategies.factory import build_runner
 from strategies.runner import Decision, PositionState, StrategyRunner
 from strategies.settings import StrategySettings, read_strategy_settings
@@ -82,6 +83,10 @@ class SignalEngine:
         self._logged: Dict[str, tuple] = {}
         self._warned: Dict[str, float] = {}
         self.last_decisions: Dict[str, Decision] = {}
+        # persistence of open positions + overlay state (stops, cooldowns) across restarts
+        self._state_path: Optional[str] = None
+        self._last_state_json: Optional[str] = None
+        self._restored_overlays: Dict[str, dict] = {}
 
     # -- configuration --------------------------------------------------------------------
 
@@ -96,6 +101,8 @@ class SignalEngine:
     def _runner_for(self, s: StrategySettings) -> StrategyRunner:
         if self._runner is None or self._runner_signature != s.signature:
             self._runner = build_runner(s.active_id, {}, list(s.overlays))
+            self._runner.set_timeframe(timeframe_seconds(s.timeframe))
+            self._runner.import_state(self._restored_overlays)
             self._runner_signature = s.signature
             self._candles.clear()
             logger.info(
@@ -122,11 +129,13 @@ class SignalEngine:
             when = bar_time if bar_time is not None else pd.Timestamp.now(tz="UTC")
             pos = runner.open_position(base, entry_price, when, candles)
             self._positions[base] = pos
+            self._persist()
         return pos
 
     def forget(self, base: str) -> None:
         """Drop the engine's record for ``base`` (the trader sees it is not held)."""
-        self._positions.pop(str(base).upper(), None)
+        if self._positions.pop(str(base).upper(), None) is not None:
+            self._persist()
 
     def record_entry(self, base: str, fill_price: float, bar_time: pd.Timestamp) -> PositionState:
         base = str(base).upper()
@@ -138,6 +147,57 @@ class SignalEngine:
         pos = self._positions.pop(base, None)
         if pos is not None and self._runner is not None:
             self._runner.close_position(pos, bar_time, fill_price)
+        self._persist()
+
+    # -- persistence ---------------------------------------------------------------------------
+
+    def attach_state(self, path: str) -> None:
+        """
+        Persist open positions and overlay state (stops, cooldowns) to ``path`` and
+        restore whatever a previous run left there, so a restart mid-position keeps
+        its stop instead of starting over.
+        """
+        self._state_path = path
+        data: dict = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, ValueError):
+            pass
+        for base, raw in (data.get("positions") or {}).items():
+            try:
+                self._positions[str(base).upper()] = PositionState.from_dict(raw)
+            except (KeyError, TypeError, ValueError):
+                logger.warning(f"Ignoring unreadable saved strategy position for {base}")
+        overlays = data.get("overlays")
+        self._restored_overlays = overlays if isinstance(overlays, dict) else {}
+        if self._runner is not None:
+            self._runner.import_state(self._restored_overlays)
+        self._last_state_json = None
+        if self._positions:
+            logger.info(f"Restored strategy state for {sorted(self._positions)} from {path}")
+
+    def _persist(self) -> None:
+        if not self._state_path:
+            return
+        payload = {
+            "positions": {b: p.to_dict() for b, p in self._positions.items()},
+            "overlays": self._runner.export_state() if self._runner is not None else self._restored_overlays,
+        }
+        text = json.dumps(payload, sort_keys=True)
+        if text == self._last_state_json:
+            return
+        try:
+            os.makedirs(os.path.dirname(self._state_path), exist_ok=True)
+            tmp = f"{self._state_path}.tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(text)
+            os.replace(tmp, self._state_path)
+            self._last_state_json = text
+        except OSError as exc:
+            self._warn_once("persist", f"Could not save strategy state: {exc}")
 
     # -- decisions ----------------------------------------------------------------------------
 
@@ -194,6 +254,8 @@ class SignalEngine:
 
         pos = position if position is not None else self._positions.get(str(base).upper())
         decision = runner.evaluate(runner.window(candles, len(candles) - 1), pos, str(base).upper())
+        if pos is not None:
+            self._persist()  # the stop / overlay state may have moved
         return self._record(
             base, decision, position=pos, log_key=(decision.bar_time, pos is None, decision.action)
         )
@@ -236,7 +298,16 @@ class SignalEngine:
                 f"Decision {base}: strategy={decision.strategy_id} action={decision.action.value} "
                 f"reason={decision.reason} bar={decision.bar_time} "
                 f"indicators={ {k: round(v, 6) for k, v in decision.indicators.items()} }"
-                + (f" stop={decision.stop_price}" if decision.stop_price is not None else "")
+                + (
+                    f" stop={decision.stop_price} stop_owner={decision.stop_owner}"
+                    if decision.stop_price is not None
+                    else ""
+                )
+                + (
+                    f" overlay_state={position.overlay_state}"
+                    if position is not None and position.overlay_state
+                    else ""
+                )
             )
         return decision
 

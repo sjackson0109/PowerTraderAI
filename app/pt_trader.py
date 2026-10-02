@@ -342,6 +342,8 @@ class CryptoAPITrading:
         self.account_value_history_path = os.path.join(
             self.data_dir, "account_value_history.jsonl"
         )
+        # Open strategy positions + overlay state (stops, cooldowns) survive a restart
+        self.signal_engine.attach_state(os.path.join(self.data_dir, "strategy_state.json"))
         if not self._settings.is_live:
             # Keep the paper book across restarts so it matches the paper ledger
             configure_paper_exchange(
@@ -1520,6 +1522,29 @@ class CryptoAPITrading:
             return 0.0
         return max(0.0, min(float(holding_qty), ledger_qty))
 
+    def _report_position_stops(self, symbol: str, pos, decision, positions: dict) -> None:
+        """Per-cycle telemetry for an open strategy position: effective stop, which
+        overlay owns it, and each overlay's state (console + trader_status.json)."""
+        overlays = [o["id"] for o in read_strategy_settings(self._settings_source).overlays]
+        stop = decision.stop_price if decision.stop_price is not None else pos.current_stop
+        owner = decision.stop_owner or pos.stop_owner
+        entry = positions.get(symbol)
+        if entry is not None:
+            entry.update(
+                overlays=overlays,
+                effective_stop=stop,
+                stop_owner=owner,
+                overlay_state=pos.overlay_state,
+            )
+            if stop:
+                entry["trail_line"] = float(stop)  # the hub charts this as the sell line
+                entry["trail_active"] = True
+        stop_txt = self._fmt_price(stop) if stop else "none"
+        print(
+            f"  Stop {symbol}: {stop_txt} (owner {owner or 'none'}) | overlays: "
+            f"{', '.join(overlays) or 'none'} | state: {json.dumps(pos.overlay_state, default=str)}"
+        )
+
     def _signals_status(self) -> dict:
         s = read_strategy_settings(self._settings_source)
         return {
@@ -1994,6 +2019,8 @@ class CryptoAPITrading:
                 if avg_cost_basis > 0 and exit_qty > 0:
                     pos = self.signal_engine.ensure_position(symbol, avg_cost_basis)
                     decision = self.signal_engine.decide(symbol, pos)
+                    if decision is not None:
+                        self._report_position_stops(symbol, pos, decision, positions)
                     if decision is not None and decision.action is Action.EXIT_LONG:
                         print(
                             f"  {decision.strategy_id} EXIT for {symbol}: {decision.reason}"

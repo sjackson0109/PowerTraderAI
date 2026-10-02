@@ -42,6 +42,30 @@ class PositionState:
     stop_owner: Optional[str] = None
     overlay_state: Dict[str, dict] = field(default_factory=dict)
 
+    def to_dict(self) -> dict:
+        """JSON-safe form, so a position (and its overlay state) survives a restart."""
+        return {
+            "symbol": self.symbol,
+            "entry_price": float(self.entry_price),
+            "entry_bar_time": pd.Timestamp(self.entry_bar_time).isoformat(),
+            "highest_close": float(self.highest_close),
+            "current_stop": None if self.current_stop is None else float(self.current_stop),
+            "stop_owner": self.stop_owner,
+            "overlay_state": {k: dict(v) for k, v in self.overlay_state.items()},
+        }
+
+    @staticmethod
+    def from_dict(d: dict) -> "PositionState":
+        return PositionState(
+            symbol=str(d["symbol"]),
+            entry_price=float(d["entry_price"]),
+            entry_bar_time=pd.Timestamp(d["entry_bar_time"]),
+            highest_close=float(d["highest_close"]),
+            current_stop=None if d.get("current_stop") is None else float(d["current_stop"]),
+            stop_owner=d.get("stop_owner"),
+            overlay_state={k: dict(v) for k, v in (d.get("overlay_state") or {}).items()},
+        )
+
 
 @dataclass(frozen=True)
 class OverlayDecision:
@@ -61,6 +85,21 @@ class Overlay(ABC):
 
     overlay_id: str = ""
     params: Dict[str, Any]
+    # Seconds per bar; set by StrategyRunner.set_timeframe (overlays that count bars need it).
+    bar_seconds: Optional[int] = None
+
+    def __init__(self, **params: Any) -> None:
+        # Imported here: the catalogue imports overlay modules to register them.
+        from strategies.catalogue import resolve_params
+
+        self.params = resolve_params(self.overlay_id, params)
+
+    def export_state(self) -> dict:
+        """State that is not tied to one position (e.g. cooldown timers); JSON-safe."""
+        return {}
+
+    def import_state(self, state: dict) -> None:
+        return None
 
     @property
     def lookback_bars(self) -> int:
@@ -104,6 +143,19 @@ class StrategyRunner:
     @property
     def lookback_bars(self) -> int:
         return max([self.strategy.lookback_bars] + [o.lookback_bars for o in self.overlays])
+
+    def set_timeframe(self, tf_seconds: int) -> None:
+        """Tell overlays how long a bar is (cooldowns count bars)."""
+        for overlay in self.overlays:
+            overlay.bar_seconds = int(tf_seconds)
+
+    def export_state(self) -> Dict[str, dict]:
+        return {o.overlay_id: o.export_state() for o in self.overlays}
+
+    def import_state(self, state: Dict[str, dict]) -> None:
+        for overlay in self.overlays:
+            if isinstance(state.get(overlay.overlay_id), dict):
+                overlay.import_state(state[overlay.overlay_id])
 
     def window(self, candles: pd.DataFrame, end_index: int) -> pd.DataFrame:
         """The bars the decision at ``end_index`` (inclusive) may see."""

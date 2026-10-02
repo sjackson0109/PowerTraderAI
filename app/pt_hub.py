@@ -29,6 +29,11 @@ from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import blended_transform_factory
 
 import pt_paths
+
+try:
+    import pt_migrate
+except ImportError:  # the hub must start even without it
+    pt_migrate = None
 from pt_paper_mode import (
     PAPER_MODE_BALANCE_KEY,
     PaperBanner,
@@ -1939,9 +1944,13 @@ class PowerTraderHub(tk.Tk):
         # Debounce map for panedwindow clamp operations
         self._paned_clamp_after_ids: Dict[str, str] = {}
 
-        # User config/data live outside the (read-only) program folder. First
-        # run: copy the shipped exchange template into the config folder; an
-        # existing file is never overwritten.
+        # User config/data live outside the (read-only) program folder. Before
+        # anything reads settings: move files left by older releases (copies
+        # only; nothing is deleted or overwritten), then, on first run, copy
+        # the shipped exchange template into the config folder.
+        self._migration_report = (
+            pt_migrate.run_startup_migration() if pt_migrate is not None else None
+        )
         try:
             pt_paths.install_default("trading_config.example.json")
         except OSError as exc:
@@ -2109,6 +2118,17 @@ class PowerTraderHub(tk.Tk):
         self.after(250, self._tick)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        if self._migration_report is not None:
+            self.after(800, self._show_migration_report)
+
+    def _show_migration_report(self) -> None:
+        """Summary of the FDS-108a migration with a 'Remove old files' button
+        (which asks for confirmation before deleting anything)."""
+        try:
+            pt_migrate.show_migration_dialog(self, self._migration_report)
+        except Exception as exc:
+            print(f"Warning: could not show the migration report: {exc}")
 
     # ---- forced dark mode ----
 

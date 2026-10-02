@@ -121,6 +121,13 @@ def legacy_dir() -> str:
     return program_dir()
 
 
+def legacy_install_dir() -> str:
+    """The install/repo root, where releases before FDS-108a also wrote
+    CWD-relative files (databases, ``logs/``) when started from there. Only
+    ``pt_migrate`` reads from here."""
+    return install_dir()
+
+
 def config_dir(create: bool = True) -> str:
     return _dir("config", create)
 

@@ -9,8 +9,9 @@
   can read the real credential store either.
 * Resolving the real platform folders raises inside tests, and a guard checks
   after every test that the real folders were not created or changed.
-* The legacy (pre-FDS-108a) location is an empty temp folder, so the
-  migration never reads the developer's real ``app/pt_config.json``.
+* The legacy (pre-FDS-108a) locations (``app/`` and the install root) are
+  empty temp folders, so the migration never reads the developer's real
+  ``app/pt_config.json`` or databases.
 """
 
 import os
@@ -108,16 +109,24 @@ def isolated_user_dirs(tmp_path, monkeypatch):
     home = tmp_path / "pt_home"
     legacy = tmp_path / "pt_legacy"
     legacy.mkdir()
+    legacy_root = tmp_path / "pt_legacy_root"
+    legacy_root.mkdir()
     monkeypatch.setenv("POWERTRADER_HOME", str(home))
     monkeypatch.setenv("PYTHON_KEYRING_BACKEND", "keyring.backends.fail.Keyring")
     monkeypatch.setattr(pt_paths, "legacy_dir", lambda: str(legacy))
+    monkeypatch.setattr(pt_paths, "legacy_install_dir", lambda: str(legacy_root))
     memory = None
     if keyring is not None:
         previous = keyring.get_keyring()
         memory = MemoryKeyring()
         keyring.set_keyring(memory)
     before = _snapshot(_REAL_DIRS)
-    yield {"home": str(home), "legacy": str(legacy), "keyring": memory}
+    yield {
+        "home": str(home),
+        "legacy": str(legacy),
+        "legacy_root": str(legacy_root),
+        "keyring": memory,
+    }
     if keyring is not None:
         keyring.set_keyring(previous)
     after = _snapshot(_REAL_DIRS)

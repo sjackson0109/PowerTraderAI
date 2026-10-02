@@ -229,12 +229,13 @@ def is_secret_key(name: str) -> bool:
 SECRET_KEY_SUFFIXES = ("_secret", "_password", "_passphrase", "_token", "_private_key", "_api_key")
 
 
-def strip_secret_fields(data, where: str = "config"):
+def strip_secret_fields(data, where: str = "config", warn: bool = True):
     """A copy of ``data`` (nested dicts/lists) without credential keys.
 
     A credential key holding a value is reported with a warning that names the
-    file and the key path, never the value. Use it on every config read so a
-    secret that ended up in a file is ignored and never written back.
+    file and the key path, never the value (``warn=False`` for the migration,
+    which has just moved those values to the keyring). Use it on every config
+    read so a secret that ended up in a file is ignored and never written back.
     """
     def walk(node, path):
         if isinstance(node, dict):
@@ -242,7 +243,7 @@ def strip_secret_fields(data, where: str = "config"):
             for key, value in node.items():
                 here = f"{path}.{key}" if path else str(key)
                 if isinstance(key, str) and is_secret_key(key):
-                    if value not in (None, "", [], {}):
+                    if warn and value not in (None, "", [], {}):
                         logger.warning(
                             "%s holds a credential field (%s); it is ignored and will not be "
                             "written back. Credentials belong in the OS keyring "

@@ -213,3 +213,40 @@ Every path in the inventory now goes through `pt_paths`, every credential throug
 Suite (this commit's files in the scratch worktree): Phase 2 results + `test_no_legacy_paths` 2,
 `test_program_dir_read_only` 5, `test_config_no_secrets` 5 passed / 2 skipped. Same 11 known failures.
 The run wrote nothing new into the worktree's `app/` or root (checked by modification time).
+
+## Phase 4 — Migration
+
+* `app/pt_migrate.py`, run by the hub before it reads any setting (and before the first-run template
+  copy, so a migrated `trading_config.json` is never shadowed by the template), and as a command.
+* Sources: `app/` (`pt_config.json`, `gui_settings.json`, `trading_config.json`, `exchange_config.json`,
+  `hub_data/`, BTC neural files in `app/` and per-coin files in `app/<SYM>/`, `order_management.db`(+`-wal`/
+  `-shm`), `institutional_trading.db`, `credential_audit.jsonl`, emergency snapshots, the Robinhood vault
+  `r_key.enc`/`r_secret.enc`/`.pt_salt` (+ `.pt_cred_meta`) or `r_key.txt`/`r_secret.txt`, and the
+  `r_key.txt.bak_*` plaintext copies) and the install root (the CWD-relative DBs `market_data.db`,
+  `portfolio_optimization.db`, `order_management.db`, `data/*.db`, and `logs/`). Both roots come from
+  `pt_paths.legacy_dir()` / `legacy_install_dir()`, which the test fixture points at empty temp folders.
+* Destinations: config files (credentials stripped; `gui_settings` folder settings that pointed into the
+  old program folder are blanked so the new defaults apply), keyring (`pt_secrets`, field names only in
+  the report), `hub_data` -> data folder (`candles/` -> cache folder), neural files -> `models/`, DBs ->
+  data folder (`market_data.db` -> cache), logs -> `<logs>/legacy/`, audit log -> logs.
+* Never deletes or modifies a legacy file; never overwrites a file or keyring entry in the new location
+  (conflict listed, new location kept). `migration-report.md` lists copies, credentials moved (by
+  `exchange:field`), conflicts, failures, legacy files still holding plaintext credentials, and the copies
+  that can be removed.
+* Idempotent: `migration-state.json` records each handled item by legacy size+mtime and whether the legacy
+  copy is redundant; a second run with nothing new writes nothing (not even the state file) and returns
+  no report, so the hub shows no dialog. A legacy file changed later is reported once. Credentials that
+  could not be stored (no keyring) are not recorded, so they are retried on the next start.
+* Hub dialog: summary + **Remove old files**; deletion only after an explicit Yes on a warning that the
+  files may contain plaintext credentials, and only of files the migration recorded as safely copied
+  (never conflicted files, never code). Emptied legacy sub-folders are pruned; root folders never.
+* `python app/pt_migrate.py --from <path>`: import one config file (kind by name or content); same rules.
+  `--remove-old-files` asks before deleting.
+* Tests: `test_pt_migrate.py` (12): fresh migration (every destination; legacy tree byte-identical with
+  identical mtimes afterwards), migrated settings are what the app reads, conflicts (file, keyring
+  entry, hub_data file), idempotent re-run, changed legacy file, no keyring (nothing stored, retried
+  later), Robinhood vault decrypted into the keyring, import from path (CLI), import never overwrites,
+  removal only after confirmation (function, CLI, Tk dialog).
+
+Suite (this commit's files in the scratch worktree): Phase 3 results + `test_pt_migrate` 12 passed. Same
+11 known failures.

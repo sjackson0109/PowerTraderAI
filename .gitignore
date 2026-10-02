@@ -246,3 +246,8 @@ app/*.txt
 
 # Temporary scratch directories
 _brainstorming_tmp/
+
+# Local exchange configuration - holds API keys in plain text. Copy
+# app/trading_config.example.json to app/trading_config.json (the app does this
+# on first save). Never commit it.
+app/trading_config.json

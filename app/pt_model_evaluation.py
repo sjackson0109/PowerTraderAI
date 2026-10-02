@@ -36,7 +36,11 @@ class ModelEvaluator:
     Comprehensive model evaluation and performance analysis
     """
 
-    def __init__(self, save_dir: str = "model_evaluations"):
+    def __init__(self, save_dir: str = None):
+        if save_dir is None:
+            import pt_paths
+
+            save_dir = os.path.join(pt_paths.data_dir(), "model_evaluations")
         self.save_dir = save_dir
         os.makedirs(save_dir, exist_ok=True)
 

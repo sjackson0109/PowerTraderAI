@@ -9,6 +9,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+import pt_paths
 import pt_secrets
 from pt_exchange_abstraction import (
     ConnectionStatus,
@@ -89,12 +90,14 @@ class ExchangeConfigManager:
     carry the credentials read from the environment or the OS keyring."""
 
     def __init__(self, config_dir: str = None):
+        # Default: the user config folder, falling back to the read-only template
+        # shipped in the program folder. An explicit folder uses its own example.
         if config_dir is None:
-            config_dir = os.path.dirname(os.path.abspath(__file__))
-
-        # A fresh clone only has the example, which load_config falls back to.
-        self.config_file = os.path.join(config_dir, "trading_config.json")
-        self.example_file = os.path.join(config_dir, EXAMPLE_CONFIG_NAME)
+            config_dir = pt_paths.config_dir()
+            self.example_file = pt_paths.shipped_default(EXAMPLE_CONFIG_NAME)
+        else:
+            self.example_file = os.path.join(config_dir, EXAMPLE_CONFIG_NAME)
+        self.config_file = os.path.join(config_dir, pt_paths.TRADING_CONFIG_FILE)
         self.config: Optional[TradingConfig] = None
 
     def load_config(self) -> Optional[TradingConfig]:
@@ -171,8 +174,7 @@ class ExchangeConfigManager:
             "auto_best_price": config.auto_best_price,
         }
 
-        with open(self.config_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        pt_paths.write_private_text(self.config_file, json.dumps(data, indent=2))
 
         for ex in config.exchanges:
             if ex.credential_source == pt_secrets.SOURCE_ENV:

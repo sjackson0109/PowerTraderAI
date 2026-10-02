@@ -7,6 +7,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 import colorama
+import pt_paths
 from colorama import Fore, Style
 from pt_cost import CostManager, PerformanceTier
 from pt_exchange_abstraction import OrderResult
@@ -32,9 +33,7 @@ from trading_mode import (
 # Base directory shared with the hub. Each trading mode keeps its own ledger and
 # history in a sub-directory (see TradingSettings.data_subdir) so paper and
 # testnet fills never mix into the live books.
-HUB_DATA_DIR = os.environ.get(
-    "POWERTRADER_HUB_DIR", os.path.join(os.path.dirname(__file__), "hub_data")
-)
+HUB_DATA_DIR = os.environ.get("POWERTRADER_HUB_DIR") or pt_paths.hub_dir()
 os.makedirs(HUB_DATA_DIR, exist_ok=True)
 
 # Assets that are cash, not positions
@@ -54,8 +53,8 @@ colorama.init(autoreset=True)
 # -----------------------------
 # GUI SETTINGS (coins list + main_neural_dir)
 # -----------------------------
-_GUI_SETTINGS_PATH = os.environ.get("POWERTRADER_GUI_SETTINGS") or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "gui_settings.json"
+_GUI_SETTINGS_PATH = (
+    os.environ.get("POWERTRADER_GUI_SETTINGS") or pt_paths.gui_settings_file()
 )
 
 _gui_settings_cache = {
@@ -89,9 +88,9 @@ def _load_gui_settings() -> dict:
         if _gui_settings_cache["mtime"] == mtime:
             return dict(_gui_settings_cache)
 
-        # Validate file path to prevent directory traversal
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        allowed_dirs = [base_dir, os.path.join(base_dir, "config")]
+        # Validate file path to prevent directory traversal: settings live in
+        # the user config folder
+        allowed_dirs = [pt_paths.config_dir()]
         from pt_files import validate_file_path
 
         if not validate_file_path(_GUI_SETTINGS_PATH, allowed_dirs):
@@ -151,8 +150,8 @@ def _build_base_paths(main_dir_in: str, coins_in: list) -> dict:
 # Live globals (will be refreshed inside manage_trades())
 crypto_symbols = ["BTC", "ETH", "XRP", "BNB", "DOGE"]
 
-# Default main_dir behavior if settings are missing
-main_dir = os.getcwd()
+# Default main_dir behavior if settings are missing (the user data folder)
+main_dir = pt_paths.neural_dir()
 base_paths = {"BTC": main_dir}
 TRADE_START_LEVEL = 3
 START_ALLOC_PCT = 0.005
@@ -194,7 +193,7 @@ def _refresh_paths_and_symbols():
     _last_settings_mtime = mtime
 
     coins = s.get("coins") or list(crypto_symbols)
-    mndir = s.get("main_neural_dir") or main_dir
+    mndir = pt_paths.neural_dir(s.get("main_neural_dir"))
     TRADE_START_LEVEL = max(
         1,
         min(int(s.get("trade_start_level", TRADE_START_LEVEL) or TRADE_START_LEVEL), 7),
@@ -244,7 +243,7 @@ def _refresh_paths_and_symbols():
 
     # Keep it safe if folder isn't real on this machine
     if not os.path.isdir(mndir):
-        mndir = os.getcwd()
+        mndir = pt_paths.neural_dir()
 
     crypto_symbols = list(coins)
     main_dir = mndir
@@ -1969,9 +1968,10 @@ class CryptoAPITrading:
                     dist_to_trail_pct = (
                         (current_sell_price - trail_line_disp) / trail_line_disp
                     ) * 100.0
-            file = open(symbol + "_current_price.txt", "w+")
-            file.write(str(current_buy_price))
-            file.close()
+            with open(
+                os.path.join(self.data_dir, symbol + "_current_price.txt"), "w+"
+            ) as file:
+                file.write(str(current_buy_price))
             positions[symbol] = {
                 "quantity": quantity,
                 "avg_cost_basis": avg_cost_basis,
@@ -2262,9 +2262,10 @@ class CryptoAPITrading:
 
                 # keep the per-coin current price file behavior for consistency
                 try:
-                    file = open(sym + "_current_price.txt", "w+")
-                    file.write(str(current_buy_price))
-                    file.close()
+                    with open(
+                        os.path.join(self.data_dir, sym + "_current_price.txt"), "w+"
+                    ) as file:
+                        file.write(str(current_buy_price))
                 except Exception:
                     pass
 

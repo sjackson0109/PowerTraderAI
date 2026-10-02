@@ -270,7 +270,12 @@ class Kline:
 class MarketDataAggregator:
     """Aggregates and normalizes market data from multiple sources"""
 
-    def __init__(self, db_path: str = "market_data.db"):
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            import pt_paths
+
+            # tickers are safe to delete: cache folder
+            db_path = pt_paths.cache_file("market_data.db")
         self.db_path = db_path
         self.subscriptions: Dict[str, Set[DataSource]] = defaultdict(set)
         self.data_handlers: Dict[DataType, List[Callable]] = defaultdict(list)

@@ -855,7 +855,7 @@ class MockMarketDataProvider:
 class ConditionalOrderEngine:
     """Main engine for conditional order management."""
 
-    def __init__(self, db_path: str = "order_management.db"):
+    def __init__(self, db_path: Optional[str] = None):
         self.db = OrderManagementDB(db_path) if CONDITIONAL_AVAILABLE else None
 
         # Initialize components
@@ -1098,7 +1098,7 @@ _conditional_engine = None
 
 
 def get_conditional_engine(
-    db_path: str = "order_management.db",
+    db_path: Optional[str] = None,
 ) -> ConditionalOrderEngine:
     """Get the global conditional order engine instance."""
     global _conditional_engine

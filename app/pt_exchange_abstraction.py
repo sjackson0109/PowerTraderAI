@@ -312,9 +312,9 @@ class ExchangeFactory:
         from ``pt_secrets`` only. Credential fields found in the file are
         ignored with a warning."""
         if config_path is None:
-            config_path = os.path.join(
-                os.path.dirname(__file__), "exchange_config.json"
-            )
+            import pt_paths
+
+            config_path = pt_paths.exchange_config_file()
 
         if not os.path.exists(config_path):
             return

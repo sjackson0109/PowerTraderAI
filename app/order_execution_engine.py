@@ -181,7 +181,7 @@ class ConditionEvaluator:
 class OrderExecutionEngine:
     """Main execution engine that monitors and executes orders."""
 
-    def __init__(self, db_path: str = "order_management.db"):
+    def __init__(self, db_path: Optional[str] = None):
         self.db = OrderManagementDB(db_path)
         self.executor = PowerTraderExecutor()
         self.evaluator = ConditionEvaluator(self.executor)
@@ -470,7 +470,7 @@ class OrderExecutionEngine:
 _execution_engine = None
 
 
-def get_execution_engine(db_path: str = "order_management.db") -> OrderExecutionEngine:
+def get_execution_engine(db_path: Optional[str] = None) -> OrderExecutionEngine:
     """Get the global execution engine instance."""
     global _execution_engine
     if _execution_engine is None:

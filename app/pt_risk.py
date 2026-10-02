@@ -389,7 +389,10 @@ class RiskManager:
         }
 
         try:
-            with open(f"emergency_snapshot_{int(time.time())}.json", "w") as f:
+            import pt_paths
+
+            snapshot_path = pt_paths.log_file(f"emergency_snapshot_{int(time.time())}.json")
+            with open(snapshot_path, "w") as f:
                 json.dump(snapshot, f, indent=2)
             self.logger.info("Emergency snapshot saved")
         except Exception as e:

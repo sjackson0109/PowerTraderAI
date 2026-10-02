@@ -162,3 +162,54 @@ Same 11 known failures, no new ones.
 Suite (this commit's files in the scratch worktree): baseline + 56 new tests passing; the same 11 known
 failures; the paper/live gate tests (`test_trading_mode`, `test_paper_mode`, `test_coinbase_paper_gate`)
 unchanged and green.
+
+## Phase 3 — Rewire every component
+
+Every path in the inventory now goes through `pt_paths`, every credential through `pt_secrets`.
+
+* **Config** (`config_dir()`): `pt_config.json` (`SettingsManager`, `trading_mode.default_settings_path`,
+  strategies), `gui_settings.json` (hub, trader, thinker), `trading_config.json`, `exchange_config.json`,
+  the YAML configs (`<config>/yaml/`), `monitoring.json`, `production.ini`, `integration_test.json`,
+  `update_settings.json`. Every config read strips credential keys (`pt_secrets.strip_secret_fields`:
+  `api_key`, `api_secret`, `private_key`, `passphrase`, `password`, `*_secret`, `*_password`, `*_token`,
+  ...) with a warning naming the key path, never the value; every write strips them too, so a credential
+  is never written back. The SMTP password moved to `pt_secrets` (`smtp:password` /
+  `POWERTRADER_SMTP_PASSWORD`).
+* **Shipped defaults**: `trading_config.example.json` stays read-only in the program folder; the hub copies
+  it into the config folder on first run only (`pt_paths.install_default`, never overwrites);
+  `ExchangeConfigManager()` falls back to it.
+* **Data** (`data_dir()`): `hub_data/` (hub, trader, thinker, API server, chart components), the neural
+  folders (default `<data>/hub_data/models`, BTC in the root, other coins in `<SYM>/` as before), every
+  SQLite database (order management -- the research engine now shares it instead of a second CWD copy --,
+  automation, holdings, institutional, portfolio optimisation/analytics, risk, compliance), training
+  summaries (`<data>/training_results/`), model checkpoints, evaluations, updater backups.
+* **Logs** (`log_dir()`): `pt_logging_system`, security audit log (was `~/.powertraderai/logs`),
+  `credential_audit.jsonl`, emergency snapshots, production logs, reports.
+* **Cache** (`cache_dir()`): candles (`<cache>/candles`), `market_data.db`, the pickle cache, updater
+  downloads.
+* The trainer is no longer copied into the coin folders: the hub runs `app/pt_trainer.py` with the coin's
+  neural folder as working directory (started from a terminal inside the program folder it moves there
+  itself). Child processes start with `cwd = data_dir()`, so a stray relative write cannot land in `app/`.
+  `<SYM>_current_price.txt` is written to the trader's data folder.
+* `hub_data_dir` / `main_neural_dir` settings: blank = defaults; relative = under `data_dir()`; a value
+  inside the program/install folder is refused with a warning (`pt_paths.user_dir_setting`). The thinker
+  now honours `main_neural_dir` like the hub and trader (it used to always write into `app/`).
+* The paper/live gate code is unchanged except `default_settings_path()`; its tests pass unchanged.
+* Tests: `test_no_legacy_paths.py` (static: no module other than `pt_paths`/`pt_migrate` builds a path to
+  `pt_config.json`, `gui_settings.json`, `trading_config.json`, `exchange_config.json` or `hub_data` --
+  verified to flag 19 sites in the baseline versions of 11 modules), `test_program_dir_read_only.py`
+  (default-path components started with `cwd = app/` change nothing under the install folder),
+  `test_config_no_secrets.py` (two YAML tests skip here because PyYAML is not installed in the suite venv;
+  they pass in a second venv with PyYAML).
+* Changed data source of one existing test (`test_demo_paper_trading.test_never_reads_or_writes_the_users_config_or_ledger`):
+  it stat'ed the developer's real `app/pt_config.json`; it now checks `pt_paths.settings_file()` and
+  `pt_paths.hub_dir()` (the fixture's temp home). Assertions unchanged.
+* Left as is (not runtime state): build/dev tools (`production_deployment.create_deployment_package`,
+  `.github/scripts/create_desktop_installer.py`, `docs/dev/run_backtest_batch1.py`), user-chosen
+  export/import paths from file dialogs, read-only program assets (`strategies/catalogue.json`,
+  `data_provider_config.json`), caller-supplied paths (`pt_backup`, `pt_database_manager`, `pt_utils`),
+  and the tracked trainer copies in `app/<SYM>/` (no longer run by the hub).
+
+Suite (this commit's files in the scratch worktree): Phase 2 results + `test_no_legacy_paths` 2,
+`test_program_dir_read_only` 5, `test_config_no_secrets` 5 passed / 2 skipped. Same 11 known failures.
+The run wrote nothing new into the worktree's `app/` or root (checked by modification time).

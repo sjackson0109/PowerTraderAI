@@ -473,7 +473,11 @@ class PortfolioRiskCalculator:
 class RiskManager:
     """Main risk management system"""
 
-    def __init__(self, db_path: str = "risk_management.db"):
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            import pt_paths
+
+            db_path = pt_paths.data_file("risk_management.db")
         self.db_path = db_path
         self.limits = RiskLimits()
         self.calculator = PortfolioRiskCalculator()

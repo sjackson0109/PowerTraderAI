@@ -13,16 +13,19 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pt_paths
+
 
 class ProductionConfig:
     """Production configuration management"""
 
-    def __init__(self, config_dir="config"):
-        self.config_dir = Path(config_dir)
-        self.config_dir.mkdir(exist_ok=True)
+    def __init__(self, config_dir=None):
+        # User config folder (pt_paths); secrets never go to a file here, they
+        # live in the OS keyring (pt_secrets).
+        self.config_dir = Path(config_dir or pt_paths.config_dir())
+        self.config_dir.mkdir(parents=True, exist_ok=True)
 
         self.config_file = self.config_dir / "production.ini"
-        self.secrets_file = self.config_dir / "secrets.json"
 
         self.config = configparser.ConfigParser()
         self._load_config()
@@ -107,8 +110,7 @@ class ProductionLogger:
 
     def __init__(self, config):
         self.config = config
-        self.log_dir = Path("logs")
-        self.log_dir.mkdir(exist_ok=True)
+        self.log_dir = Path(pt_paths.log_dir())
 
         self._setup_logging()
 
@@ -398,14 +400,18 @@ class ProductionDeployment:
             "python_version"
         ] = f"{python_version.major}.{python_version.minor}.{python_version.micro}"
 
-        # Check required directories
-        required_dirs = ["logs", "config", "data", "backups"]
-        for dir_name in required_dirs:
-            dir_path = Path(dir_name)
-            if not dir_path.exists():
-                dir_path.mkdir(exist_ok=True)
+        # Check required directories (user folders, see pt_paths)
+        required_dirs = {
+            "logs": pt_paths.log_dir(create=False),
+            "config": pt_paths.config_dir(create=False),
+            "data": pt_paths.data_dir(create=False),
+            "backups": os.path.join(pt_paths.data_dir(create=False), "backups"),
+        }
+        for dir_name, dir_path in required_dirs.items():
+            if not os.path.isdir(dir_path):
+                pt_paths.make_private_dir(dir_path)
                 validation_results["warnings"].append(
-                    f"Created missing directory: {dir_name}"
+                    f"Created missing directory: {dir_name} ({dir_path})"
                 )
 
         # Check disk space

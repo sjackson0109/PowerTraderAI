@@ -338,7 +338,7 @@ class ConditionalStopManager:
 class AdvancedStopLossEngine:
     """Main engine for managing advanced stop-loss orders."""
 
-    def __init__(self, db_path: str = "order_management.db"):
+    def __init__(self, db_path: Optional[str] = None):
         self.db = OrderManagementDB(db_path) if STOP_LOSS_AVAILABLE else None
         self.trailing_manager = TrailingStopManager(self)
         self.percentage_manager = PercentageStopManager(self)
@@ -714,7 +714,7 @@ _stop_loss_engine = None
 
 
 def get_stop_loss_engine(
-    db_path: str = "order_management.db",
+    db_path: Optional[str] = None,
 ) -> AdvancedStopLossEngine:
     """Get the global stop-loss engine instance."""
     global _stop_loss_engine

@@ -33,6 +33,7 @@ robinhood        ``robinhood:private_key`` ``POWERTRADER_ROBINHOOD_PRIVATE_KEY``
                                           (or ``POWERTRADER_ROBINHOOD_API_SECRET``)
 aave, yearn_finance, ``<x>:private_key``  ``POWERTRADER_<X>_PRIVATE_KEY``        ``private_key``
 lido_finance
+smtp (alerts)    ``smtp:password``        ``POWERTRADER_SMTP_PASSWORD``          ``password``
 any other        ``<x>:api_key``          ``POWERTRADER_<X>_API_KEY``            ``api_key``
 any other        ``<x>:api_secret``       ``POWERTRADER_<X>_API_SECRET``         ``api_secret``
 any other        ``<x>:passphrase``       ``POWERTRADER_<X>_PASSPHRASE``         ``passphrase``
@@ -183,6 +184,8 @@ def _fields(exchange: str) -> Tuple[SecretField, ...]:
         )
     if x in ("aave", "yearn_finance", "lido_finance"):
         return (SecretField("private_key", "private_key", (_env(x, "PRIVATE_KEY"),)),)
+    if x == "smtp":  # alert e-mails (pt_live_monitor)
+        return (SecretField("password", "password", (_env(x, "PASSWORD"),)),)
     return (
         SecretField("api_key", "api_key", (_env(x, "API_KEY"),)),
         SecretField("api_secret", "api_secret", (_env(x, "API_SECRET"),)),
@@ -217,9 +220,44 @@ def env_var_names(exchange: str) -> Tuple[str, ...]:
 
 def is_secret_key(name: str) -> bool:
     """True for config keys that hold a credential and must never be written to
-    a config file (``api_key``, ``api_secret``, ``private_key``, ...)."""
+    a config file (``api_key``, ``api_secret``, ``private_key``,
+    ``webhook_secret``, ``smtp_password``, ...)."""
     key = str(name).strip().lower().replace("-", "_")
-    return key in SECRET_CONFIG_KEYS
+    return key in SECRET_CONFIG_KEYS or key.endswith(SECRET_KEY_SUFFIXES)
+
+
+SECRET_KEY_SUFFIXES = ("_secret", "_password", "_passphrase", "_token", "_private_key", "_api_key")
+
+
+def strip_secret_fields(data, where: str = "config"):
+    """A copy of ``data`` (nested dicts/lists) without credential keys.
+
+    A credential key holding a value is reported with a warning that names the
+    file and the key path, never the value. Use it on every config read so a
+    secret that ended up in a file is ignored and never written back.
+    """
+    def walk(node, path):
+        if isinstance(node, dict):
+            out = {}
+            for key, value in node.items():
+                here = f"{path}.{key}" if path else str(key)
+                if isinstance(key, str) and is_secret_key(key):
+                    if value not in (None, "", [], {}):
+                        logger.warning(
+                            "%s holds a credential field (%s); it is ignored and will not be "
+                            "written back. Credentials belong in the OS keyring "
+                            "(setup window, or pt_migrate.py).",
+                            where,
+                            here,
+                        )
+                    continue
+                out[key] = walk(value, here)
+            return out
+        if isinstance(node, list):
+            return [walk(v, f"{path}[{i}]") for i, v in enumerate(node)]
+        return node
+
+    return walk(data, "")
 
 
 # Keys that, wherever they appear in a config file, are credentials.

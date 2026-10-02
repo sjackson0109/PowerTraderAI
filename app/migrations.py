@@ -22,11 +22,13 @@ class OrderManagementMigrations:
 
     def __init__(self, db_path: Optional[str] = None):
         """Initialize migration manager."""
+        import pt_paths
+
         if db_path is None:
-            db_path = os.path.join(os.path.dirname(__file__), "order_management.db")
+            db_path = pt_paths.data_file("order_management.db")
 
         self.db_path = db_path
-        self.migrations_dir = os.path.join(os.path.dirname(__file__), "migrations")
+        self.migrations_dir = os.path.join(pt_paths.data_dir(), "migrations")
 
         # Ensure migrations directory exists
         os.makedirs(self.migrations_dir, exist_ok=True)

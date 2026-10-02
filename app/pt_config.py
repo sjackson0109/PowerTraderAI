@@ -7,6 +7,7 @@ import configparser
 import json
 import logging
 import os
+import pt_secrets
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
@@ -254,15 +255,20 @@ class ConfigurationManager:
     """Advanced configuration management with validation and hot-reloading."""
 
     def __init__(
-        self, config_dir: Union[str, Path] = "config", enable_hot_reload: bool = True
+        self, config_dir: Union[str, Path, None] = None, enable_hot_reload: bool = True
     ):
         """
         Initialize configuration manager.
 
         Args:
-            config_dir: Directory containing configuration files
+            config_dir: Directory containing configuration files (default:
+                ``yaml/`` in the user config folder, see pt_paths)
             enable_hot_reload: Whether to watch for file changes
         """
+        if config_dir is None:
+            import pt_paths
+
+            config_dir = os.path.join(pt_paths.config_dir(), "yaml")
         self.config_dir = Path(config_dir)
         self.enable_hot_reload = enable_hot_reload
         self.logger = logging.getLogger(__name__)
@@ -363,6 +369,8 @@ class ConfigurationManager:
         try:
             with open(file_path, "r") as f:
                 data = yaml.safe_load(f) or {}
+            # Credentials never come from (or go back to) a config file.
+            data = pt_secrets.strip_secret_fields(data, file_path.name)
 
             # Update config instance with loaded data
             field_names = {field.name for field in fields(config_class)}
@@ -382,8 +390,10 @@ class ConfigurationManager:
     def _save_default_config(self, file_path: Path, config_instance: Any) -> None:
         """Save default configuration to file."""
         try:
-            # Convert dataclass to dict
-            config_dict = self._dataclass_to_dict(config_instance)
+            # Convert dataclass to dict (no credential fields in the file)
+            config_dict = pt_secrets.strip_secret_fields(
+                self._dataclass_to_dict(config_instance), file_path.name
+            )
 
             with open(file_path, "w") as f:
                 yaml.dump(config_dict, f, default_flow_style=False, indent=2)
@@ -516,7 +526,9 @@ class ConfigurationManager:
     def _save_config_file(self, file_path: Path, config_instance: Any) -> None:
         """Save configuration instance to YAML file."""
         try:
-            config_dict = self._dataclass_to_dict(config_instance)
+            config_dict = pt_secrets.strip_secret_fields(
+                self._dataclass_to_dict(config_instance), file_path.name
+            )
 
             with open(file_path, "w") as f:
                 yaml.dump(config_dict, f, default_flow_style=False, indent=2)

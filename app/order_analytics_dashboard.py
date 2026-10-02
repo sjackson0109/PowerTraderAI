@@ -50,7 +50,7 @@ class PerformanceMetric(Enum):
 class OrderAnalytics:
     """Core analytics engine for order performance analysis."""
 
-    def __init__(self, db_path: str = "order_management.db"):
+    def __init__(self, db_path: Optional[str] = None):
         self.db = OrderManagementDB(db_path) if ANALYTICS_AVAILABLE else None
         self.cache = {}
         self.cache_expiry = {}
@@ -768,7 +768,7 @@ class OrderAnalytics:
 _analytics_engine = None
 
 
-def get_analytics_engine(db_path: str = "order_management.db") -> OrderAnalytics:
+def get_analytics_engine(db_path: Optional[str] = None) -> OrderAnalytics:
     """Get the global analytics engine instance."""
     global _analytics_engine
     if _analytics_engine is None:

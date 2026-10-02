@@ -556,7 +556,11 @@ class CacheManager:
     """
 
     def __init__(self, cache_dir: str = None):
-        self.cache_dir = cache_dir or "cache"
+        if cache_dir is None:
+            import pt_paths
+
+            cache_dir = pt_paths.cache_dir()
+        self.cache_dir = cache_dir
 
         # Initialize different cache types
         self.memory_cache = MemoryCache(max_size=1000, max_memory_mb=100)

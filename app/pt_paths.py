@@ -109,6 +109,12 @@ def program_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def install_dir() -> str:
+    """The install or repo folder that contains ``program_dir()`` (where
+    ``start_powertrader.bat`` lives). Also read-only at runtime."""
+    return os.path.dirname(program_dir())
+
+
 def legacy_dir() -> str:
     """Where releases before FDS-108a kept settings, credentials and hub_data
     (next to the code). Only ``pt_migrate`` reads from here."""
@@ -141,6 +147,42 @@ def models_dir(create: bool = True) -> str:
     """``<data>/hub_data/models``; one ``<model_id>/`` folder per model."""
     path = os.path.join(hub_dir(create), MODELS_DIR_NAME)
     return make_private_dir(path) if create else path
+
+
+def user_dir_setting(configured: Optional[str], default: str, what: str = "folder") -> str:
+    """Resolve a folder the user may override in settings (``hub_data_dir``,
+    ``main_neural_dir``). Blank -> ``default``. A relative value is resolved
+    against ``data_dir()``. A value inside the read-only program/install folder
+    is refused (a warning is logged) and ``default`` is used."""
+    value = str(configured or "").strip()
+    if not value:
+        return default
+    path = os.path.expanduser(value)
+    if not os.path.isabs(path):
+        path = os.path.join(data_dir(), path)
+    path = os.path.abspath(path)
+    if is_inside_program_dir(path):
+        import logging
+
+        logging.getLogger("pt_paths").warning(
+            "Ignoring %s %s: it is inside the program folder, which is read-only. Using %s.",
+            what,
+            path,
+            default,
+        )
+        return default
+    return path
+
+
+def neural_dir(configured: Optional[str] = None) -> str:
+    """Root of the per-coin neural folders (``main_neural_dir``): BTC uses it
+    directly, other coins use ``<root>/<SYMBOL>``. Default ``models_dir()``."""
+    return make_private_dir(user_dir_setting(configured, models_dir(), "main_neural_dir"))
+
+
+def hub_dir_for(configured: Optional[str] = None) -> str:
+    """``hub_data_dir`` setting resolved like ``neural_dir``; default ``hub_dir()``."""
+    return make_private_dir(user_dir_setting(configured, hub_dir(), "hub_data_dir"))
 
 
 def config_file(name: str) -> str:
@@ -254,12 +296,21 @@ def install_default(name: str, target: Optional[str] = None) -> Optional[str]:
 
 
 def is_inside_program_dir(path: str) -> bool:
-    """True when ``path`` is inside the (read-only) program directory."""
+    """True when ``path`` is inside the read-only install folder (which holds
+    the program directory). A ``POWERTRADER_HOME`` inside a checkout is
+    allowed: it is the user's explicit choice for development."""
+    target = os.path.normcase(os.path.abspath(path))
+    home = home_override()
+    if home and _contains(os.path.normcase(home), target):
+        return False
+    return _contains(os.path.normcase(install_dir()), target)
+
+
+def _contains(folder: str, path: str) -> bool:
     try:
-        common = os.path.commonpath([os.path.abspath(path), program_dir()])
+        return os.path.commonpath([path, folder]) == folder
     except ValueError:  # different drives on Windows
         return False
-    return os.path.normcase(common) == os.path.normcase(program_dir())
 
 
 def _bare(name: str) -> str:

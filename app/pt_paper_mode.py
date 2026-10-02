@@ -356,11 +356,14 @@ def read_paper_mode_from_disk(settings_path: Optional[str] = None) -> bool:
     `_apply_forced_dark_mode` call can paint the window the right color
     immediately - no flash of dark theme before paper mode kicks in.
 
-    Reads `trading.mode` from the settings file (default: pt_config.json next
-    to the app). A missing, unreadable or malformed file means paper.
+    Reads `trading.mode` from the settings file (default: pt_config.json in
+    the user config folder, see pt_paths). A missing, unreadable or malformed
+    file means paper.
     """
     return is_paper_mode(settings_path)
 
 
-def settings_path_for(app_dir: str, filename: str = "gui_settings.json") -> str:
-    return os.path.join(app_dir, filename)
+def settings_path_for(app_dir: str, filename: Optional[str] = None) -> str:
+    import pt_paths
+
+    return os.path.join(app_dir, filename or pt_paths.GUI_SETTINGS_FILE)

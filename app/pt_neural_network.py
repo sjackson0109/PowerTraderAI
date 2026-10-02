@@ -296,6 +296,13 @@ class FeatureEngineering:
         return np.array(X), np.array(y)
 
 
+def _best_model_path() -> str:
+    """Checkpoint of the best model so far, in the user models folder."""
+    import pt_paths
+
+    return os.path.join(pt_paths.models_dir(), "best_model.pth")
+
+
 class ModelTrainer:
     """
     Comprehensive model training and evaluation system
@@ -473,9 +480,8 @@ class ModelTrainer:
             if val_loss < best_loss:
                 best_loss = val_loss
                 patience_counter = 0
-                # Save best model
-                os.makedirs("data", exist_ok=True)
-                torch.save(self.model.state_dict(), "data/best_model.pth")
+                # Save best model (user models folder, see pt_paths)
+                torch.save(self.model.state_dict(), _best_model_path())
             else:
                 patience_counter += 1
 
@@ -504,7 +510,7 @@ class ModelTrainer:
                 break
 
         # Load best model
-        self.model.load_state_dict(torch.load("data/best_model.pth"))
+        self.model.load_state_dict(torch.load(_best_model_path()))
 
         # Evaluate model
         evaluation_results = self.evaluate_model(data)

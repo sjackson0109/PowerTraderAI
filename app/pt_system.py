@@ -6,6 +6,7 @@ Orchestrates all components and provides unified API for the trading system.
 import asyncio
 import atexit
 import logging
+import os
 import signal
 import sys
 import threading
@@ -46,16 +47,18 @@ class PowerTraderSystem:
     Manages all components, configuration, monitoring, and lifecycle.
     """
 
-    def __init__(self, config_dir: str = "config", data_dir: str = "data"):
+    def __init__(self, config_dir: str = None, data_dir: str = None):
         """
         Initialize PowerTraderAI+ system.
 
         Args:
-            config_dir: Configuration directory path
-            data_dir: Data directory path
+            config_dir: Configuration directory path (default: pt_paths)
+            data_dir: Data directory path (default: pt_paths)
         """
-        self.config_dir = Path(config_dir)
-        self.data_dir = Path(data_dir)
+        import pt_paths
+
+        self.config_dir = Path(config_dir or os.path.join(pt_paths.config_dir(), "yaml"))
+        self.data_dir = Path(data_dir or pt_paths.data_dir())
         self.start_time = None
         self.is_running = False
         self.shutdown_handlers: List[Callable] = []

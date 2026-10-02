@@ -70,7 +70,11 @@ class Holding:
 class HoldingsDatabase:
     """Database management for long-term holdings"""
 
-    def __init__(self, db_path: str = "holdings.db"):
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            import pt_paths
+
+            db_path = pt_paths.data_file("holdings.db")
         self.db_path = db_path
         self._init_db()
 
@@ -234,9 +238,8 @@ class HoldingsDatabase:
 class HoldingsManager:
     """Main manager for long-term holdings operations"""
 
-    def __init__(self, db_path: str = "data/holdings.db"):
-        # Ensure data directory exists
-        os.makedirs("data", exist_ok=True)
+    def __init__(self, db_path: Optional[str] = None):
+        # None: holdings.db in the user data folder (pt_paths)
         self.db = HoldingsDatabase(db_path)
         self.holdings: List[Holding] = []
         self.refresh_holdings()

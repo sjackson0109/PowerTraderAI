@@ -182,8 +182,11 @@ if __name__ == "__main__":
     print(report)
 
     # Save to file
-    with open("PHASE_COMPLETION_REPORT.txt", "w") as f:
+    import pt_paths
+
+    report_path = pt_paths.log_file("PHASE_COMPLETION_REPORT.txt")
+    with open(report_path, "w") as f:
         f.write(report)
 
-    print(f"\nReport saved to: PHASE_COMPLETION_REPORT.txt")
+    print(f"\nReport saved to: {report_path}")
     print("\n🎉 PHASE COMPLETION SUCCESSFUL! 🎉")

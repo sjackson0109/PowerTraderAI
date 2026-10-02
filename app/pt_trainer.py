@@ -18,6 +18,10 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+import pt_paths  # noqa: E402
 
 
 class NeuralTrainer:
@@ -195,11 +199,10 @@ class NeuralTrainer:
             "status": "completed",
         }
 
-        # Ensure data directory exists
-        data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-        os.makedirs(data_dir, exist_ok=True)
-
-        results_file = os.path.join(data_dir, f"{coin.lower()}_training_results.json")
+        # Training summary goes to the user data folder (pt_paths)
+        results_file = pt_paths.data_file(
+            "training_results", f"{coin.lower()}_training_results.json"
+        )
         with open(results_file, "w") as f:
             json.dump(training_results, f, indent=2)
 
@@ -251,6 +254,17 @@ def train_neural_network(coin: str) -> bool:
         return False
 
 
+def _leave_program_dir(coin: str) -> None:
+    """The trainer writes its model files to the working directory (the hub
+    starts it in the coin's neural folder). Started from a terminal inside the
+    read-only program folder, move to that coin's neural folder first."""
+    if pt_paths.is_inside_program_dir(os.getcwd()):
+        folder = pt_paths.neural_dir()
+        folder = folder if coin == "BTC" else os.path.join(folder, coin)
+        os.makedirs(folder, exist_ok=True)
+        os.chdir(folder)
+
+
 def main():
     """Main entry point for standalone trainer."""
     if len(sys.argv) < 2:
@@ -259,6 +273,7 @@ def main():
         sys.exit(1)
 
     coin = sys.argv[1].upper().strip()
+    _leave_program_dir(coin)
 
     print(f"PowerTrader AI+ Neural Network Trainer")
     print(f"======================================")

@@ -468,8 +468,12 @@ class DependencyChecker:
 
         return script
 
-    def save_report(self, filename: str = "dependency_report.txt"):
-        """Save dependency report to file."""
+    def save_report(self, filename: str = None):
+        """Save dependency report to file (default: the PowerTraderAI log folder)."""
+        if filename is None:
+            import pt_paths
+
+            filename = pt_paths.log_file("dependency_report.txt")
         try:
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(f"PowerTrader Dependency Report\n")

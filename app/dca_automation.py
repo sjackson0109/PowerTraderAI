@@ -524,7 +524,7 @@ class DCAConditionChecker:
 class DCAEngine:
     """Main DCA automation engine."""
 
-    def __init__(self, db_path: str = "order_management.db"):
+    def __init__(self, db_path: Optional[str] = None):
         self.db = OrderManagementDB(db_path) if DCA_AVAILABLE else None
         self.dca_plans = {}  # plan_id -> DCA configuration
         self.strategy_classes = {
@@ -918,7 +918,7 @@ class DCAEngine:
 _dca_engine = None
 
 
-def get_dca_engine(db_path: str = "order_management.db") -> DCAEngine:
+def get_dca_engine(db_path: Optional[str] = None) -> DCAEngine:
     """Get the global DCA engine instance."""
     global _dca_engine
     if _dca_engine is None:

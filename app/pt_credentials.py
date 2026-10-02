@@ -102,7 +102,13 @@ class SecureCredentialManager:
     """Manages encrypted storage and rotation of API credentials."""
 
     def __init__(self, base_dir: str = None):
-        self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
+        # Default: the pre-FDS-108a location. The file vault is only read by
+        # the migration now; the app stores credentials through pt_secrets.
+        if base_dir is None:
+            import pt_paths
+
+            base_dir = pt_paths.legacy_dir()
+        self.base_dir = base_dir
         self.salt_file = os.path.join(self.base_dir, ".pt_salt")
         self.encrypted_key_file = os.path.join(self.base_dir, "r_key.enc")
         self.encrypted_secret_file = os.path.join(self.base_dir, "r_secret.enc")
@@ -584,7 +590,11 @@ class PermissionValidator:
     AUDIT_ROTATION_KEEP = 1  # Number of rotated backups to keep
 
     def __init__(self, base_dir: str = None):
-        self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
+        if base_dir is None:
+            import pt_paths
+
+            base_dir = pt_paths.log_dir()
+        self.base_dir = base_dir
         self._audit_log = os.path.join(self.base_dir, self.AUDIT_LOG_FILE)
 
     def validate(

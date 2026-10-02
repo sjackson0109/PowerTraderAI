@@ -48,7 +48,9 @@ class OrderManagementDB:
         """Initialize the database manager."""
         if database_url is None:
             # Default to SQLite for development
-            db_path = os.path.join(os.path.dirname(__file__), "order_management.db")
+            import pt_paths
+
+            db_path = pt_paths.data_file("order_management.db")
             database_url = f"sqlite:///{db_path}"
 
         self.database_url = database_url

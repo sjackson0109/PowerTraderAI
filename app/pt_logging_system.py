@@ -426,8 +426,12 @@ class PowerTraderLogger:
     """
 
     def __init__(self, log_directory: str = None, session_id: str = None):
-        self.log_directory = Path(log_directory or "logs")
-        self.log_directory.mkdir(exist_ok=True)
+        if log_directory is None:
+            import pt_paths
+
+            log_directory = pt_paths.log_dir()
+        self.log_directory = Path(log_directory)
+        self.log_directory.mkdir(parents=True, exist_ok=True)
 
         self.session_id = session_id or f"session_{int(time.time())}"
 

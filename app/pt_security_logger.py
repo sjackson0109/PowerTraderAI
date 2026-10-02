@@ -209,7 +209,8 @@ class SecurityLogger:
 
     Args:
         log_dir: Directory for the audit log file.  Defaults to
-            ~/.powertraderai/logs so the source tree is never polluted.
+            the PowerTraderAI log folder (pt_paths.log_dir()) so the source
+            tree is never polluted.
     """
 
     AUDIT_LOG_FILENAME = "security_audit.jsonl"
@@ -217,9 +218,11 @@ class SecurityLogger:
     BACKUP_COUNT = 10  # Keep 10 rotated files
 
     def __init__(self, log_dir: Optional[str] = None):
-        self._log_dir = log_dir or os.path.join(
-            os.path.expanduser("~"), ".powertraderai", "logs"
-        )
+        if log_dir is None:
+            import pt_paths
+
+            log_dir = pt_paths.log_dir()
+        self._log_dir = log_dir
         os.makedirs(self._log_dir, exist_ok=True)
         self._audit_path = os.path.join(self._log_dir, self.AUDIT_LOG_FILENAME)
         self._lock = threading.Lock()

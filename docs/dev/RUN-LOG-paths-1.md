@@ -90,3 +90,25 @@ exchanges/settings; every other module), Python source only. Key results:
   checked through `git show` for credential keys: all such values are empty.
 
 Suite: documentation-only commit; not re-run (identical to baseline).
+
+## Phase 1 — Paths module
+
+* `app/pt_paths.py`: `config_dir()`, `data_dir()`, `log_dir()`, `cache_dir()`, `hub_dir()`, `models_dir()`,
+  `program_dir()`, `legacy_dir()`, `ensure_dirs()`, `describe()`, named config files, `install_default()`,
+  `write_private_text()` (atomic, `0600` on POSIX), `secure_file()`, `is_inside_program_dir()`.
+  `platformdirs` with `appname="PowerTraderAI"`, `appauthor="SJackson"`; config `roaming=True`, data
+  `roaming=False`; folders created lazily (`0700` on POSIX). `POWERTRADER_HOME` puts everything under
+  `config/`, `data/`, `logs/`, `cache/`. Functions return `str` (the codebase is `os.path`-based).
+* Windows resolution checked: `%APPDATA%\SJackson\PowerTraderAI`, `%LOCALAPPDATA%\SJackson\PowerTraderAI`,
+  `...\Logs`, `...\Cache` (string comparison only; nothing created).
+* `app/conftest.py` (autouse, every test under `app/`): fresh `POWERTRADER_HOME` temp folder per test (and
+  one set at import, before any module computes a path), in-memory keyring per test,
+  `PYTHON_KEYRING_BACKEND=fail` for child processes, real platform-folder resolution blocked, legacy folder
+  = empty temp folder, and a per-test check that the four real folders were not created or changed
+  (`os.stat` of the folder only).
+* `platformdirs>=4.0.0` added to `requirements.txt` and `app/requirements.txt`.
+* Tests: `app/tests/test_pt_paths.py` (11 + 1 POSIX-only skip).
+
+Suite (run on exactly this commit's files in a scratch worktree): baseline + `test_pt_paths` 11 passed;
+`test_trading_mode` 50 passed (baseline 49 + 1 skipped: a Tk test that intermittently cannot initialise Tk).
+Same 11 known failures, no new ones.

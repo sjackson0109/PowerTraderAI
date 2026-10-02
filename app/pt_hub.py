@@ -38,6 +38,7 @@ from pt_paper_mode import (
     install_classic_widget_defaults,
     run_sample_scenario,
 )
+from strategies.settings import read_strategy_settings
 from trading_mode import TradingSettings, read_trading_settings
 from trading_mode_ui import TradingModeDialog, TradingModeIndicator, pack_at_top
 
@@ -6335,6 +6336,7 @@ Platform: {sys.platform}
         # trader status -> current trades table (now mtime-cached inside)
         self._refresh_trader_status()
         self._refresh_price_note()
+        self._refresh_signals_note()
 
         # pnl ledger -> realized profit (now mtime-cached inside)
         self._refresh_pnl()
@@ -6446,6 +6448,25 @@ Platform: {sys.platform}
         self.after(
             int(float(self.settings.get("ui_refresh_seconds", 1.0)) * 1000), self._tick
         )
+
+    def _refresh_signals_note(self) -> None:
+        """Strip text for the signal source: the legacy neural trainer is a mock, so it
+        must never look like a real model. Re-read only when pt_config.json changes."""
+        indicator = getattr(self, "_mode_indicator", None)
+        if indicator is None:
+            return
+        try:
+            path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "pt_config.json")
+            mtime = os.path.getmtime(path) if os.path.exists(path) else None
+        except OSError:
+            mtime = None
+        if mtime != getattr(self, "_signals_note_mtime", object()):
+            self._signals_note_mtime = mtime
+            try:
+                self._signals_note_text = read_strategy_settings().note
+            except Exception:
+                self._signals_note_text = "SIGNALS: BLOCKED"
+        indicator.update_signals_note(self._signals_note_text)
 
     def _refresh_price_note(self) -> None:
         """Paper mode: show PRICES: LIVE / DEGRADED on the mode strip, from the

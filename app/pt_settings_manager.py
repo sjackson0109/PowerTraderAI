@@ -89,6 +89,16 @@ DEFAULT_SETTINGS = {
     "risk": {
         "emergency_drawdown_pct": 8.0,
     },
+    # Signal source (FDS-121). "catalogue" = deterministic rule-based strategies;
+    # "legacy_neural" = the old (untrained, mock) trainer files. An unknown engine
+    # or strategy id places no orders (the trader fails closed).
+    "strategy": {
+        "engine": "catalogue",
+        "active_id": "STRAT-000",
+        "symbols": ["BTCUSDT"],
+        "timeframe": "1h",
+        "overlays": [],
+    },
     "neural_config": {
         "training_epochs": 100,
         "batch_size": 32,
@@ -106,6 +116,15 @@ DEFAULT_SETTINGS = {
 }
 
 SETTINGS_FILE = "pt_config.json"
+
+
+STRATEGY_ENGINES = ("catalogue", "legacy_neural")
+
+
+def _is_valid_timeframe(value: Any) -> bool:
+    from market_data.timeframes import TIMEFRAME_SECONDS
+
+    return isinstance(value, str) and value in TIMEFRAME_SECONDS
 
 
 def _is_valid_broker_id(value: Any) -> bool:
@@ -238,6 +257,38 @@ class SettingsValidator:
             lambda v: _is_number_in(v, EMERGENCY_DRAWDOWN_RANGE),
             "Emergency drawdown must be between 1 and 50 percent",
             lambda v: DEFAULT_EMERGENCY_DRAWDOWN_PCT,
+        )
+
+        # Strategy engine settings. No auto-fix on purpose: a wrong engine / id is
+        # reported, kept as written, and makes the trader place no orders, rather
+        # than silently trading a strategy the user did not choose.
+        self.add_rule(
+            "strategy.engine",
+            lambda v: v in STRATEGY_ENGINES,
+            "Strategy engine must be 'catalogue' or 'legacy_neural'",
+        )
+        self.add_rule(
+            "strategy.active_id",
+            lambda v: isinstance(v, str) and bool(v.strip()),
+            "Active strategy id must be a non-empty string",
+        )
+        self.add_rule(
+            "strategy.symbols",
+            lambda v: isinstance(v, list)
+            and bool(v)
+            and all(isinstance(s, str) and s.strip() for s in v),
+            "Strategy symbols must be a non-empty list of symbol strings",
+        )
+        self.add_rule(
+            "strategy.timeframe",
+            _is_valid_timeframe,
+            "Strategy timeframe must be a supported candle timeframe",
+        )
+        self.add_rule(
+            "strategy.overlays",
+            lambda v: isinstance(v, list)
+            and all(isinstance(o, dict) and isinstance(o.get("id"), str) for o in v),
+            "Strategy overlays must be a list of {id, params} objects",
         )
 
         # Neural config validation

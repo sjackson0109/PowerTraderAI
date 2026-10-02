@@ -121,6 +121,44 @@ Every order passes through `resolve_order_target(settings)` before it can reach 
 
 `pt_trader.py` has no broker-specific REST code; it uses the target's `place_order`, `get_balance`, `get_order_status` and `get_market_data`. The trader is pinned to the mode it started in and refuses orders if `trading.mode`/broker changes underneath it. Each mode keeps its own ledger and history under the hub data directory (`paper/`, `testnet/`, or the base directory for live). The hub shows the active mode in an always-visible header strip, and switching to Live (File > Trading Mode...) requires choosing a broker and ticking "Yes, I understand real money is at risk".
 
+### Signal Path and Strategy Engine (FDS-121)
+
+**How the trader consumed signals before FDS-121 (documented before it was changed).**
+`pt_trainer_standalone.py` and the per-coin `pt_trainer.py` copies are mocks (a sleep loop, hard-coded
+"accuracy"). `pt_thinker.py` reads the `memories_<tf>.txt` files they produce and writes, per coin folder,
+`long_dca_signal.txt`, `short_dca_signal.txt` (integers 0-7) and `low_bound_prices.html`. `pt_trader.py` then:
+
+- opens a trade when `long_dca_signal >= trade_start_level (3)` and `short_dca_signal == 0`;
+- DCAs when the loss passes a hard % level (-2.5, -5, -10, -20, -30, -40, -50) **or** the long signal reaches the
+  neural level for that stage (4-7 for stages 0-3) while below cost basis;
+- sells on its trailing profit margin (start +5% / +2.5% after a DCA, 0.5% trail gap).
+
+Those signals are noise from an untrained mock, so they are **not** a basis for trading.
+
+**The replacement.** `strategy.engine` (setting, default `catalogue`) selects the signal source:
+
+| Setting | Behaviour |
+|---|---|
+| `strategy.engine = catalogue` | `SignalEngine` fetches the latest *closed* candles (Binance public klines, cached under `hub_data/candles/`), runs the active strategy plus overlays through `StrategyRunner`, and the trader enters on `ENTER_LONG` and exits on `EXIT_LONG`. Legacy DCA buys and trailing-PM sells are **off** in this mode. |
+| `strategy.engine = legacy_neural` | The old neural-signal logic, unchanged. The hub strip shows `SIGNALS: LEGACY (UNTRAINED)`. |
+| anything else, or an unknown `strategy.active_id` | **No orders** are placed and an ERROR is logged (fail closed). |
+
+Other settings: `strategy.active_id` (default `STRAT-000`, a trivial EMA 20/50 cross), `strategy.symbols`
+(default `["BTCUSDT"]`), `strategy.timeframe` (default `1h`), `strategy.overlays` (`[{id, params}]`).
+Entry size is the trader's existing start allocation; a strategy exit sells only the quantity the trader's own
+ledger says it bought (never the user's other holdings), and a holding without a ledger cost basis is never sold.
+If the last closed candle is older than 2x the timeframe the engine returns `HOLD` with reason `STALE_CANDLES`.
+
+**One interface everywhere.** `strategies/` holds the `Strategy` interface (`on_bar(candles) -> Signal` on closed
+bars only; pure; long-only), indicators (EMA, DEMA, TEMA, Wilder ATR/ADX), a JSON catalogue + registry that fail
+loudly when they disagree, and `StrategyRunner`, the single place where a strategy and its overlays are combined.
+The backtester (`python -m app.backtest`) and the trader use the same runner and the same lookback window, so a
+backtest and a paper run cannot disagree.
+
+**Backtest honesty rules.** Signal on bar *t* close fills at bar *t+1* open; 10 bps fee + 5 bps slippage per fill;
+fixed-fraction sizing; nothing opened during warm-up; first 70% of bars in-sample and last 30% out-of-sample,
+reported separately; buy-and-hold over the same window and fee model as the benchmark. The random-price example in
+`backtesting_engine.py` is labelled `DEMO ONLY - SYNTHETIC DATA`.
 ### UI/UX Enhancement
 
 #### Theme Management (`pt_theme_manager.py`)

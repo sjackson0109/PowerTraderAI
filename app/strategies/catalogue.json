@@ -1,0 +1,19 @@
+[
+  {
+    "strategy_id": "STRAT-000",
+    "strategy_name": "EMA Cross (baseline)",
+    "family": "trend",
+    "class_type": "main",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1h",
+    "entry_logic_summary": "Fast EMA crosses above slow EMA on the closed bar.",
+    "exit_logic_summary": "Fast EMA is below slow EMA on the closed bar.",
+    "dependencies_indicators": ["EMA"],
+    "default_params": {"fast_len": 20, "slow_len": 50},
+    "param_bounds": {
+      "fast_len": {"min": 2, "max": 100},
+      "slow_len": {"min": 5, "max": 400}
+    },
+    "version": "1.0.0"
+  }
+]

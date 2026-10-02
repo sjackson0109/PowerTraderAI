@@ -250,6 +250,11 @@ def _settings_mapping(settings: Any) -> Any:
     return settings
 
 
+# Public names for other modules that read the same settings source.
+lookup_setting = _lookup
+settings_mapping = _settings_mapping
+
+
 def read_paper_settings(settings: Any = None) -> PaperSettings:
     """Fail closed: an unknown policy is "pause"; a bad max age is the default."""
     settings = _settings_mapping(settings)

@@ -13,6 +13,9 @@ from pt_exchange_abstraction import OrderResult
 from pt_logging import get_logger
 from pt_risk import RiskLimits, RiskManager
 from pt_validation import InputValidator, ValidationError
+from signal_engine import SignalEngine
+from strategies.base import Action
+from strategies.settings import read_strategy_settings
 from trading_mode import (
     OrderTarget,
     TradingModeError,
@@ -317,13 +320,17 @@ class _TraderRiskAdapter:
 
 
 class CryptoAPITrading:
-    def __init__(self, settings_source: Any = None):
+    def __init__(self, settings_source: Any = None, signal_engine: Optional[SignalEngine] = None):
         """
         ``settings_source`` is where the trading-mode gate reads trading.mode /
         trading.active_broker from (None = the settings file, re-read fresh on
         every order; a dict or SettingsManager is accepted for tests).
+        ``signal_engine`` supplies rule-based decisions when ``strategy.engine``
+        is "catalogue" (tests inject one with scripted candles).
         """
         self._settings_source = settings_source
+        self.signal_engine = signal_engine or SignalEngine(settings_source=settings_source)
+        self._catalogue_mode = False
 
         # This mode's own ledger / history / status files
         self._settings = read_trading_settings(self._settings_source)
@@ -1357,6 +1364,13 @@ class CryptoAPITrading:
 
     def _gate_or_refuse(self) -> Optional[OrderTarget]:
         """Run the gate; on refusal report it and return None (no order may follow)."""
+        # Fail closed on the signal source too: an unknown strategy engine / id
+        # (or unusable strategy settings) means no orders at all.
+        problem = read_strategy_settings(self._settings_source).problem
+        if problem:
+            print(f"{Fore.RED}ORDER REFUSED: invalid strategy configuration: {problem}{Style.RESET_ALL}")
+            logger.error(f"Order refused: invalid strategy configuration: {problem}")
+            return None
         try:
             return self._resolve_target_for_order()
         except TradingModeError as exc:
@@ -1496,6 +1510,36 @@ class CryptoAPITrading:
             "age_s": order.age_s,
         }
 
+    def _catalogue_exit_quantity(self, symbol: str, holding_qty: float) -> float:
+        """Quantity a strategy exit may sell: what this trader's ledger says it
+        bought, capped by the exchange balance (never the user's other holdings)."""
+        try:
+            pos = (self._pnl_ledger.get("open_positions") or {}).get(symbol) or {}
+            ledger_qty = float(pos.get("qty", 0.0) or 0.0)
+        except (AttributeError, TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(float(holding_qty), ledger_qty))
+
+    def _signals_status(self) -> dict:
+        s = read_strategy_settings(self._settings_source)
+        return {
+            "engine": s.engine,
+            "strategy_id": s.active_id if s.is_catalogue else None,
+            "timeframe": s.timeframe if s.is_catalogue else None,
+            "overlays": [o["id"] for o in s.overlays] if s.is_catalogue else [],
+            "blocked": s.problem,
+            "note": s.note,
+            "last_decisions": {
+                base: {
+                    "action": d.action.value,
+                    "reason": d.reason,
+                    "bar_time": str(d.bar_time),
+                    "stop": d.stop_price,
+                }
+                for base, d in self.signal_engine.last_decisions.items()
+            },
+        }
+
     def _clear_pending(self, order_id: str) -> None:
         try:
             if order_id:
@@ -1630,6 +1674,20 @@ class CryptoAPITrading:
 
         if time.time() - self._last_price_summary_ts >= 3600.0:
             self._log_price_summary()
+
+        # Signal source for this tick. "catalogue": the rule-based strategy (+ overlays)
+        # decides entries and exits and the legacy DCA / trailing-PM logic is off.
+        # "legacy_neural": the old neural-signal logic (untrained mock - see
+        # docs/technical/ARCHITECTURE.md). An invalid configuration trades nothing.
+        strategy_cfg = read_strategy_settings(self._settings_source)
+        self._catalogue_mode = strategy_cfg.is_catalogue and not strategy_cfg.problem
+        if strategy_cfg.problem:
+            self._warn_throttled(
+                "strategy-config",
+                f"Strategy configuration invalid; no orders will be placed: {strategy_cfg.problem}",
+                every=300.0,
+            )
+        catalogue_mode = self._catalogue_mode
 
         # Fetch account details
         account = self.get_account()
@@ -1927,6 +1985,49 @@ class CryptoAPITrading:
             else:
                 print("  PM/Trail: N/A (avg_cost_basis is 0)")
 
+            # --- Catalogue engine: the strategy (+ overlays) own the exit ---------------
+            # Legacy trailing-PM sells and DCA buys below are skipped in this mode.
+            # Only positions this trader opened (they have a ledger cost basis) are
+            # managed, and only the quantity the ledger says it bought is sold.
+            if catalogue_mode:
+                exit_qty = self._catalogue_exit_quantity(symbol, quantity)
+                if avg_cost_basis > 0 and exit_qty > 0:
+                    pos = self.signal_engine.ensure_position(symbol, avg_cost_basis)
+                    decision = self.signal_engine.decide(symbol, pos)
+                    if decision is not None and decision.action is Action.EXIT_LONG:
+                        print(
+                            f"  {decision.strategy_id} EXIT for {symbol}: {decision.reason}"
+                        )
+                        response = self.place_sell_order(
+                            str(uuid.uuid4()),
+                            "sell",
+                            "market",
+                            full_symbol,
+                            exit_qty,
+                            expected_price=current_sell_price,
+                            avg_cost_basis=avg_cost_basis,
+                            pnl_pct=gain_loss_percentage_sell,
+                            tag=f"EXIT:{decision.exit_rule or 'strategy'}",
+                        )
+                        if response and isinstance(response, dict) and "errors" not in response:
+                            trades_made = True
+                            self.signal_engine.record_exit(
+                                symbol, response.get("price") or current_sell_price, decision.bar_time
+                            )
+                            self.trailing_pm.pop(symbol, None)
+                            self._reset_dca_window_for_trade(symbol, sold=True)
+                            print(f"  Successfully sold {exit_qty} {symbol}.")
+                            time.sleep(5)
+                            holdings = self.get_holdings()
+                elif avg_cost_basis <= 0:
+                    self._warn_throttled(
+                        f"unmanaged:{symbol}",
+                        f"{symbol} is held but was not opened by this trader (no ledger cost "
+                        "basis); the strategy will not sell it.",
+                        every=3600.0,
+                    )
+                continue
+
             # --- Trailing profit margin (0.5% trail gap) ---
             # PM "start line" is the normal 5% / 2.5% line (depending on DCA levels hit).
             # Trailing activates once price is ABOVE the PM start line, then line follows peaks up
@@ -2185,16 +2286,26 @@ class CryptoAPITrading:
                 start_index += 1
                 continue
 
-            # Neural signals are used as a "permission to start" gate.
-            buy_count = self._read_long_dca_signal(base_symbol)
-            sell_count = self._read_short_dca_signal(base_symbol)
+            entry_decision = None
+            buy_count = sell_count = 0
+            if catalogue_mode:
+                # Not held -> the strategy's record of a position (if any) is stale.
+                self.signal_engine.forget(base_symbol)
+                entry_decision = self.signal_engine.decide(base_symbol, None)
+                if entry_decision is None or entry_decision.action is not Action.ENTER_LONG:
+                    start_index += 1
+                    continue
+            else:
+                # Neural signals are used as a "permission to start" gate.
+                buy_count = self._read_long_dca_signal(base_symbol)
+                sell_count = self._read_short_dca_signal(base_symbol)
 
-            start_level = max(1, min(int(TRADE_START_LEVEL or 3), 7))
+                start_level = max(1, min(int(TRADE_START_LEVEL or 3), 7))
 
-            # Default behavior: long must be >= start_level and short must be 0
-            if not (buy_count >= start_level and sell_count == 0):
-                start_index += 1
-                continue
+                # Default behavior: long must be >= start_level and short must be 0
+                if not (buy_count >= start_level and sell_count == 0):
+                    start_index += 1
+                    continue
 
             response = self.place_buy_order(
                 str(uuid.uuid4()),
@@ -2202,10 +2313,17 @@ class CryptoAPITrading:
                 "market",
                 full_symbol,
                 allocation_in_usd,
+                tag="ENTRY" if catalogue_mode else None,
             )
 
             if response and "errors" not in response:
                 trades_made = True
+                if entry_decision is not None:
+                    self.signal_engine.record_entry(
+                        base_symbol,
+                        response.get("price") or 0.0,
+                        entry_decision.bar_time,
+                    )
                 # Do NOT pre-trigger any DCA levels. Hardcoded DCA will mark levels only when it hits your loss thresholds.
                 self.dca_levels_triggered[base_symbol] = []
 
@@ -2215,10 +2333,16 @@ class CryptoAPITrading:
                 # Reset trailing PM state for this coin (fresh trade, fresh trailing logic)
                 self.trailing_pm.pop(base_symbol, None)
 
-                print(
-                    f"Starting new trade for {full_symbol} (AI start signal long={buy_count}, short={sell_count}). "
-                    f"Allocating ${allocation_in_usd:.2f}."
-                )
+                if entry_decision is not None:
+                    print(
+                        f"Starting new trade for {full_symbol} ({entry_decision.strategy_id}: "
+                        f"{entry_decision.reason}). Allocating ${allocation_in_usd:.2f}."
+                    )
+                else:
+                    print(
+                        f"Starting new trade for {full_symbol} (AI start signal long={buy_count}, short={sell_count}). "
+                        f"Allocating ${allocation_in_usd:.2f}."
+                    )
                 time.sleep(5)
                 holdings = self.get_holdings()
                 holding_full_symbols = [
@@ -2244,6 +2368,7 @@ class CryptoAPITrading:
             status = {
                 "timestamp": time.time(),
                 "trading_mode": self._target.key,
+                "signals": self._signals_status(),
                 "account": {
                     "total_account_value": total_account_value,
                     "buying_power": buying_power,

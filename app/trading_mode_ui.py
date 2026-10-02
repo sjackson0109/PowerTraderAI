@@ -56,12 +56,20 @@ class TradingModeIndicator(tk.Label):
         )
         self._settings = settings
         self._price_integrity: Optional[dict] = None
+        self._signals_note: str = ""
         self._render()
 
     def update_settings(self, settings: TradingSettings) -> None:
         self._settings = settings
         self._price_integrity = None  # belongs to the previous mode's trader
         self._render()
+
+    def update_signals_note(self, note: Optional[str]) -> None:
+        """e.g. "SIGNALS: LEGACY (UNTRAINED)" / "SIGNALS: STRAT-001 1h"."""
+        note = note or ""
+        if note != self._signals_note:
+            self._signals_note = note
+            self._render()
 
     def update_price_integrity(self, price_integrity: Optional[dict]) -> None:
         """Latest ``price_integrity`` block from trader_status.json (paper only)."""
@@ -80,6 +88,8 @@ class TradingModeIndicator(tk.Label):
         text = settings.label
         if not settings.is_live:
             text += price_note(self._price_integrity)
+        if self._signals_note:
+            text += f" · {self._signals_note}"
         self.configure(text=text, bg=bg, fg=fg)
 
 

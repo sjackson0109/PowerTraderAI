@@ -23,6 +23,31 @@ if APP_DIR not in sys.path:
 import trading_mode as tm  # noqa: E402
 
 
+def make_candles(closes, start="2026-01-01", tf_seconds=3600, opens=None, wick=0.001):
+    """Deterministic SYNTHETIC candles for logic tests (never used to judge performance).
+
+    open = previous close (or ``opens``), high/low = body +/- ``wick`` (relative).
+    """
+    import pandas as pd
+
+    closes = [float(c) for c in closes]
+    if opens is None:
+        opens = [closes[0]] + closes[:-1]
+    rows = []
+    for i, (o, c) in enumerate(zip(opens, closes)):
+        rows.append(
+            {
+                "open_time": pd.Timestamp(start, tz="UTC") + pd.Timedelta(seconds=tf_seconds * i),
+                "open": float(o),
+                "high": max(o, c) * (1 + wick),
+                "low": min(o, c) * (1 - wick),
+                "close": c,
+                "volume": 100.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 class _FakeResponse:
     def __init__(self, payload: dict, headers: Dict[str, str]):
         self._body = json.dumps(payload).encode("utf-8")
@@ -96,9 +121,18 @@ class PaperTraderCase(unittest.TestCase):
         os.chdir(self.tmp.name)  # the trader drops <SYM>_current_price.txt in cwd
         self.addCleanup(os.chdir, self.cwd)
 
-    def trader(self, settings: Optional[dict] = None):
+    def trader(self, settings: Optional[dict] = None, candle_provider=None):
+        """A trader whose signal engine never touches the network: by default it
+        has no candles (so the strategy sits on HOLD)."""
+        import pandas as pd
+        from signal_engine import SignalEngine
+
         settings = settings if settings is not None else {"trading": {"mode": "paper"}}
-        t = self.pt_trader.CryptoAPITrading(settings_source=settings)
+        engine = SignalEngine(
+            settings_source=settings,
+            candle_provider=candle_provider or (lambda *a, **k: pd.DataFrame()),
+        )
+        t = self.pt_trader.CryptoAPITrading(settings_source=settings, signal_engine=engine)
         t._order_poll_seconds = 0.0
         return t
 

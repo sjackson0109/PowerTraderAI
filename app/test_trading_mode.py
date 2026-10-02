@@ -431,7 +431,13 @@ class TraderGateTests(unittest.TestCase):
         self.addCleanup(os.chdir, self.cwd)
 
     def trader(self, settings):
-        t = self.pt_trader.CryptoAPITrading(settings_source=settings)
+        import pandas as pd
+        from signal_engine import SignalEngine
+
+        engine = SignalEngine(
+            settings_source=settings, candle_provider=lambda *a, **k: pd.DataFrame()
+        )
+        t = self.pt_trader.CryptoAPITrading(settings_source=settings, signal_engine=engine)
         t._order_poll_seconds = 0.0
         return t
 

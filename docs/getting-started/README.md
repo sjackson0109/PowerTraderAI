@@ -142,11 +142,13 @@ When you run PowerTraderAI+ for the first time, you'll be guided through:
 
 ### 2. Configuration Files
 
-PowerTraderAI+ creates several configuration files:
+PowerTraderAI+ keeps its files in your per-user folders, not in the program folder
+(see [Where your data lives](../../README.md#where-your-data-lives)):
 
-- `gui_settings.json` - GUI preferences and settings
-- `credentials/` - Encrypted API keys and authentication
-- `logs/` - Application logs and audit trails
+- Config folder: `gui_settings.json` (GUI preferences), `pt_config.json` (trading mode,
+  strategy, risk), `trading_config.json` (exchange selection, no keys)
+- Log folder: application logs and audit trails
+- API keys: the operating system's credential store, never a file
 
 ## Quick Start Guide
 

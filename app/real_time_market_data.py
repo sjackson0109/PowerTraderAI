@@ -833,7 +833,8 @@ class MarketDataAggregator:
 class MarketDataManager:
     """Main market data management interface"""
 
-    def __init__(self, db_path: str = "market_data.db"):
+    def __init__(self, db_path: Optional[str] = None):
+        # None: market_data.db in the cache folder (pt_paths)
         self.aggregator = MarketDataAggregator(db_path)
         self.active_subscriptions: Dict[str, Dict] = {}
         self.update_callbacks: List[Callable] = []

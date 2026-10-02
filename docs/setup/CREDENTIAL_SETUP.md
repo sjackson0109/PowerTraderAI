@@ -4,7 +4,7 @@
 
 PowerTraderAI+ now supports **dual credential modes** for different use cases:
 
-### 🖥️ **Desktop Use (Option 2): Encrypted Credentials**
+### 🖥️ **Desktop Use (Option 2): OS credential store**
 
 **Recommended for local development and personal trading**
 
@@ -19,8 +19,9 @@ PowerTraderAI+ now supports **dual credential modes** for different use cases:
 3. **The wizard will:**
    - Generate a public/private keypair
    - Guide you through Robinhood API setup
-   - Store encrypted credentials automatically
-   - Create secure files: `r_key.enc`, `r_secret.enc`, `.pt_salt`
+   - Store both values in the operating system's credential store (Windows Credential
+     Manager, macOS Keychain or the Linux Secret Service) as `robinhood:api_key` and
+     `robinhood:private_key`. No file is written.
 
 ### 🚀 **CI/CD Use (Option 3): Environment Variables**
 
@@ -45,14 +46,23 @@ PowerTraderAI+ now supports **dual credential modes** for different use cases:
    - Copy the API key (starts with `rh_crypto_`)
    - Save your private key in Base64 format
 
-2. **Or use the GUI wizard first:** Run the desktop setup, then copy values from generated files
+2. **Or use the GUI wizard first:** the wizard shows the public key; the private key is
+   only kept in the credential store, so keep your own copy if you need it for CI
 
 ## ⚙️ **How It Works**
 
-**Credential Loading Priority:**
-1. **Encrypted files** (desktop): `r_key.enc`, `r_secret.enc`
-2. **Environment variables** (CI/CD): `POWERTRADER_ROBINHOOD_API_KEY`, `POWERTRADER_ROBINHOOD_PRIVATE_KEY`
-3. **Plaintext files** (legacy): `r_key.txt`, `r_secret.txt`
+**Credential Loading Priority** (defined once, in `app/pt_secrets.py`):
+1. **Environment variables** (CI/CD): `POWERTRADER_ROBINHOOD_API_KEY`, `POWERTRADER_ROBINHOOD_PRIVATE_KEY`
+2. **OS credential store** (desktop): entries `robinhood:api_key`, `robinhood:private_key`
+   under the service `SJackson.PowerTraderAI`
+
+There is no plaintext fallback: if the system has no credential store, nothing is saved,
+PowerTrader names the environment variables to set, and keeps running in paper mode.
+
+**Upgrading:** older versions kept these keys in `app/r_key.enc`/`r_secret.enc` (encrypted
+with a machine-derived key) or `app/r_key.txt`/`r_secret.txt` (plain text). On first start
+the migration (`app/pt_migrate.py`) moves them into the credential store and lists them in
+`migration-report.md`; the old files stay until you press **Remove old files**.
 
 ## ✅ **Verification**
 
@@ -62,15 +72,15 @@ PowerTraderAI+ now supports **dual credential modes** for different use cases:
 
 ## 🔒 **Security Notes**
 
-- **Desktop:** Credentials are encrypted with machine-specific keys
+- **Desktop:** Credentials are protected by the operating system's credential store
 - **CI/CD:** Secrets are encrypted by GitHub and only available during workflow execution
-- **Never commit** `.txt`, `.enc` credential files to git
+- **Never commit** old `r_key*` / `r_secret*` files from earlier versions to git
 - **Keep private keys secure** - they provide full trading access
 
 ## 🆘 **Troubleshooting**
 
 **"Robinhood API credentials not found" error:**
-- Desktop: Run GUI wizard or check encrypted files exist
+- Desktop: Run the GUI wizard (Settings → Robinhood API) or check the migration report
 - CI/CD: Verify GitHub secrets are set correctly
 
 **Import errors in CI/CD:**

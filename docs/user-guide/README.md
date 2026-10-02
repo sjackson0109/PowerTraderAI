@@ -165,13 +165,14 @@ Dollar-Cost Averaging implementation:
 
 ### Configuration Files
 
-PowerTraderAI+ stores settings in:
+PowerTraderAI+ stores settings in the per-user config folder (`%APPDATA%\SJackson\PowerTraderAI\`
+on Windows; see [Where your data lives](../../README.md#where-your-data-lives)), never in the
+program folder:
 - `gui_settings.json`: User interface preferences
-- `trading_config.json`: Exchange selection and API credentials. It is created from
-  `trading_config.example.json` the first time you save in **Configure exchange APIs**
-  (or copy the example yourself). It holds your API keys in plain text and is git-ignored:
-  never commit or share it.
-- `ai_config.json`: AI model settings
+- `pt_config.json`: Trading mode, strategy and risk settings
+- `trading_config.json`: Exchange selection (enabled exchanges, region, primary exchange). It is
+  copied from the shipped `trading_config.example.json` on first start. It holds **no** API keys:
+  keys entered in **Configure exchange APIs** go to the operating system's credential store.
 
 ## Monitoring Performance
 

@@ -250,3 +250,98 @@ The run wrote nothing new into the worktree's `app/` or root (checked by modific
 
 Suite (this commit's files in the scratch worktree): Phase 3 results + `test_pt_migrate` 12 passed. Same
 11 known failures.
+
+## Phase 5 — Docs and visibility
+
+* README: new section **Where your data lives** with the section-2 table, what goes where, the
+  credential env vars, `POWERTRADER_HOME`, and the upgrade/migration behaviour.
+* Settings window: a **Paths** section shows the resolved config, data and log folders (read-only
+  fields), each with an **Open folder** button.
+* Docs that sent users to files under `app/` or described plaintext/file key storage were updated:
+  `docs/exchanges/coinbase-setup.md`, `docs/setup/CREDENTIAL_SETUP.md`,
+  `docs/reference/QUICK_REFERENCE.md`, `docs/reference/API_REFERENCE.md`,
+  `docs/user-guide/README.md`, `docs/user-guide/DESKTOP_INSTALLATION_GUIDE.md`,
+  `docs/README_DESKTOP.md`, `docs/getting-started/README.md`, `docs/getting-started/installation.md`,
+  `docs/guides/GUI_USER_GUIDE.md`, `docs/technical/ARCHITECTURE.md`.
+* `.gitignore`: added the legacy runtime paths from inventory section 11 (`app/gui_settings.json`,
+  `app/exchange_config.json`, `app/r_key*`, `app/r_secret*`, `app/.pt_salt`, `app/.pt_cred_meta*`,
+  `trainer_status.json`, `killer.txt`, `emergency_snapshot_*.json`, `*_current_price.txt`,
+  `cache/`, `model_evaluations/`, `test_results/`, `app/migrations/`, `app/backup/`, `app/temp/`,
+  `app/data/`, `data/*_training_results.json`, report files). `app/trading_config.json` kept (an
+  existing test checks it).
+* `app/trading_config.example.json` (the only `*.example.json`) no longer has `api_key`/`api_secret`/
+  `passphrase` at all, and carries a `_note` pointing to **Configure exchange APIs** and the env vars.
+* Config files written by the YAML config manager, the live monitor and production deployment are now
+  `0600` on POSIX too (the app's own config writers already were).
+* Tests: `test_docs_and_visibility.py` (5).
+
+### End-to-end check of the hub (acceptance 2 and 9)
+
+The hub (`app/pt_hub.py`) was started from a clean checkout of this branch in the scratch worktree
+(`git clean -fdx` first, cwd = install root like `start_powertrader.bat`) with `POWERTRADER_HOME` set
+to a folder outside the checkout and `PYTHON_KEYRING_BACKEND` = the fail backend (no credential store),
+left running 60 s, then stopped. The window stayed up and every file it created landed under
+`POWERTRADER_HOME` (`config/trading_config.json` from the template, `data/*.db`,
+`cache/market_data.db`); no `pt_config.json` was written, so the mode stayed the paper default.
+
+* **First run found a leak:** `market_data.db` appeared in the install root. `MarketDataManager`
+  (the hub's market data tab) still passed the bare name `"market_data.db"` to the aggregator; Phase 3
+  had only changed the aggregator's default. Fixed here (default `None` -> cache folder), added to
+  `test_program_dir_read_only`, and `test_no_legacy_paths` gained a second static rule: no relative
+  `*.db`/`*.sqlite` literal outside a `pt_paths` call (checked to flag the old defaults in four
+  modules plus this one).
+* **Second run: 0 files changed inside the checkout.**
+* Not done with `POWERTRADER_HOME` unset: that would create files in the real `%APPDATA%` /
+  `%LOCALAPPDATA%`, which the run protocol forbids. The unset case differs only in how the four base
+  folders resolve, which `test_pt_paths` checks (Windows layout matches the spec, string comparison).
+* The hub makes the same public market-data requests it always has while running; no order was placed.
+
+### Acceptance criteria
+
+| # | Criterion | Evidence |
+|---|---|---|
+| 1 | Inventory covers every runtime read and write | `docs/dev/PATHS-INVENTORY.md` |
+| 2 | Clean checkout: hub writes nothing in the program folder | hub run above (0 changes); `test_program_dir_read_only`; `test_no_legacy_paths` |
+| 3 | Windows: config in `%APPDATA%\SJackson\PowerTraderAI\`, data in `%LOCALAPPDATA%\SJackson\PowerTraderAI\` | `test_pt_paths::test_windows_layout_matches_the_spec` |
+| 4 | No credential written to any file | `pt_secrets` keyring only; config readers/writers strip credential keys; `test_credentials_single_source`, `test_config_no_secrets`, `test_pt_secrets` no-backend tests. (The old `SecureCredentialManager` file vault class remains for its own tests and for the migration to read old vaults; no production code writes with it.) |
+| 5 | Setup windows and live gate read from the same place | `test_gui_saved_coinbase_key_is_what_the_live_gate_builds_with` |
+| 6 | Two sources no longer drop the exchange; precedence applied and logged | `test_env_and_keyring_both_set_no_longer_drop_the_exchange`, `test_explicit_credentials_and_stored_ones_do_not_collide`, `test_environment_wins_over_keyring_and_the_source_is_logged` |
+| 7 | Legacy files migrate on first start, nothing deleted without confirmation, report lists every move | `pt_hub` start-up hook; `test_pt_migrate` |
+| 8 | `pt_migrate.py --from <path>` | `test_import_a_backup_config_from_anywhere` |
+| 9 | No keyring: nothing stored in plaintext, hub starts in paper mode | `test_no_backend_refuses_and_writes_no_file`, `test_without_a_keyring_nothing_is_stored_and_trading_stays_paper`, migration no-keyring test, hub run above |
+| 10 | Static legacy-path test passes | `test_no_legacy_paths` |
+| 11 | Suite at baseline or better; no assertion weakened, skipped or deleted | suite below; the only edit to an existing test is the data source of one `test_demo_paper_trading` test |
+| 12 | Paper/live gate behaviour and tests unchanged | gate test files untouched and green; `trading_mode.py` changed only `default_settings_path()` (the credential source behind `ExchangeFactory` is now `pt_secrets`, as phase 2 requires) |
+
+### For the owner
+
+* **Out of scope, still owed under #108** (comment to post when the PR opens): master password or
+  encrypted start-up gate (closed PR #130); key rotation UI and expiry reminders; an actual installer
+  (MSI, pkg, deb) -- this branch only makes one possible; encrypting config files at rest beyond OS file
+  permissions.
+* On this machine `app/pt_config.json`, `app/gui_settings.json` and other legacy runtime files still
+  exist (never opened). The next hub start will copy them to the new folders and show the migration
+  dialog; nothing is deleted until **Remove old files** is confirmed.
+* Still tracked by git although they are runtime output: `<repo>/<SYM>_current_price.txt` (5 files),
+  `app/*_training_results.json` and `app/<SYM>/*_training_results.json`, and the per-coin trainer copies
+  `app/<SYM>/pt_trainer*.py` (the hub no longer runs or copies them). Untracking/removing them was left
+  for you to decide.
+* `config/*.yaml` (your commit `25bf2b8`) and `app/config/*.json|yaml` are tracked; their credential
+  fields are empty, and the app no longer reads or writes those copies (the YAML manager now uses
+  `<config>/yaml/`).
+* The YAML config tests skip in the suite venv (no PyYAML); they pass with PyYAML installed.
+
+### Final suite (this commit's files, clean scratch worktree)
+
+Phase 4 results + `test_docs_and_visibility` 5 passed + `test_no_legacy_paths` 4 passed (was 2).
+Totals: **910 passed, 11 failed, 5 skipped** (baseline: 822 passed, 11 failed, 3 skipped). The 11
+failures are exactly the baseline set (`test_integration` x2, `test_suite` x8,
+`test_expired_proposal_cannot_execute`). Skips: the two pre-existing ones (`test_paper_trading_integration`,
+`test_coinbase_auth`), the POSIX-only permission test, and the two YAML tests (no PyYAML here); the
+baseline's skipped Tk test in `test_trading_mode` passed. No existing test was skipped, deleted or had an
+assertion changed.
+
+The full suite was run on a checkout cleaned with `git clean -fdx`; afterwards the checkout contained no
+new file at all (at baseline the suite left `app/hub_data/`, `app/*.db`, `<repo>/*.db`, `data/`, `logs/`
+behind). The developer's real `app/pt_config.json` and `app/gui_settings.json` have the same SHA-256 prefixes
+as before the work started.

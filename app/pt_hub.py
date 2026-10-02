@@ -2130,6 +2130,28 @@ class PowerTraderHub(tk.Tk):
         except Exception as exc:
             print(f"Warning: could not show the migration report: {exc}")
 
+    @staticmethod
+    def _user_folder_rows() -> List[Tuple[str, str]]:
+        """(label, folder) for the Settings window's Paths section."""
+        return [
+            ("Config folder:", pt_paths.config_dir()),
+            ("Data folder:", pt_paths.data_dir()),
+            ("Log folder:", pt_paths.log_dir()),
+        ]
+
+    def _open_user_folder(self, folder: str) -> None:
+        """Open ``folder`` in the system file manager."""
+        try:
+            pt_paths.make_private_dir(folder)
+            if os.name == "nt":
+                os.startfile(folder)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except Exception as e:
+            messagebox.showerror("Couldn't open folder", f"Tried to open:\n{folder}\n\nError:\n{e}")
+
     # ---- forced dark mode ----
 
     def _apply_forced_dark_mode(self) -> None:
@@ -8291,6 +8313,32 @@ Platform: {sys.platform}
         r += 1
 
         _refresh_api_status()
+
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        )
+        r += 1
+
+        # --- Paths (FDS-108a): where settings, data and logs live ---
+        ttk.Label(frm, text="Paths (read-only program folder is not used for your files):").grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(0, 4)
+        )
+        r += 1
+        for label, folder in self._user_folder_rows():
+            ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", padx=(0, 10), pady=3)
+            path_row = ttk.Frame(frm)
+            path_row.grid(row=r, column=1, columnspan=2, sticky="ew", pady=3)
+            path_row.columnconfigure(0, weight=1)
+            path_entry = ttk.Entry(path_row)
+            path_entry.insert(0, folder)
+            path_entry.configure(state="readonly")
+            path_entry.grid(row=0, column=0, sticky="ew")
+            ttk.Button(
+                path_row,
+                text="Open folder",
+                command=lambda f=folder: self._open_user_folder(f),
+            ).grid(row=0, column=1, sticky="e", padx=(10, 0))
+            r += 1
 
         ttk.Separator(frm, orient="horizontal").grid(
             row=r, column=0, columnspan=3, sticky="ew", pady=10

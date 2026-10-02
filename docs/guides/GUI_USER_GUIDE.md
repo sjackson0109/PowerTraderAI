@@ -260,9 +260,12 @@ Modify trading parameters per cryptocurrency:
 ## 📱 Integration & Extensions
 
 ### External Monitoring
-Connect external tools to PowerTrader data:
+Connect external tools to PowerTrader data. The files are in `hub_data/<mode>/` inside the
+data folder (`%LOCALAPPDATA%\SJackson\PowerTraderAI\` on Windows, see
+[Where your data lives](../../README.md#where-your-data-lives)); `<mode>` is `paper`,
+`testnet`, or empty for live:
 ```
-hub_data/
+hub_data/paper/
 ├── trader_status.json      # Current trading status
 ├── trade_history.jsonl     # Complete trade log
 ├── account_value_history.jsonl  # Portfolio performance
@@ -273,14 +276,21 @@ hub_data/
 Programmatic access to trading data:
 ```python
 import json
+import os
+import sys
+
+sys.path.insert(0, "app")
+import pt_paths  # resolves the data folder for this machine
+
+hub = os.path.join(pt_paths.hub_dir(), "paper")
 
 # Read current status
-with open('hub_data/trader_status.json') as f:
+with open(os.path.join(hub, 'trader_status.json')) as f:
     status = json.load(f)
     print(f"Active positions: {len(status.get('positions', []))}")
 
 # Monitor account value
-with open('hub_data/account_value_history.jsonl') as f:
+with open(os.path.join(hub, 'account_value_history.jsonl')) as f:
     for line in f:
         data = json.loads(line)
         print(f"{data['timestamp']}: ${data['total_value']}")

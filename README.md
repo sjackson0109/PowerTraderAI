@@ -118,6 +118,46 @@ start_powertrader.bat
 python app/pt_hub.py
 ```
 
+## Where your data lives
+
+The program folder (this repository, or wherever PowerTrader is installed) is **read-only** while
+PowerTrader runs: it holds code and shipped defaults only. Your settings, data and logs live in the
+standard per-user folders for your operating system, and your API keys live in the operating system's
+credential store, never in a file.
+
+| Kind | Windows | macOS | Linux |
+|---|---|---|---|
+| Program | install or repo folder | install or repo folder | install or repo folder |
+| Config | `%APPDATA%\SJackson\PowerTraderAI\` | `~/Library/Application Support/PowerTraderAI/` | `~/.config/PowerTraderAI/` |
+| Data | `%LOCALAPPDATA%\SJackson\PowerTraderAI\` | `~/Library/Application Support/PowerTraderAI/` | `~/.local/share/PowerTraderAI/` |
+| Logs | `%LOCALAPPDATA%\SJackson\PowerTraderAI\Logs\` | `~/Library/Logs/PowerTraderAI/` | `~/.local/state/PowerTraderAI/log/` |
+| Cache | `%LOCALAPPDATA%\SJackson\PowerTraderAI\Cache\` | `~/Library/Caches/PowerTraderAI/` | `~/.cache/PowerTraderAI/` |
+| Secrets | Windows Credential Manager | Keychain | Secret Service (GNOME Keyring, KWallet) |
+
+* **Config**: `pt_config.json` (trading mode, strategy, risk), `gui_settings.json` (hub settings),
+  `trading_config.json` / `exchange_config.json` (exchange selection, no keys), `migration-report.md`.
+* **Data**: `hub_data/` (trader status, trade history, paper account, `models/` neural files) and the
+  SQLite databases.
+* **Logs**: application, audit and security logs. **Cache**: downloaded candles and market data (safe to
+  delete).
+* **Secrets**: API keys, API secrets, private keys and passphrases, entered in the exchange setup window
+  (or the Robinhood wizard). For headless or CI use, set them as environment variables instead
+  (`POWERTRADER_<EXCHANGE>_API_KEY`, `POWERTRADER_<EXCHANGE>_API_SECRET`,
+  `POWERTRADER_<EXCHANGE>_PASSPHRASE`; Robinhood: `POWERTRADER_ROBINHOOD_API_KEY`,
+  `POWERTRADER_ROBINHOOD_PRIVATE_KEY`). Environment variables take precedence over the keyring. The full
+  table is at the top of [`app/pt_secrets.py`](app/pt_secrets.py). If the system has no credential store,
+  PowerTrader stores nothing, tells you which variables to set, and stays in paper mode.
+* **Settings → Paths** in the hub shows the folders in use, each with an **Open folder** button.
+* Set `POWERTRADER_HOME` to keep everything (`config/`, `data/`, `logs/`, `cache/`) under one folder, for
+  development or a portable install.
+
+**Upgrading from an older version:** on first start PowerTrader copies settings, data and keys it finds
+in the program folder (`app/pt_config.json`, `app/trading_config.json`, `app/hub_data/`, the Robinhood key
+files, ...) to the new locations. It never overwrites anything already there, writes a
+`migration-report.md` to the config folder, and changes or deletes nothing in the old location until you
+press **Remove old files** and confirm. To import a config file from somewhere else (for example a
+backup): `python app/pt_migrate.py --from <path>`.
+
 ## 📁 Project Structure
 
 ```

@@ -90,6 +90,64 @@ def test_no_module_builds_a_legacy_user_path():
     )
 
 
+def pt_paths_call_args(tree):
+    """String constants passed straight to a ``pt_paths.<fn>(...)`` call."""
+    allowed = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "pt_paths"
+        ):
+            allowed.update(id(a) for a in node.args if isinstance(a, ast.Constant))
+    return allowed
+
+
+def relative_database_paths(path):
+    """Bare or relative ``*.db`` / ``*.sqlite`` names (they resolve against the
+    working directory, which may be the program folder)."""
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        tree = ast.parse(f.read(), filename=path)
+    skip = docstring_nodes(tree) | pt_paths_call_args(tree)
+    found = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)) or id(node) in skip:
+            continue
+        value = node.value
+        if any(ch.isspace() for ch in value) or os.path.isabs(value):
+            continue
+        if re.fullmatch(r"(sqlite:///)?[\w./\\-]+\.(db|sqlite3?)", value):
+            found.append((node.lineno, repr(value)))
+    return found
+
+
+def test_no_module_uses_a_relative_database_path():
+    problems = {}
+    for path in production_files():
+        hits = relative_database_paths(path)
+        if hits:
+            problems[os.path.relpath(path, APP_DIR)] = hits
+    assert not problems, "relative database paths (use pt_paths):\n" + "\n".join(
+        f"  {f}: " + "; ".join(f"line {ln} {txt}" for ln, txt in hits)
+        for f, hits in sorted(problems.items())
+    )
+
+
+def test_the_database_checker_catches_the_old_patterns(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "import pt_paths\n"
+        "def f(db_path='market_data.db'): pass\n"
+        "B = 'data/holdings.db'\n"
+        "C = pt_paths.data_file('holdings.db')\n"
+        "D = 'sqlite:///order_management.db'\n"
+        "E = 'see order_management.db for details'\n",
+        encoding="utf-8",
+    )
+    assert sorted(ln for ln, _ in relative_database_paths(str(sample))) == [2, 3, 5]
+
+
 def test_the_checker_catches_the_old_patterns(tmp_path):
     sample = tmp_path / "sample.py"
     sample.write_text(

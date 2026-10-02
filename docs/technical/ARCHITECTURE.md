@@ -111,7 +111,12 @@ async def fetch_market_data():
 - **Auto-Recovery**: Invalid settings automatically corrected
 - **Nested Configuration**: Dot notation for structured settings access
 - **Change Notifications**: Callback system for configuration updates
-- **Trading Mode**: `trading.mode` (`paper`|`live`, default `paper`), `trading.active_broker` and `trading.<broker>_testnet` persist in `pt_config.json`
+- **Trading Mode**: `trading.mode` (`paper`|`live`, default `paper`), `trading.active_broker` and `trading.<broker>_testnet` persist in `pt_config.json` (in the user config folder)
+
+#### User Folders and Credentials (`pt_paths.py`, `pt_secrets.py`, `pt_migrate.py`)
+- **`pt_paths`** is the only module that knows where files live: config, data, logs and cache resolve to the OS per-user folders through `platformdirs` (`SJackson` / `PowerTraderAI`), or under `POWERTRADER_HOME`. The program folder is read-only at runtime; shipped `*.example.json` templates are copied into the config folder on first run only.
+- **`pt_secrets`** is the only module that reads or writes credentials: OS keyring (service `SJackson.PowerTraderAI`, entries `<exchange>:<field>`), environment variables first, no plaintext fallback. The setup windows, `MultiExchangeManager` and the live gate (`ExchangeFactory`) all read through it. Config files never hold a credential: one found in a loaded file is ignored and never written back.
+- **`pt_migrate`** moves files left in the program folder by older versions at hub start-up (copies only, never overwrites, report in `migration-report.md`, old files removed only after confirmation).
 
 #### Trading-Mode Gate (`trading_mode.py`)
 Every order passes through `resolve_order_target(settings)` before it can reach an exchange:
@@ -139,7 +144,7 @@ Those signals are noise from an untrained mock, so they are **not** a basis for 
 
 | Setting | Behaviour |
 |---|---|
-| `strategy.engine = catalogue` | `SignalEngine` fetches the latest *closed* candles (Binance public klines, cached under `hub_data/candles/`), runs the active strategy plus overlays through `StrategyRunner`, and the trader enters on `ENTER_LONG` and exits on `EXIT_LONG`. Legacy DCA buys and trailing-PM sells are **off** in this mode. |
+| `strategy.engine = catalogue` | `SignalEngine` fetches the latest *closed* candles (Binance public klines, cached under `<cache folder>/candles/`), runs the active strategy plus overlays through `StrategyRunner`, and the trader enters on `ENTER_LONG` and exits on `EXIT_LONG`. Legacy DCA buys and trailing-PM sells are **off** in this mode. |
 | `strategy.engine = legacy_neural` | The old neural-signal logic, unchanged. The hub strip shows `SIGNALS: LEGACY (UNTRAINED)`. |
 | anything else, or an unknown `strategy.active_id` | **No orders** are placed and an ERROR is logged (fail closed). |
 

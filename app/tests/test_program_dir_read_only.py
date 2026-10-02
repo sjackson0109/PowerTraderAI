@@ -92,11 +92,12 @@ def test_databases_and_candle_cache(install_snapshot, isolated_user_dirs):
     assert candles.cache_dir_default().startswith(pt_paths.cache_dir())
     from long_term_holdings import HoldingsDatabase
     from portfolio_optimizer import PortfolioOptimizer
-    from real_time_market_data import MarketDataAggregator
+    from real_time_market_data import MarketDataAggregator, MarketDataManager
 
     HoldingsDatabase()
     PortfolioOptimizer()
     MarketDataAggregator()
+    MarketDataManager()  # the hub's market data tab (found leaking by the hub smoke run)
     try:
         from order_management_db import OrderManagementDB
     except ImportError:  # SQLAlchemy not installed

@@ -1,48 +1,34 @@
 {
+  "_note": "Exchange selection only. API keys never go in this file: enter them in Settings > Configure exchange APIs (stored in the OS credential store), or set POWERTRADER_<EXCHANGE>_API_KEY / _API_SECRET environment variables. PowerTrader copies this template to your config folder on first start.",
   "auto_best_price": false,
   "exchanges": [
     {
-      "api_key": "",
-      "api_secret": "",
       "enabled": true,
       "exchange_type": "binance",
-      "passphrase": "",
       "region_preference": 1,
       "sandbox": false
     },
     {
-      "api_key": "",
-      "api_secret": "",
       "enabled": false,
       "exchange_type": "kraken",
-      "passphrase": "",
       "region_preference": 2,
       "sandbox": false
     },
     {
-      "api_key": "",
-      "api_secret": "",
       "enabled": false,
       "exchange_type": "kucoin",
-      "passphrase": "",
       "region_preference": 3,
       "sandbox": false
     },
     {
-      "api_key": "",
-      "api_secret": "",
       "enabled": false,
       "exchange_type": "coinbase",
-      "passphrase": "",
       "region_preference": 4,
       "sandbox": false
     },
     {
-      "api_key": "",
-      "api_secret": "",
       "enabled": false,
       "exchange_type": "robinhood",
-      "passphrase": "",
       "region_preference": 5,
       "sandbox": false
     }

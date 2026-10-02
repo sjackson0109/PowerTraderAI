@@ -89,6 +89,7 @@ class ProductionConfig:
 
         with open(self.config_file, "w") as f:
             self.config.write(f)
+        pt_paths.secure_file(str(self.config_file))
 
         print(f"Created default production configuration: {self.config_file}")
 
@@ -204,6 +205,7 @@ class HealthMonitor:
             # Save default thresholds
             with open(thresholds_file, "w") as f:
                 json.dump(default_thresholds, f, indent=2)
+            pt_paths.secure_file(str(thresholds_file))
 
     def check_system_health(self):
         """Check system health and return status"""

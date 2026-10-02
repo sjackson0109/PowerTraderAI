@@ -251,6 +251,13 @@ else:
             pass
 
 
+def _secure(path) -> None:
+    """Config files are 0600 on macOS/Linux (see pt_paths)."""
+    import pt_paths
+
+    pt_paths.secure_file(str(path))
+
+
 class ConfigurationManager:
     """Advanced configuration management with validation and hot-reloading."""
 
@@ -397,6 +404,7 @@ class ConfigurationManager:
 
             with open(file_path, "w") as f:
                 yaml.dump(config_dict, f, default_flow_style=False, indent=2)
+            _secure(file_path)
 
             self.logger.info(f"Created default config file: {file_path}")
 
@@ -532,6 +540,7 @@ class ConfigurationManager:
 
             with open(file_path, "w") as f:
                 yaml.dump(config_dict, f, default_flow_style=False, indent=2)
+            _secure(file_path)
 
             self.logger.debug(f"Saved config to {file_path}")
 

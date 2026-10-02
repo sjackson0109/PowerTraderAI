@@ -138,26 +138,19 @@ print(f"Executed: {result.order_id}")
 
 ## 🔐 Credential Setup
 
-### File-Based (Desktop)
-Create `credentials/exchange_config.json`:
-```json
-{
-  "kraken": {
-    "api_key": "your_api_key",
-    "api_secret": "your_api_secret"
-  },
-  "coinbase": {
-    "api_key": "your_key",
-    "api_secret": "your_secret",
-    "passphrase": "your_passphrase"
-  }
-}
-```
+### Desktop: the setup window (OS credential store)
+Open **Settings → Configure exchange APIs**, pick the exchange, paste the key and secret,
+**Test Connection**, then **Save Configuration**. Keys go to the operating system's
+credential store (Windows Credential Manager / macOS Keychain / Secret Service) through
+`app/pt_secrets.py`. They are never written to a file; there is no credentials file to
+create or edit. See [Where your data lives](../../README.md#where-your-data-lives).
 
-### Environment Variables (CI/CD)
+### Environment Variables (CI/CD, headless)
+Environment variables take precedence over the keyring. Names: `POWERTRADER_<EXCHANGE>_API_KEY`,
+`_API_SECRET`, `_PASSPHRASE` (full table in `app/pt_secrets.py`).
 ```bash
-export KRAKEN_API_KEY="your_key"
-export KRAKEN_API_SECRET="your_secret"
+export POWERTRADER_KRAKEN_API_KEY="your_key"
+export POWERTRADER_KRAKEN_API_SECRET="your_secret"
 # Coinbase CDP key: key name + EC private key (PEM); no passphrase
 export POWERTRADER_COINBASE_API_KEY="organizations/<org-id>/apiKeys/<key-id>"
 export POWERTRADER_COINBASE_API_SECRET="$(cat coinbase_private_key.pem)"

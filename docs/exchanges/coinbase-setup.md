@@ -91,9 +91,11 @@ two values. Source: [CDP API key authentication](https://docs.cdp.coinbase.com/c
    lines; pasting it on one line or with `\n` escapes also works).
 5. Press **Test Connection**, then **Save Configuration**.
 
-Saved credentials are written to `app/trading_config.json` (`api_key` = key name,
-`api_secret` = private key) as **plain text**. That file is tracked by git: never
-commit it with a key in it.
+Saved credentials go to your operating system's credential store (Windows Credential
+Manager, macOS Keychain or the Linux Secret Service) as `coinbase:key_name` and
+`coinbase:private_key`. Nothing is written to a file; `trading_config.json` in the
+config folder only records that Coinbase is enabled. See
+[Where your data lives](../../README.md#where-your-data-lives).
 
 ### Environment variables (alternative)
 ```bash

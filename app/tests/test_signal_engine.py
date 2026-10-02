@@ -11,7 +11,7 @@ from unittest import mock
 
 import numpy as np
 import pandas as pd
-from helpers import PaperTraderCase, make_candles
+from helpers import Feed, PaperTraderCase, make_candles
 
 import signal_engine as se
 import trading_mode as tm
@@ -23,7 +23,7 @@ from strategies.factory import build_runner
 from strategies.settings import ENGINES, read_strategy_settings
 
 HOUR = pd.Timedelta(hours=1)
-PAPER = {"trading": {"mode": "paper"}}
+PAPER = {"trading": {"mode": "paper"}, "strategy": {"active_id": "STRAT-000"}}  # engine/trader tests pin the simple baseline strategy
 
 
 def trend_series():
@@ -32,30 +32,6 @@ def trend_series():
     up = np.linspace(150, 240, 40)
     fall = np.linspace(240, 110, 70)
     return np.concatenate([down, up, fall])
-
-
-class Feed:
-    """A controllable clock plus a candle provider that only reveals closed bars."""
-
-    def __init__(self, frame):
-        self.frame = frame
-        self.now = 0.0
-        self.calls = 0
-        self.fail = None
-
-    def set_after_bar(self, k, seconds_after_close=10):
-        close = self.frame["open_time"].iloc[k] + HOUR
-        self.now = close.timestamp() + seconds_after_close
-
-    def clock(self):
-        return self.now
-
-    def provider(self, symbol, tf, n, now):
-        self.calls += 1
-        if self.fail:
-            raise self.fail
-        closed = self.frame[self.frame["open_time"] + HOUR <= now]
-        return closed.tail(n).reset_index(drop=True)
 
 
 def expected_actions(frame, active="STRAT-000"):
@@ -76,9 +52,9 @@ def expected_actions(frame, active="STRAT-000"):
 class SettingsReaderTests(unittest.TestCase):
     def test_defaults(self):
         s = read_strategy_settings({})
-        self.assertEqual((s.engine, s.active_id, s.symbols, s.timeframe), ("catalogue", "STRAT-000", ("BTCUSDT",), "1h"))
+        self.assertEqual((s.engine, s.active_id, s.symbols, s.timeframe), ("catalogue", "STRAT-001", ("BTCUSDT",), "1h"))
         self.assertIsNone(s.problem)
-        self.assertEqual(s.note, "SIGNALS: STRAT-000 1h")
+        self.assertEqual(s.note, "SIGNALS: STRAT-001 1h")
 
     def test_unknown_engine_is_a_problem_not_a_fallback(self):
         s = read_strategy_settings({"strategy": {"engine": "magic"}})
@@ -125,7 +101,7 @@ class SettingsManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             m = SettingsManager("pt_config.json", d)
             self.assertEqual(m.get("strategy.engine"), "catalogue")
-            self.assertEqual(m.get("strategy.active_id"), "STRAT-000")
+            self.assertEqual(m.get("strategy.active_id"), "STRAT-001")
             self.assertEqual(m.get("strategy.symbols"), ["BTCUSDT"])
             self.assertEqual(m.get("strategy.timeframe"), "1h")
             self.assertEqual(m.get("strategy.overlays"), [])
@@ -455,7 +431,7 @@ class HubNoteTests(unittest.TestCase):
         ind.update_signals_note(read_strategy_settings({"strategy": {"engine": "legacy_neural"}}).note)
         self.assertEqual(ind.cget("text"), "MODE: PAPER · SIGNALS: LEGACY (UNTRAINED)")
         ind.update_signals_note(read_strategy_settings({}).note)
-        self.assertEqual(ind.cget("text"), "MODE: PAPER · SIGNALS: STRAT-000 1h")
+        self.assertEqual(ind.cget("text"), "MODE: PAPER · SIGNALS: STRAT-001 1h")
         live = tm.read_trading_settings({"trading": {"mode": "live", "active_broker": "kraken"}})
         ind.update_settings(live)
         ind.update_signals_note("SIGNALS: LEGACY (UNTRAINED)")

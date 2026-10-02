@@ -94,7 +94,7 @@ DEFAULT_SETTINGS = {
     # or strategy id places no orders (the trader fails closed).
     "strategy": {
         "engine": "catalogue",
-        "active_id": "STRAT-000",
+        "active_id": "STRAT-001",
         "symbols": ["BTCUSDT"],
         "timeframe": "1h",
         "overlays": [],

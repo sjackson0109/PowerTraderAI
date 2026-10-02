@@ -20,6 +20,8 @@ APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
+import pandas as pd  # noqa: E402
+
 import trading_mode as tm  # noqa: E402
 
 
@@ -46,6 +48,33 @@ def make_candles(closes, start="2026-01-01", tf_seconds=3600, opens=None, wick=0
             }
         )
     return pd.DataFrame(rows)
+
+
+HOUR = pd.Timedelta(hours=1)
+
+
+class Feed:
+    """A controllable clock plus a candle provider that only reveals closed bars."""
+
+    def __init__(self, frame):
+        self.frame = frame
+        self.now = 0.0
+        self.calls = 0
+        self.fail = None
+
+    def set_after_bar(self, k, seconds_after_close=10):
+        close = self.frame["open_time"].iloc[k] + HOUR
+        self.now = close.timestamp() + seconds_after_close
+
+    def clock(self):
+        return self.now
+
+    def provider(self, symbol, tf, n, now):
+        self.calls += 1
+        if self.fail:
+            raise self.fail
+        closed = self.frame[self.frame["open_time"] + HOUR <= now]
+        return closed.tail(n).reset_index(drop=True)
 
 
 class _FakeResponse:

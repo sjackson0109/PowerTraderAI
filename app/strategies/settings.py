@@ -22,7 +22,7 @@ from trading_mode import lookup_setting, settings_mapping
 
 ENGINES = ("catalogue", "legacy_neural")
 DEFAULT_ENGINE = "catalogue"
-DEFAULT_ACTIVE_ID = "STRAT-000"
+DEFAULT_ACTIVE_ID = "STRAT-001"
 DEFAULT_SYMBOLS = ("BTCUSDT",)
 DEFAULT_TIMEFRAME = "1h"
 

@@ -187,6 +187,7 @@ def load_entries(path: str = CATALOGUE_PATH) -> List[dict]:
 
 # Import the modules that register strategy / overlay classes, then validate.
 from strategies import builtin as _builtin  # noqa: E402,F401
+from strategies import trend_crossover as _trend_crossover  # noqa: E402,F401
 
 CATALOGUE: Dict[str, dict] = build_catalogue(load_entries(), _REGISTRY)
 

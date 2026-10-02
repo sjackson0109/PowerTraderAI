@@ -15,5 +15,34 @@
       "slow_len": {"min": 5, "max": 400}
     },
     "version": "1.0.0"
-  }
-]
+  },
+  {
+    "strategy_id": "STRAT-001",
+    "strategy_name": "Trend Crossover (DEMA/TEMA)",
+    "family": "trend",
+    "class_type": "main",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1h",
+    "entry_logic_summary": "Fast DEMA/TEMA is above slow on the closed bar and has been for persistence_bars bars, the cross having happened within the last persistence_bars+1 bars; with the ADX regime filter, ADX >= adx_min.",
+    "exit_logic_summary": "Fast DEMA/TEMA is below slow on the closed bar (no persistence on exit), or a risk overlay exits.",
+    "dependencies_indicators": ["DEMA", "TEMA", "ADX"],
+    "default_params": {
+      "ma_type": "TEMA",
+      "fast_len": 12,
+      "slow_len": 48,
+      "persistence_bars": 2,
+      "regime_filter": "adx",
+      "adx_len": 14,
+      "adx_min": 20
+    },
+    "param_bounds": {
+      "ma_type": {"values": ["DEMA", "TEMA"]},
+      "fast_len": {"min": 5, "max": 50},
+      "slow_len": {"min": 20, "max": 200},
+      "persistence_bars": {"min": 0, "max": 5},
+      "regime_filter": {"values": ["none", "adx"]},
+      "adx_len": {"min": 7, "max": 30},
+      "adx_min": {"min": 10, "max": 40}
+    },
+    "version": "1.0.0"
+  }]

@@ -67,7 +67,7 @@ smoke test that hub start-up still works).
 - Process note: the first 087 commit was made before reading a failing test (a format change after the test was written); amended before anything else was built on it. Commits are now gated on the test result in the same command.
 
 ### FDS-121 — strategy runtime, catalogue (lite), honest backtesting — **done** (ended 2026-10-02 03:34 local)
-- Commit: see `git log` (`FDS-121: ...`)
+- Commit: `dae9b3e`
 - Tests (new, all in `app/tests/`): indicators 17, catalogue 18, candles 22, backtest engine 30, runner 13, signal engine + trader integration 37, CLI 13 = 150 new tests, all passing. Full suite vs baseline: identical pre-existing failures only (`test_integration` x2, `test_suite` x8, known `test_expired_proposal_cannot_execute`).
 - Acceptance: 1 indicators vs independent scalar references (1e-6) + hand values; 2 lookahead (mutating later bars never changes the decision, plus a backtest-level check); 3 fills at t+1 open with fees+slippage checked to 1e-9; 4 buy-and-hold on identical window/costs; 5 catalogue fails on missing field / orphan class / orphan entry; 6 scripted candles drive one ENTER and one EXIT through `pt_trader` into `PaperExchange`; 7 unknown id/engine -> no orders + ERROR; 8 CLI writes JSON + trades CSV (also run as `python -m app.backtest`); 9 random-price example labelled `DEMO ONLY - SYNTHETIC DATA`.
 - Design decisions:
@@ -79,3 +79,10 @@ smoke test that hub start-up still works).
 - Bugs found and fixed while building: SignalEngine retry rate-limit did not apply before the first successful fetch; warning throttle treated a clock near 0 as "just warned".
 - Out-of-scope observations: the trader's risk adapter limits any single order to 1% of the portfolio (`RiskManager.validate_trade`), so strategy sizing above that would be blocked; left as is.
 - Environment note: `test_phase1_phase2_integration.py` is excluded from the per-file suite runner because it raises `KeyboardInterrupt` in its own process group on Windows (pre-existing, not changed by this batch).
+
+### FDS-122 — STRAT-001 DEMA/TEMA crossover — **done** (ended 2026-10-02 03:51 local)
+- Commit: see below (`FDS-122: ...`)
+- Tests: new `app/tests/test_trend_crossover.py` 28 passed (+23 subtests). Full suite vs baseline: identical pre-existing failures only. `test_advanced_features` / `test_core` timed out once when the machine was busy with other work and passed when re-run alone (63 s / 8 s).
+- Acceptance: 1 ENTER fires exactly on bar `cross + persistence_bars` (checked for k = 0,1,2,3,5 and against an independent run-length restatement of the rule on a choppy market for TEMA and DEMA); 2 ADX below `adx_min` -> no ENTER (and the threshold is inclusive); 3 EXIT on the first bar fast < slow, no persistence; 4 `slow_len <= fast_len` raises `StrategyError` naming both; 5 HOLD/WARMUP before `3*slow_len + adx_len` bars; 6 backtest CLI on cached BTCUSDT 1h candles prints full KPIs (in/out-of-sample + buy-and-hold); 7 paper trader runs STRAT-001 on scripted candles (buy at the confirmed cross bar, sell at the death cross) with no runtime errors; 8 defaults not tuned (they are the spec's).
+- `strategy.active_id` default is now `STRAT-001` (settings manager and reader); the engine/trader tests pin `STRAT-000` explicitly.
+- Test-fixture lesson: TEMA is lag-free on a straight line, so a linear ramp gives degenerate fast/slow crosses. Fixtures use smooth waves.

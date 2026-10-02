@@ -38,14 +38,14 @@ group on Windows). Interpreter: Python 3.13 in a throw-away venv outside the rep
 | test_error_handler | 24 passed |
 | test_exchanges | 2 passed |
 | test_gui_exchange_integration | 3 passed |
-| test_hub_trainer | 1 passed |
+| test_hub_trainer | 1 passed (tests nothing: hard-coded `C:\Users\Administrator` paths and its own copy of main's copy-and-run logic; see `RUN-LOG-paths-2.md` item 2) |
 | test_integration | 8 passed, **2 failed** (`test_graceful_degradation`, `test_powertrader_hub_creation`) |
 | test_paper_mode | 15 passed |
 | test_paper_trading_integration | 8 passed, 1 skipped |
 | test_phase3_integration | 15 passed |
 | test_real_app | 1 passed |
 | test_security_logger | 30 passed |
-| test_subprocess_trainer | 1 passed |
+| test_subprocess_trainer | 1 passed (tests nothing: hard-coded `C:\Users\Administrator` paths, no assert; see `RUN-LOG-paths-2.md` item 2) |
 | test_suite | 16 passed, **8 failed** (`test_exchange_factory`, `test_database_initialization`, `test_holdings_database`, `test_holdings_manager`, `test_performance_metrics`, `test_portfolio_analytics_initialization`, `test_portfolio_snapshot`, `test_database_integration`) |
 | test_tabbed_interface | 1 passed |
 | test_trade_proposal_approval | 23 passed, **1 failed** (`test_expired_proposal_cannot_execute`) |

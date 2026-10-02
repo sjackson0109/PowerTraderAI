@@ -2031,7 +2031,9 @@ class PowerTraderHub(tk.Tk):
         # coin folders (neural outputs)
         self.coins = [c.upper().strip() for c in self.settings["coins"]]
 
-        # On startup (like on Settings-save), create missing alt folders and copy the trainer into them.
+        # On startup (like on Settings-save), create any missing alt coin neural
+        # folders. Nothing is copied into them: the trainer runs from the
+        # program folder with the coin folder as its working directory.
         self._ensure_alt_coin_folders_and_trainer_on_startup()
 
         # Rebuild folder map after potential folder creation
@@ -2059,9 +2061,8 @@ class PowerTraderHub(tk.Tk):
             ),
         )
 
-        self.proc_trainer_path = os.path.abspath(
-            os.path.join(self.project_dir, self.settings["script_neural_trainer"])
-        )
+        # Resolved again on every Settings save (see _refresh_trainer_path).
+        self._refresh_trainer_path()
 
         # live log queues
         self.runner_log_q: "queue.Queue[str]" = queue.Queue()
@@ -2596,7 +2597,8 @@ class PowerTraderHub(tk.Tk):
         Startup behavior (mirrors Settings-save behavior): create the per-coin
         neural folder for every alt coin that does not have one yet. The trainer
         is run from the program folder with the coin folder as its working
-        directory, so no code is copied into the data folders.
+        directory, so no code is copied into the data folders. (The name is
+        historical: older versions also copied the trainer into each folder.)
         """
         try:
             main_dir = pt_paths.neural_dir(self.settings.get("main_neural_dir"))
@@ -2606,6 +2608,18 @@ class PowerTraderHub(tk.Tk):
                     os.makedirs(os.path.join(main_dir, coin), exist_ok=True)
         except Exception:
             pass
+
+    def _refresh_trainer_path(self) -> str:
+        """
+        Set ``proc_trainer_path`` from the ``script_neural_trainer`` setting,
+        resolved against the (read-only) program folder. Called at start-up and
+        on every Settings save, so a changed trainer script is used by the next
+        training run without restarting the hub.
+        """
+        self.proc_trainer_path = os.path.abspath(
+            os.path.join(self.project_dir, self.settings["script_neural_trainer"])
+        )
+        return self.proc_trainer_path
 
     # ---- menu / layout ----
 
@@ -5603,6 +5617,7 @@ Platform: {sys.platform}
 
         # The trainer runs from the (read-only) program folder with the coin's
         # neural folder as its working directory, so its outputs land there.
+        # proc_trainer_path follows the Settings (see _refresh_trainer_path).
         trainer_path = self.proc_trainer_path
         print(f"DEBUG: Looking for trainer at: {trainer_path}")
 
@@ -8560,6 +8575,8 @@ Platform: {sys.platform}
                     trainer_script_var.get().strip()
                 )
                 self.settings["script_trader"] = trader_script_var.get().strip()
+                # The next training run uses the new trainer script (no restart).
+                self._refresh_trainer_path()
 
                 self.settings["ui_refresh_seconds"] = float(
                     ui_refresh_var.get().strip()

@@ -250,3 +250,8 @@ _brainstorming_tmp/
 # Runtime settings written by the settings manager (trading mode, broker, ...)
 app/pt_config.json
 app/pt_config.json.*
+
+# Local exchange configuration - holds API keys in plain text. Copy
+# app/trading_config.example.json to app/trading_config.json (the app does this
+# on first save). Never commit it.
+app/trading_config.json

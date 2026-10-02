@@ -167,7 +167,10 @@ Dollar-Cost Averaging implementation:
 
 PowerTraderAI+ stores settings in:
 - `gui_settings.json`: User interface preferences
-- `trading_config.json`: Trading parameters
+- `trading_config.json`: Exchange selection and API credentials. It is created from
+  `trading_config.example.json` the first time you save in **Configure exchange APIs**
+  (or copy the example yourself). It holds your API keys in plain text and is git-ignored:
+  never commit or share it.
 - `ai_config.json`: AI model settings
 
 ## Monitoring Performance

@@ -138,6 +138,16 @@ class LiveCatalogueTests(unittest.TestCase):
         with self.assertRaises(CatalogueError):
             strategies.create("STRAT-404")
 
+    def test_whole_number_parameters_reject_floats_but_float_parameters_accept_ints(self):
+        for bad in (10.5, 10.0):  # a float length would break the indicators downstream
+            with self.assertRaises(ParamError):
+                strategies.create("STRAT-000", fast_len=bad)
+        self.assertEqual(strategies.create("STRAT-001", adx_min=22.5).params["adx_min"], 22.5)
+        self.assertEqual(strategies.create("STRAT-001", adx_min=25).params["adx_min"], 25)
+        with self.assertRaises(ParamError):
+            strategies.create("STRAT-002", atr_len=10.5)
+        self.assertEqual(strategies.create("STRAT-002", mult=2).params["mult"], 2)
+
     def test_bool_is_not_a_number(self):
         with self.assertRaises(ParamError):
             strategies.create("STRAT-000", fast_len=True)

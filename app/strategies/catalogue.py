@@ -188,6 +188,7 @@ def load_entries(path: str = CATALOGUE_PATH) -> List[dict]:
 # Import the modules that register strategy / overlay classes, then validate.
 from strategies import builtin as _builtin  # noqa: E402,F401
 from strategies import trend_crossover as _trend_crossover  # noqa: E402,F401
+from strategies import supertrend as _supertrend  # noqa: E402,F401
 
 CATALOGUE: Dict[str, dict] = build_catalogue(load_entries(), _REGISTRY)
 
@@ -218,6 +219,15 @@ def resolve_params(strategy_id: str, overrides: Mapping[str, Any]) -> Dict[str, 
         params[name] = value
     for name, value in params.items():
         check_value(strategy_id, name, value, entry["param_bounds"][name])
+        default = entry["default_params"][name]
+        if (
+            isinstance(default, int)
+            and not isinstance(default, bool)
+            and not (isinstance(value, int) and not isinstance(value, bool))
+        ):
+            # lengths and bar counts must be whole numbers (a float would break the
+            # indicators downstream); float-valued parameters have a float default
+            raise ParamError(f"{strategy_id}.{name} must be a whole number, got {value!r}")
     return params
 
 

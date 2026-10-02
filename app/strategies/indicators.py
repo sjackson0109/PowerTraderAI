@@ -103,3 +103,67 @@ def adx(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.Se
         dx = 100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di)
     dx = dx.where((plus_di + minus_di) != 0, 0.0).where(~s_tr.isna())
     return _wilder(dx, n, seed="mean")
+
+
+def supertrend(df: pd.DataFrame, atr_len: int = 10, mult: float = 3.0) -> pd.DataFrame:
+    """
+    Supertrend. Returns a frame with ``line``, ``direction`` (+1 up / -1 down), the
+    two ``final_upper`` / ``final_lower`` bands and ``atr`` (Wilder); NaN until the
+    first valid ATR (bar ``atr_len - 1``).
+
+    ``hl2 = (high + low)/2``; ``basic_upper = hl2 + mult*ATR``;
+    ``basic_lower = hl2 - mult*ATR``. The bands carry forward with the trend:
+
+    * while the direction is **up** the final lower band only rises
+      (``max(basic_lower, previous final lower)``) and the line is that band;
+    * while the direction is **down** the final upper band only falls
+      (``min(basic_upper, previous final upper)``) and the line is that band;
+    * the direction flips to up when ``close > previous final upper`` and to down
+      when ``close < previous final lower``; on a flip the new line is the fresh
+      basic band of that bar.
+
+    The first valid bar starts up if ``close > hl2``, else down.
+    """
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+    atr_s = atr(high, low, close, atr_len)
+    a = atr_s.to_numpy(dtype=float)
+    hl2 = ((high + low) / 2.0).to_numpy(dtype=float)
+    c = close.to_numpy(dtype=float)
+    n = len(c)
+
+    upper = np.full(n, np.nan)
+    lower = np.full(n, np.nan)
+    direction = np.full(n, np.nan)
+    line = np.full(n, np.nan)
+
+    start = atr_len - 1
+    if n > start:
+        basic_upper = hl2 + mult * a
+        basic_lower = hl2 - mult * a
+        upper[start] = basic_upper[start]
+        lower[start] = basic_lower[start]
+        direction[start] = 1.0 if c[start] > hl2[start] else -1.0
+        line[start] = lower[start] if direction[start] > 0 else upper[start]
+        for t in range(start + 1, n):
+            if direction[t - 1] > 0:
+                lower[t] = max(basic_lower[t], lower[t - 1])
+                upper[t] = basic_upper[t]
+                direction[t] = -1.0 if c[t] < lower[t - 1] else 1.0
+            else:
+                upper[t] = min(basic_upper[t], upper[t - 1])
+                lower[t] = basic_lower[t]
+                direction[t] = 1.0 if c[t] > upper[t - 1] else -1.0
+            line[t] = lower[t] if direction[t] > 0 else upper[t]
+
+    return pd.DataFrame(
+        {
+            "line": line,
+            "direction": direction,
+            "final_upper": upper,
+            "final_lower": lower,
+            "atr": a,
+        },
+        index=df.index,
+    )

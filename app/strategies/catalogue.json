@@ -33,7 +33,7 @@
       "persistence_bars": 2,
       "regime_filter": "adx",
       "adx_len": 14,
-      "adx_min": 20
+      "adx_min": 20.0
     },
     "param_bounds": {
       "ma_type": {"values": ["DEMA", "TEMA"]},
@@ -43,6 +43,24 @@
       "regime_filter": {"values": ["none", "adx"]},
       "adx_len": {"min": 7, "max": 30},
       "adx_min": {"min": 10, "max": 40}
+    },
+    "version": "1.0.0"
+  },
+  {
+    "strategy_id": "STRAT-002",
+    "strategy_name": "Supertrend with ATR Trailing Exit",
+    "family": "trend",
+    "class_type": "main",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "4h",
+    "entry_logic_summary": "Supertrend direction flips from down to up and stays up for confirm_bars further closed bars.",
+    "exit_logic_summary": "Supertrend direction is down, i.e. the close is below the trailing Supertrend line (ATR trailing exit), or a risk overlay exits earlier.",
+    "dependencies_indicators": ["ATR", "SUPERTREND"],
+    "default_params": {"atr_len": 10, "mult": 3.0, "confirm_bars": 1},
+    "param_bounds": {
+      "atr_len": {"min": 5, "max": 30},
+      "mult": {"min": 1.0, "max": 5.0},
+      "confirm_bars": {"min": 0, "max": 3}
     },
     "version": "1.0.0"
   }]

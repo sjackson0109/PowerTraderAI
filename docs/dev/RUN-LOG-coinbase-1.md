@@ -190,3 +190,35 @@ flag that does not exist). So: not "the wrong auth", but no auth, plus instructi
   version created 13 roots and hit an intermittent `init.tcl` load failure in `tk.Tk()` on this machine.
 * Suite vs baseline: same 11 known failures, nothing new; new files 21 + 12 passed. `test_integration` 2 failed /
   8 passed, identical to baseline.
+
+## Task 4 — Paper gate with Coinbase (done)
+
+`app/tests/test_coinbase_paper_gate.py` (15 tests). Premise check: the tests load synthetic Coinbase credentials
+via `POWERTRADER_COINBASE_*` (the path `ExchangeFactory`, hence the live gate, reads) and a first test proves the
+factory *would* build a `CoinbaseExchange` from them. Every test then runs inside `recorded_http()`, which replaces
+`requests.sessions.Session.request` with a recorder (so `requests.get/post/delete` and any Session are all seen) and
+makes raw sockets fail; a final test proves that recorder flags an order POST, an order preview GET and an order
+DELETE, so the zero-HTTP assertions cannot pass vacuously.
+
+Paper mode with `active_broker = coinbase` and credentials loaded:
+* `resolve_order_target` returns the `PaperExchange` (broker `None`), never a `CoinbaseExchange`;
+  `ExchangeFactory.get_exchange` is not called.
+* Through the real trader path (`place_buy_order` / `place_sell_order`, and a full `manage_trades()` pass): zero HTTP
+  requests of any kind, `CoinbaseExchange.place_order` never invoked, fills land in the paper account.
+* Limit orders, order status, cancel, balance and market data on the paper target: zero HTTP.
+* Mode values that are not exactly `live` (None, "", "liv", "true", 1, True, [], {}, ...) stay paper.
+* Credentials loaded the other way (saved via the config store, connected by `MultiExchangeManager.initialize`): still zero HTTP.
+* The Test button is permitted in paper mode and is exactly one read-only GET; no paper order is created.
+
+Live mode:
+* Live with no broker is refused (`LiveTradingRefused`) for both `resolve_order_target` and trader start-up, with
+  credentials loaded: zero HTTP, factory untouched. Flipping to live-without-broker mid-run refuses orders.
+* `can_apply` / `apply_trading_mode`: live + coinbase needs both the broker and the explicit confirmation; each missing
+  piece is refused and the effective mode stays paper; with both, the mode becomes `live:coinbase`.
+* Observations (tested, not changed): (a) `coinbase` is not in `TESTNET_BROKERS`, so there is **no Coinbase testnet**:
+  live + coinbase is real money regardless of the `coinbase_testnet: true` flag in `pt_config.json`, which the gate ignores.
+  (b) A confirmed live + coinbase target is built, but `CoinbaseExchange.place_order`/`cancel_order` raise
+  `NotImplementedError` before any request is formed; through the trader the order returns `None` and no trade is recorded.
+  So today Coinbase cannot trade live, whatever the settings.
+
+Suite vs baseline: same 11 known failures, no new ones; new Coinbase files 21 + 27 + 12 + 15 passed.

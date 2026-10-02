@@ -107,3 +107,32 @@ or manager) and the GUI is calling the right object — the manager simply never
 6. Credential sources are inconsistent: GUI → `trading_config.json`; `ExchangeFactory.get_exchange` (used by the
    live gate in `trading_mode._build_live_exchange`) → env vars `POWERTRADER_<NAME>_API_KEY/SECRET` or
    `exchange_config.json`. A key saved through the GUI is therefore not what the live gate would load.
+
+## Task 2 — Test button (done)
+
+* `MultiExchangeManager.test_exchange_connection(exchange, api_key=None, api_secret=None, passphrase=None)`
+  now exists and returns a `ConnectionTestResult(exchange, status, message, details)` (`pt_exchange_abstraction.py`).
+  It never raises for a bad connection and never saves what it is given. Typed credentials win; with both
+  blank it uses saved credentials (config file, then `POWERTRADER_<EXCHANGE>_*`).
+* New `AbstractExchange.check_connection()` — default returns `UNSUPPORTED` ("not tested"), so exchanges
+  without a check can never show a false green. `CoinbaseExchange.check_connection()` is the only real
+  implementation: **one** `GET https://api.coinbase.com/api/v3/brokerage/key_permissions` (needs only the View
+  scope; returns `can_view/can_trade/can_transfer`), `allow_redirects=False`, 10 s timeout, no body/query.
+* Outcomes (distinct status + message): `OK` (reports view/trade/transfer, notes a view-only key, warns if the
+  key can transfer funds), `INVALID_CREDENTIALS` (malformed key, detected locally, **nothing sent**),
+  `AUTH_FAILED` (401), `PERMISSION_DENIED` (403, or 200 with `can_view: false`), `NETWORK_ERROR`
+  (DNS/TLS/timeout/refused), `ENDPOINT_ERROR` (404/429/5xx/3xx/non-JSON 200 — explicitly *not* an auth verdict),
+  `UNSUPPORTED`.
+* Because a signed call is needed to test anything, the ES256 JWT signer (`app/coinbase_auth.py`) lands in this
+  commit; Task 3 audits it against the docs and hardens the input side and the GUI text.
+* GUI (`exchange_config_gui.py`): the button tests what is typed in the form (blank form → saved credentials),
+  runs on a worker thread so the window does not freeze, and prints one block per outcome.
+  `test_all_exchanges` was also repaired (it called `.get` on a dataclass) and now uses the same method.
+* Tests: `app/tests/test_coinbase_connection.py` — 27 tests. HTTP is mocked at `requests.sessions.Session.request`
+  (the funnel under `requests.get/post/...`), with `socket.create_connection` and `socket.socket.connect`
+  patched to fail, so a stray call of any kind is both visible and unable to leave the machine. Keys are
+  generated per test. Asserts: exactly one GET to `key_permissions`, no non-GET and no order/preview URL,
+  every outcome, bad credentials send nothing, messages contain neither the token nor key material,
+  the manager neither saves typed credentials nor claims success for unsupported exchanges.
+* Suite vs baseline: no regressions. `test_integration` showed 1 failed + 1 skipped instead of 2 failed
+  (display-dependent, same flip noted in the batch-1 log); all other files identical; new file 27 passed.

@@ -8,7 +8,13 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Dict, List, Optional
 
-from pt_exchange_abstraction import ExchangeManager, ExchangeType
+from pt_exchange_abstraction import (
+    ConnectionStatus,
+    ConnectionTestResult,
+    ExchangeFactory,
+    ExchangeManager,
+    ExchangeType,
+)
 from pt_exchanges import *
 
 
@@ -299,6 +305,73 @@ class MultiExchangeManager:
             )
         else:
             return self.exchange_manager.place_order(symbol, side, amount, price)
+
+    def test_exchange_connection(
+        self,
+        exchange_name: str,
+        api_key: Optional[str] = None,
+        api_secret: Optional[str] = None,
+        passphrase: Optional[str] = None,
+    ) -> ConnectionTestResult:
+        """Check credentials with one read-only authenticated call.
+
+        ``api_key``/``api_secret``/``passphrase`` are used as given (e.g. what is
+        typed in the setup form) and are NOT saved. When both ``api_key`` and
+        ``api_secret`` are omitted the stored credentials (config file, then
+        ``POWERTRADER_<EXCHANGE>_*`` environment variables) are used. Never places,
+        previews or cancels an order, and never raises for a bad connection: the
+        outcome is in ``ConnectionTestResult.status``.
+        """
+        name = (exchange_name or "").strip().lower()
+        try:
+            exchange_type = ExchangeType(name)
+        except ValueError:
+            return ConnectionTestResult(
+                name,
+                ConnectionStatus.UNSUPPORTED,
+                f"'{exchange_name}' is not an exchange PowerTrader can connect to.",
+            )
+
+        exchange_class = ExchangeFactory.get_exchange_class(exchange_type)
+        if exchange_class is None:
+            return ConnectionTestResult(
+                name,
+                ConnectionStatus.UNSUPPORTED,
+                f"{name.title()} has no connector in this version of PowerTrader, so "
+                "its credentials cannot be tested.",
+            )
+
+        if api_key is None and api_secret is None:
+            creds = self._stored_credentials(name)
+        else:
+            creds = {"api_key": api_key or "", "api_secret": api_secret or ""}
+            if passphrase:
+                creds["passphrase"] = passphrase
+        if not creds or not creds.get("api_key") or not creds.get("api_secret"):
+            return ConnectionTestResult(
+                name,
+                ConnectionStatus.INVALID_CREDENTIALS,
+                f"No {name.title()} credentials were entered or saved.",
+            )
+
+        try:
+            exchange = exchange_class(**creds)
+            return exchange.check_connection()
+        except Exception as exc:  # a connector bug must not take the GUI down
+            return ConnectionTestResult(
+                name,
+                ConnectionStatus.ENDPOINT_ERROR,
+                f"The {name.title()} connection test failed unexpectedly "
+                f"({type(exc).__name__}).",
+            )
+
+    def _stored_credentials(self, exchange_name: str) -> Optional[Dict[str, str]]:
+        if self.config_manager.config is None:
+            self.config_manager.load_config()
+        exchange_config = self.config_manager.get_exchange_config(exchange_name)
+        if exchange_config is not None:
+            return self._get_exchange_credentials(exchange_config)
+        return self._get_exchange_credentials(ExchangeConfig(exchange_name, False, 0))
 
     def get_available_exchanges(self) -> List[str]:
         """Get list of connected exchanges"""

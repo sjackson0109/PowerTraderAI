@@ -11,9 +11,12 @@ import time
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import Dict, List, Optional
 
+import coinbase_auth
 import requests
 from pt_exchange_abstraction import (
     AbstractExchange,
+    ConnectionStatus,
+    ConnectionTestResult,
     ExchangeType,
     MarketData,
     OrderResult,
@@ -951,14 +954,142 @@ class BinanceExchange(AbstractExchange):
 
 
 class CoinbaseExchange(AbstractExchange):
-    """Coinbase Advanced Trade API implementation"""
+    """Coinbase connector.
+
+    ``api_key`` is the CDP *key name* (``organizations/.../apiKeys/...``) and
+    ``api_secret`` is the EC *private key* (PEM). Authenticated requests go to the
+    Advanced Trade API at ``AUTH_BASE_URL`` with a per-request ES256 JWT (see
+    ``coinbase_auth``). Today the only authenticated call implemented is the
+    read-only ``check_connection``; order placement, balances and order status
+    are not implemented. Price methods use Coinbase's unauthenticated public
+    ticker and send no credentials.
+    """
+
+    AUTH_HOST = "api.coinbase.com"
+    AUTH_BASE_URL = "https://api.coinbase.com"
+    KEY_PERMISSIONS_PATH = "/api/v3/brokerage/key_permissions"
 
     def __init__(self, api_key: str, api_secret: str, **kwargs):
         super().__init__(api_key, api_secret, **kwargs)
+        # Public ticker host (unauthenticated market data only).
         self.base_url = "https://api.exchange.coinbase.com"
 
     def get_exchange_name(self) -> str:
         return "coinbase"
+
+    def _auth_headers(self, method: str, path: str) -> Dict[str, str]:
+        """Authorization header for one request. Raises CoinbaseCredentialError
+        if the stored key name / private key are unusable."""
+        key_name = coinbase_auth.validate_key_name(self.api_key)
+        private_key = coinbase_auth.load_private_key(self.api_secret)
+        token = coinbase_auth.build_jwt(
+            key_name, private_key, method, self.AUTH_HOST, path
+        )
+        return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    def check_connection(self, timeout: float = 10.0) -> ConnectionTestResult:
+        """One read-only call: ``GET /api/v3/brokerage/key_permissions``.
+
+        It needs only a valid key and reports what the key may do. It never
+        places, previews or cancels an order.
+        """
+
+        def result(status: ConnectionStatus, message: str, **details) -> ConnectionTestResult:
+            return ConnectionTestResult("coinbase", status, message, details)
+
+        try:
+            headers = self._auth_headers("GET", self.KEY_PERMISSIONS_PATH)
+        except coinbase_auth.CoinbaseCredentialError as exc:
+            return result(
+                ConnectionStatus.INVALID_CREDENTIALS,
+                f"Credentials not sent to Coinbase: {exc}",
+            )
+
+        try:
+            response = requests.get(
+                self.AUTH_BASE_URL + self.KEY_PERMISSIONS_PATH,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=False,
+            )
+        except requests.exceptions.RequestException as exc:
+            return result(
+                ConnectionStatus.NETWORK_ERROR,
+                "Could not reach Coinbase "
+                f"({type(exc).__name__}). Check your internet connection, proxy "
+                "or firewall and try again.",
+            )
+
+        code = response.status_code
+        if code == 401:
+            return result(
+                ConnectionStatus.AUTH_FAILED,
+                "Coinbase rejected the credentials (HTTP 401). Check that the key name "
+                "and private key belong to the same API key, that the key has not been "
+                "deleted, that this computer's clock is accurate (tokens last 2 "
+                "minutes), and that the key's IP allowlist, if any, includes this "
+                "machine.",
+                http_status=code,
+            )
+        if code == 403:
+            return result(
+                ConnectionStatus.PERMISSION_DENIED,
+                "Coinbase accepted the key but denied this request (HTTP 403). The key "
+                "needs at least the View permission.",
+                http_status=code,
+            )
+        if code != 200:
+            return result(
+                ConnectionStatus.ENDPOINT_ERROR,
+                f"Unexpected response from Coinbase (HTTP {code}). This is not an "
+                "authentication verdict; try again later or check Coinbase's status "
+                "page.",
+                http_status=code,
+            )
+
+        try:
+            data = response.json()
+            can_view = bool(data["can_view"])
+        except (ValueError, KeyError, TypeError):
+            return result(
+                ConnectionStatus.ENDPOINT_ERROR,
+                "Coinbase answered HTTP 200 but the body was not a key-permissions "
+                "document. Something may be intercepting the connection.",
+                http_status=code,
+            )
+
+        can_trade = bool(data.get("can_trade"))
+        can_transfer = bool(data.get("can_transfer"))
+        details = {
+            "http_status": code,
+            "can_view": can_view,
+            "can_trade": can_trade,
+            "can_transfer": can_transfer,
+            "portfolio_type": data.get("portfolio_type"),
+        }
+        if not can_view:
+            return result(
+                ConnectionStatus.PERMISSION_DENIED,
+                "Coinbase accepted the key but it does not have the View permission, "
+                "so PowerTrader cannot read the account.",
+                **details,
+            )
+
+        def mark(flag: bool) -> str:
+            return "yes" if flag else "no"
+
+        message = (
+            "Connected to Coinbase. Key permissions - view: yes, trade: "
+            f"{mark(can_trade)}, transfer: {mark(can_transfer)}."
+        )
+        if not can_trade:
+            message += " This key cannot trade; it is fine for paper mode and monitoring."
+        if can_transfer:
+            message += (
+                " Warning: this key can move funds out of the account. PowerTrader does "
+                "not need Transfer; create a key without it."
+            )
+        return result(ConnectionStatus.OK, message, **details)
 
     def get_current_price(self, symbol: str) -> float:
         coinbase_symbol = self._convert_symbol(symbol)

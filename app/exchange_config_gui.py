@@ -6,12 +6,45 @@ GUI-based tool for setting up and managing cryptocurrency exchanges
 
 import json
 import os
+import threading
 import tkinter as tk
 from tkinter import font, messagebox, ttk
 from typing import Dict, Optional
 
-from pt_exchange_abstraction import ExchangeType
+from pt_exchange_abstraction import (
+    ConnectionStatus,
+    ConnectionTestResult,
+    ExchangeType,
+)
 from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
+
+
+STATUS_HEADLINES = {
+    ConnectionStatus.OK: "connection successful",
+    ConnectionStatus.INVALID_CREDENTIALS: "credentials not valid",
+    ConnectionStatus.AUTH_FAILED: "authentication failed",
+    ConnectionStatus.PERMISSION_DENIED: "permission denied",
+    ConnectionStatus.NETWORK_ERROR: "network error",
+    ConnectionStatus.ENDPOINT_ERROR: "unexpected response",
+    ConnectionStatus.UNSUPPORTED: "not tested",
+}
+_STATUS_ICONS = {
+    ConnectionStatus.OK: "✅",
+    ConnectionStatus.INVALID_CREDENTIALS: "❌",
+    ConnectionStatus.AUTH_FAILED: "🔑❌",
+    ConnectionStatus.PERMISSION_DENIED: "🚫",
+    ConnectionStatus.NETWORK_ERROR: "🌐❌",
+    ConnectionStatus.ENDPOINT_ERROR: "⚠️",
+    ConnectionStatus.UNSUPPORTED: "ℹ️",
+}
+
+
+def format_test_result(exchange_name: str, result: ConnectionTestResult) -> str:
+    """One readable block for the Test Results pane (no credentials in it)."""
+    return (
+        f"{_STATUS_ICONS[result.status]} {exchange_name.title()}: "
+        f"{STATUS_HEADLINES[result.status]}\n   {result.message}"
+    )
 
 
 class ExchangeConfigGUI:
@@ -1071,83 +1104,94 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save configuration: {e}")
 
+    def _form_credentials(self):
+        """What is currently typed in the setup form: (api_key, api_secret, passphrase).
+        Blank key AND secret mean "use the saved credentials"."""
+        return (
+            self.api_key_var.get().strip(),
+            self.api_secret_var.get().strip(),
+            self.passphrase_var.get().strip(),
+        )
+
+    def _append_result(self, text: str):
+        self.results_text.insert(tk.END, text)
+        self.results_text.see(tk.END)
+
     def test_exchange_connection(self):
-        """Test connection for current exchange"""
+        """Test the credentials typed in the form (or the saved ones if the form is
+        blank) with one read-only call. Runs off the UI thread."""
         exchange_name = self.exchange_var.get()
         if not exchange_name:
             messagebox.showwarning("No Exchange", "Please select an exchange first")
             return
 
-        try:
-            # Switch to test tab
-            self.notebook.select(2)
+        api_key, api_secret, passphrase = self._form_credentials()
+        if not api_key and not api_secret:
+            api_key = api_secret = passphrase = None  # fall back to saved credentials
 
-            self.results_text.insert(
-                tk.END, f"\n🧪 Testing {exchange_name.title()} connection...\n"
-            )
-            self.results_text.see(tk.END)
-            self.window.update()
+        self.notebook.select(2)
+        self._append_result(f"\n🧪 Testing {exchange_name.title()} connection...\n")
+        self.status_var.set(f"Testing {exchange_name.title()}...")
 
-            # Test connection
-            success = self.multi_exchange.test_exchange_connection(exchange_name)
-
-            if success:
-                self.results_text.insert(
-                    tk.END, f"✅ {exchange_name.title()} connection successful!\n"
+        def worker():
+            try:
+                result = self.multi_exchange.test_exchange_connection(
+                    exchange_name, api_key, api_secret, passphrase
                 )
-                self.status_var.set(f"{exchange_name.title()} connection successful")
-            else:
-                self.results_text.insert(
-                    tk.END, f"❌ {exchange_name.title()} connection failed\n"
+            except Exception as exc:  # never leave the user without an answer
+                result = ConnectionTestResult(
+                    exchange_name,
+                    ConnectionStatus.ENDPOINT_ERROR,
+                    f"The test failed unexpectedly ({type(exc).__name__}).",
                 )
-                self.status_var.set(f"{exchange_name.title()} connection failed")
+            self.window.after(0, lambda: self._show_test_result(exchange_name, result))
 
-            self.results_text.see(tk.END)
+        threading.Thread(target=worker, daemon=True).start()
 
-        except Exception as e:
-            self.results_text.insert(
-                tk.END, f"❌ Error testing {exchange_name.title()}: {e}\n"
-            )
-            self.status_var.set(f"Error testing {exchange_name.title()}")
+    def _show_test_result(self, exchange_name: str, result: ConnectionTestResult):
+        self._append_result(format_test_result(exchange_name, result) + "\n")
+        self.status_var.set(
+            f"{exchange_name.title()} connection successful"
+            if result.ok
+            else f"{exchange_name.title()} test: {STATUS_HEADLINES[result.status]}"
+        )
 
     def test_all_exchanges(self):
-        """Test all configured exchanges"""
+        """Test every enabled exchange that has saved credentials (read-only)."""
         self.results_text.delete(1.0, tk.END)
-        self.results_text.insert(1.0, "🧪 Testing all configured exchanges...\n\n")
-        self.window.update()
+        self._append_result("🧪 Testing all configured exchanges...\n\n")
 
         config = self.config_manager.load_config()
-        exchanges = config.get("exchanges", {})
+        targets = [
+            ex.exchange_type
+            for ex in (config.exchanges if config else [])
+            if ex.enabled and ex.api_key
+        ]
 
-        tested = 0
-        successful = 0
-
-        for exchange_name, exchange_config in exchanges.items():
-            if exchange_config.get("enabled") and exchange_config.get("api_key"):
-                tested += 1
-                self.results_text.insert(tk.END, f"Testing {exchange_name.title()}... ")
-                self.results_text.see(tk.END)
-                self.window.update()
-
+        def worker():
+            ok = 0
+            for name in targets:
                 try:
-                    success = self.multi_exchange.test_exchange_connection(
-                        exchange_name
+                    result = self.multi_exchange.test_exchange_connection(name)
+                except Exception as exc:
+                    result = ConnectionTestResult(
+                        name,
+                        ConnectionStatus.ENDPOINT_ERROR,
+                        f"The test failed unexpectedly ({type(exc).__name__}).",
                     )
-                    if success:
-                        self.results_text.insert(tk.END, "✅ Success\n")
-                        successful += 1
-                    else:
-                        self.results_text.insert(tk.END, "❌ Failed\n")
-                except Exception as e:
-                    self.results_text.insert(tk.END, f"❌ Error: {e}\n")
+                ok += 1 if result.ok else 0
+                line = format_test_result(name, result) + "\n"
+                self.window.after(0, lambda line=line: self._append_result(line))
+            summary = f"\n📊 Summary: {ok}/{len(targets)} exchanges tested successfully\n"
+            self.window.after(0, lambda: self._append_result(summary))
+            self.window.after(
+                0,
+                lambda: self.status_var.set(
+                    f"Tested {len(targets)} exchanges, {ok} successful"
+                ),
+            )
 
-                self.results_text.see(tk.END)
-
-        self.results_text.insert(
-            tk.END,
-            f"\n📊 Summary: {successful}/{tested} exchanges tested successfully\n",
-        )
-        self.status_var.set(f"Tested {tested} exchanges, {successful} successful")
+        threading.Thread(target=worker, daemon=True).start()
 
     def run(self):
         """Start the GUI"""

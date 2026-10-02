@@ -12,6 +12,9 @@ from pt_exchange_abstraction import ExchangeManager, ExchangeType
 from pt_exchanges import *
 
 
+EXAMPLE_CONFIG_NAME = "trading_config.example.json"
+
+
 @dataclass
 class ExchangeConfig:
     """Configuration for a single exchange"""
@@ -43,14 +46,26 @@ class ExchangeConfigManager:
         if config_dir is None:
             config_dir = os.path.dirname(os.path.abspath(__file__))
 
+        # trading_config.json holds API keys in plain text and is git-ignored; a
+        # fresh clone only has the example, which load_config falls back to.
         self.config_file = os.path.join(config_dir, "trading_config.json")
+        self.example_file = os.path.join(config_dir, EXAMPLE_CONFIG_NAME)
         self.config: Optional[TradingConfig] = None
 
     def load_config(self) -> Optional[TradingConfig]:
-        """Load trading configuration from file"""
-        if os.path.exists(self.config_file):
+        """Load trading configuration.
+
+        Reads ``trading_config.json``. If that file does not exist (a fresh
+        clone) the committed example is used instead, so there is always a
+        config to edit; the real file is only created by ``save_config``. A
+        real file that exists but cannot be read is NOT replaced by the example
+        (that would hide the problem and a later save would overwrite it).
+        """
+        for path in (self.config_file, self.example_file):
+            if not os.path.exists(path):
+                continue
             try:
-                with open(self.config_file, "r") as f:
+                with open(path, "r") as f:
                     data = json.load(f)
 
                 exchanges = [ExchangeConfig(**ex) for ex in data.get("exchanges", [])]
@@ -65,6 +80,7 @@ class ExchangeConfigManager:
                 return self.config
             except Exception as e:
                 print(f"Error loading config: {e}")
+                return None
 
         return None
 

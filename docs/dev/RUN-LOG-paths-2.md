@@ -836,3 +836,136 @@ The `#108` comment draft repeats none of the corrected claims and is unchanged.
   `pt_system` and `pt_testing` import it), and PyYAML is not in `requirements.txt`, so its two YAML tests
   skip in a standard install. Either wire the module in or remove it; then add PyYAML to the requirements
   or drop those tests.
+
+## Report
+
+### Commits of this round
+
+| Item | Commit | What |
+|---|---|---|
+| 1 | `23243b0`, `4938e39`..`d949df4` | branch rebuilt without `25bf2b8` (see the top of this file) |
+| 2 | `a922518` | trainer path refreshed on Settings save; real launch test |
+| 3 | `541a0d5` | Remove old files re-checks the migration record; `.db` units; links and junctions |
+| 4 | `cd573a5` | conflicts keep both files; a config that is the file in use is skipped |
+| 5 | `7b0d7ed` | missing `platformdirs` / `keyring` named, including the error box title |
+| 6 | `126844d` | `.github/scripts` and `app/tests` load the isolation guard |
+| 7 | `543de1f` | build-log and user-facing safety claims corrected |
+
+Item 1 check: `git diff --stat 7bbb810 d949df4` lists only the five root `config/*.yaml` deletions
+(71 lines); `git branch --contains 25bf2b8` lists only `backup/user-data-separation-7bbb810`.
+
+The item sections above were written as the work went, and the commits they name were later rebuilt
+(item 3's hot-journal fix, then the audit fixes, folded into their item commits). They map to the final
+commits like this; the earlier ones are on no branch:
+
+| Item | Named above | Final |
+|---|---|---|
+| 3 | `998682e`, `9977743`, `18ea47a`, `cbc6c56` | `541a0d5` |
+| 4 | `1e6910d`, `bf0c233` | `cd573a5` |
+| 5 | `a82f1d3`, `eb51c6d` | `7b0d7ed` |
+| 6 | `a89c413` | `126844d` |
+| 7 | `5b76009` | `543de1f` |
+
+The test tables inside items 3 to 6 were measured on those earlier commits; the suite below is on
+`543de1f`. Every rebuilt item commit was re-tested at its own position (its item's test files), and the
+final tree is identical to the tree the suite ran on.
+
+### Independent audits
+
+Two read-only audits ran on the tip after item 7 (spec compliance; safety and regression). Neither
+found anything blocking. Confirmed: the five paper/live gate files are unchanged
+(`git diff d949df4..HEAD` is empty for `trading_mode.py`, `trading_mode_ui.py`, `pt_trader.py`,
+`pt_exchanges.py`, `pt_exchange_abstraction.py`); no path turns a paper config live; no credential value
+reaches the report, the dialog or a conflict copy; the owner's untracked runtime files have the same
+SHA-256 as before the work (recomputed again on `543de1f`: all 13 unchanged).
+
+Fixed, each in its item's commit, each with a test that fails on the code before the fix:
+
+* Item 3: a junction (or symlink) inside a legacy folder was followed by `os.walk`, so files outside every
+  legacy folder were recorded as migrated and then deleted by Remove old files (reproduced for a junction
+  in `app/hub_data` and for a linked install-root `logs/`). Links and junctions are no longer followed;
+  each record keeps the file's real path and a file whose real path changed is refused ("reached through
+  a link or junction since it was migrated"); a linked folder is never pruned. Tests:
+  `test_a_folder_linked_into_a_legacy_folder_is_neither_copied_nor_removed`,
+  `test_a_linked_logs_folder_in_the_install_root_is_left_alone`,
+  `test_a_folder_replaced_by_a_link_after_the_migration_is_refused`.
+* Item 4: a legacy config that is the same file as the one in use (hard link) was saved as a conflict and
+  offered for removal; through a link from the new file to the legacy one, the config in use would have
+  been left dangling (it would read as paper). It is now skipped; `--from` on the file in use says so.
+  Test: `test_a_config_that_is_the_same_file_as_the_one_in_use_is_left_alone`.
+* Item 5: the setup window's error box title still said "No secure credential store" when the `keyring`
+  package was missing. Test: `test_the_error_title_names_the_missing_keyring_package`.
+* Item 6: pytest started inside `app/tests` takes that folder as its root and never read
+  `app/conftest.py`, so no test there was isolated (the audit's static scan found 25 tests that resolve
+  real folders without a fixture).
+  `app/tests/conftest.py` now loads the guard too. Test:
+  `test_the_guard_is_in_force_wherever_pytest_is_started[repo root|app/tests]` (`--setup-plan` only).
+* Item 7: the vault exception now names `.pt_cred_meta` too (up to three legacy files written); the unit
+  deletion order and the macOS/Linux open-handle limit are stated; the same exception is stated in the
+  migration report line, the module docstring, README and `ARCHITECTURE.md`; this file's "Rules followed"
+  is corrected.
+
+Not changed; for the owner to decide:
+
+* `--from` still writes no conflict copy; it only lists the conflict (item 4 deviation).
+* `r_key.txt.bak_*` files become removable once the Robinhood keyring entries exist; their content (an
+  older key) is not in the keyring (unchanged since phase 4).
+* A credential-named key in `pt_config.json` / `gui_settings.json`, or outside `exchanges[*]` in
+  `trading_config.json`, would be stripped and not stored, yet the file stays removable. No such key
+  exists in the code or templates today.
+* Copies check that the target is free, then write (no exclusive create). Safe within the hub (the
+  migration runs first at start-up), not against another program writing that path in the same instant.
+* `test_trainer_launch` builds the hub with `__new__` and repeats `__init__`'s path set-up, so it would not
+  notice `__init__` dropping `_refresh_trainer_path()`.
+* `python app/pt_migrate.py` without `platformdirs` still ends in a traceback (its last line names the
+  package). CI's `cd app && python test_*.py` steps (`code-quality.yml`) run outside pytest, so without
+  the guard. `test_isolation_guard.py::test_resolving_the_real_folders_fails_inside_tests` calls
+  `config_dir()`, which would create the real folder if the guard were ever missing.
+
+### Live-mode conflict test
+
+`test_pt_migrate_conflicts.py::test_a_newer_live_legacy_config_never_turns_an_existing_paper_config_live`
+passes on `543de1f` and fails against a copy of item 4's code changed to let a newer legacy file replace
+the one in the new location (the existing paper `pt_config.json` is replaced). Against the code before
+item 4 its mode check would also pass (that code never replaced the file either), so the mutant is the
+proof that the test catches the rejected rule.
+
+### Suite
+
+Same per-file runner for both (`app/test_*.py`, `app/tests/test_*.py`, `test_phase1_phase2_integration.py`
+excluded, plus `.github/scripts/test_*.py`), Python 3.13 venv with `--system-site-packages` + `pytest`,
+`pytest-timeout`, `platformdirs`, `keyring` (no PyYAML), fresh clones, `POWERTRADER_HOME` = a fresh scratch
+folder and the fail keyring backend per file. The runner compared the real `%APPDATA%\SJackson` /
+`%LOCALAPPDATA%\SJackson` and the names of PowerTrader entries in Windows Credential Manager before and
+after every file: no change, both folders absent, no entries.
+
+| | Baseline `d949df4` | Final `543de1f` |
+|---|---|---|
+| `app/` | 910 passed, 10 failed, 6 skipped | 1004 passed, 11 failed, 5 skipped |
+| `.github/scripts` | 19 passed, 19 failed, 1 skipped | 23 passed, 19 failed, 1 skipped |
+
+* New tests, all passing: `test_missing_packages` 14, `test_pt_migrate_conflicts` 23,
+  `test_pt_migrate_removal` 50, `test_trainer_launch` 4, `test_credentials_single_source` +1,
+  `test_isolation_guard` +2, `.github/scripts/test_isolation_guard_active` 4 (94 in `app/`, 4 in
+  `.github/scripts`).
+* Every pre-existing test has its baseline outcome except
+  `test_integration.py::TestPowerTraderHubIntegration::test_graceful_degradation`: skipped at baseline,
+  failed now. It is the known Tk start-up flip ("Can't find a usable tk.tcl"): re-run twice on the baseline clone and
+  twice on a clone of the tip before the audit fixes (`5b76009`), it skipped once and failed once on each. The 11 failures are exactly the build's known set
+  (`test_integration` x2, `test_suite` x8, `test_expired_proposal_cannot_execute`).
+* `.github/scripts`: no pre-existing test changed outcome; none newly passes.
+* Neither clone had any file left behind (`git status --short --ignored`, `__pycache__` aside).
+
+### For the owner (not done in this branch)
+
+* Push `chore/untrack-trading-config` and `feat/user-data-separation` (neither is pushed); enforce merge
+  commits in the repo settings; merge 2 -> 3 -> 4 with merge commits; close PR1 if GitHub does not mark it
+  merged.
+* Revoke the old trade-enabled Coinbase key. Never import `app/pt_config.json.backup.20261002_165032`
+  with `--from` (it says `mode=live`).
+* Back up, create `.venv` and `pip install -r requirements.txt`, then the first start. With item 4 the
+  repo-root `logs/` and `order_management.db` are migrated (the newer copy under its own name, the other
+  as `.conflict-app` / `.conflict-root`), so they no longer need deleting by hand; Remove old files can
+  take them once all branches are merged.
+* The YAML follow-up above; untracking the runtime files; the `#108` comment.
+* `backup/user-data-separation-7bbb810` can be deleted once this branch is accepted.

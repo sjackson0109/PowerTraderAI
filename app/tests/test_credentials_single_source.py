@@ -326,3 +326,25 @@ class TestSetupWindowEcho(unittest.TestCase):
         title, message = exchange_config_gui.messagebox.showerror.call_args[0]
         self.assertIn("POWERTRADER_BINANCE_API_KEY", message)
         self.assertIn("paper mode", message)
+
+    def test_the_error_title_names_the_missing_keyring_package(self):
+        """FDS-108a review item 5: with the keyring package missing the error
+        box names the package, not the OS; with the package there but no
+        usable backend it still says there is no credential store."""
+        import exchange_config_gui
+
+        showerror = exchange_config_gui.messagebox.showerror
+        self.select("binance")
+        self.gui.api_key_var.set("k")
+        self.gui.api_secret_var.set("s")
+        with mock.patch.dict(sys.modules, {"keyring": None}):
+            self.gui.save_exchange_config()
+        title, message = showerror.call_args[0]
+        self.assertEqual(title, "The 'keyring' package is not installed")
+        self.assertIn("'keyring' is not installed", message)
+
+        keyring.set_keyring(keyring.backends.fail.Keyring())
+        self.gui.api_secret_var.set("s")
+        self.gui.save_exchange_config()
+        title, _ = showerror.call_args[0]
+        self.assertEqual(title, "No secure credential store")

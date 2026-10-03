@@ -48,7 +48,9 @@ If no usable keyring backend exists (for example a headless Linux box without
 Secret Service), nothing is stored: ``set_secret`` raises
 ``KeyringUnavailable`` with a message naming the environment variables to use
 instead, and the app keeps running in paper mode. Backends that write to a
-plain file (``keyrings.alt``) are refused.
+plain file (``keyrings.alt``) are refused. The same happens when the
+``keyring`` package itself is not installed; the message then names the
+package and how to install it (the cause is logged once).
 
 Values never appear in logs, exceptions or ``repr()``: reads return
 ``Secret`` / ``Credentials`` objects whose ``repr`` is redacted.
@@ -60,6 +62,8 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional, Tuple
+
+import pt_paths
 
 logger = logging.getLogger("pt_secrets")
 
@@ -307,14 +311,44 @@ def _refused_backend(backend) -> bool:
     return "plaintext" in cls.__name__.lower()
 
 
-def _backend():
-    """The usable keyring backend, or None. A chained backend is narrowed to its
-    first acceptable member, so a write can never fall through to a refused one."""
+# True once the missing keyring package has been logged: the cause is logged once
+# per process, not on every lookup.
+_missing_package_logged = False
+
+
+def _keyring_package():
+    """``(keyring, ChainerBackend)``, or None when the keyring package is not
+    installed (or cannot be loaded). The cause is logged once."""
+    global _missing_package_logged
     try:
         import keyring
         from keyring.backends.chainer import ChainerBackend
-    except ImportError:
+    except ImportError as exc:
+        if not _missing_package_logged:
+            _missing_package_logged = True
+            logger.warning(
+                "The Python package 'keyring' is not installed (%s), so credentials cannot be "
+                "read from or saved to the OS credential store. %s",
+                exc,
+                pt_paths.install_hint("keyring"),
+            )
         return None
+    return keyring, ChainerBackend
+
+
+def keyring_package_missing() -> bool:
+    """True when the keyring package itself is missing, as opposed to installed
+    without a usable OS backend."""
+    return _keyring_package() is None
+
+
+def _backend():
+    """The usable keyring backend, or None. A chained backend is narrowed to its
+    first acceptable member, so a write can never fall through to a refused one."""
+    package = _keyring_package()
+    if package is None:
+        return None
+    keyring, ChainerBackend = package
     try:
         current = keyring.get_keyring()
     except Exception:
@@ -336,10 +370,22 @@ def backend_name() -> str:
 
 
 def unavailable_message(exchange: Optional[str] = None) -> str:
+    """Why credentials were not saved and what to do instead. Names the keyring
+    package when that is what is missing, else the OS credential store."""
     names = env_var_names(exchange) if exchange else (
         "POWERTRADER_<EXCHANGE>_API_KEY",
         "POWERTRADER_<EXCHANGE>_API_SECRET",
     )
+    if keyring_package_missing():
+        return (
+            "The Python package 'keyring' is not installed, so credentials were NOT saved: "
+            "PowerTrader needs it to use the operating system's credential store and never "
+            "stores API keys in a plain file. "
+            + pt_paths.install_hint("keyring")
+            + " Or set the credentials as environment variables ("
+            + ", ".join(names)
+            + "). Until then PowerTrader runs in paper mode."
+        )
     return (
         "No secure credential store (OS keyring) is available on this system, so "
         "credentials were NOT saved. PowerTrader never stores API keys in a plain "

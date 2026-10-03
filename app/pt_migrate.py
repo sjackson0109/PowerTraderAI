@@ -659,9 +659,13 @@ def _store_secret(exchange: str, field_name: str, value: str, source: str, repor
         report.secrets.append((source, entry))
         return "stored"
     except pt_secrets.KeyringUnavailable:
+        if pt_secrets.keyring_package_missing():
+            why = f"the Python package 'keyring' is not installed ({pt_paths.REQUIREMENTS_COMMAND})"
+        else:
+            why = "no OS keyring available"
         report.errors.append(
-            (source, f"{entry}: no OS keyring available, not moved - set it as an "
-                     "environment variable instead (see pt_secrets)")
+            (source, f"{entry}: {why}, not moved - set it as an environment variable "
+                     "instead (see pt_secrets)")
         )
     except pt_secrets.SecretsError as exc:
         report.errors.append((source, f"{entry}: {exc}"))

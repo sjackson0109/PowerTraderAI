@@ -54,11 +54,20 @@ try:
     from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
 
     EXCHANGE_SUPPORT_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
     EXCHANGE_SUPPORT_AVAILABLE = False
-    print(
-        "Warning: Multi-exchange support not available. Exchange status will be disabled."
-    )
+    # A missing package is reported as such, not as a multi-exchange problem.
+    if isinstance(exc, pt_paths.MissingDependency):
+        print(f"Warning: {exc}")  # platformdirs: main() stops on it
+    elif isinstance(exc, ModuleNotFoundError):
+        print(
+            f"Warning: Multi-exchange support not available: {exc}. Install the requirements "
+            f"with: {pt_paths.REQUIREMENTS_COMMAND}. Exchange status will be disabled."
+        )
+    else:
+        print(
+            "Warning: Multi-exchange support not available. Exchange status will be disabled."
+        )
 
 # Order management imports
 try:
@@ -8838,8 +8847,27 @@ Platform: {sys.platform}
         self.destroy()
 
 
+def _show_startup_error(message: str) -> None:
+    """Print ``message`` and, when Tk can open a window, show it in an error box."""
+    print(f"PowerTraderAI cannot start. {message}", file=sys.stderr)
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("PowerTraderAI cannot start", message, parent=root)
+        root.destroy()
+    except Exception:  # no display, or Tcl/Tk not usable: the printed message is enough
+        pass
+
+
 def main():
     """Entry point for console script installation."""
+    # Before the window opens: without platformdirs the hub cannot find its
+    # folders and would stop later with a traceback.
+    try:
+        pt_paths.check_dependencies()
+    except pt_paths.MissingDependency as exc:
+        _show_startup_error(str(exc))
+        sys.exit(1)
     app = PowerTraderHub()
     app.mainloop()
 

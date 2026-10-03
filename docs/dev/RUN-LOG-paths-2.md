@@ -622,3 +622,134 @@ passed. `test_comprehensive`: no tests. `test_core`: 1 passed. `test_credential_
 passed. `.github/scripts/test_powertrader_system.py`: 3 passed, 1 skipped. All of `app/tests` in the same
 two clones: 527 passed and 2 skipped before; 549 passed and 2 skipped after (`PyJWT` not installed,
 POSIX permission bits); no failures.
+
+## Item 5 — Messages: missing `platformdirs` or `keyring`
+
+Reproduced in a scratch clone at `1e6910d`: `POWERTRADER_HOME` not set, `platformdirs` blocked with
+`sys.modules["platformdirs"] = None`, message boxes printed and `mainloop` skipped. The hub printed
+"Warning: Multi-exchange support not available. Exchange status will be disabled." (the import-time
+`MultiExchangeManager()` raised `ModuleNotFoundError`), opened its window, logged "Migration failed
+(ModuleNotFoundError)" and stopped with a traceback at `pt_paths.install_default` (`except OSError` there).
+For `keyring`, `pt_secrets._backend()` swallowed the `ImportError` and `unavailable_message()` said the
+system has no secure credential store.
+
+* `app/pt_paths.py`:
+  * `MissingDependency`, an `ImportError` (`name` = the package). Message: "The Python package
+    'platformdirs' is not installed; PowerTraderAI needs it to find its settings and data folders.
+    Install it with: python -m pip install -r requirements.txt (in the PowerTraderAI folder), or: pip
+    install platformdirs." `_platform_dir()` gets the module through `_platformdirs()`, which raises it
+    (the original `ImportError` as `__cause__`).
+  * `check_dependencies()` raises it when `POWERTRADER_HOME` is not set and `platformdirs` is missing.
+    With `POWERTRADER_HOME` set, `platformdirs` is not needed, as before.
+  * `REQUIREMENTS_COMMAND` and `install_hint(package)`, so every message gives the same commands.
+* `app/pt_hub.py`:
+  * `main()` calls `check_dependencies()` before the window opens. On `MissingDependency` it prints
+    "PowerTraderAI cannot start. <message>" to stderr. When Tk can open a window, it also shows the
+    message in an error box on a hidden root. Any error there (no display, Tcl not usable) is ignored,
+    because the printed message stands. Then `sys.exit(1)`: exit code 1, no traceback.
+  * The multi-exchange import guard reports the real cause. For `MissingDependency` it prints its
+    message ("Warning: The Python package 'platformdirs' is not installed; ..."). For another
+    `ModuleNotFoundError` it prints "Multi-exchange support not available: No module named '<x>'.
+    Install the requirements with: python -m pip install -r requirements.txt. Exchange status will be
+    disabled." Any other `ImportError` keeps the old message.
+* `app/pt_secrets.py`:
+  * `_keyring_package()` does the import. When it fails, the cause is logged once per process as a
+    warning: the package, the import error, the install hint. `keyring_package_missing()`; `_backend()`
+    uses `_keyring_package()`.
+  * `unavailable_message()`, when the package is missing: "The Python package 'keyring' is not
+    installed, so credentials were NOT saved: PowerTrader needs it to use the operating system's
+    credential store and never stores API keys in a plain file. Install it with: ... Or set the
+    credentials as environment variables (...). Until then PowerTrader runs in paper mode." The
+    message for an installed package without a usable backend is unchanged.
+  * Behaviour unchanged: `_backend()` is None, so `set_secret`/`set_credentials` raise
+    `KeyringUnavailable` and write nothing, and reads come from environment variables only.
+* Also changed, `app/pt_migrate.py`: the report line for a credential that was not moved names the
+  package when that is the cause ("coinbase:key_name: the Python package 'keyring' is not installed
+  (python -m pip install -r requirements.txt), not moved - set it as an environment variable instead
+  (see pt_secrets)"). Otherwise the line is unchanged ("no OS keyring available, ...").
+* After, same simulation: exit code 1, no traceback. The console has the guard's warning and then the
+  "cannot start" line; the error box has the message. No file in the working folder, the scratch home
+  or the clone. The cause is printed twice on purpose. The guard reports it for every importer of
+  `pt_hub` (`start_powertrader.py` imports it without `main()`), and `main()` must stop even if the
+  guard does not run first.
+* New `app/tests/test_missing_packages.py` (14 tests; a missing package is `sys.modules[name] = None`):
+  * `test_without_platformdirs_every_folder_lookup_names_the_package`: every lookup of a fresh
+    `pt_paths` copy raises `MissingDependency` with the commands: `_platform_dir` for each kind, the
+    `*_dir()` functions, `describe()`, `check_dependencies()`.
+  * `test_with_powertrader_home_platformdirs_is_not_needed`,
+    `test_with_platformdirs_installed_the_check_passes`.
+  * `test_without_platformdirs_the_hub_stops_with_the_message_and_an_error_box`: `main()` exits 1 with
+    no hub made and no `mainloop`. One error box with the title and message; root withdrawn and
+    destroyed; the message on stderr.
+  * `test_without_a_usable_tk_the_hub_still_stops_cleanly`: `tk.Tk` raises `TclError`; exit 1, no
+    box, the message on stderr.
+  * `test_when_the_folders_can_be_found_the_hub_starts_as_before[platformdirs installed|POWERTRADER_HOME
+    set]`.
+  * `test_the_hub_started_without_platformdirs_says_so_and_exits_without_a_traceback`: a child process
+    imports `pt_hub` with `platformdirs` blocked and calls `main()`. In the child the legacy folders
+    are a temp folder, the hub class raises if reached, and `tk.Tk` and the error box are stubbed.
+    Checked: exit 1, no "Traceback", no "Multi-exchange support not available", the guard's warning,
+    the stderr line, the error box; nothing in its working folder.
+  * `test_the_multi_exchange_guard_names_another_missing_package`: a child with `requests` blocked
+    (and `POWERTRADER_HOME` set); the warning names `requests` and the requirements command.
+  * `test_a_missing_keyring_package_is_named_and_nothing_is_stored`: the message names the package,
+    both commands, the environment variables and paper mode, without the old wording and without the
+    value. Nothing lands in the in-memory keyring, the user folders or the working folder. Nothing is
+    read back.
+  * `test_the_missing_keyring_package_is_logged_once` (three rounds of reads and writes: one warning),
+    `test_environment_credentials_still_work_without_the_keyring_package`,
+    `test_without_a_usable_backend_the_message_is_unchanged` (fail backend: the old message, no
+    package warning).
+  * `test_the_migration_names_the_missing_keyring_package_and_retries_later`: every report error names
+    the package. No credential in the keyring or in `trading_config.json`, and the credential files are
+    not removable. With the package back, the next run moves them.
+* Checked in a scratch clone by disabling each piece in turn (13 mutations): the guard's two branches,
+  the check in `main()`, the exit, the guard around the error box, the error box, `_platformdirs()` in
+  `_platform_dir`, the `POWERTRADER_HOME` exception in `check_dependencies`, the package message, the
+  log-once flag, the log itself, `keyring_package_missing()`, the migration line. Each fails at least
+  one new test; restored, all pass.
+
+No existing assertion changed.
+
+Notes and limits:
+
+* `start_powertrader.py` and `production_deployment.py` create `PowerTraderHub()` directly, so the
+  check in `main()` does not run there. From the code (not run): without `platformdirs` the hub's
+  start-up folder lookup raises `MissingDependency`, an `ImportError` with the same message, which
+  `start_powertrader.py` prints as "Import error: ...". `python pt_migrate.py` without `platformdirs`
+  still ends in a traceback; its last line is the `MissingDependency` message. Both are unchanged.
+* "Tk not available" means Tk cannot open a window. `tkinter` itself is imported at the top of
+  `pt_hub`, as before.
+
+Tests (real checkout, one file per run):
+
+| File | Result |
+|---|---|
+| tests/test_missing_packages (new) | 14 passed |
+| tests/test_pt_migrate | 12 passed |
+| tests/test_pt_migrate_conflicts | 22 passed |
+| tests/test_pt_migrate_removal | 45 passed |
+| tests/test_pt_paths | 11 passed, 1 skipped (POSIX-only) |
+| tests/test_pt_secrets | 24 passed |
+| tests/test_isolation_guard | 6 passed |
+| tests/test_program_dir_read_only | 5 passed |
+| tests/test_no_legacy_paths | 4 passed |
+| tests/test_docs_and_visibility | 5 passed |
+| tests/test_credentials_single_source | 15 passed |
+| tests/test_config_no_secrets | 7 passed |
+| tests/test_trainer_launch | 4 passed |
+| tests/test_coinbase_connection | 27 passed |
+| tests/test_coinbase_gui | 12 passed |
+| tests/test_coinbase_paper_gate | 15 passed |
+| tests/test_demo_paper_trading | 11 passed |
+
+Two scratch clones, `1e6910d` and `1e6910d` plus this change. All of `app/tests`: 549 passed and 2
+skipped before, 563 passed and 2 skipped after (`PyJWT` not installed, POSIX permission bits). No
+failures. Same results in both for the files that import `pt_hub` and for `.github/scripts`:
+`test_advanced_features` 22 passed, `test_comprehensive` no tests, `test_core` 1 passed,
+`test_credential_audit` 9 passed, `test_gui_exchange_integration` 3 passed, `test_real_app` 1 passed,
+`test_suite` 16 passed with the same 8 known failures, `test_tabbed_interface` 1 passed,
+`.github/scripts/test_powertrader_system.py` 3 passed and 1 skipped. `test_integration`: 8 passed and
+the 2 known failures (`test_graceful_degradation`, `test_powertrader_hub_creation`) in both. In 4 runs
+per clone, one of the two was now and then skipped instead ("No display available ...: Can't find a
+usable init.tcl"; Tk start-up on this machine): once in the base clone, twice with the change.

@@ -1187,7 +1187,12 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             self.status_var.set(f"Saved configuration for {exchange_name.title()}")
 
         except pt_secrets.KeyringUnavailable as e:
-            messagebox.showerror("No secure credential store", str(e))
+            title = (
+                "The 'keyring' package is not installed"
+                if pt_secrets.keyring_package_missing()
+                else "No secure credential store"
+            )
+            messagebox.showerror(title, str(e))
         except pt_secrets.SecretsError as e:
             messagebox.showerror("Credentials not saved", str(e))
         except Exception as e:

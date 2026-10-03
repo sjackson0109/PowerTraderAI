@@ -25,6 +25,10 @@ If ``POWERTRADER_HOME`` is set, everything lives under it instead, as
 ``config/``, ``data/``, ``logs/`` and ``cache/`` (development, portable use,
 tests).
 
+The OS folders come from the ``platformdirs`` package. Without it (and without
+``POWERTRADER_HOME``) every lookup raises ``MissingDependency``, an
+``ImportError`` whose message names the package and how to install it.
+
 The program directory is read-only at runtime: it holds code and shipped
 defaults (``*.example.json`` templates) only. Directories are created lazily,
 the first time they are asked for. On macOS and Linux the folders are created
@@ -57,10 +61,51 @@ _POSIX = os.name == "posix"
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
 
+# How to install what requirements.txt lists, for messages about a missing package.
+REQUIREMENTS_COMMAND = "python -m pip install -r requirements.txt"
+
+
+def install_hint(package: str) -> str:
+    """One sentence saying how to install ``package``."""
+    return (
+        f"Install it with: {REQUIREMENTS_COMMAND} (in the PowerTraderAI folder), "
+        f"or: pip install {package}."
+    )
+
+
+class MissingDependency(ImportError):
+    """A Python package PowerTraderAI needs is not installed. The message names
+    the package and says how to install it."""
+
+    def __init__(self, package: str, needed_for: str):
+        super().__init__(
+            f"The Python package '{package}' is not installed; PowerTraderAI needs it "
+            f"{needed_for}. {install_hint(package)}",
+            name=package,
+        )
+        self.package = package
+
+
+def _platformdirs():
+    """The ``platformdirs`` module; ``MissingDependency`` when it is not installed."""
+    try:
+        import platformdirs
+    except ImportError as exc:
+        raise MissingDependency("platformdirs", "to find its settings and data folders") from exc
+    return platformdirs
+
+
+def check_dependencies() -> None:
+    """Raise ``MissingDependency`` when the folders cannot be found: no
+    ``POWERTRADER_HOME`` and ``platformdirs`` is not installed. The hub calls
+    it first, so the user gets that message instead of a traceback later."""
+    if home_override() is None:
+        _platformdirs()
+
 
 def _platform_dir(kind: str) -> str:
     """The OS-standard folder for ``kind`` ("config", "data", "log", "cache")."""
-    import platformdirs
+    platformdirs = _platformdirs()
 
     if kind == "config":
         return platformdirs.user_config_dir(APP_NAME, APP_AUTHOR, roaming=True)

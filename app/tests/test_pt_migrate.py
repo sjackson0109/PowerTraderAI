@@ -194,9 +194,11 @@ def test_conflicts_keep_the_new_location_and_are_reported(legacy, memory_keyring
     assert os.path.join(legacy["app"], "pt_config.json") in conflicted
     assert os.path.join(legacy["app"], "hub_data", "runner_ready.json") in conflicted
     assert (os.path.join(legacy["app"], "trading_config.json"), "binance:api_secret") in report.secret_conflicts
-    # a conflicted legacy file is never offered for removal
-    for path in conflicted | {os.path.join(legacy["app"], "trading_config.json")}:
-        assert path not in report.removable
+    # a legacy file with a value the keyring did not take is never offered for removal; a
+    # conflicted file saved as a conflict copy is (FDS-108a review item 4)
+    assert os.path.join(legacy["app"], "trading_config.json") not in report.removable
+    for path in conflicted:
+        assert path in report.removable and os.path.isfile(report.conflict_copies[path])
     with open(report.report_path, encoding="utf-8") as f:
         text = f.read()
     assert "Conflicts" in text and "already-in-keyring" not in text and "bin-secret-legacy" not in text

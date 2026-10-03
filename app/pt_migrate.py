@@ -19,7 +19,8 @@ Rules:
   ``remove_old_files`` deletes migrated legacy copies only when called with
   ``confirmed=True`` (the hub asks first and warns that they may hold
   plaintext credentials). A legacy file whose content was not migrated (a
-  conflict, or a credential that could not be stored) is never offered.
+  keyring conflict, a credential that could not be stored, or a ``--from``
+  import that conflicted) is never offered.
 * Before deleting, every legacy file is checked again against the migration
   record: it must be recorded as migrated and safe to remove, its SHA-256 must
   still be the one recorded when it was migrated, and its migrated copy (a
@@ -42,8 +43,21 @@ Rules:
 * A file in a folder PowerTrader uses now (``POWERTRADER_HOME`` may be the
   install root or ``app/``, whose ``data/`` and ``logs/`` are also legacy
   locations) is the new app's own file: never copied, recorded or removed.
-* An existing file in the new location is never overwritten: it is kept and
-  the conflict is listed in the report. The same holds for keyring entries.
+* Nothing in the new location is ever overwritten or replaced, so a setting
+  there never rolls back and a trading mode never changes. A legacy file that
+  differs from a file already there is copied next to it as
+  ``<name>.conflict-<source>.<ext>`` (``<source>`` is ``app`` for
+  ``legacy_dir()`` and ``root`` for ``legacy_install_dir()``; a name without
+  an extension gets no ``.<ext>``; ``-2``, ``-3``, ... follow ``<source>``
+  when the name is taken by other content). When both legacy folders hold
+  different versions of a file the new location does not have yet, the newer
+  one (by modification time; for a database the newest of its parts) gets
+  ``<name>`` and the older one the conflict copy. That is decided before
+  anything is copied. Both files are listed in the report and the dialog. A
+  conflict copy of a config file has its credential fields removed like any
+  migrated config. A legacy file saved as a conflict copy is migrated (its
+  copy is the conflict copy). Keyring entries are never replaced either: a
+  different legacy value is not stored and the conflict is listed.
 * Idempotent: every handled item is recorded (size and modification time of
   the legacy file) in ``migration-state.json``; a second run with nothing new
   does nothing. Credentials that could not be stored (no keyring) are retried
@@ -127,6 +141,11 @@ SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
 # Sidecars that can hold data the .db does not have yet.
 SQLITE_DATA_SIDECARS = ("-wal", "-journal")
 
+# Which legacy folder a file comes from, as its conflict copy names it.
+APP = "app"  # pt_paths.legacy_dir()
+ROOT = "root"  # pt_paths.legacy_install_dir()
+CONFLICT = ".conflict-"
+
 # Robinhood legacy files.
 RH_PLAINTEXT = ("r_key.txt", "r_secret.txt")
 RH_VAULT = ("r_key.enc", "r_secret.enc", ".pt_salt")
@@ -162,6 +181,8 @@ class Report:
     copied: List[Tuple[str, str]] = field(default_factory=list)  # (source, target)
     secrets: List[Tuple[str, str]] = field(default_factory=list)  # (source, "exchange:field")
     conflicts: List[Tuple[str, str]] = field(default_factory=list)  # (source, kept target)
+    conflict_copies: Dict[str, str] = field(default_factory=dict)  # legacy part -> its conflict copy
+    newer: Dict[str, str] = field(default_factory=dict)  # kept target -> newer legacy file copied there
     secret_conflicts: List[Tuple[str, str]] = field(default_factory=list)  # (source, entry)
     errors: List[Tuple[str, str]] = field(default_factory=list)  # (source, message)
     removable: List[str] = field(default_factory=list)  # legacy copies safe to delete
@@ -183,11 +204,40 @@ class Report:
         if self.conflicts or self.secret_conflicts:
             lines.append(
                 f"{len(self.conflicts) + len(self.secret_conflicts)} conflict(s): "
-                "the new location was kept"
+                "nothing in the new location was replaced"
             )
         if self.errors:
             lines.append(f"{len(self.errors)} item(s) could not be migrated")
         return "\n".join(lines) or "Nothing to migrate."
+
+    def conflict_lines(self, markdown: bool = False) -> List[str]:
+        """Every conflict, with both files: the file in the new location that
+        PowerTrader uses (kept), and under it the conflict copy of each legacy
+        file that differed (every part of a database)."""
+        name = (lambda p: f"`{p}`") if markdown else (lambda p: p)
+        top, sub = ("* ", "  * ") if markdown else ("", "    ")
+        lines = []
+        by_target: Dict[str, List[str]] = {}
+        for source, target in self.conflicts:
+            by_target.setdefault(target, []).append(source)
+        for target, sources in by_target.items():
+            saved = [s for s in sources if s in self.conflict_copies]
+            if saved:
+                newer = self.newer.get(target)
+                kept = f"copy of the newer {name(newer)}" if newer else "was already there, kept"
+                lines.append(f"{top}{name(target)}: {kept} (in use)")
+            for source in sources:
+                if source not in saved:  # an import (--from): nothing copied
+                    lines.append(f"{top}{name(source)} was not copied; kept {name(target)}")
+                    continue
+                for part in _parts(source):
+                    if part in self.conflict_copies:
+                        lines.append(f"{sub}{name(self.conflict_copies[part])}: copy of {name(part)}")
+        lines += [
+            f"{top}{name(e)} from {name(s)} was not stored; the keyring already holds a different value"
+            for s, e in self.secret_conflicts
+        ]
+        return lines
 
 
 @dataclass
@@ -226,7 +276,8 @@ def _sha256(path: str) -> str:
 class _State:
     """``migration-state.json``::
 
-        {"items": {key: {"fp": fingerprint, "redundant": bool}},
+        {"items": {key: {"fp": fingerprint, "redundant": bool,
+                         "copy": conflict copy (only when the content went there)}},
          "files": {legacy file: {"fp": [size, mtime_ns], "sha256": hex, "copy": [location, ...],
                                  "keep": true (only when set)}},
          "removable": [[legacy file, ...], ...]}
@@ -263,9 +314,13 @@ class _State:
             pass
         return None
 
-    def mark(self, key: str, source, redundant: bool) -> None:
+    def mark(self, key: str, source, redundant: bool, copy: Optional[str] = None) -> None:
+        """Record ``key`` as handled; ``copy``: the conflict copy that holds its content."""
         try:
-            self.data["items"][key] = {"fp": _fingerprint(source), "redundant": bool(redundant)}
+            item = {"fp": _fingerprint(source), "redundant": bool(redundant)}
+            if copy:
+                item["copy"] = copy
+            self.data["items"][key] = item
         except OSError:
             pass
 
@@ -347,66 +402,231 @@ def _copy_parts(pairs: List[Tuple[str, str]]) -> Dict[str, str]:
     return {source: _sha256(target) for source, target in pairs}
 
 
-def _copy_file(source: str, target: str, report: Report, state: _State) -> List[str]:
-    """Copy one file, never overwriting. A database comes with its
-    -wal/-shm/-journal files as one unit: compared, copied and recorded together. Returns the
-    legacy parts when they are redundant (copied now or earlier, or already
-    identical at the target), else [].
+def _parts(path: str) -> List[str]:
+    """``path`` and the names of its -wal/-shm/-journal files (a database is one unit)."""
+    return [path + s for s in ("",) + SQLITE_SIDECARS]
 
-    Each part is recorded with the SHA-256 of what was copied and with
-    ``target`` as its copy: SQLite merges and deletes the -wal/-shm files of
-    the migrated database when it closes it (and rolls back and deletes a hot
-    -journal when it opens it), so the .db is what must remain. Until then, a
-    -wal or -journal with data also needs its own copy (``_refusal``).
+
+def _pairs(source: str, target: str) -> List[Tuple[str, str]]:
+    return list(zip(_parts(source), _parts(target)))
+
+
+def _taken(path: str) -> bool:
+    """Whether anything is at ``path`` or at one of its -wal/-shm/-journal names."""
+    return any(os.path.lexists(p) for p in _parts(path))
+
+
+def _newest(source: str) -> int:
+    """When a legacy unit was last written: the latest modification time of its parts."""
+    times = []
+    for part in _parts(source):
+        try:
+            times.append(os.stat(part).st_mtime_ns)
+        except OSError:
+            pass
+    return max(times, default=0)
+
+
+def _conflict_name(target: str, label: str, number: int = 1) -> str:
+    """``<name>.conflict-<label>.<ext>`` next to ``target`` (no ``.<ext>`` for
+    a name without one), with ``-<number>`` after ``<label>`` from 2 on."""
+    stem, ext = os.path.splitext(target)
+    return f"{stem}{CONFLICT}{label}{f'-{number}' if number > 1 else ''}{ext}"
+
+
+def _conflict_copy(target: str, label: str, same) -> Tuple[str, object]:
+    """Where a legacy file that conflicts with ``target`` goes: the first
+    conflict name (``_conflict_name``) that is free, or that already holds
+    the same content, so an earlier conflict copy is reused and never
+    overwritten. ``same(name)`` says whether a taken name holds that content
+    (anything but None: yes). Returns the name and None for a free name, else
+    what ``same`` returned."""
+    number = 1
+    while True:
+        name = _conflict_name(target, label, number)
+        if not _taken(name):
+            return name, None
+        found = same(name)
+        if found is not None:
+            return name, found
+        number += 1
+
+
+def _record_unit(source: str, present: List[Tuple[str, str]], copy: str, digests: Dict[str, str],
+                 state: _State, conflict: bool) -> List[str]:
+    """Record each part of a migrated legacy unit with the SHA-256 of what
+    was copied and with ``copy`` (the .db) as its copy: SQLite merges and
+    deletes the -wal/-shm files of the migrated database when it closes it
+    (and rolls back and deletes a hot -journal when it opens it), so the .db
+    is what must remain. Until then, a -wal or -journal with data also needs
+    its own copy (``_refusal``). Returns the parts (now redundant)."""
+    for part, _ in present:
+        state.remember(part, [copy], digests[part])
+    state.mark(f"file:{source}", _parts(source), True, copy if conflict else None)
+    return [s for s, _ in present]
+
+
+def _copy_new(source: str, target: str, report: Report, state: _State) -> Optional[List[str]]:
+    """Copy a legacy unit to ``target``, where nothing is yet. Returns its
+    parts, or None if the copy failed (nothing is left at ``target`` then)."""
+    present = [(s, t) for s, t in _pairs(source, target) if os.path.isfile(s)]
+    try:
+        digests = _copy_parts(present)
+    except OSError as exc:
+        report.errors.append((source, f"copy failed ({type(exc).__name__})"))
+        return None
+    report.copied += present
+    return _record_unit(source, present, target, digests, state, conflict=False)
+
+
+def _save_beside(source: str, target: str, label: str, newer: Optional[str], report: Report,
+                 state: _State) -> List[str]:
+    """A legacy unit whose ``target`` is taken: if it holds the same parts with
+    the same content, nothing is copied; otherwise the unit is copied to its
+    conflict copy next to ``target`` (``_conflict_copy``), which is listed
+    with ``target`` in the report. ``target`` is never touched. ``newer``: the
+    newer legacy file this run copied to ``target``, if any. Returns the
+    legacy parts (now redundant), or [] if the copy failed."""
+    present = [(s, t) for s, t in _pairs(source, target) if os.path.isfile(s)]
+    try:
+        digests = _same_unit(_pairs(source, target))
+        if digests is not None:
+            return _record_unit(source, present, target, digests, state, conflict=False)
+        copy, digests = _conflict_copy(target, label, lambda name: _same_unit(_pairs(source, name)))
+        pairs = [(s, c) for s, c in _pairs(source, copy) if os.path.isfile(s)]
+        if digests is None:
+            digests = _copy_parts(pairs)
+            report.conflicts.append((source, target))
+            report.conflict_copies.update(pairs)
+            if newer:
+                report.newer[target] = newer
+    except OSError as exc:
+        report.errors.append((source, f"copy failed ({type(exc).__name__})"))
+        return []
+    return _record_unit(source, pairs, copy, digests, state, conflict=True)
+
+
+def _copy_files(target: str, sources: List[Tuple[str, str]], report: Report,
+                state: _State) -> List[List[str]]:
+    """Copy the legacy files that go to ``target`` (``(path, label)`` each, one
+    per legacy folder), never overwriting or replacing anything. A database
+    comes with its -wal/-shm/-journal files as one unit: compared, copied and recorded
+    together. Returns the redundant legacy units: copied now or earlier,
+    identical to what is there, or saved as a conflict copy.
+
+    A file that was in the new location before this run is kept as it is; a
+    legacy unit that differs is saved next to it (``_save_beside``). When
+    ``target`` does not exist yet, the newest legacy unit (``_newest``; the
+    first on a tie) is copied there and the others are saved next to it.
+    That choice is made before anything is copied, so nothing written in
+    this run is renamed or replaced. If the newest one cannot be copied, the
+    others wait for the next run, so it still gets ``target`` then.
 
     A source in a folder PowerTrader uses now, or that is its own target, is
     the new app's own file: skipped, never recorded as its own copy. (With
     ``POWERTRADER_HOME`` at the install root, ``logs/`` is the log folder:
     copying it into ``logs/legacy`` would nest it deeper on every run.)"""
-    pairs = [(source + s, target + s) for s in ("",) + SQLITE_SIDECARS]
-    if _in_new_location(source) or any(os.path.isfile(s) and _same_file(s, t) for s, t in pairs):
-        return []
-    sources = [s for s, _ in pairs]
-    key = f"file:{source}"
-    seen = state.entry(key, sources)
-    if seen is not None:
-        if seen["redundant"] and os.path.exists(target):
-            return [s for s in sources if os.path.isfile(s)]
-        return []
-    present = [(s, t) for s, t in pairs if os.path.isfile(s)]
+    units, pending = [], []
+    for source, label in sources:
+        pairs = _pairs(source, target)
+        if _in_new_location(source) or any(os.path.isfile(s) and _same_file(s, t) for s, t in pairs):
+            continue
+        seen = state.entry(f"file:{source}", _parts(source))
+        if seen is None:
+            pending.append((source, label))
+        elif seen["redundant"] and os.path.exists(seen.get("copy", target)):
+            units.append([p for p in _parts(source) if os.path.isfile(p)])
+    newer = None
+    if pending and not _taken(target):
+        pending.sort(key=lambda item: _newest(item[0]), reverse=True)  # stable: a tie keeps the order
+        newer = pending.pop(0)[0]
+        unit = _copy_new(newer, target, report, state)
+        if unit is None:
+            report.errors += [
+                (source, f"not copied yet: the newer {newer} could not be copied first")
+                for source, _ in pending
+            ]
+            return units
+        units.append(unit)
+    for source, label in pending:
+        unit = _save_beside(source, target, label, newer, report, state)
+        if unit:
+            units.append(unit)
+    return units
+
+
+def _copy_file(source: str, target: str, report: Report, state: _State,
+               label: str = APP) -> List[str]:
+    """One legacy file (or database unit) to ``target`` (``_copy_files``).
+    Returns its parts when they are redundant, else []."""
+    units = _copy_files(target, [(source, label)], report, state)
+    return units[0] if units else []
+
+
+class _Copies:
+    """The legacy files to copy, by target. A file both legacy folders hold
+    goes to one target; collecting them first lets ``_copy_files`` compare
+    them before anything is copied."""
+
+    def __init__(self):
+        self.targets: Dict[str, Tuple[str, List[Tuple[str, str]]]] = {}
+
+    def add(self, source: str, target: str, label: str) -> None:
+        target = os.path.normpath(target)
+        self.targets.setdefault(os.path.normcase(target), (target, []))[1].append((source, label))
+
+    def run(self, report: Report, state: _State) -> List[List[str]]:
+        units = []
+        for target, sources in self.targets.values():
+            units += _copy_files(target, sources, report, state)
+        return units
+
+
+def _holds(path: str, content: bytes) -> bool:
+    """Whether the file ``path`` holds exactly ``content``."""
     try:
-        if any(os.path.exists(t) for _, t in pairs):
-            digests = _same_unit(pairs)
-            if digests is None:
-                report.conflicts.append((source, target))
-                state.mark(key, sources, False)
-                return []
-        else:
-            digests = _copy_parts(present)
-            report.copied += present
-    except OSError as exc:
-        report.errors.append((source, f"copy failed ({type(exc).__name__})"))
-        return []
-    for part, _ in present:
-        state.remember(part, [target], digests[part])
-    state.mark(key, sources, True)
-    return [s for s, _ in present]
+        if os.path.getsize(path) != len(content):
+            return False
+        with open(path, "rb") as f:
+            return f.read() == content
+    except OSError:
+        return False
 
 
-def _write_config(source: str, target: str, data, report: Report, state: _State) -> bool:
-    """Write the cleaned config ``data`` to ``target`` unless a file is already there."""
+def _write_config(source: str, target: str, data, report: Report, state: _State,
+                  label: Optional[str] = None) -> Optional[str]:
+    """Write the cleaned config ``data`` to ``target``, never over a file.
+    Returns where its content is now (``target``, or the conflict copy), or
+    None. A ``target`` that holds something else is kept as it is: ``data``
+    (the same cleaned content, no credential) goes to the conflict copy next
+    to it, so a setting never rolls back and the trading mode never changes.
+    Without ``label`` (an import with ``--from``) nothing is written then and
+    the conflict is only listed."""
     key = f"config:{source}"
     seen = state.entry(key, source)
     if seen is not None:
-        return seen["redundant"]
-    if os.path.exists(target):
+        return seen.get("copy", target) if seen["redundant"] else None
+    text = json.dumps(data, indent=2)
+    content = text.encode("utf-8")
+    if not os.path.exists(target):
+        pt_paths.write_private_text(target, text)
+        report.copied.append((source, target))
+        state.mark(key, source, True)
+        return target
+    if _holds(target, content):  # migrated before: nothing new
+        state.mark(key, source, True)
+        return target
+    if label is None:
         report.conflicts.append((source, target))
         state.mark(key, source, False)
-        return False
-    pt_paths.write_private_text(target, json.dumps(data, indent=2))
-    report.copied.append((source, target))
-    state.mark(key, source, True)
-    return True
+        return None
+    copy, found = _conflict_copy(target, label, lambda name: True if _holds(name, content) else None)
+    if found is None:
+        pt_paths.write_private_text(copy, text)
+        report.conflicts.append((source, target))
+        report.conflict_copies[source] = copy
+    state.mark(key, source, True, copy)
+    return copy
 
 
 def _read_json(path: str, report: Report) -> Tuple[object, Optional[str]]:
@@ -600,11 +820,23 @@ def _copy_exists(location: str) -> bool:
 
 
 def _migrate_config(source: str, kind: str, report: Report, state: _State,
-                    legacy_roots: Iterable[str], keep: bool = False) -> bool:
+                    legacy_roots: Iterable[str], keep: bool = False,
+                    label: Optional[str] = None) -> bool:
     """One legacy config file: credentials to the keyring, the rest to the
-    config folder. True when the legacy file is now redundant; it is then
-    recorded with the SHA-256 that was read and its copies (the config file
-    and the keyring entries), and with ``keep`` (never removed)."""
+    config folder (or, if a different file is there, to its conflict copy
+    ``<name>.conflict-<label>.json``; ``_write_config``). True when the legacy
+    file is now redundant; it is then recorded with the SHA-256 that was read
+    and its copies (the config file or conflict copy, and the keyring
+    entries), and with ``keep`` (never removed).
+
+    A legacy source in a folder PowerTrader uses now, or a source that is the
+    same file as its target (a hard link, or a link either way), is the new
+    app's own config: skipped, never recorded, never offered for removal."""
+    target = pt_paths.config_file(kind)
+    if _same_file(source, target) or (label is not None and _in_new_location(source)):
+        if label is None:  # --from
+            report.errors.append((source, "is the config file in use; nothing to import"))
+        return False
     data, digest = _read_json(source, report)
     if not isinstance(data, (dict, list)):
         return False
@@ -632,13 +864,12 @@ def _migrate_config(source: str, kind: str, report: Report, state: _State,
     clean = pt_secrets.strip_secret_fields(data, os.path.basename(source), warn=False)
     if kind == pt_paths.GUI_SETTINGS_FILE and isinstance(clean, dict):
         clean = _relocated_gui_settings(clean, legacy_roots)
-    target = pt_paths.config_file(kind)
-    written = _write_config(source, target, clean, report, state)
+    copy = _write_config(source, target, clean, report, state, label)
     if _holds_secret(data):
         report.plaintext_left.append(source)
-    if not (written and secrets_ok):
+    if not (copy and secrets_ok):
         return False
-    state.remember(source, [target] + [f"{KEYRING_COPY}{ex}:{f}" for ex, f, _ in items], digest, keep)
+    state.remember(source, [copy] + [f"{KEYRING_COPY}{ex}:{f}" for ex, f, _ in items], digest, keep)
     return True
 
 
@@ -669,7 +900,9 @@ def _detect_kind(path: str, report: Report) -> Optional[str]:
 def import_config_file(path: str, kind: Optional[str] = None) -> Report:
     """Import one config file from any location (e.g. a backup copied out of
     the repo). Same rules: credentials to the keyring, the rest to the config
-    folder, nothing overwritten, nothing deleted."""
+    folder, nothing overwritten, nothing deleted. If the config folder holds a
+    different file of that kind, nothing is written and the conflict is
+    listed (no conflict copy: conflict copies are for the legacy folders)."""
     report = Report()
     path = os.path.abspath(path)
     if not os.path.isfile(path):
@@ -751,20 +984,18 @@ def _robinhood_meta(legacy: str, report: Report, state: _State) -> List[List[str
     meta = os.path.join(legacy, RH_META)
     if not os.path.isfile(meta):
         return []
-    return [_copy_file(meta, pt_paths.config_file("robinhood_rotation.json"), report, state)]
+    return [_copy_file(meta, pt_paths.config_file("robinhood_rotation.json"), report, state, APP)]
 
 
 # --- data -------------------------------------------------------------------------------
 
 
-def _copy_tree(source_dir: str, target_dir: str, report: Report, state: _State,
-               redirect: Optional[Dict[str, str]] = None) -> List[List[str]]:
-    """Copy every file under ``source_dir`` (a database with its
-    -wal/-shm/-journal files as one unit); a first-level folder named in
-    ``redirect`` goes to the folder given there instead. Returns the
-    redundant legacy units. Links and junctions are not followed
-    (``_through_link``): ``os.walk`` follows a junction on Windows."""
-    units = []
+def _copy_tree(source_dir: str, target_dir: str, copies: _Copies, label: str,
+               redirect: Optional[Dict[str, str]] = None) -> None:
+    """Add every file under ``source_dir`` to ``copies`` (a database with its
+    -wal/-shm/-journal files as one unit); a first-level folder named in ``redirect``
+    goes to the folder given there instead. Links and junctions are not
+    followed (``_through_link``): ``os.walk`` follows a junction on Windows."""
     for folder, dirs, files in os.walk(source_dir):
         dirs[:] = [d for d in dirs if d != "__pycache__" and not _linked(os.path.join(folder, d))]
         rel = os.path.relpath(folder, source_dir)
@@ -779,9 +1010,7 @@ def _copy_tree(source_dir: str, target_dir: str, report: Report, state: _State,
                 continue
             if any(name.endswith(s) and name[: -len(s)] in names for s in SQLITE_SIDECARS):
                 continue  # copied with its database
-            src = os.path.join(folder, name)
-            units.append(_copy_file(src, os.path.normpath(os.path.join(base, rel, name)), report, state))
-    return units
+            copies.add(os.path.join(folder, name), os.path.join(base, rel, name), label)
 
 
 def _listdir(folder: str) -> List[str]:
@@ -830,7 +1059,8 @@ def migrate(legacy_dir: Optional[str] = None, legacy_install_dir: Optional[str] 
     for name in CONFIG_FILES:
         source = os.path.join(legacy, name)
         if os.path.isfile(source) and _migrate_config(
-            source, name, report, state, (legacy, root), keep=checkout and name in BRANCH_SETTINGS
+            source, name, report, state, (legacy, root), keep=checkout and name in BRANCH_SETTINGS,
+            label=APP,
         ):
             units.append([source])
     units += _migrate_robinhood(legacy, report, state)
@@ -847,33 +1077,36 @@ def migrate(legacy_dir: Optional[str] = None, legacy_install_dir: Optional[str] 
                 state.remember(path, RH_COPIES)
                 units.append([path])
 
-    # 3. data: hub_data (candles are cache), neural files, databases, logs
+    # 3. data: hub_data (candles are cache), neural files, databases, logs. Both
+    # legacy folders can hold the same database or log: every copy is planned
+    # first, so the two are compared before either is copied (_copy_files)
+    copies = _Copies()
     hub = os.path.join(legacy, pt_paths.HUB_DIR_NAME)
     if os.path.isdir(hub) and not _through_link(hub, legacy):
-        units += _copy_tree(
-            hub, pt_paths.hub_dir(), report, state,
+        _copy_tree(
+            hub, pt_paths.hub_dir(), copies, APP,
             redirect={"candles": os.path.join(pt_paths.cache_dir(), "candles")},
         )
     neural_root = pt_paths.neural_dir()
     for src in _neural_files(legacy):
-        units.append(_copy_file(src, os.path.join(neural_root, os.path.basename(src)), report, state))
+        copies.add(src, os.path.join(neural_root, os.path.basename(src)), APP)
     for coin in _coin_folders(legacy):
         for src in _neural_files(os.path.join(legacy, coin)):
-            units.append(
-                _copy_file(src, os.path.join(neural_root, coin, os.path.basename(src)), report, state)
-            )
-    for base in dict.fromkeys((legacy, root)):
+            copies.add(src, os.path.join(neural_root, coin, os.path.basename(src)), APP)
+    bases = {legacy: APP}
+    bases.setdefault(root, ROOT)
+    for base, label in bases.items():
         for rel, kind, name in LOOSE_FILES:
             src = os.path.join(base, rel)
             if os.path.isfile(src) and not _through_link(src, base):
-                units.append(_copy_file(src, os.path.join(_dest_dir(kind), name), report, state))
+                copies.add(src, os.path.join(_dest_dir(kind), name), label)
         for name in fnmatch.filter(_listdir(base), "emergency_snapshot_*.json"):
-            src = os.path.join(base, name)
-            if not _linked(src):
-                units.append(_copy_file(src, os.path.join(pt_paths.log_dir(), name), report, state))
+            if not _linked(os.path.join(base, name)):
+                copies.add(os.path.join(base, name), os.path.join(pt_paths.log_dir(), name), label)
         logs = os.path.join(base, "logs")
         if os.path.isdir(logs) and not _through_link(logs, base):
-            units += _copy_tree(logs, os.path.join(pt_paths.log_dir(), "legacy"), report, state)
+            _copy_tree(logs, os.path.join(pt_paths.log_dir(), "legacy"), copies, label)
+    units += copies.run(report, state)
 
     # Safe to remove: every part of the unit exists and is recorded (hash and copy).
     recorded = state.data["files"]
@@ -905,14 +1138,23 @@ def write_report_file(report: Report, records: Optional[Dict[str, dict]] = None)
     for kind, folder in pt_paths.describe().items():
         lines.append(f"* {kind}: `{folder}`")
     lines.append("* credentials: the operating system's credential store (keyring)")
+    conflicts = report.conflict_lines(markdown=True)
+    if report.conflict_copies:
+        conflicts = [
+            "An old file that differs from the file in the new location was copied next to it "
+            "as `<name>.conflict-app.<ext>` (from the program folder "
+            "`app/`) or `<name>.conflict-root.<ext>` (from the install folder), with `-2`, `-3`, "
+            "... if that name was taken. If both old folders held a different version of a file "
+            "the new location did not have yet, the newer one got the normal name. PowerTrader "
+            "uses only the file with the normal name (marked \"in use\"): compare the two and copy "
+            "over anything you need. A conflict copy of a config file holds no credentials.",
+            "",
+        ] + conflicts
     sections = (
         ("Copied", [f"* `{s}` -> `{t}`" for s, t in report.copied]),
         ("Credentials moved to the OS keyring (field names only)",
          [f"* `{e}` (from `{s}`)" for s, e in report.secrets]),
-        ("Conflicts (what was already in the new location was kept)",
-         [f"* `{s}` was not copied; kept `{t}`" for s, t in report.conflicts]
-         + [f"* `{e}` from `{s}` was not stored; the keyring already holds a different value"
-            for s, e in report.secret_conflicts]),
+        ("Conflicts (nothing in the new location was replaced)", conflicts),
         ("Not migrated", [f"* `{s}`: {m}" for s, m in report.errors]),
         ("Old files that still hold plaintext credentials",
          [f"* `{p}`" for p in dict.fromkeys(report.plaintext_left)]),
@@ -1192,6 +1434,16 @@ def _prune_empty(folder: str) -> None:
         folder = os.path.dirname(folder)
 
 
+def _conflicts_text(report: Report, limit: Optional[int] = 20) -> str:
+    """The conflicts with both files of each, for the dialog and the CLI ('' if none)."""
+    lines = report.conflict_lines()
+    if not lines:
+        return ""
+    if limit is not None and len(lines) > limit:
+        lines = lines[:limit] + ["..."]
+    return "\n\nConflicts:\n" + "\n".join(lines)
+
+
 def _not_removed_text(*results: Removal, limit: int = 15) -> str:
     """The files left in place, with the reason, for the dialog ('' if none)."""
     lines = [line for result in results for line in result.not_removed()]
@@ -1231,6 +1483,7 @@ def show_migration_dialog(parent, report: Report, messagebox=None):
         "PowerTraderAI now keeps your settings and data outside the program folder,\n"
         "and your API keys in the operating system's credential store.\n\n"
         + report.summary()
+        + _conflicts_text(report)
         + (f"\n\nFull report: {report.report_path}" if report.report_path else "")
     )
     ttk.Label(win, text=text, justify="left", wraplength=560).pack(padx=16, pady=(16, 8), anchor="w")
@@ -1313,7 +1566,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     report = import_config_file(args.source) if args.source else migrate()
     if args.source and report.changed:
         report.report_path = write_report_file(report)
-    print(report.summary())
+    print(report.summary() + _conflicts_text(report, limit=None))
     if report.report_path:
         print(f"Report: {report.report_path}")
     for source, message in report.errors:

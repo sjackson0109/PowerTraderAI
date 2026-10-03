@@ -153,11 +153,20 @@ credential store, never in a file.
 
 **Upgrading from an older version:** on first start PowerTrader copies settings, data and keys it finds
 in the program folder (`app/pt_config.json`, `app/trading_config.json`, `app/hub_data/`, the Robinhood key
-files, ...) to the new locations. It never overwrites anything already there, writes a
+files, ...) to the new locations. It never overwrites or replaces anything already there, writes a
 `migration-report.md` to the config folder, and changes or deletes nothing in the old location until you
-press **Remove old files** (or run `python app/pt_migrate.py --remove-old-files`) and confirm. Even then
-it deletes an old file only if the file is unchanged since it was copied, its copy still exists in the
-new location and it is not read-only. A database goes together with its `-wal`/`-shm`/`-journal` files; if one of
+press **Remove old files** (or run `python app/pt_migrate.py --remove-old-files`) and confirm. If an old
+file differs from the file already in the new location, both are kept: PowerTrader keeps using the file
+that was there, and the old one is copied next to it as `<name>.conflict-app.<ext>` (from `app/`) or
+`<name>.conflict-root.<ext>` (from the install folder), for example `pt_config.conflict-app.json`
+(`-2`, `-3`, ... if that name is taken). So a conflict never rolls a setting back or switches paper
+trading to live. If both old folders hold a different version of a file the new location does not have
+yet (for example `logs/powertrader.log`), the newer one gets the normal name and the older one the
+`.conflict-` name. Both files of each conflict are listed in `migration-report.md` and in the window
+shown at start-up; compare them and copy over what you need. A conflict copy of a config file holds no
+keys, and keys already in the credential store are never replaced. Even with **Remove old files**, it
+deletes an old file only if the file is unchanged since it was copied, its copy (for a conflict, its
+`.conflict-` copy) still exists in the new location and it is not read-only. A database goes together with its `-wal`/`-shm`/`-journal` files; if one of
 them cannot be deleted, the database is kept. Every file it keeps is listed with the reason. In a git
 checkout `app/pt_config.json` and `app/gui_settings.json` are always kept, because other branches still
 use them. Files in the folders PowerTrader uses now (for example `data/` and `logs/` when

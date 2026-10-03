@@ -226,9 +226,9 @@ def test_a_credential_file_whose_keyring_entry_is_gone_is_refused(legacy):
 
 
 def test_files_not_in_the_record_are_refused(legacy):
-    write(pt_paths.settings_file(), {"trading": {"mode": "paper"}, "kept": True})
+    pt_secrets.set_secret("binance", "api_secret", "already-in-keyring")
     report = pt_migrate.migrate()
-    conflicted = os.path.join(legacy["app"], "pt_config.json")  # not migrated: a conflict
+    conflicted = os.path.join(legacy["app"], "trading_config.json")  # not migrated: a keyring conflict
     code = os.path.join(legacy["app"], "ETH", "pt_trainer.py")
     assert conflicted not in report.removable
     assert conflicted not in pt_migrate.remove_old_files().removable
@@ -533,7 +533,11 @@ def test_a_different_or_missing_wal_makes_the_database_a_conflict(legacy, target
         write(target + "-wal", target_wal)
     report = pt_migrate.migrate()
     assert (db, target) in report.conflicts
-    assert db not in report.removable and db + "-wal" not in report.removable
+    # saved whole as the conflict copy, so removable (FDS-108a review item 4)
+    copy = os.path.join(pt_paths.data_dir(), "order_management.conflict-app.db")
+    assert report.conflict_copies == {db: copy, db + "-wal": copy + "-wal"}
+    assert sha(copy) == sha(db) and sha(copy + "-wal") == sha(db + "-wal")
+    assert db in report.removable and db + "-wal" in report.removable
     if target_wal is None:
         assert not os.path.exists(target + "-wal")  # nothing copied next to the existing database
     else:

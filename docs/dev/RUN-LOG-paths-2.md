@@ -450,3 +450,175 @@ Fix (folded into this item's commit after the workflow stopped on a usage limit)
     legacy files still read as the committed rows.
   * Against the code before this fix both fail (no `-journal` is copied); with it both pass.
 * Docs: README and `ARCHITECTURE.md` name `-journal` with `-wal`/`-shm`.
+
+## Item 4 — Conflicts: keep both files
+
+Policy chosen by the owner. Before, a legacy file that differed from a file in the new location was not
+copied and stayed only in the old folder. When both legacy folders held the same file, the one handled
+first (`app/`) took the name. Reproduced in a scratch clone at `18ea47a`, with `<root>/logs/errors.log`
+and `powertrader.log` newer than the `app/logs` ones (the owner's machine): the older `app/` logs were
+copied to `logs/legacy/`, and the newer root logs were listed as "was not copied" and left behind.
+
+* `app/pt_migrate.py`:
+  * Nothing in the new location is ever overwritten or replaced. A legacy file that differs from what is
+    there is copied next to it as `<name>.conflict-<source>.<ext>`: `<source>` is `app` for
+    `legacy_dir()` and `root` for `legacy_install_dir()`. A name without an extension gets
+    `<name>.conflict-<source>`. A database goes with its parts: `order_management.conflict-root.db` with
+    `order_management.conflict-root.db-wal`/`-shm`.
+  * Two legacy copies in the same run: every copy of hub data, neural files, databases, snapshots and logs
+    is planned first, grouped by target (`_Copies`), then handled per target (`_copy_files`). If the
+    target does not exist, the newer legacy unit is copied straight to `<name>` and the older one
+    straight to its conflict copy. Newer means latest modification time; for a database, the latest of its
+    parts. On a tie, `app/` wins. Nothing written in the run is renamed or replaced. If the newer copy
+    fails, the older one is not copied either ("not copied yet: the newer ... could not be copied
+    first"), so the next start still gives `<name>` to the newer one.
+  * A target that existed before the run is never replaced, whatever the times: each differing legacy
+    file goes to its own conflict copy. Config files go through the same path as before
+    (`_write_config`). The conflict copy holds the same cleaned data a normal migration writes:
+    credential fields removed, folders that pointed into `app/` blanked. So a newer `app/pt_config.json`
+    with `mode: live` never changes an existing paper `pt_config.json`.
+  * Conflict copies are never overwritten (`_conflict_copy`). A taken name whose content is the same is
+    reused; a name taken by other content (any part, including a stray `-shm`) moves on to `-2`, `-3`,
+    and so on, after `<source>` (`powertrader.conflict-root-2.log`). A reused copy is not reported again.
+    A re-run with nothing new stays a no-op.
+  * Item 3: a legacy file saved as a conflict copy is recorded like a migrated one. It has the SHA-256 of
+    what was copied, and its copy is the conflict copy (the conflict `.db` for each part of a database,
+    as in item 3). It is offered for removal and goes through the same checks: hash, copy exists,
+    `-wal` rule, git-checkout keep rule. The `items` entry stores the conflict copy (`"copy"`), so the
+    next run looks for that file, not `<name>`.
+  * Keyring conflicts are unchanged: the keyring value is kept and listed, and the legacy file is not
+    offered for removal.
+  * Report: `conflicts` keeps its `(source, kept target)` shape. New are `conflict_copies` (legacy part
+    -> conflict copy) and `newer` (target -> the newer legacy file copied there).
+    `Report.conflict_lines()` lists each conflict with both files. The `<name>` line says "(in use)"
+    and either "was already there, kept" or "copy of the newer `<legacy file>`". Under it comes each
+    conflict copy with the legacy file it copies, every part of a database. `migration-report.md` has
+    these lines under "Conflicts (nothing in the new location was replaced)", after a short paragraph on
+    the naming. The start-up dialog and the CLI show them under "Conflicts:" (the dialog shows the first
+    20 lines). The summary line now reads "N conflict(s): nothing in the new location was replaced".
+* Also changed:
+  * A config file whose cleaned content is byte-identical to the file already in the config folder is no
+    longer a conflict. It counts as migrated (for example after `migration-state.json` was deleted).
+    Without this, a re-run without the record would write conflict copies identical to `<name>`.
+  * Not changed: `--from` (import one config file). A conflict there is still only listed and nothing is
+    written; conflict copies are only for the two legacy folders.
+* Docs: README ("Upgrading from an older version") and `docs/technical/ARCHITECTURE.md` (`pt_migrate`)
+  describe the conflict copies, the newer-wins rule, that a conflict never rolls a setting back or
+  switches paper to live, and that removal checks the conflict copy. `RUN-LOG-paths-1.md` still
+  describes phase 4 as it was built ("conflict listed, new location kept"); left as the record of that
+  phase. `CREDENTIAL_SETUP.md` and `PATHS-INVENTORY.md` do not describe conflicts; unchanged.
+* New `app/tests/test_pt_migrate_conflicts.py` (22 tests; it reuses the fixtures and helpers of
+  `test_pt_migrate.py` and `test_pt_migrate_removal.py`):
+  * `test_the_newer_of_two_legacy_copies_gets_the_name_and_the_older_is_kept_beside_it[root newer|app
+    newer]`: `powertrader.log`, `errors.log` and `trace` (no extension) in both `logs/` folders. The newer
+    one is at `<name>` and the older at `<name>.conflict-<folder>[.<ext>]`. A wrapped `shutil.copy2` shows
+    each destination written exactly once. Both legacy files are removable. Root newer:
+    `powertrader.conflict-app.log` and `errors.conflict-app.log`.
+  * `test_a_database_goes_with_its_wal_and_shm_and_its_newest_part_decides[root newer|app newer]`:
+    `order_management.db` in both folders (app with `-wal`, root with `-wal` and `-shm`). In the root-newer
+    case app's `.db` is newer than root's `.db`; root's `-shm` decides. Each unit lands whole at its name,
+    no part at a name its unit does not have. The record gives the conflict `.db` as the copy of every
+    part of the older unit.
+  * `test_if_the_newer_copy_cannot_be_made_the_older_one_waits`: the newer copy fails, nothing is at
+    `<name>`, the older one is listed "not copied yet". The retry gives `<name>` to the newer one.
+  * `test_a_file_already_in_the_new_location_is_never_replaced`: an existing log and database, older
+    than the legacy files, keep their content and modification time. Both legacy logs and app's database
+    unit are saved as conflict copies, and the listing says "was already there, kept (in use)".
+  * `test_a_newer_live_legacy_config_never_turns_an_existing_paper_config_live`: the existing paper
+    `pt_config.json` is byte-identical afterwards. `read_trading_settings()` is not live;
+    `read_trading_settings(<conflict copy>)` is. The next start changes nothing.
+  * `test_a_conflict_copy_of_a_config_file_is_stripped_like_a_migrated_one`: `trading_config`,
+    `exchange_config` and `gui_settings` conflict copies are byte-identical to what a normal migration
+    (another home) writes for the same legacy files, with no credential. The keyring gets the same
+    entries. The trading config record is `[conflict copy, 4 keyring entries]`.
+  * `test_an_import_with_from_still_writes_no_conflict_copy`.
+  * `test_a_taken_conflict_name_is_never_overwritten`: `powertrader.conflict-root.log` taken goes to
+    `-2`; `pt_config.conflict-app.json` and `-2` taken goes to `-3`. The earlier files are unchanged.
+  * `test_a_database_conflict_copy_whose_name_is_taken_by_a_part_moves_on`: a stray
+    `order_management.conflict-app.db-shm` is left alone and the copy goes to `-2`.
+  * `test_an_earlier_conflict_copy_with_the_same_content_is_reused`: no new file, nothing reported, and
+    the record points at the earlier copy.
+  * `test_the_report_lists_both_files_of_each_conflict`, `test_the_dialog_lists_both_files_of_each_conflict`
+    (the real dialog's label text) and `test_the_cli_lists_both_files_of_each_conflict`: a legacy-vs-legacy
+    log and an existing `pt_config.json`. Both files of each are named, with "copy of the newer" or "was
+    already there, kept", and "(in use)".
+  * `test_a_second_run_after_conflicts_does_nothing`: three cases, each with no report and no new file.
+    A second run (user folders and record unchanged, `run_startup_migration()` returns None). A run after
+    a legacy file is only touched: it is now the newest, but `<name>` is taken and its conflict copy is
+    reused. A run with `migration-state.json` deleted: every copy is found again; only the record is
+    rewritten.
+  * `test_the_next_run_looks_for_the_conflict_copy_a_file_was_saved_as[conflict copy|name]`: with the
+    conflict copy deleted, the older log is no longer removable and the newer one still is. With `<name>`
+    deleted, the reverse.
+  * `test_old_files_saved_as_conflict_copies_are_removed_after_the_same_checks`: `--remove-old-files
+    --yes` removes every conflicted legacy file (exit 0); every file in the new location, conflict copies
+    included, is byte-identical with the same times.
+  * `test_a_conflicted_old_file_whose_copy_is_gone_or_that_changed_is_kept`: three cases, all refused and
+    unchanged (exit 1). An appended legacy log (`changed since it was migrated`). A deleted config
+    conflict copy (`no migrated copy`). A deleted conflict `-wal` whose data the conflict `.db` does not
+    hold (`no migrated copy` for both parts; item 3's `-wal` rule).
+  * `test_in_a_git_checkout_a_conflicted_pt_config_is_still_kept`: the record has `keep`;
+    `remove_old_files` keeps it.
+  * `test_keyring_conflicts_are_unchanged`.
+* Checked in a scratch clone by disabling each piece in turn. The pieces: the newer-first sort, newest
+  part rather than the `.db` alone, the existing-target check, reuse of an identical conflict copy, the
+  free-name check, config stripping in the conflict copy, the conflict copy as the recorded copy, the
+  conflict lines, the identical-config check, waiting after a failed newer copy, the config conflict
+  copy as the migrated copy, the dialog and CLI listings, the `keep` flag on a conflict copy, and the
+  recorded copy in `items`. Each makes at least one test fail; restored, all pass.
+
+Existing assertions changed (each because a conflicted legacy file is now saved as a conflict copy and so
+is migrated and removable):
+
+* `test_pt_migrate.py::test_conflicts_keep_the_new_location_and_are_reported`: "a conflicted legacy file
+  is never offered for removal" (`path not in report.removable` for the conflicted `pt_config.json`,
+  `hub_data/runner_ready.json` and the keyring-conflicted `trading_config.json`) -> the keyring-conflicted
+  `trading_config.json` is still not offered; the two conflicted files are offered and their conflict
+  copy exists. The checks that the new location was kept are unchanged.
+* `test_pt_migrate_removal.py::test_files_not_in_the_record_are_refused`: the file that is not in the
+  record was `app/pt_config.json` conflicting with an existing config. That file is now migrated, so the
+  test makes `app/trading_config.json` not migrated through a keyring conflict instead. The assertions
+  (not offered, refused `not part of the migration` together with `ETH/pt_trainer.py`, nothing removed,
+  both exist) are unchanged.
+* `test_pt_migrate_removal.py::test_a_different_or_missing_wal_makes_the_database_a_conflict[different|
+  missing]`: `db not in report.removable and db-wal not in report.removable` -> both are removable, and
+  `report.conflict_copies` maps them to `order_management.conflict-app.db`/`-wal`, which hold the same
+  bytes. Still asserted: the conflict is listed, nothing is written next to the existing database, and
+  an existing `-wal` is never overwritten.
+
+Notes and limits:
+
+* No compatibility path for a record written by an earlier version of this branch. A conflict recorded
+  there (`redundant: false`) stays as it was until its legacy file changes. Item 3 made the same choice.
+* The trainer clears `memories_*.txt`, `memory_weights_*.txt` and similar files in a coin folder before it
+  trains, so it also deletes a conflict copy of a neural file there. Its legacy file is then kept by
+  Remove old files (`no migrated copy`); training writes those files again anyway.
+* Nothing in the app reads a conflict copy. Every reader opens exact names (`pt_config.json`,
+  `credential_audit.jsonl.1`, `memories_<tf>.txt`), and the log analyser's `*.log` glob is not
+  recursive, while the log conflict copies are in `logs/legacy/`.
+
+Tests (real checkout, one file per run):
+
+| File | Result |
+|---|---|
+| tests/test_pt_migrate_conflicts (new) | 22 passed |
+| tests/test_pt_migrate | 12 passed |
+| tests/test_pt_migrate_removal | 45 passed |
+| tests/test_pt_paths | 11 passed, 1 skipped (POSIX-only) |
+| tests/test_pt_secrets | 24 passed |
+| tests/test_isolation_guard | 6 passed |
+| tests/test_program_dir_read_only | 5 passed |
+| tests/test_no_legacy_paths | 4 passed |
+| tests/test_docs_and_visibility | 5 passed |
+| tests/test_credentials_single_source | 15 passed |
+| tests/test_config_no_secrets | 7 passed |
+| tests/test_trainer_launch | 4 passed |
+
+Files that import `pt_hub` (whose start-up runs the migration) and `.github/scripts` ran in two scratch
+clones, `18ea47a` and `18ea47a` plus this change, with identical results. `test_advanced_features`: 22
+passed. `test_comprehensive`: no tests. `test_core`: 1 passed. `test_credential_audit`: 9 passed.
+`test_gui_exchange_integration`: 3 passed. `test_integration`: 8 passed and the 2 known failures.
+`test_real_app`: 1 passed. `test_suite`: 16 passed and the 8 known failures. `test_tabbed_interface`: 1
+passed. `.github/scripts/test_powertrader_system.py`: 3 passed, 1 skipped. All of `app/tests` in the same
+two clones: 527 passed and 2 skipped before; 549 passed and 2 skipped after (`PyJWT` not installed,
+POSIX permission bits); no failures.

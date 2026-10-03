@@ -753,3 +753,52 @@ failures. Same results in both for the files that import `pt_hub` and for `.gith
 the 2 known failures (`test_graceful_degradation`, `test_powertrader_hub_creation`) in both. In 4 runs
 per clone, one of the two was now and then skipped instead ("No display available ...: Can't find a
 usable init.tcl"; Tk start-up on this machine): once in the base clone, twice with the change.
+
+## Item 6 — `.github/scripts` tests go through the isolation guard
+
+Items 6 and 7, the suite run and this report were done in the main session after the workflow stopped
+on a usage limit (its item 6 agent never started).
+
+`.github/scripts/conftest.py` set none of the isolation, while `test_integration.py` imports `pt_trader`,
+which resolves its folders at import time, and CI runs `python -m pytest .github/scripts/`
+(`code-quality.yml:139`).
+
+* The guard moved unchanged from `app/conftest.py` into `app/tests/isolation.py` (only `APP_DIR` is now
+  two levels up). `app/tests/` is outside the static legacy-path scan and is not production code.
+* `app/conftest.py` and `.github/scripts/conftest.py` both load that file by path under one module name,
+  `powertrader_test_isolation`, so its set-up (session `POWERTRADER_HOME`, keyring backends, blocked
+  real folders) runs once per session, before any test module is imported, also when `app/` and
+  `.github/scripts` run in one session. pytest does not allow `pytest_plugins` in a non-root conftest,
+  hence the loader. Both conftests take the autouse fixture `isolated_user_dirs` and `memory_keyring`
+  from it; `app/conftest.py` keeps `real_platform_dirs` and `RealLocationTouched` too. Nothing in the
+  guard is Windows-specific.
+* New `.github/scripts/test_isolation_guard_active.py` (4 tests): the session home is the guard's temp
+  folder and `pt_trader.main_dir`, resolved at import, is inside it; `POWERTRADER_HOME` is a fresh temp
+  folder per test; resolving a real folder raises; the keyring is the in-memory one and children get
+  the fail backend.
+
+Results, `.github/scripts` per file in a scratch clone (same env and runner flags as the baseline):
+
+| File | Baseline (`d949df4`) | With item 6 |
+|---|---|---|
+| test_integration | 6 passed, 10 failed | 6 passed, 10 failed (same tests) |
+| test_performance | 3 passed, 2 failed | 3 passed, 2 failed (same tests) |
+| test_powertrader_system | 3 passed, 1 skipped | 3 passed, 1 skipped |
+| test_pr_validation | no tests collected | no tests collected |
+| test_risk_cost | 7 passed, 7 failed | 7 passed, 7 failed (same tests) |
+| test_isolation_guard_active | (new) | 4 passed |
+
+Every pre-existing test has its baseline outcome; none newly passes. `app/tests/test_isolation_guard.py`
+6 passed; `app/` and `.github/scripts` guard tests in one session: 10 passed. Without the two conftest
+changes the four new tests fail (fixtures not found, module not loaded, no exception).
+
+**Incident.** That last check ran the new tests without the guard, on purpose. One of them removed
+`POWERTRADER_HOME` and called `pt_paths.config_dir()`, which, unguarded, created the real
+`%APPDATA%\SJackson\PowerTraderAI` (two empty folders, no file; `%LOCALAPPDATA%\SJackson` stayed
+absent; no PowerTrader entry in Windows Credential Manager). Deleting them was blocked by the session's
+permission rules and left to the owner. The test now calls `pt_paths._resolve("config")`, which names
+the folder without creating it, so it cannot create anything even without the guard. The older
+`app/tests/test_isolation_guard.py::test_resolving_the_real_folders_fails_inside_tests` has the same
+pattern; it was left unchanged (it only runs under the guard). The suite runner now compares a snapshot of
+the real folders and of PowerTrader entries in Credential Manager (names only) before and after every
+file, instead of only checking that the folders are absent.

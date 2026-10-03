@@ -154,8 +154,10 @@ credential store, never in a file.
 **Upgrading from an older version:** on first start PowerTrader copies settings, data and keys it finds
 in the program folder (`app/pt_config.json`, `app/trading_config.json`, `app/hub_data/`, the Robinhood key
 files, ...) to the new locations. It never overwrites or replaces anything already there, writes a
-`migration-report.md` to the config folder, and changes or deletes nothing in the old location until you
-press **Remove old files** (or run `python app/pt_migrate.py --remove-old-files`) and confirm. If an old
+`migration-report.md` to the config folder, and deletes nothing in the old location until you press
+**Remove old files** (or run `python app/pt_migrate.py --remove-old-files`) and confirm. The only old
+files it can change on its own: a Robinhood key vault saved with the old encryption is re-encrypted in
+place when it is read (with its `.pt_cred_meta`). If an old
 file differs from the file already in the new location, both are kept: PowerTrader keeps using the file
 that was there, and the old one is copied next to it as `<name>.conflict-app.<ext>` (from `app/`) or
 `<name>.conflict-root.<ext>` (from the install folder), for example `pt_config.conflict-app.json`
@@ -170,7 +172,9 @@ deletes an old file only if the file is unchanged since it was copied, its copy 
 them cannot be deleted, the database is kept. Every file it keeps is listed with the reason. In a git
 checkout `app/pt_config.json` and `app/gui_settings.json` are always kept, because other branches still
 use them. Files in the folders PowerTrader uses now (for example `data/` and `logs/` when
-`POWERTRADER_HOME` is the install root) are never treated as old files. To import a config file from
+`POWERTRADER_HOME` is the install root) are never treated as old files. Files reached through a link or
+junction are neither copied nor removed, and an old config file that is the same file as the one in use
+(a hard link or link) is left alone. To import a config file from
 somewhere else (for example a backup): `python app/pt_migrate.py --from <path>`.
 
 ## 📁 Project Structure

@@ -15,8 +15,10 @@ This module moves them to the locations ``pt_paths`` defines:
 
 Rules:
 
-* A legacy file is never deleted or modified automatically.
-  ``remove_old_files`` deletes migrated legacy copies only when called with
+* A legacy file is never deleted automatically, and never modified, with one
+  exception: a legacy Robinhood vault in the old encryption is re-encrypted
+  in place by ``pt_credentials`` when it is read (and its ``.pt_cred_meta``
+  rewritten or created). ``remove_old_files`` deletes migrated legacy copies only when called with
   ``confirmed=True`` (the hub asks first and warns that they may hold
   plaintext credentials). A legacy file whose content was not migrated (a
   keyring conflict, a credential that could not be stored, or a ``--from``
@@ -25,7 +27,9 @@ Rules:
   record: it must be recorded as migrated and safe to remove, its SHA-256 must
   still be the one recorded when it was migrated, and its migrated copy (a
   file, or a keyring entry for a credential) must still exist and must not be
-  the file itself. A file that fails a check is kept and reported with the
+  the file itself, and its real path must still be the recorded one (files
+  reached through a link or junction are never copied, so never removed).
+  A file that fails a check is kept and reported with the
   reason. The check is repeated once the file is renamed aside, just before
   it is deleted, so a write that lands in between keeps it. A SQLite database
   and its ``-wal``/``-shm``/``-journal`` files are one unit: compared, copied,
@@ -1134,7 +1138,8 @@ def write_report_file(report: Report, records: Optional[Dict[str, dict]] = None)
         f"Run: {time.strftime('%Y-%m-%d %H:%M:%S')}",
         "",
         "Settings, data and credentials were moved out of the program folder (FDS-108a).",
-        "No old file was changed or deleted.",
+        "No old file was deleted. The only old files a migration can change are a Robinhood key vault in "
+        "the old encryption and its .pt_cred_meta, re-encrypted in place.",
         "",
         "## Where things live now",
         "",

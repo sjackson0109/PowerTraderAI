@@ -22,8 +22,16 @@ The PRs merge in the order 2 -> 3 -> 4, each with a merge commit. PR1's commits 
 
 * Nothing pushed. The backup branch is never touched. No checkout, switch, reset, rebase or stash in the
   working repo; other revisions are read with `git show` or in clones under the session scratchpad.
+  * *Corrected:* the workflow's agents kept to this. The main session did use the working repo for the
+    history rebuilds (dropping `25bf2b8`, and folding the review and audit fixes into their item
+    commits): detached checkouts, cherry-picks, `git commit-tree` and `git branch -f`, all on this
+    unpushed branch, with the backup branch untouched. See "Report" at the end.
 * `%APPDATA%\SJackson` and `%LOCALAPPDATA%\SJackson` are checked absent before and after each item and
   are never created or read; the real credential store is never read or written.
+  * *Corrected:* `%APPDATA%\SJackson\PowerTraderAI` was created once by mistake (two empty folders; see
+    the item 6 incident); the owner removed them. No credential value was ever read or written. At the
+    owner's request the suite runner lists the names (only) of PowerTrader entries in Windows Credential
+    Manager (`cmdkey /list`) before and after every test file; there were none.
 * The owner's untracked runtime files in the checkout (`app/pt_config.json`, `app/gui_settings.json`,
   backups, databases, logs, `hub_data/`, `data/`) are never opened, changed, moved, staged or deleted.
 * Every test process runs with `POWERTRADER_HOME` = a fresh folder in the scratchpad,
@@ -802,3 +810,29 @@ the folder without creating it, so it cannot create anything even without the gu
 pattern; it was left unchanged (it only runs under the guard). The suite runner now compares a snapshot of
 the real folders and of PowerTrader entries in Credential Manager (names only) before and after every
 file, instead of only checking that the folders are absent.
+
+## Item 7 — Run-log corrections
+
+`RUN-LOG-paths-1.md` now carries marked corrections ("*Corrected after review:*") instead of silently
+rewritten text. Each was checked against the code at this commit:
+
+* Starting point and "For the owner": `25bf2b8` was dropped and root `config/*.yaml` are no longer
+  tracked (`git branch --contains 25bf2b8` lists only `backup/user-data-separation-7bbb810`;
+  `git diff --stat 7bbb810 d949df4` lists only the five `config/*.yaml` deletions).
+  `PATHS-INVENTORY.md` (the `config/` row) says the same.
+* "Never deletes or modifies a legacy file": a legacy Robinhood vault that only decrypts with the old
+  derivation is re-encrypted in place (`app/pt_credentials.py:350-418`; the migration calls it at
+  `app/pt_migrate.py:933-935`). Conflicts are described as they now are (item 4:
+  `app/pt_migrate.py:435-555`, configs `594-629`).
+* Remove old files: the phase-4 CLI deleted from a stale list (reproduced in review); the current checks
+  are `remove_old_files` (`app/pt_migrate.py:1320`), `_refusal` (`:1185`), `_delete_unit` (`:1272`) and
+  `_kept_reason` (`:1156`).
+
+The `#108` comment draft repeats none of the corrected claims and is unchanged.
+
+### Follow-up for the owner (not in this branch)
+
+* YAML config: `app/pt_config.py`'s `ConfigurationManager` is not loaded by the hub (only `pt_integration`,
+  `pt_system` and `pt_testing` import it), and PyYAML is not in `requirements.txt`, so its two YAML tests
+  skip in a standard install. Either wire the module in or remove it; then add PyYAML to the requirements
+  or drop those tests.

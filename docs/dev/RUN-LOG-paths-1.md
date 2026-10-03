@@ -6,6 +6,11 @@ Branch: `feat/user-data-separation`. Paper mode only; no network calls in tests;
 
 * The branch already contained `main` + `feat/strategy-batch-1` + `fix/coinbase-connector`, plus the
   owner's commit `25bf2b8` ("pushing config changes": `config/*.yaml` and one `.gitignore` line).
+  * *Corrected after review:* `25bf2b8` was dropped during review. The branch was rebuilt from
+    `6a8cc2b` without it (chore merge now `23243b0`, FDS-108a phases `4938e39`..`d949df4`; the old tip
+    `7bbb810` is kept as `backup/user-data-separation-7bbb810`). Its root `config/*.yaml` were
+    byte-identical to `app/config/*.yaml` and read by no code; they are no longer tracked. See
+    `RUN-LOG-paths-2.md`.
 * `chore/untrack-trading-config`, the third prerequisite, was **not** merged yet. It was merged
   here as `58efed2` (local merge commit, nothing pushed). The only conflict was `.gitignore`
   (both sides appended entries); both sides were kept.
@@ -233,6 +238,17 @@ The run wrote nothing new into the worktree's `app/` or root (checked by modific
   (conflict listed, new location kept). `migration-report.md` lists copies, credentials moved (by
   `exchange:field`), conflicts, failures, legacy files still holding plaintext credentials, and the copies
   that can be removed.
+  * *Corrected after review:* (1) Legacy files can be modified: a legacy Robinhood vault
+    (`r_key.enc`/`r_secret.enc`) that only decrypts with the old machine-password derivation is
+    re-encrypted in place, in the legacy folder, by `SecureCredentialManager.decrypt_credentials`
+    (`app/pt_credentials.py:350-418`, called from `app/pt_migrate.py`'s Robinhood step), and its
+    `.pt_cred_meta` is rewritten, or created if missing (`encrypt_credentials` saves metadata), so up
+    to three legacy files are written. Not reachable on the owner's machine (no vault there). (2) Conflicts, after review item 4: both files are kept. A file
+    already in the new location is never replaced; a legacy file that differs is copied next to it as
+    `<name>.conflict-app.<ext>` or `<name>.conflict-root.<ext>` (config copies stripped of credentials).
+    When `app/` and the install root both hold a version of a file the new location does not have yet,
+    the newer one gets `<name>` and the older one the conflict name, decided before anything is copied
+    (`app/pt_migrate.py:435-555`, configs `594-629`). Keyring entries are still never replaced.
 * Idempotent: `migration-state.json` records each handled item by legacy size+mtime and whether the legacy
   copy is redundant; a second run with nothing new writes nothing (not even the state file) and returns
   no report, so the hub shows no dialog. A legacy file changed later is reported once. Credentials that
@@ -240,6 +256,22 @@ The run wrote nothing new into the worktree's `app/` or root (checked by modific
 * Hub dialog: summary + **Remove old files**; deletion only after an explicit Yes on a warning that the
   files may contain plaintext credentials, and only of files the migration recorded as safely copied
   (never conflicted files, never code). Emptied legacy sub-folders are pruned; root folders never.
+  * *Corrected after review:* as built here, `--remove-old-files` deleted every path listed at migration
+    time without looking at it again, so a legacy file changed afterwards (for example by running `main`)
+    or whose new copy had gone could be lost; the review reproduced this. After review item 3 the dialog
+    and the CLI share one path, `remove_old_files` (`app/pt_migrate.py:1320`). It refuses, with the
+    reason, any file not recorded as migrated, whose SHA-256 differs from the one recorded at migration,
+    or whose migrated copy (file or keyring entry) is missing (`_refusal`, `:1185`), and checks each unit
+    again after renaming it aside, just before deleting it (`_delete_unit`). A SQLite `.db` with its
+    `-wal`/`-shm`/`-journal` is one unit, checked and deleted together, sidecars first and the `.db` last;
+    if a delete still fails, the parts not yet deleted are put back, so a `.db` can be left without its
+    `-wal` or `-journal` (their content is in the new location). On macOS/Linux a program that already
+    holds a part open can still write to it after the last check (on Windows the rename fails then). In
+    a git checkout `app/pt_config.json` and `app/gui_settings.json` are always kept (`_kept_reason`).
+    After item 4 a conflicted file is removable once its conflict copy exists, under the same checks.
+    Since the safety audit, files reached through a link or junction are neither copied nor removed (a
+    recorded file whose real path changed is refused), and a legacy config that is the same file as the
+    one in use is skipped.
 * `python app/pt_migrate.py --from <path>`: import one config file (kind by name or content); same rules.
   `--remove-old-files` asks before deleting.
 * Tests: `test_pt_migrate.py` (12): fresh migration (every destination; legacy tree byte-identical with
@@ -329,6 +361,8 @@ left running 60 s, then stopped. The window stayed up and every file it created 
 * `config/*.yaml` (your commit `25bf2b8`) and `app/config/*.json|yaml` are tracked; their credential
   fields are empty, and the app no longer reads or writes those copies (the YAML manager now uses
   `<config>/yaml/`).
+  * *Corrected after review:* `25bf2b8` was dropped, so root `config/*.yaml` are no longer tracked;
+    `app/config/*.json|yaml` still are.
 * The YAML config tests skip in the suite venv (no PyYAML); they pass with PyYAML installed.
 
 ### Final suite (this commit's files, clean scratch worktree)

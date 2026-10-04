@@ -104,7 +104,9 @@ def read_strategy_settings(settings: Any = None) -> StrategySettings:
         overlays = tuple(dict(o) for o in raw_overlays)
         for o in overlays:
             entry = CATALOGUE.get(o["id"])
-            if engine == "catalogue" and (entry is None or entry["class_type"] != "risk_overlay"):
+            if engine == "catalogue" and (
+                entry is None or entry["class_type"] != "risk_overlay"
+            ):
                 problems.append(f"unknown overlay id {o['id']!r}")
     else:
         problems.append(f"invalid strategy.overlays {raw_overlays!r}")

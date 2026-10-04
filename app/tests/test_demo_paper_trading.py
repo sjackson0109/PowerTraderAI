@@ -90,7 +90,10 @@ class DemoTests(unittest.TestCase):
     # gate failure
     def test_a_gate_that_does_not_return_paper_is_a_failure(self):
         live = tm.OrderTarget(
-            mode=tm.TradingMode.LIVE, broker="kraken", exchange=mock.MagicMock(), key="live:kraken"
+            mode=tm.TradingMode.LIVE,
+            broker="kraken",
+            exchange=mock.MagicMock(),
+            key="live:kraken",
         )
         with mock.patch.object(demo.tm, "resolve_order_target", return_value=live):
             code, output = self.run_demo()
@@ -157,7 +160,9 @@ class DemoTests(unittest.TestCase):
         self.assertTrue(self.binance.urls)
         for url in self.binance.urls:
             self.assertTrue(
-                url.startswith("https://api.binance.com/api/v3/ticker/bookTicker?symbol=BTCUSDT"),
+                url.startswith(
+                    "https://api.binance.com/api/v3/ticker/bookTicker?symbol=BTCUSDT"
+                ),
                 url,
             )
 

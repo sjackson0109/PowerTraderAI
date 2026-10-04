@@ -87,7 +87,9 @@ def adx(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.Se
     up = high.diff()
     down = -low.diff()
     plus_dm = pd.Series(np.where((up > down) & (up > 0), up, 0.0), index=high.index)
-    minus_dm = pd.Series(np.where((down > up) & (down > 0), down, 0.0), index=high.index)
+    minus_dm = pd.Series(
+        np.where((down > up) & (down > 0), down, 0.0), index=high.index
+    )
     # bar 0 has no previous bar: DM and TR start from bar 1
     plus_dm.iloc[0] = np.nan
     minus_dm.iloc[0] = np.nan

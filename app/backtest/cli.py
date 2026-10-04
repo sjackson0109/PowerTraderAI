@@ -59,7 +59,10 @@ def _section(parts: Dict[str, Any]) -> Dict[str, Any]:
         "to": strat.last_bar.isoformat(),
         "strategy": strat.kpis,
         "buy_and_hold": bench.kpis,
-        "slippage_cost": {"strategy": strat.slippage_cost, "buy_and_hold": bench.slippage_cost},
+        "slippage_cost": {
+            "strategy": strat.slippage_cost,
+            "buy_and_hold": bench.slippage_cost,
+        },
     }
 
 
@@ -78,8 +81,11 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     source: Dict[str, Any]
     if args.candles_file:
         candles = load_candles_csv(args.candles_file, args.tf)
-        source = {"kind": "file", "path": os.path.abspath(args.candles_file),
-                  "sha256": file_sha256(args.candles_file)}
+        source = {
+            "kind": "file",
+            "path": os.path.abspath(args.candles_file),
+            "sha256": file_sha256(args.candles_file),
+        }
         if args.start or args.end:
             mask = pd.Series(True, index=candles.index)
             if args.start:
@@ -87,10 +93,14 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             if args.end:
                 mask &= candles["open_time"] < pd.Timestamp(args.end, tz="UTC")
             candles = candles[mask].reset_index(drop=True)
-            candles.attrs["report"] = load_candles_csv(args.candles_file, args.tf).attrs["report"]
+            candles.attrs["report"] = load_candles_csv(
+                args.candles_file, args.tf
+            ).attrs["report"]
     else:
         if not (args.start and args.end):
-            raise SystemExit("--start and --end are required unless --candles-file is given")
+            raise SystemExit(
+                "--start and --end are required unless --candles-file is given"
+            )
         candles = get_candles(
             args.symbol,
             args.tf,
@@ -101,8 +111,11 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             offline=args.offline,
         )
         path = cache_path(args.symbol, args.tf, args.cache_dir)
-        source = {"kind": "binance_klines_cache", "path": path,
-                  "sha256": file_sha256(path) if os.path.isfile(path) else None}
+        source = {
+            "kind": "binance_klines_cache",
+            "path": path,
+            "sha256": file_sha256(path) if os.path.isfile(path) else None,
+        }
     if len(candles) < 50:
         raise SystemExit(f"only {len(candles)} candles available; need at least 50")
     report = candles.attrs.get("report")
@@ -122,10 +135,17 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             "last": candles["open_time"].iloc[-1].isoformat(),
             "gaps": report.to_dict() if report is not None else None,
         },
-        "cost_model": {"fee_bps": cost.fee_bps, "slippage_bps": cost.slippage_bps,
-                       "size_fraction": cost.size_fraction},
-        "split": {"in_sample_fraction": args.split,
-                  "out_of_sample_starts": candles["open_time"].iloc[split["out_of_sample"]["window"][0]].isoformat()},
+        "cost_model": {
+            "fee_bps": cost.fee_bps,
+            "slippage_bps": cost.slippage_bps,
+            "size_fraction": cost.size_fraction,
+        },
+        "split": {
+            "in_sample_fraction": args.split,
+            "out_of_sample_starts": candles["open_time"]
+            .iloc[split["out_of_sample"]["window"][0]]
+            .isoformat(),
+        },
         "in_sample": _section(split["in_sample"]),
         "out_of_sample": _section(split["out_of_sample"]),
         "note": DISCLAIMER,
@@ -139,35 +159,56 @@ def _fmt(v: Optional[float]) -> str:
 
 
 def print_summary(results: Dict[str, Any], out=print) -> None:
-    out(f"{results['strategy_id']} {results['symbol']} {results['timeframe']}  "
+    out(
+        f"{results['strategy_id']} {results['symbol']} {results['timeframe']}  "
         f"overlays={[o['id'] for o in results['overlays']] or 'none'}  "
-        f"candles={results['data']['candles']}")
+        f"candles={results['data']['candles']}"
+    )
     for name in ("in_sample", "out_of_sample"):
         sec = results[name]
         out(f"  {name}: {sec['from'][:10]} -> {sec['to'][:10]} ({sec['bars']} bars)")
         for label in ("strategy", "buy_and_hold"):
             k = sec[label]
-            out(f"    {label:13s} ret {_fmt(k['total_return_pct'])}%  maxDD {_fmt(k['max_drawdown_pct'])}%  "
+            out(
+                f"    {label:13s} ret {_fmt(k['total_return_pct'])}%  maxDD {_fmt(k['max_drawdown_pct'])}%  "
                 f"sharpe {_fmt(k['sharpe'])}  trades {k['trade_count']}  fees ${_fmt(k['fees_paid'])}"
-                + (f"  vs B&H {_fmt(k['vs_buy_hold_pct'])}pp" if label == "strategy" else ""))
+                + (
+                    f"  vs B&H {_fmt(k['vs_buy_hold_pct'])}pp"
+                    if label == "strategy"
+                    else ""
+                )
+            )
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="python -m app.backtest", description=__doc__.split("\n\n")[0])
+    p = argparse.ArgumentParser(
+        prog="python -m app.backtest", description=__doc__.split("\n\n")[0]
+    )
     p.add_argument("--strategy", required=True, help="catalogue id, e.g. STRAT-000")
     p.add_argument("--symbol", default="BTCUSDT")
     p.add_argument("--tf", default="1h")
     p.add_argument("--start", help="YYYY-MM-DD (UTC)")
     p.add_argument("--end", help="YYYY-MM-DD (UTC, exclusive)")
-    p.add_argument("--overlays", help="comma separated overlay ids, e.g. OVL-ATR,OVL-COOLDOWN")
-    p.add_argument("--params", help='strategy parameter overrides as JSON, e.g. \'{"fast_len": 10}\'')
-    p.add_argument("--overlay-params", help='overlay overrides as JSON keyed by id')
+    p.add_argument(
+        "--overlays", help="comma separated overlay ids, e.g. OVL-ATR,OVL-COOLDOWN"
+    )
+    p.add_argument(
+        "--params",
+        help="strategy parameter overrides as JSON, e.g. '{\"fast_len\": 10}'",
+    )
+    p.add_argument("--overlay-params", help="overlay overrides as JSON keyed by id")
     p.add_argument("--fee-bps", type=float, default=10.0)
     p.add_argument("--slippage-bps", type=float, default=5.0)
     p.add_argument("--size-fraction", type=float, default=1.0)
-    p.add_argument("--split", type=float, default=0.7, help="in-sample fraction (default 0.7)")
-    p.add_argument("--candles-file", help="cache-format CSV to use instead of the cache/network")
-    p.add_argument("--cache-dir", help="candle cache directory (default hub_data/candles)")
+    p.add_argument(
+        "--split", type=float, default=0.7, help="in-sample fraction (default 0.7)"
+    )
+    p.add_argument(
+        "--candles-file", help="cache-format CSV to use instead of the cache/network"
+    )
+    p.add_argument(
+        "--cache-dir", help="candle cache directory (default hub_data/candles)"
+    )
     p.add_argument("--offline", action="store_true", help="never touch the network")
     p.add_argument("--out", help="write JSON results here (trades CSV alongside)")
     return p

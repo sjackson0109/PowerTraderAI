@@ -66,10 +66,16 @@ class AtrStop(Overlay):
 
     def on_bar(self, pos: PositionState, candles: pd.DataFrame) -> OverlayDecision:
         p = self.params
-        a = float(atr(candles["high"], candles["low"], candles["close"], p["atr_len"]).iloc[-1])
+        a = float(
+            atr(candles["high"], candles["low"], candles["close"], p["atr_len"]).iloc[
+                -1
+            ]
+        )
         state = pos.overlay_state.setdefault(self.overlay_id, {})
         if math.isnan(a):
-            return OverlayDecision()  # not enough history yet: no stop rather than a guess
+            return (
+                OverlayDecision()
+            )  # not enough history yet: no stop rather than a guess
         stop = pos.highest_close - p["mult"] * a
         state.update(atr=a, stop=stop)
         return OverlayDecision(stop_price=stop, reason="ATR_TRAIL")
@@ -114,7 +120,9 @@ class EntryCooldown(Overlay):
     def _key(self, symbol: str) -> str:
         return "*" if self.params["global"] else symbol
 
-    def on_exit(self, pos: PositionState, bar_time: pd.Timestamp, exit_price: float) -> None:
+    def on_exit(
+        self, pos: PositionState, bar_time: pd.Timestamp, exit_price: float
+    ) -> None:
         loss = float(exit_price) < float(pos.entry_price)
         self._last[self._key(pos.symbol)] = (pd.Timestamp(bar_time), loss)
         pos.overlay_state.setdefault(self.overlay_id, {})["last_exit_loss"] = loss
@@ -128,8 +136,14 @@ class EntryCooldown(Overlay):
                 "OVL-COOLDOWN needs the bar duration: call StrategyRunner.set_timeframe()"
             )
         exit_time, loss = last
-        elapsed = int((pd.Timestamp(now_bar_time) - exit_time) / pd.Timedelta(seconds=self.bar_seconds))
-        need = max(self.params["bars_after_exit"], self.params["bars_after_loss"] if loss else 0)
+        elapsed = int(
+            (pd.Timestamp(now_bar_time) - exit_time)
+            / pd.Timedelta(seconds=self.bar_seconds)
+        )
+        need = max(
+            self.params["bars_after_exit"],
+            self.params["bars_after_loss"] if loss else 0,
+        )
         if elapsed < need:
             kind = "after a loss" if loss else "after an exit"
             return GateResult(False, f"{need - elapsed} bar(s) left {kind}")

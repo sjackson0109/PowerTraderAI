@@ -94,7 +94,7 @@ class TradingModeIndicator(tk.Label):
 
 
 def price_note(price_integrity: Optional[dict]) -> str:
-    """"  ·  PRICES: LIVE" / "  ·  PRICES: DEGRADED (n in last hour)" for the paper
+    """ "  ·  PRICES: LIVE" / "  ·  PRICES: DEGRADED (n in last hour)" for the paper
     strip; empty until the trader has reported (no claim without data)."""
     if not isinstance(price_integrity, dict):
         return ""

@@ -39,7 +39,8 @@ def make_candles(closes, start="2026-01-01", tf_seconds=3600, opens=None, wick=0
     for i, (o, c) in enumerate(zip(opens, closes)):
         rows.append(
             {
-                "open_time": pd.Timestamp(start, tz="UTC") + pd.Timedelta(seconds=tf_seconds * i),
+                "open_time": pd.Timestamp(start, tz="UTC")
+                + pd.Timedelta(seconds=tf_seconds * i),
                 "open": float(o),
                 "high": max(o, c) * (1 + wick),
                 "low": min(o, c) * (1 - wick),
@@ -161,7 +162,9 @@ class PaperTraderCase(unittest.TestCase):
             settings_source=settings,
             candle_provider=candle_provider or (lambda *a, **k: pd.DataFrame()),
         )
-        t = self.pt_trader.CryptoAPITrading(settings_source=settings, signal_engine=engine)
+        t = self.pt_trader.CryptoAPITrading(
+            settings_source=settings, signal_engine=engine
+        )
         t._order_poll_seconds = 0.0
         return t
 

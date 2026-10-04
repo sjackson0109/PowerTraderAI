@@ -44,7 +44,12 @@ def hold_runner(frame, *overlays, tf=3600):
 
 def drive(runner, frame, entry_bar, entry_price, bars=None):
     """Open a long at ``entry_bar`` and evaluate each following bar. Returns (pos, decisions)."""
-    pos = runner.open_position("X", entry_price, frame["open_time"].iloc[entry_bar], runner.window(frame, entry_bar))
+    pos = runner.open_position(
+        "X",
+        entry_price,
+        frame["open_time"].iloc[entry_bar],
+        runner.window(frame, entry_bar),
+    )
     out = []
     for i in range(entry_bar + 1, len(frame) if bars is None else entry_bar + 1 + bars):
         out.append((i, runner.evaluate(runner.window(frame, i), pos, "X")))
@@ -57,24 +62,39 @@ def candles_from_closes(closes):
 
 class CatalogueTests(unittest.TestCase):
     def test_all_four_overlays_are_registered_as_risk_overlays(self):
-        self.assertEqual(list_ids("risk_overlay"), ["OVL-ATR", "OVL-COOLDOWN", "OVL-PLOCK", "OVL-RATCHET"])
+        self.assertEqual(
+            list_ids("risk_overlay"),
+            ["OVL-ATR", "OVL-COOLDOWN", "OVL-PLOCK", "OVL-RATCHET"],
+        )
         for oid in list_ids("risk_overlay"):
             self.assertEqual(CATALOGUE[oid]["class_type"], "risk_overlay")
 
     def test_defaults_match_the_spec(self):
-        self.assertEqual(create("OVL-RATCHET").params, {"trigger_pct": 2.0, "lock_pct": 0.5, "step_pct": 1.0})
+        self.assertEqual(
+            create("OVL-RATCHET").params,
+            {"trigger_pct": 2.0, "lock_pct": 0.5, "step_pct": 1.0},
+        )
         self.assertEqual(create("OVL-ATR").params, {"atr_len": 14, "mult": 2.5})
-        self.assertEqual(create("OVL-PLOCK").params, {"stages": [[3, 1], [6, 3], [10, 6]]})
-        self.assertEqual(create("OVL-COOLDOWN").params,
-                         {"bars_after_exit": 3, "bars_after_loss": 12, "global": False})
+        self.assertEqual(
+            create("OVL-PLOCK").params, {"stages": [[3, 1], [6, 3], [10, 6]]}
+        )
+        self.assertEqual(
+            create("OVL-COOLDOWN").params,
+            {"bars_after_exit": 3, "bars_after_loss": 12, "global": False},
+        )
 
     def test_bad_parameters_are_rejected(self):
         for oid, bad in (
-            ("OVL-RATCHET", {"trigger_pct": 0}), ("OVL-RATCHET", {"step_pct": 0}),
-            ("OVL-ATR", {"atr_len": 4}), ("OVL-ATR", {"mult": 0.1}), ("OVL-ATR", {"atr_len": 14.5}),
-            ("OVL-PLOCK", {"stages": [[3, 1], [2, 1]]}), ("OVL-PLOCK", {"stages": []}),
+            ("OVL-RATCHET", {"trigger_pct": 0}),
+            ("OVL-RATCHET", {"step_pct": 0}),
+            ("OVL-ATR", {"atr_len": 4}),
+            ("OVL-ATR", {"mult": 0.1}),
+            ("OVL-ATR", {"atr_len": 14.5}),
+            ("OVL-PLOCK", {"stages": [[3, 1], [2, 1]]}),
+            ("OVL-PLOCK", {"stages": []}),
             ("OVL-PLOCK", {"stages": [[3, 3]]}),
-            ("OVL-COOLDOWN", {"bars_after_exit": -1}), ("OVL-COOLDOWN", {"bars_after_loss": 1.5}),
+            ("OVL-COOLDOWN", {"bars_after_exit": -1}),
+            ("OVL-COOLDOWN", {"bars_after_loss": 1.5}),
             ("OVL-COOLDOWN", {"global": "yes"}),
         ):
             with self.subTest(oid=oid, bad=bad), self.assertRaises(ParamError):
@@ -85,8 +105,14 @@ class CatalogueTests(unittest.TestCase):
             create("OVL-RATCHET", trigger_pct=2.0, lock_pct=2.0)
 
     def test_build_runner_attaches_overlays_by_id(self):
-        runner = build_runner("STRAT-000", {}, [{"id": "OVL-ATR"}, {"id": "OVL-COOLDOWN", "params": {"global": True}}])
-        self.assertEqual([o.overlay_id for o in runner.overlays], ["OVL-ATR", "OVL-COOLDOWN"])
+        runner = build_runner(
+            "STRAT-000",
+            {},
+            [{"id": "OVL-ATR"}, {"id": "OVL-COOLDOWN", "params": {"global": True}}],
+        )
+        self.assertEqual(
+            [o.overlay_id for o in runner.overlays], ["OVL-ATR", "OVL-COOLDOWN"]
+        )
         self.assertTrue(runner.overlays[1].params["global"])
         self.assertEqual(runner.lookback_bars, max(runner.strategy.lookback_bars, 70))
 
@@ -106,23 +132,36 @@ class RatchetTests(unittest.TestCase):
             self.assertIsNone(self.by_bar[i].stop_price, i)
 
     def test_triggers_exactly_when_the_gain_reaches_trigger_pct(self):
-        self.assertAlmostEqual(self.by_bar[3].stop_price, 100.5)  # gain 2.0% -> entry*(1+0.5%)
+        self.assertAlmostEqual(
+            self.by_bar[3].stop_price, 100.5
+        )  # gain 2.0% -> entry*(1+0.5%)
 
     def test_each_further_step_raises_the_stop_by_step_pct(self):
-        want = {4: 101.5, 5: 102.5, 6: 103.5, 7: 104.5}  # gains 3,4,5,6% -> lock 1.5,2.5,3.5,4.5%
+        want = {
+            4: 101.5,
+            5: 102.5,
+            6: 103.5,
+            7: 104.5,
+        }  # gains 3,4,5,6% -> lock 1.5,2.5,3.5,4.5%
         for bar, stop in want.items():
-            self.assertAlmostEqual(self.by_bar[bar].stop_price, stop, places=9, msg=f"bar {bar}")
+            self.assertAlmostEqual(
+                self.by_bar[bar].stop_price, stop, places=9, msg=f"bar {bar}"
+            )
 
     def test_the_stop_never_decreases_through_the_rally_and_pullback(self):
         stops = [d.stop_price for _, d in self.out if d.stop_price is not None]
         self.assertEqual(stops, sorted(stops))
-        self.assertAlmostEqual(self.by_bar[8].stop_price, 104.5)  # pulled back, stop held
+        self.assertAlmostEqual(
+            self.by_bar[8].stop_price, 104.5
+        )  # pulled back, stop held
         self.assertAlmostEqual(self.by_bar[9].stop_price, 104.5)
 
     def test_exit_when_the_close_falls_below_the_stop_and_names_the_overlay(self):
         self.assertEqual(self.by_bar[9].action, Action.HOLD)  # 104.5 == stop: not below
         d = self.by_bar[10]  # 104.4 < 104.5
-        self.assertEqual((d.action, d.exit_rule), (Action.EXIT_LONG, "stop:OVL-RATCHET"))
+        self.assertEqual(
+            (d.action, d.exit_rule), (Action.EXIT_LONG, "stop:OVL-RATCHET")
+        )
 
     def test_state_is_exposed_per_position(self):
         st = self.pos.overlay_state["OVL-RATCHET"]
@@ -132,13 +171,20 @@ class RatchetTests(unittest.TestCase):
     def test_a_close_exactly_on_a_step_counts_despite_float_noise(self):
         for gain, steps in ((2.0, 0), (3.0, 1), (4.0, 2), (5.0, 3), (7.0, 5)):
             overlay = create("OVL-RATCHET")
-            pos = PositionState("X", 100.0, pd.Timestamp("2026-01-01", tz="UTC"), 100.0 * (1 + gain / 100))
+            pos = PositionState(
+                "X",
+                100.0,
+                pd.Timestamp("2026-01-01", tz="UTC"),
+                100.0 * (1 + gain / 100),
+            )
             d = overlay.on_bar(pos, self.frame)
             self.assertEqual(pos.overlay_state["OVL-RATCHET"]["steps"], steps, gain)
 
     def test_custom_parameters(self):
         o = RatchetStop(trigger_pct=1.0, lock_pct=0.2, step_pct=0.5)
-        pos = PositionState("X", 200.0, pd.Timestamp("2026-01-01", tz="UTC"), 203.0)  # +1.5%
+        pos = PositionState(
+            "X", 200.0, pd.Timestamp("2026-01-01", tz="UTC"), 203.0
+        )  # +1.5%
         d = o.on_bar(pos, self.frame)
         self.assertAlmostEqual(d.stop_price, 200 * (1 + (0.2 + 1 * 0.5) / 100))
 
@@ -152,8 +198,12 @@ class AtrTests(unittest.TestCase):
         frame = make_candles(closes, wick=0.002)
         # widen the ranges steadily so ATR (and so the raw stop distance) grows
         grow = 1 + np.linspace(0, 1.5, n)
-        frame["high"] = frame["close"] + (frame["high"] - frame["close"]).abs() * grow + 0.05 * grow
-        frame["low"] = frame["close"] - (frame["close"] - frame["low"]).abs() * grow - 0.05 * grow
+        frame["high"] = (
+            frame["close"] + (frame["high"] - frame["close"]).abs() * grow + 0.05 * grow
+        )
+        frame["low"] = (
+            frame["close"] - (frame["close"] - frame["low"]).abs() * grow - 0.05 * grow
+        )
         self.frame = frame
         self.overlay = create("OVL-ATR", atr_len=14, mult=2.5)
         self.runner = hold_runner(frame, self.overlay)
@@ -166,8 +216,12 @@ class AtrTests(unittest.TestCase):
 
     def test_stop_tracks_highest_close_minus_mult_times_atr(self):
         entry_price = float(self.frame["close"].iloc[self.entry_bar])
-        pos = self.runner.open_position("X", entry_price, self.frame["open_time"].iloc[self.entry_bar],
-                                        self.runner.window(self.frame, self.entry_bar))
+        pos = self.runner.open_position(
+            "X",
+            entry_price,
+            self.frame["open_time"].iloc[self.entry_bar],
+            self.runner.window(self.frame, self.entry_bar),
+        )
         highest = entry_price
         best = -np.inf
         for i in range(self.entry_bar + 1, len(self.frame)):
@@ -179,8 +233,12 @@ class AtrTests(unittest.TestCase):
             self.assertAlmostEqual(pos.overlay_state["OVL-ATR"]["stop"], raw, places=9)
 
     def test_the_effective_stop_never_decreases_even_when_atr_widens(self):
-        pos, out = drive(self.runner, self.frame, self.entry_bar,
-                         float(self.frame["close"].iloc[self.entry_bar]))
+        pos, out = drive(
+            self.runner,
+            self.frame,
+            self.entry_bar,
+            float(self.frame["close"].iloc[self.entry_bar]),
+        )
         stops = [d.stop_price for _, d in out if d.stop_price is not None]
         self.assertGreater(len(stops), 30)
         self.assertEqual(stops, sorted(stops))
@@ -188,15 +246,27 @@ class AtrTests(unittest.TestCase):
         # the raw (per-bar) stop did fall at some point while the effective stop held
         raws = []
         runner = hold_runner(self.frame, create("OVL-ATR", atr_len=14, mult=2.5))
-        p = runner.open_position("X", float(self.frame["close"].iloc[self.entry_bar]),
-                                 self.frame["open_time"].iloc[self.entry_bar], runner.window(self.frame, self.entry_bar))
+        p = runner.open_position(
+            "X",
+            float(self.frame["close"].iloc[self.entry_bar]),
+            self.frame["open_time"].iloc[self.entry_bar],
+            runner.window(self.frame, self.entry_bar),
+        )
         for i in range(self.entry_bar + 1, len(self.frame)):
             runner.evaluate(runner.window(self.frame, i), p, "X")
             raws.append(p.overlay_state["OVL-ATR"]["stop"])
-        self.assertTrue(any(b < a for a, b in zip(raws, raws[1:])), "fixture must make the raw stop fall")
+        self.assertTrue(
+            any(b < a for a, b in zip(raws, raws[1:])),
+            "fixture must make the raw stop fall",
+        )
 
     def test_exit_names_the_atr_overlay_when_price_closes_below_the_stop(self):
-        pos, out = drive(self.runner, self.frame, self.entry_bar, float(self.frame["close"].iloc[self.entry_bar]))
+        pos, out = drive(
+            self.runner,
+            self.frame,
+            self.entry_bar,
+            float(self.frame["close"].iloc[self.entry_bar]),
+        )
         exits = [(i, d) for i, d in out if d.action is Action.EXIT_LONG]
         self.assertTrue(exits, "the pullback should hit the trailing stop")
         i, d = exits[0]
@@ -219,7 +289,10 @@ class ProgressiveLockTests(unittest.TestCase):
         frame = candles_from_closes(closes)
         runner = hold_runner(frame, create("OVL-PLOCK"))  # [[3,1],[6,3],[10,6]]
         pos, out = drive(runner, frame, 0, 100.0)
-        got = {i: (d.stop_price, pos_state) for (i, d), pos_state in zip(out, [None] * len(out))}
+        got = {
+            i: (d.stop_price, pos_state)
+            for (i, d), pos_state in zip(out, [None] * len(out))
+        }
         stops = {i: d.stop_price for i, d in out}
         self.assertIsNone(stops[1])  # +2.99%: below stage 1
         self.assertAlmostEqual(stops[2], 101.0)  # +3.0%: stage 1 -> lock 1%
@@ -242,7 +315,9 @@ class ProgressiveLockTests(unittest.TestCase):
         pos, out = drive(runner, frame, 0, 100.0)
         last_i, last = out[-1]
         # stage 2 lock at 103; close 102.5 < 103
-        self.assertEqual((last.action, last.exit_rule), (Action.EXIT_LONG, "stop:OVL-PLOCK"))
+        self.assertEqual(
+            (last.action, last.exit_rule), (Action.EXIT_LONG, "stop:OVL-PLOCK")
+        )
 
     def test_stages_are_configurable(self):
         frame = candles_from_closes([100, 101, 102])
@@ -255,7 +330,9 @@ class ProgressiveLockTests(unittest.TestCase):
 class CooldownTests(unittest.TestCase):
     def run_script(self, closes, script, **params):
         frame = candles_from_closes(closes)
-        runner = StrategyRunner(Scripted(frame, script), [create("OVL-COOLDOWN", **params)])
+        runner = StrategyRunner(
+            Scripted(frame, script), [create("OVL-COOLDOWN", **params)]
+        )
         res = run_backtest(frame, runner, "X", "1h", cost=ZERO)
         return frame, res
 
@@ -268,7 +345,9 @@ class CooldownTests(unittest.TestCase):
         closes = [100, 100, 100, 101, 102, 103] + [104 + i * 0.1 for i in range(40)]
         frame, res = self.run_script(closes, self.enters_everywhere(2, 5, 45))
         t = list(frame["open_time"])
-        self.assertEqual(res.trades[0].exit_time, t[6])  # exit signalled on 5 fills at 6 (a gain)
+        self.assertEqual(
+            res.trades[0].exit_time, t[6]
+        )  # exit signalled on 5 fills at 6 (a gain)
         self.assertGreater(res.trades[0].pnl, 0)
         # bars 6,7,8 are inside the 3-bar cooldown; bar 9 may enter and fills at bar 10
         self.assertEqual(res.trades[1].entry_time, t[10])
@@ -283,14 +362,26 @@ class CooldownTests(unittest.TestCase):
 
     def test_whichever_is_longer_wins(self):
         closes = [100, 100, 100, 99, 98, 97] + [96 - i * 0.1 for i in range(40)]
-        _, res = self.run_script(closes, self.enters_everywhere(2, 5, 45), bars_after_exit=20, bars_after_loss=5)
+        _, res = self.run_script(
+            closes,
+            self.enters_everywhere(2, 5, 45),
+            bars_after_exit=20,
+            bars_after_loss=5,
+        )
         frame = candles_from_closes(closes)
         self.assertEqual(res.trades[1].entry_time, frame["open_time"].iloc[6 + 20 + 1])
 
     def test_zero_bars_means_no_cooldown(self):
         closes = [100, 100, 100, 101, 102, 103] + [104] * 20
-        frame, res = self.run_script(closes, self.enters_everywhere(2, 5, 25), bars_after_exit=0, bars_after_loss=0)
-        self.assertEqual(res.trades[1].entry_time, frame["open_time"].iloc[7])  # signal at bar 6 -> fills at 7
+        frame, res = self.run_script(
+            closes,
+            self.enters_everywhere(2, 5, 25),
+            bars_after_exit=0,
+            bars_after_loss=0,
+        )
+        self.assertEqual(
+            res.trades[1].entry_time, frame["open_time"].iloc[7]
+        )  # signal at bar 6 -> fills at 7
 
     def test_per_symbol_by_default_and_global_when_asked(self):
         t0 = pd.Timestamp("2026-01-01", tz="UTC")
@@ -325,27 +416,52 @@ class CooldownTests(unittest.TestCase):
 
     def test_no_exit_yet_means_no_block_even_without_a_bar_length(self):
         o = create("OVL-COOLDOWN")
-        self.assertTrue(o.allow_entry("A", pd.Timestamp("2026-01-01", tz="UTC")).allowed)
+        self.assertTrue(
+            o.allow_entry("A", pd.Timestamp("2026-01-01", tz="UTC")).allowed
+        )
 
     def test_state_survives_export_and_import(self):
         t0 = pd.Timestamp("2026-01-01", tz="UTC")
         a = create("OVL-COOLDOWN")
         a.bar_seconds = 3600
-        a.on_exit(PositionState("A", 100.0, t0, 100.0), t0 + pd.Timedelta(hours=10), 90.0)
+        a.on_exit(
+            PositionState("A", 100.0, t0, 100.0), t0 + pd.Timedelta(hours=10), 90.0
+        )
         b = create("OVL-COOLDOWN")
         b.bar_seconds = 3600
         b.import_state(json.loads(json.dumps(a.export_state())))
         for h in (10, 13, 21, 22, 30):
             t = t0 + pd.Timedelta(hours=h)
-            self.assertEqual(a.allow_entry("A", t).allowed, b.allow_entry("A", t).allowed, h)
+            self.assertEqual(
+                a.allow_entry("A", t).allowed, b.allow_entry("A", t).allowed, h
+            )
         b.import_state({"garbage": 1})  # unreadable entries are ignored, not fatal
 
 
 class CompositionTests(unittest.TestCase):
     def setUp(self):
         # a rally with a shallow early dip, a second leg, then a pullback
-        closes = ([100 + 0.9 * i for i in range(6)] + [104, 103.2, 103.6, 104.4, 105.5, 106.8, 108.0, 109.5,
-                  111.0, 112.5, 112.0, 111.5, 110.4, 109.0, 107.5, 106.0, 104.0, 102.0, 100.0])
+        closes = [100 + 0.9 * i for i in range(6)] + [
+            104,
+            103.2,
+            103.6,
+            104.4,
+            105.5,
+            106.8,
+            108.0,
+            109.5,
+            111.0,
+            112.5,
+            112.0,
+            111.5,
+            110.4,
+            109.0,
+            107.5,
+            106.0,
+            104.0,
+            102.0,
+            100.0,
+        ]
         self.frame = make_candles(closes, wick=0.004)
         self.params = {
             "OVL-RATCHET": {"trigger_pct": 1.0, "lock_pct": 0.2, "step_pct": 0.5},
@@ -362,8 +478,13 @@ class CompositionTests(unittest.TestCase):
         singles = {i: self.runner([i]) for i in ids}
         entry_bar, entry = 5, float(self.frame["close"].iloc[5])
         tm_open = self.frame["open_time"].iloc[entry_bar]
-        cpos = combined.open_position("X", entry, tm_open, combined.window(self.frame, entry_bar))
-        spos = {i: r.open_position("X", entry, tm_open, r.window(self.frame, entry_bar)) for i, r in singles.items()}
+        cpos = combined.open_position(
+            "X", entry, tm_open, combined.window(self.frame, entry_bar)
+        )
+        spos = {
+            i: r.open_position("X", entry, tm_open, r.window(self.frame, entry_bar))
+            for i, r in singles.items()
+        }
 
         owners, exit_info = [], None
         running = {i: None for i in ids}
@@ -376,14 +497,20 @@ class CompositionTests(unittest.TestCase):
             candidates = {k: v for k, v in running.items() if v is not None}
             if candidates:
                 want = max(candidates.values())
-                self.assertAlmostEqual(cpos.current_stop, want, places=9, msg=f"bar {i}")
+                self.assertAlmostEqual(
+                    cpos.current_stop, want, places=9, msg=f"bar {i}"
+                )
                 owners.append(cpos.stop_owner)
                 self.assertAlmostEqual(candidates[cpos.stop_owner], want, places=9)
             if d.action is Action.EXIT_LONG:
                 exit_info = (i, d)
                 break
 
-        self.assertGreaterEqual(len(set(owners)), 2, f"fixture should hand the stop between overlays: {owners}")
+        self.assertGreaterEqual(
+            len(set(owners)),
+            2,
+            f"fixture should hand the stop between overlays: {owners}",
+        )
         self.assertIsNotNone(exit_info, "the pullback must hit the combined stop")
         i, d = exit_info
         self.assertTrue(d.exit_rule.startswith("stop:"))
@@ -412,23 +539,51 @@ class CompositionTests(unittest.TestCase):
         for oid in ("OVL-RATCHET", "OVL-ATR", "OVL-PLOCK"):
             alone = exit_bar([oid])
             if alone is not None:
-                self.assertLessEqual(combined, alone, f"adding overlays must never exit later than {oid} alone")
+                self.assertLessEqual(
+                    combined,
+                    alone,
+                    f"adding overlays must never exit later than {oid} alone",
+                )
 
     def test_overlays_never_make_the_strategy_exit_later(self):
-        frame = make_candles([100 + i for i in range(10)] + [110 - 2 * i for i in range(15)], wick=0.002)
+        frame = make_candles(
+            [100 + i for i in range(10)] + [110 - 2 * i for i in range(15)], wick=0.002
+        )
         script = {1: Action.ENTER_LONG, 17: Action.EXIT_LONG}
-        base = run_backtest(frame, StrategyRunner(Scripted(frame, script)), "X", "1h", cost=ZERO)
+        base = run_backtest(
+            frame, StrategyRunner(Scripted(frame, script)), "X", "1h", cost=ZERO
+        )
         with_ovl = run_backtest(
-            frame, StrategyRunner(Scripted(frame, script), [create("OVL-RATCHET", trigger_pct=1, lock_pct=0.2, step_pct=0.5)]),
-            "X", "1h", cost=ZERO)
+            frame,
+            StrategyRunner(
+                Scripted(frame, script),
+                [create("OVL-RATCHET", trigger_pct=1, lock_pct=0.2, step_pct=0.5)],
+            ),
+            "X",
+            "1h",
+            cost=ZERO,
+        )
         self.assertLessEqual(with_ovl.trades[0].exit_time, base.trades[0].exit_time)
-        self.assertTrue(with_ovl.trades[0].exit_rule.startswith("stop:") or with_ovl.trades[0].exit_rule == "strategy")
+        self.assertTrue(
+            with_ovl.trades[0].exit_rule.startswith("stop:")
+            or with_ovl.trades[0].exit_rule == "strategy"
+        )
 
 
 class PersistenceTests(unittest.TestCase):
     def test_position_state_round_trips_through_json(self):
-        pos = PositionState("BTC", 100.0, pd.Timestamp("2026-03-01 12:00", tz="UTC"), 107.5, 104.2, "OVL-ATR",
-                            {"OVL-ATR": {"atr": 1.5, "stop": 104.2}, "OVL-RATCHET": {"armed": True, "steps": 3}})
+        pos = PositionState(
+            "BTC",
+            100.0,
+            pd.Timestamp("2026-03-01 12:00", tz="UTC"),
+            107.5,
+            104.2,
+            "OVL-ATR",
+            {
+                "OVL-ATR": {"atr": 1.5, "stop": 104.2},
+                "OVL-RATCHET": {"armed": True, "steps": 3},
+            },
+        )
         back = PositionState.from_dict(json.loads(json.dumps(pos.to_dict())))
         self.assertEqual(back, pos)
 
@@ -439,7 +594,9 @@ class PersistenceTests(unittest.TestCase):
             engine = SignalEngine({"strategy": {"active_id": "STRAT-000"}})
             engine.attach_state(path)
             self.assertIsNone(engine.position("BTC"))
-            open(path, "w", encoding="utf-8").write(json.dumps({"positions": {"BTC": {"symbol": "BTC"}}}))
+            open(path, "w", encoding="utf-8").write(
+                json.dumps({"positions": {"BTC": {"symbol": "BTC"}}})
+            )
             engine.attach_state(path)
             self.assertIsNone(engine.position("BTC"))
 
@@ -470,7 +627,10 @@ class TraderRestartTests(PaperTraderCase):
         "strategy": {
             "active_id": "STRAT-001",
             "overlays": [
-                {"id": "OVL-RATCHET", "params": {"trigger_pct": 0.5, "lock_pct": 0.1, "step_pct": 0.5}},
+                {
+                    "id": "OVL-RATCHET",
+                    "params": {"trigger_pct": 0.5, "lock_pct": 0.1, "step_pct": 0.5},
+                },
                 {"id": "OVL-COOLDOWN"},
             ],
         },
@@ -487,7 +647,9 @@ class TraderRestartTests(PaperTraderCase):
     def make_trader(self):
         settings = copy.deepcopy(self.SETTINGS)
         engine = SignalEngine(settings, self.feed.provider, self.feed.clock)
-        trader = self.pt_trader.CryptoAPITrading(settings_source=settings, signal_engine=engine)
+        trader = self.pt_trader.CryptoAPITrading(
+            settings_source=settings, signal_engine=engine
+        )
         trader._order_poll_seconds = 0.0
         return trader
 
@@ -507,8 +669,10 @@ class TraderRestartTests(PaperTraderCase):
         trader1 = self.make_trader()
         for k in range(160, 290):
             self.tick(trader1, k)
-            if trader1.signal_engine.position("BTC") is not None and \
-                    trader1.signal_engine.position("BTC").current_stop is not None:
+            if (
+                trader1.signal_engine.position("BTC") is not None
+                and trader1.signal_engine.position("BTC").current_stop is not None
+            ):
                 break
         pos1 = trader1.signal_engine.position("BTC")
         self.assertIsNotNone(pos1, "the strategy should be long by now")
@@ -529,7 +693,9 @@ class TraderRestartTests(PaperTraderCase):
         self.assertEqual(pos2.to_dict(), saved)
         self.assertEqual(pos2.current_stop, saved["current_stop"])
         self.assertEqual(pos2.stop_owner, saved["stop_owner"])
-        self.assertEqual(pos2.overlay_state["OVL-RATCHET"], saved["overlay_state"]["OVL-RATCHET"])
+        self.assertEqual(
+            pos2.overlay_state["OVL-RATCHET"], saved["overlay_state"]["OVL-RATCHET"]
+        )
 
         # keep trading with the restored state: the stop never moves down and the position closes
         stops = [saved["current_stop"]]
@@ -540,7 +706,10 @@ class TraderRestartTests(PaperTraderCase):
                 break
             stops.append(p.current_stop)
         self.assertEqual(stops, sorted(stops))
-        self.assertIsNone(trader2.signal_engine.position("BTC"), "the position should have been closed")
+        self.assertIsNone(
+            trader2.signal_engine.position("BTC"),
+            "the position should have been closed",
+        )
         sells = [r for r in self.ledger_rows() if r["side"] == "sell"]
         self.assertEqual(len(sells), 1)
         self.assertTrue(sells[0]["tag"].startswith("EXIT:"))
@@ -563,7 +732,9 @@ class TraderRestartTests(PaperTraderCase):
         trader2 = self.make_trader()
         self.feed.set_after_bar(exit_k)
         trader2.signal_engine.decide("BTC")  # builds the runner and imports saved state
-        self.assertEqual(trader2.signal_engine._runner.export_state()["OVL-COOLDOWN"], saved)
+        self.assertEqual(
+            trader2.signal_engine._runner.export_state()["OVL-COOLDOWN"], saved
+        )
 
     def test_status_reports_overlays_effective_stop_and_owner_for_the_hub(self):
         trader = self.make_trader()
@@ -577,7 +748,9 @@ class TraderRestartTests(PaperTraderCase):
         self.assertIsNotNone(seen)
         self.assertEqual(seen["overlays"], ["OVL-RATCHET", "OVL-COOLDOWN"])
         self.assertEqual(seen["stop_owner"], "OVL-RATCHET")
-        self.assertAlmostEqual(seen["effective_stop"], trader.signal_engine.position("BTC").current_stop)
+        self.assertAlmostEqual(
+            seen["effective_stop"], trader.signal_engine.position("BTC").current_stop
+        )
         self.assertIn("OVL-RATCHET", seen["overlay_state"])
 
     def test_per_cycle_log_names_the_stop_owner_and_overlay_state(self):
@@ -585,7 +758,9 @@ class TraderRestartTests(PaperTraderCase):
 
         trader = self.make_trader()
         logged = []
-        with mock.patch.object(se.logger, "info", side_effect=lambda m, *a, **k: logged.append(str(m))):
+        with mock.patch.object(
+            se.logger, "info", side_effect=lambda m, *a, **k: logged.append(str(m))
+        ):
             for k in range(160, len(self.frame)):
                 self.tick(trader, k)
                 p = trader.signal_engine.position("BTC")
@@ -599,8 +774,21 @@ class TraderRestartTests(PaperTraderCase):
 
 class BacktestCliOverlayTests(unittest.TestCase):
     def run_cli(self, d, strategy, tf_path, tf, overlays=None, symbol="BTCUSDT"):
-        out = os.path.join(d, f"{strategy}_{symbol}_{overlays or 'none'}.json".replace(",", "_"))
-        argv = ["--strategy", strategy, "--symbol", symbol, "--tf", tf, "--candles-file", tf_path, "--out", out]
+        out = os.path.join(
+            d, f"{strategy}_{symbol}_{overlays or 'none'}.json".replace(",", "_")
+        )
+        argv = [
+            "--strategy",
+            strategy,
+            "--symbol",
+            symbol,
+            "--tf",
+            tf,
+            "--candles-file",
+            tf_path,
+            "--out",
+            out,
+        ]
         if overlays:
             argv += ["--overlays", overlays]
         with contextlib.redirect_stdout(io.StringIO()):
@@ -614,42 +802,96 @@ class BacktestCliOverlayTests(unittest.TestCase):
                 plain = self.run_cli(d, strategy, BTC, "1h")
                 over = self.run_cli(d, strategy, BTC, "1h", "OVL-ATR,OVL-COOLDOWN")
                 self.assertEqual(plain["overlays"], [])
-                self.assertEqual([o["id"] for o in over["overlays"]], ["OVL-ATR", "OVL-COOLDOWN"])
+                self.assertEqual(
+                    [o["id"] for o in over["overlays"]], ["OVL-ATR", "OVL-COOLDOWN"]
+                )
                 for res in (plain, over):
                     for sample in ("in_sample", "out_of_sample"):
                         for series in ("strategy", "buy_and_hold"):
                             self.assertEqual(set(res[sample][series]), set(KPI_KEYS))
                 # the benchmark does not depend on overlays
-                self.assertEqual(plain["in_sample"]["buy_and_hold"], over["in_sample"]["buy_and_hold"])
-                self.assertEqual(plain["out_of_sample"]["buy_and_hold"], over["out_of_sample"]["buy_and_hold"])
+                self.assertEqual(
+                    plain["in_sample"]["buy_and_hold"],
+                    over["in_sample"]["buy_and_hold"],
+                )
+                self.assertEqual(
+                    plain["out_of_sample"]["buy_and_hold"],
+                    over["out_of_sample"]["buy_and_hold"],
+                )
 
     def test_overlays_actually_change_the_run_on_real_candles(self):
         with tempfile.TemporaryDirectory() as d:
             plain = self.run_cli(d, "STRAT-002", ETH, "1h", symbol="ETHUSDT")
-            over = self.run_cli(d, "STRAT-002", ETH, "1h", "OVL-RATCHET,OVL-ATR,OVL-PLOCK", symbol="ETHUSDT")
-            self.assertNotEqual(plain["in_sample"]["strategy"], over["in_sample"]["strategy"])
+            over = self.run_cli(
+                d,
+                "STRAT-002",
+                ETH,
+                "1h",
+                "OVL-RATCHET,OVL-ATR,OVL-PLOCK",
+                symbol="ETHUSDT",
+            )
+            self.assertNotEqual(
+                plain["in_sample"]["strategy"], over["in_sample"]["strategy"]
+            )
 
     def test_overlay_params_are_accepted_and_recorded(self):
         with tempfile.TemporaryDirectory() as d:
             out = os.path.join(d, "r.json")
             with contextlib.redirect_stdout(io.StringIO()):
-                code = cli.main(["--strategy", "STRAT-000", "--candles-file", BTC, "--overlays", "OVL-ATR",
-                                 "--overlay-params", '{"OVL-ATR": {"mult": 4.0}}', "--out", out])
+                code = cli.main(
+                    [
+                        "--strategy",
+                        "STRAT-000",
+                        "--candles-file",
+                        BTC,
+                        "--overlays",
+                        "OVL-ATR",
+                        "--overlay-params",
+                        '{"OVL-ATR": {"mult": 4.0}}',
+                        "--out",
+                        out,
+                    ]
+                )
             self.assertEqual(code, 0)
             res = json.load(open(out, encoding="utf-8"))
-            self.assertEqual(res["overlays"], [{"id": "OVL-ATR", "params": {"mult": 4.0}}])
+            self.assertEqual(
+                res["overlays"], [{"id": "OVL-ATR", "params": {"mult": 4.0}}]
+            )
 
     def test_exit_rules_name_the_overlay_in_the_trades_csv(self):
         with tempfile.TemporaryDirectory() as d:
-            self.run_cli(d, "STRAT-002", ETH, "1h", "OVL-RATCHET,OVL-ATR,OVL-PLOCK", symbol="ETHUSDT")
-            trades = pd.read_csv(os.path.join(d, "STRAT-002_ETHUSDT_OVL-RATCHET_OVL-ATR_OVL-PLOCK_trades.csv"))
+            self.run_cli(
+                d,
+                "STRAT-002",
+                ETH,
+                "1h",
+                "OVL-RATCHET,OVL-ATR,OVL-PLOCK",
+                symbol="ETHUSDT",
+            )
+            trades = pd.read_csv(
+                os.path.join(
+                    d, "STRAT-002_ETHUSDT_OVL-RATCHET_OVL-ATR_OVL-PLOCK_trades.csv"
+                )
+            )
             rules = set(trades.loc[trades["series"] == "strategy", "exit_rule"])
             self.assertTrue(any(r.startswith("stop:") for r in rules), rules)
 
     def test_a_bad_overlay_param_exits_2(self):
-        with contextlib.redirect_stderr(io.StringIO()) as err, contextlib.redirect_stdout(io.StringIO()):
-            code = cli.main(["--strategy", "STRAT-000", "--candles-file", BTC, "--overlays", "OVL-ATR",
-                             "--overlay-params", '{"OVL-ATR": {"mult": 99}}'])
+        with contextlib.redirect_stderr(
+            io.StringIO()
+        ) as err, contextlib.redirect_stdout(io.StringIO()):
+            code = cli.main(
+                [
+                    "--strategy",
+                    "STRAT-000",
+                    "--candles-file",
+                    BTC,
+                    "--overlays",
+                    "OVL-ATR",
+                    "--overlay-params",
+                    '{"OVL-ATR": {"mult": 99}}',
+                ]
+            )
         self.assertEqual(code, 2)
         self.assertIn("mult", err.getvalue())
 

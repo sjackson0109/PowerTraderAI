@@ -52,8 +52,20 @@ class FakeKlines:
 
     def row(self, i):
         o = 100.0 + i
-        return [T0_MS + i * HOUR_MS, f"{o}", f"{o + 1}", f"{o - 1}", f"{o + 0.5}", "10.0",
-                T0_MS + (i + 1) * HOUR_MS - 1, "0", 0, "0", "0", "0"]
+        return [
+            T0_MS + i * HOUR_MS,
+            f"{o}",
+            f"{o + 1}",
+            f"{o - 1}",
+            f"{o + 0.5}",
+            "10.0",
+            T0_MS + (i + 1) * HOUR_MS - 1,
+            "0",
+            0,
+            "0",
+            "0",
+            "0",
+        ]
 
     def __call__(self, url, timeout=None):
         q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
@@ -140,8 +152,16 @@ class GetCandlesTests(unittest.TestCase):
 
     def get(self, server, start, end, **kw):
         f, _ = fetcher_for(server)
-        df = cd.get_candles("BTCUSDT", "1h", start, end, cache_dir=self.tmp.name,
-                            fetcher=f, now=kw.pop("now", self.now), **kw)
+        df = cd.get_candles(
+            "BTCUSDT",
+            "1h",
+            start,
+            end,
+            cache_dir=self.tmp.name,
+            fetcher=f,
+            now=kw.pop("now", self.now),
+            **kw,
+        )
         return df, f
 
     def test_frame_has_the_strategy_columns_in_utc_ascending_order(self):
@@ -169,10 +189,16 @@ class GetCandlesTests(unittest.TestCase):
         df, f = self.get(server, at(50), at(250))  # extend both sides
         self.assertEqual(len(df), 200)
         starts = sorted(int(c["startTime"]) for c in server.calls)
-        self.assertEqual(starts, [int(at(50).timestamp() * 1000), int(at(200).timestamp() * 1000)])
+        self.assertEqual(
+            starts, [int(at(50).timestamp() * 1000), int(at(200).timestamp() * 1000)]
+        )
         # nothing in the middle was re-requested
         for c in server.calls:
-            self.assertFalse(at(100).timestamp() * 1000 <= int(c["startTime"]) < at(200).timestamp() * 1000)
+            self.assertFalse(
+                at(100).timestamp() * 1000
+                <= int(c["startTime"])
+                < at(200).timestamp() * 1000
+            )
 
     def test_forming_bar_is_never_returned_or_cached(self):
         server = FakeKlines()
@@ -232,8 +258,15 @@ class GetCandlesTests(unittest.TestCase):
 
     def test_unsupported_timeframe_is_rejected(self):
         with self.assertRaises(ValueError):
-            cd.get_candles("BTCUSDT", "7m", at(0), at(5), cache_dir=self.tmp.name,
-                           fetcher=cd.BinanceKlines(opener=FakeKlines()), now=self.now)
+            cd.get_candles(
+                "BTCUSDT",
+                "7m",
+                at(0),
+                at(5),
+                cache_dir=self.tmp.name,
+                fetcher=cd.BinanceKlines(opener=FakeKlines()),
+                now=self.now,
+            )
 
     def test_cache_file_sha256_is_stable(self):
         server = FakeKlines()
@@ -246,8 +279,14 @@ class GetCandlesTests(unittest.TestCase):
 class ValidationTests(unittest.TestCase):
     def frame(self, hours):
         return pd.DataFrame(
-            {"open_time": [at(h) for h in hours], "open": 1.0, "high": 1.0,
-             "low": 1.0, "close": 1.0, "volume": 1.0}
+            {
+                "open_time": [at(h) for h in hours],
+                "open": 1.0,
+                "high": 1.0,
+                "low": 1.0,
+                "close": 1.0,
+                "volume": 1.0,
+            }
         )
 
     def test_clean_frame_has_no_gaps(self):

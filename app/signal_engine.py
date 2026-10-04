@@ -137,7 +137,9 @@ class SignalEngine:
         if self._positions.pop(str(base).upper(), None) is not None:
             self._persist()
 
-    def record_entry(self, base: str, fill_price: float, bar_time: pd.Timestamp) -> PositionState:
+    def record_entry(
+        self, base: str, fill_price: float, bar_time: pd.Timestamp
+    ) -> PositionState:
         base = str(base).upper()
         self._positions.pop(base, None)
         return self.ensure_position(base, fill_price, bar_time)
@@ -170,21 +172,29 @@ class SignalEngine:
             try:
                 self._positions[str(base).upper()] = PositionState.from_dict(raw)
             except (KeyError, TypeError, ValueError):
-                logger.warning(f"Ignoring unreadable saved strategy position for {base}")
+                logger.warning(
+                    f"Ignoring unreadable saved strategy position for {base}"
+                )
         overlays = data.get("overlays")
         self._restored_overlays = overlays if isinstance(overlays, dict) else {}
         if self._runner is not None:
             self._runner.import_state(self._restored_overlays)
         self._last_state_json = None
         if self._positions:
-            logger.info(f"Restored strategy state for {sorted(self._positions)} from {path}")
+            logger.info(
+                f"Restored strategy state for {sorted(self._positions)} from {path}"
+            )
 
     def _persist(self) -> None:
         if not self._state_path:
             return
         payload = {
             "positions": {b: p.to_dict() for b, p in self._positions.items()},
-            "overlays": self._runner.export_state() if self._runner is not None else self._restored_overlays,
+            "overlays": (
+                self._runner.export_state()
+                if self._runner is not None
+                else self._restored_overlays
+            ),
         }
         text = json.dumps(payload, sort_keys=True)
         if text == self._last_state_json:
@@ -201,7 +211,9 @@ class SignalEngine:
 
     # -- decisions ----------------------------------------------------------------------------
 
-    def decide(self, base: str, position: Optional[PositionState] = None) -> Optional[Decision]:
+    def decide(
+        self, base: str, position: Optional[PositionState] = None
+    ) -> Optional[Decision]:
         """
         Decision for the latest closed bar of ``base``'s pair. ``position`` defaults
         to the engine's own record. Returns None when blocked, when the engine is
@@ -210,7 +222,9 @@ class SignalEngine:
         s = self.settings
         if s.problem:
             self._warn_once(
-                "blocked", f"Strategy configuration invalid, no signals: {s.problem}", error=True
+                "blocked",
+                f"Strategy configuration invalid, no signals: {s.problem}",
+                error=True,
             )
             return None
         if not s.is_catalogue:
@@ -252,12 +266,19 @@ class SignalEngine:
                 log_key=("STALE", last_open),
             )
 
-        pos = position if position is not None else self._positions.get(str(base).upper())
-        decision = runner.evaluate(runner.window(candles, len(candles) - 1), pos, str(base).upper())
+        pos = (
+            position if position is not None else self._positions.get(str(base).upper())
+        )
+        decision = runner.evaluate(
+            runner.window(candles, len(candles) - 1), pos, str(base).upper()
+        )
         if pos is not None:
             self._persist()  # the stop / overlay state may have moved
         return self._record(
-            base, decision, position=pos, log_key=(decision.bar_time, pos is None, decision.action)
+            base,
+            decision,
+            position=pos,
+            log_key=(decision.bar_time, pos is None, decision.action),
         )
 
     # -- internals --------------------------------------------------------------------------------
@@ -282,14 +303,18 @@ class SignalEngine:
         try:
             df = self._provider(pair, tf, runner.lookback_bars + 5, now)
         except (CandleDataError, OSError) as exc:
-            self._warn_once(f"fetch:{pair}", f"Could not fetch {pair} {tf} candles: {exc}")
+            self._warn_once(
+                f"fetch:{pair}", f"Could not fetch {pair} {tf} candles: {exc}"
+            )
             return cached[1] if cached is not None else None
         if df is None or df.empty:
             return cached[1] if cached is not None else None
         self._candles[pair] = (expected_last_open, df)
         return df
 
-    def _record(self, base: str, decision: Decision, position, log_key: tuple) -> Decision:
+    def _record(
+        self, base: str, decision: Decision, position, log_key: tuple
+    ) -> Decision:
         base = str(base).upper()
         self.last_decisions[base] = decision
         if self._logged.get(base) != log_key:
@@ -311,7 +336,9 @@ class SignalEngine:
             )
         return decision
 
-    def _warn_once(self, key: str, message: str, error: bool = False, every: float = 300.0) -> None:
+    def _warn_once(
+        self, key: str, message: str, error: bool = False, every: float = 300.0
+    ) -> None:
         now = self._clock()
         last = self._warned.get(key)
         if last is None or now - last >= every:

@@ -100,7 +100,9 @@ def run_backtest(
     if not 0 <= start_index < n <= len(candles):
         raise ValueError("invalid trading window")
     tf_seconds = timeframe_seconds(tf)
-    runner.set_timeframe(tf_seconds)  # overlays that count bars (cooldowns) need the bar length
+    runner.set_timeframe(
+        tf_seconds
+    )  # overlays that count bars (cooldowns) need the bar length
     fee_rate = cost.fee_bps / 1e4
 
     open_ = candles["open"].to_numpy(dtype=float)
@@ -162,7 +164,9 @@ def run_backtest(
             slippage_cost += qty * (fill - open_[i])
             entry_i = i
             entry_fill = fill
-            pos = runner.open_position(symbol, fill, times.iloc[i], runner.window(candles, i))
+            pos = runner.open_position(
+                symbol, fill, times.iloc[i], runner.window(candles, i)
+            )
         elif pending is not None and pending.startswith("EXIT") and pos is not None:
             sell(i, open_[i], pending.split(":", 1)[1], forced=False)
         pending = None
@@ -197,7 +201,12 @@ def run_backtest(
         bars=n - start_index,
     )
     result.kpis = compute_kpis(
-        equity, initial_equity, tf_seconds, [t.pnl_pct for t in trades], bars_in_position, fees_paid
+        equity,
+        initial_equity,
+        tf_seconds,
+        [t.pnl_pct for t in trades],
+        bars_in_position,
+        fees_paid,
     )
     return result
 
@@ -296,7 +305,9 @@ def evaluate_split(
     for name, (a, b) in windows.items():
         if b - a < 2:
             raise ValueError(f"{name} window has fewer than 2 bars")
-        strat = run_backtest(candles, runner_factory(), symbol, tf, a, b, cost, initial_equity)
+        strat = run_backtest(
+            candles, runner_factory(), symbol, tf, a, b, cost, initial_equity
+        )
         bench = buy_and_hold(candles, tf, a, b, cost, initial_equity)
         sk, bk = strat.kpis, bench.kpis
         if sk["total_return_pct"] is not None and bk["total_return_pct"] is not None:

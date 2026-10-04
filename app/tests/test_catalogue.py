@@ -87,7 +87,9 @@ class BuildCatalogueTests(unittest.TestCase):
             build_catalogue([entry], {"T-001": Dummy})
 
     def test_unknown_bound_keys_fail(self):
-        entry = good_entry(param_bounds={"fast": {"minimum": 1}, "mode": {"values": ["A"]}})
+        entry = good_entry(
+            param_bounds={"fast": {"minimum": 1}, "mode": {"values": ["A"]}}
+        )
         with self.assertRaises(CatalogueError):
             build_catalogue([entry], {"T-001": Dummy})
 
@@ -126,7 +128,9 @@ class LiveCatalogueTests(unittest.TestCase):
     def test_create_validates_parameters(self):
         s = strategies.create("STRAT-000", fast_len=10, slow_len=30)
         self.assertEqual(s.params, {"fast_len": 10, "slow_len": 30})
-        self.assertEqual(strategies.create("STRAT-000").params, {"fast_len": 20, "slow_len": 50})
+        self.assertEqual(
+            strategies.create("STRAT-000").params, {"fast_len": 20, "slow_len": 50}
+        )
         with self.assertRaises(ParamError):
             strategies.create("STRAT-000", fast_len=1)  # below min
         with self.assertRaises(ParamError):
@@ -138,12 +142,18 @@ class LiveCatalogueTests(unittest.TestCase):
         with self.assertRaises(CatalogueError):
             strategies.create("STRAT-404")
 
-    def test_whole_number_parameters_reject_floats_but_float_parameters_accept_ints(self):
+    def test_whole_number_parameters_reject_floats_but_float_parameters_accept_ints(
+        self,
+    ):
         for bad in (10.5, 10.0):  # a float length would break the indicators downstream
             with self.assertRaises(ParamError):
                 strategies.create("STRAT-000", fast_len=bad)
-        self.assertEqual(strategies.create("STRAT-001", adx_min=22.5).params["adx_min"], 22.5)
-        self.assertEqual(strategies.create("STRAT-001", adx_min=25).params["adx_min"], 25)
+        self.assertEqual(
+            strategies.create("STRAT-001", adx_min=22.5).params["adx_min"], 22.5
+        )
+        self.assertEqual(
+            strategies.create("STRAT-001", adx_min=25).params["adx_min"], 25
+        )
         with self.assertRaises(ParamError):
             strategies.create("STRAT-002", atr_len=10.5)
         self.assertEqual(strategies.create("STRAT-002", mult=2).params["mult"], 2)

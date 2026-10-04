@@ -44,6 +44,11 @@ Rules:
   ``app/pt_config.json`` and ``app/gui_settings.json`` are always kept: other
   branches still use them. That is decided from where the file is (and
   recorded at migration), not from where this program runs.
+* A legacy file that holds credentials (the Robinhood key files and their
+  ``.bak`` copies, the old vault, config files) is removed only when each
+  credential in it is in the keyring with the same value; otherwise it is
+  kept and reported by field name. Values are compared in memory and never
+  logged or printed. The vault's three files are one unit.
 * A file in a folder PowerTrader uses now (``POWERTRADER_HOME`` may be the
   install root or ``app/``, whose ``data/`` and ``logs/`` are also legacy
   locations) is the new app's own file: never copied, recorded or removed.
@@ -166,6 +171,7 @@ CHANGED = "changed since it was migrated"
 NO_COPY = "no migrated copy"
 IN_USE = "in a folder PowerTrader uses now"
 LINKED = "reached through a link or junction since it was migrated"
+UNCONFIRMED = "credentials not confirmed in the keyring"
 KEPT_FOR_BRANCHES = "kept: other branches in this git checkout still use it"
 REMOVING_SUFFIX = ".pt-removing"  # a part renamed aside while its unit is deleted
 
@@ -720,6 +726,96 @@ def _credential_items(source: str, pairs, report: Report) -> Tuple[List[Tuple[st
     return items, complete
 
 
+def _config_pairs(kind: str, data) -> Optional[List[Tuple[str, str, object, str]]]:
+    """``(exchange, key, value, where)`` for each credential the migration
+    moves from a legacy config file of ``kind`` to the keyring (``where``: its
+    place in the file, for messages), or None for a kind that holds none."""
+    if kind == pt_paths.TRADING_CONFIG_FILE and isinstance(data, dict):
+        return [
+            (str(ex.get("exchange_type", "")).strip().lower(), key, ex.get(key), f"exchanges[{i}].{key}")
+            for i, ex in enumerate(data.get("exchanges", []) or [])
+            if isinstance(ex, dict)
+            for key in ("api_key", "api_secret", "passphrase")
+        ]
+    if kind == pt_paths.EXCHANGE_CONFIG_FILE and isinstance(data, dict):
+        return [
+            (str(name).strip().lower(), key, value, f"{name}.{key}")
+            for name, settings in data.items()
+            if isinstance(settings, dict)
+            for key, value in settings.items()
+            if pt_secrets.is_secret_key(key)
+        ]
+    return None
+
+
+def _secret_places(data, where: str = ""):
+    """``where`` of every credential-named key with a text value in ``data``."""
+    if isinstance(data, dict):
+        for key, value in data.items():
+            place = f"{where}.{key}" if where else str(key)
+            if pt_secrets.is_secret_key(key) and isinstance(value, str) and value.strip():
+                yield place
+            yield from _secret_places(value, place)
+    elif isinstance(data, list):
+        for i, value in enumerate(data):
+            yield from _secret_places(value, f"{where}[{i}]")
+
+
+def _unconfirmed_credentials(path: str) -> Optional[str]:
+    """For a legacy file that holds credentials (the Robinhood key files and
+    their ``.bak`` copies, the old vault, config files): why it must be kept
+    because a credential in it is not in the keyring with the same value, or
+    None when each one is (or it holds none). Values are compared in memory
+    and never logged, printed or returned; the reason names fields only."""
+    name = os.path.basename(path)
+    is_config = name in CONFIG_FILES
+    if not (name in RH_PLAINTEXT + RH_VAULT or is_config
+            or any(fnmatch.fnmatch(name, p) for p in RH_BACKUP_PATTERNS)):
+        return None
+    if not pt_secrets.keyring_available():
+        return f"{UNCONFIRMED}: no keyring to compare with"
+    found: List[Tuple[str, str, str]] = []  # (exchange, field, value)
+    problems: List[str] = []
+    try:
+        if name in RH_VAULT:
+            from pt_credentials import SecureCredentialManager
+
+            creds = SecureCredentialManager(os.path.dirname(path)).decrypt_credentials()
+            if not creds:
+                return f"{UNCONFIRMED}: the old vault could not be decrypted"
+            found += [("robinhood", "api_key", creds[0]), ("robinhood", "private_key", creds[1])]
+        elif not is_config:  # r_key.txt / r_secret.txt and their .bak copies
+            with open(path, encoding="utf-8") as f:
+                value = f.read().strip()
+            if value:
+                found.append(("robinhood", "api_key" if name.startswith("r_key") else "private_key", value))
+        else:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            pairs = _config_pairs(name, data) or []
+            covered = set()
+            for exchange, key, value, where in pairs:
+                value = str(value or "").strip()
+                if not value:
+                    continue
+                covered.add(where)
+                field_name = _secret_field(exchange, key) if exchange else None
+                if field_name:
+                    found.append((exchange, field_name, value))
+                else:
+                    problems.append(f"{where} has no keyring field")
+            problems += [f"{where} has no keyring field" for where in _secret_places(data) if where not in covered]
+    except Exception as exc:  # unreadable, not JSON, cryptography missing, ...
+        return f"{UNCONFIRMED}: could not be read to compare ({type(exc).__name__})"
+    for exchange, field_name, value in found:
+        stored = pt_secrets._keyring_get(pt_secrets.normalise_exchange(exchange), field_name)
+        if stored is None:
+            problems.append(f"{exchange}:{field_name} is not in the keyring")
+        elif stored != value:
+            problems.append(f"{exchange}:{field_name} differs from the keyring")
+    return f"{UNCONFIRMED}: {', '.join(problems)}" if problems else None
+
+
 def _holds_secret(data) -> bool:
     if isinstance(data, dict):
         return any((pt_secrets.is_secret_key(k) and bool(v)) or _holds_secret(v) for k, v in data.items())
@@ -848,26 +944,11 @@ def _migrate_config(source: str, kind: str, report: Report, state: _State,
     data, digest = _read_json(source, report)
     if not isinstance(data, (dict, list)):
         return False
-    pairs = None
-    if kind == pt_paths.TRADING_CONFIG_FILE and isinstance(data, dict):
-        pairs = [
-            (str(ex.get("exchange_type", "")).strip().lower(), key, ex.get(key))
-            for ex in data.get("exchanges", []) or []
-            if isinstance(ex, dict)
-            for key in ("api_key", "api_secret", "passphrase")
-        ]
-    elif kind == pt_paths.EXCHANGE_CONFIG_FILE and isinstance(data, dict):
-        pairs = [
-            (str(name).strip().lower(), key, value)
-            for name, settings in data.items()
-            if isinstance(settings, dict)
-            for key, value in settings.items()
-            if pt_secrets.is_secret_key(key)
-        ]
+    pairs = _config_pairs(kind, data)
     items: List[Tuple[str, str, str]] = []
     secrets_ok = True
     if pairs is not None:
-        items, complete = _credential_items(source, pairs, report)
+        items, complete = _credential_items(source, [p[:3] for p in pairs], report)
         secrets_ok = _migrate_secrets(source, items, report, state) and complete
     clean = pt_secrets.strip_secret_fields(data, os.path.basename(source), warn=False)
     if kind == pt_paths.GUI_SETTINGS_FILE and isinstance(clean, dict):
@@ -938,10 +1019,14 @@ def _migrate_robinhood(legacy: str, report: Report, state: _State) -> List[List[
             continue
         source = files[0]
         key = f"secrets:robinhood:{label}"
+        # The vault's three files are one unit (removed together or kept
+        # together: one without the others cannot be read); the plaintext
+        # files are one each.
+        units = [files] if label == "vault" else [[p] for p in files]
         seen = state.entry(key, files[1])
         if seen is not None:
             if seen["redundant"]:
-                return [[p] for p in files] + _robinhood_meta(legacy, report, state)
+                return units + _robinhood_meta(legacy, report, state)
             continue
         creds = _read_robinhood(legacy, files, label, report)
         if creds is None:
@@ -958,7 +1043,7 @@ def _migrate_robinhood(legacy: str, report: Report, state: _State) -> List[List[
             return []
         for path in files:
             state.remember(path, RH_COPIES)
-        return [[p] for p in files] + _robinhood_meta(legacy, report, state)
+        return units + _robinhood_meta(legacy, report, state)
     return []
 
 
@@ -1178,12 +1263,15 @@ def write_report_file(report: Report, records: Optional[Dict[str, dict]] = None)
             "",
             "Use **Remove old files** in the migration window, or "
             "`python app/pt_migrate.py --remove-old-files`. Each file is checked again first; "
-            "one that changed since it was migrated, or whose migrated copy is gone, is kept. "
+            "one that changed since it was migrated, or whose migrated copy is gone, is kept, and "
+            "a file holding credentials goes only when each one is in the keyring with the same value. "
             + PLAINTEXT_WARNING,
             "",
         ]
         for p in report.removable:
             kept = _kept_reason(p, (records or {}).get(p))
+            if kept is None:
+                kept = _unit_unconfirmed([p])
             lines.append(f"* `{p}`" + (f" ({kept})" if kept else ""))
     pt_paths.write_private_text(path, "\n".join(lines) + "\n")
     return path
@@ -1272,6 +1360,20 @@ def _refusal(unit: List[str], files: Dict[str, dict], suffix: str = "") -> Optio
                 return NO_COPY
         except OSError as exc:
             return f"could not be read ({type(exc).__name__})"
+    return None
+
+
+def _unit_unconfirmed(unit: List[str]) -> Optional[str]:
+    """Why ``unit`` is kept because a file in it holds a credential that is
+    not in the keyring with the same value (``_unconfirmed_credentials``), or
+    None. The vault's files are one unit and are read together, so the first
+    one decides."""
+    for path in unit:
+        reason = _unconfirmed_credentials(path)
+        if reason is not None:
+            return f"kept: {reason}"
+        if os.path.basename(path) in RH_VAULT:
+            break
     return None
 
 
@@ -1398,6 +1500,14 @@ def remove_old_files(paths: Optional[List[str]] = None, confirmed: bool = False)
             result.kept += [(p, reason) for p in present]
             continue
         reason = _refusal(unit, files) if unit else NOT_MIGRATED
+        if reason is None:
+            # a file holding credentials goes only when each one is in the keyring
+            # with the same value; compared now, just before any delete (the vault
+            # cannot be read under the names _delete_unit renames it to)
+            kept = _unit_unconfirmed(unit)
+            if kept:
+                result.kept += [(p, kept) for p in present]
+                continue
         if reason is None and not confirmed:
             reason = _cannot_delete(unit)  # what _delete_unit would find first
         if reason is not None:

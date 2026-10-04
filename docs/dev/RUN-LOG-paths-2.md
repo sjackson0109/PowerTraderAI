@@ -907,16 +907,17 @@ Fixed, each in its item's commit, each with a test that fails on the code before
 
 Not changed; for the owner to decide:
 
-* `--from` still writes no conflict copy; it only lists the conflict (item 4 deviation).
+* `--from` still writes no conflict copy; it only lists the conflict (item 4 deviation). Drafted as
+  Issue 1 below.
 * `r_key.txt.bak_*` files become removable once the Robinhood keyring entries exist; their content (an
-  older key) is not in the keyring (unchanged since phase 4).
+  older key) is not in the keyring (unchanged since phase 4). Fixed in item 8.
 * A credential-named key in `pt_config.json` / `gui_settings.json`, or outside `exchanges[*]` in
   `trading_config.json`, would be stripped and not stored, yet the file stays removable. No such key
-  exists in the code or templates today.
+  exists in the code or templates today. Fixed in item 8 (such a file is kept).
 * Copies check that the target is free, then write (no exclusive create). Safe within the hub (the
   migration runs first at start-up), not against another program writing that path in the same instant.
 * `test_trainer_launch` builds the hub with `__new__` and repeats `__init__`'s path set-up, so it would not
-  notice `__init__` dropping `_refresh_trainer_path()`.
+  notice `__init__` dropping `_refresh_trainer_path()`. Drafted as Issue 2 below.
 * `python app/pt_migrate.py` without `platformdirs` still ends in a traceback (its last line names the
   package). CI's `cd app && python test_*.py` steps (`code-quality.yml`) run outside pytest, so without
   the guard. `test_isolation_guard.py::test_resolving_the_real_folders_fails_inside_tests` calls
@@ -969,3 +970,116 @@ after every file: no change, both folders absent, no entries.
   take them once all branches are merged.
 * The YAML follow-up above; untracking the runtime files; the `#108` comment.
 * `backup/user-data-separation-7bbb810` can be deleted once this branch is accepted.
+
+## Item 8 — Credential files go only when the keyring holds each value
+
+Asked for in the owner's review of the fix round: Remove old files deleted `r_key.txt.bak_*` /
+`r_secret.txt.bak_*` once the keyring held any Robinhood key, without comparing their content, so a
+backup holding an older key (or a key that never reached the keyring) was destroyed. The same gap
+applied to every other legacy file holding credentials: the removal check only looked for the keyring
+entry by name.
+
+* `_unconfirmed_credentials` (`app/pt_migrate.py`) reads the credentials a legacy file holds, the same
+  way the migration read them (`r_key.txt` / `r_secret.txt` and their `.bak` copies; the old vault,
+  decrypted with `SecureCredentialManager`; `trading_config.json` / `exchange_config.json` through
+  `_config_pairs`, the extraction the migration uses), and compares each with the keyring entry
+  (`pt_secrets._keyring_get`, keyring only, not the environment). Any credential-named key with a value
+  that has no keyring field (`_secret_places`, for example a stray `api_key` in `pt_config.json`) also
+  counts as not confirmed. Values stay in local variables; reasons name fields only:
+  `kept: credentials not confirmed in the keyring: robinhood:api_key differs from the keyring`
+  (or `... is not in the keyring`, `... has no keyring field`, `no keyring to compare with`,
+  `the old vault could not be decrypted`, `could not be read to compare (<type>)`).
+* `remove_old_files` runs it for every unit that passed the other checks, just before deleting (and in the
+  plan the dialog and the CLI show before asking). A file that fails it goes to `kept` (listed with the
+  reason, like the git-checkout settings), so the CLI exit code is unchanged. The migration report marks
+  such a file `(kept: ...)`.
+* The old vault's three files (`r_key.enc`, `r_secret.enc`, `.pt_salt`) are now one unit: removed together
+  or kept together (one without the others cannot be read). They were three units, so a vault could be
+  partly deleted.
+* Docs: README ("Upgrading"), `ARCHITECTURE.md`, the module docstring and the report header.
+
+Tests (`app/tests/test_pt_migrate_removal.py`, 6 new):
+
+| Test | Before this fix | Now |
+|---|---|---|
+| `test_a_backup_key_file_holding_another_key_is_kept_and_named` (the fixture's `.bak` holds an older key; no value in reasons, CLI output, report or log) | fails (removed) | passes |
+| `test_a_backup_key_file_holding_the_keyring_value_is_removed` | passes | passes |
+| `test_credential_files_whose_keyring_value_was_replaced_are_kept` (`r_key.txt`, `trading_config.json` kept; `r_secret.txt` removed) | fails | passes |
+| `test_a_config_holding_a_credential_with_no_keyring_field_is_kept` | fails | passes |
+| `test_the_old_vault_goes_whole_when_the_keyring_holds_its_keys` | fails (one part only) | passes |
+| `test_the_old_vault_stays_whole_and_readable_when_a_key_differs` | fails | passes |
+
+"Before this fix" was run in a scratch clone of `d6f3344` with the new test file (the reason prefix
+written as text, since the old module has no constant for it), under the isolation guard.
+
+Existing assertions changed (the fixture's `r_key.txt.bak_20260101_000000` holds `rh.older-key` while the
+keyring holds `rh.legacy-key`, so it is now kept, as this item requires): `"not removed" not in out`
+became "the only `not removed` line is that `.bak`, kept for `robinhood:api_key`" (exact line) in
+`test_pt_migrate_removal.py::test_with_powertrader_home_in_the_checkout_its_own_files_are_never_old_copies`
+and `test_pt_migrate_conflicts.py::test_old_files_saved_as_conflict_copies_are_removed_after_the_same_checks`.
+Both still assert that every other file was removed; the new form is stricter.
+
+The two report bullets above about `r_key.txt.bak_*` and about credential-named keys without a keyring
+field are fixed by this item.
+
+Suite on this commit (same runner, venv and clone method as the report above; real folders and
+Credential Manager names compared before and after every file: unchanged, both folders absent, no
+entries):
+
+| | Baseline `d949df4` | This commit |
+|---|---|---|
+| `app/` | 910 passed, 10 failed, 6 skipped | 1010 passed, 10 failed, 6 skipped |
+| `.github/scripts` | 19 passed, 19 failed, 1 skipped | 23 passed, 19 failed, 1 skipped |
+
+The failures and skips are the baseline's, test for test (`test_graceful_degradation` skipped this time,
+as at baseline). New: 100 in `app/` (the 94 of the report plus these 6), 4 in `.github/scripts`. No file
+left behind in the clone.
+
+## Draft GitHub issues (not created)
+
+### Issue 1: `pt_migrate --from` writes no conflict copy
+
+**Summary.** `python app/pt_migrate.py --from <path>` imports one config file. When the config folder
+already holds a different file of that kind, the import lists the conflict and writes nothing. The
+start-up migration does better since FDS-108a review item 4: it saves the legacy file next to the one in
+use as `<name>.conflict-app.<ext>` / `<name>.conflict-root.<ext>` and lists both.
+
+**Impact.** Nothing is lost (the imported file is never changed), but the two paths behave differently and
+the user has to compare the files by hand.
+
+**Proposal.**
+- On a conflict, write the cleaned (credential-stripped) content as `<name>.conflict-import.<ext>` next to
+  the file in use, never over an existing file (`-2`, `-3`, ...; reuse an identical one).
+- Keep the file in use untouched, so a setting never rolls back and the trading mode never changes.
+- List both files in `migration-report.md` and in the CLI output.
+
+**Acceptance.** A test imports a config that conflicts with the one in use: the conflict copy exists and
+holds no credential, the file in use is byte-identical, a live-mode import never turns a paper config
+live, and a repeat import creates nothing new.
+
+**Where.** `app/pt_migrate.py`: `import_config_file`, `_write_config` (the `label is None` path).
+Recorded as a deviation in `docs/dev/RUN-LOG-paths-2.md` (item 4).
+
+### Issue 2: trainer tests that do not test the launch
+
+**Summary.** Three trainer tests would not notice a broken trainer launch:
+- `app/tests/test_trainer_launch.py` builds the hub with `PowerTraderHub.__new__` and repeats the path
+  set-up of `__init__` in `make_hub` (line 89) instead of running it. If `__init__` stopped calling
+  `_refresh_trainer_path()` (`app/pt_hub.py:2074`), no test would fail. The Settings-save call (`:8588`)
+  is covered.
+- `app/test_hub_trainer.py` and `app/test_subprocess_trainer.py` pass without testing anything: they
+  hard-code `C:\Users\Administrator\PowerTrader\...` paths (`test_hub_trainer.py:76`,
+  `test_subprocess_trainer.py:37-39`) and re-implement `main`'s old copy-and-run logic rather than calling
+  the hub.
+
+**Proposal.**
+- Move the hub's path set-up into one method that `__init__` calls, and have the test call that method
+  (or build a real hub under the isolation guard with Tk and the heavy tabs patched), so `__init__`'s
+  wiring is exercised.
+- Replace the two no-op tests with tests of the real launch, or delete them as part of the trainer audit
+  (Phase 0 of the trained-model spec).
+
+**Acceptance.** Removing the `_refresh_trainer_path()` call from `__init__` makes a test fail; no test
+under `app/` contains a hard-coded user path.
+
+**Labels.** tests, tech-debt.

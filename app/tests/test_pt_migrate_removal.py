@@ -5,8 +5,10 @@ and treats a SQLite database with its -wal/-shm files as one unit. The hub
 dialog and ``--remove-old-files`` share one code path. Fixture legacy files
 only (conftest points the legacy folders at temp dirs)."""
 
+import base64
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -132,6 +134,17 @@ def read_only():
         for name in (path, path + pt_migrate.REMOVING_SUFFIX):
             if os.path.exists(name):
                 os.chmod(name, stat.S_IREAD | stat.S_IWRITE)
+
+
+def not_removed_lines(out):
+    return [line.strip() for line in out.splitlines() if "not removed:" in line]
+
+
+def kept_backup_line(legacy):
+    """The fixture's r_key.txt.bak holds an older key than the keyring: Remove
+    old files keeps it (review item 8) and says why, by field name."""
+    bak = os.path.join(legacy["app"], "r_key.txt.bak_20260101_000000")
+    return f"not removed: {bak}: kept: {pt_migrate.UNCONFIRMED}: robinhood:api_key differs from the keyring"
 
 
 not_as_root = pytest.mark.skipif(
@@ -392,7 +405,7 @@ def test_with_powertrader_home_in_the_checkout_its_own_files_are_never_old_copie
 
     assert pt_migrate.main(["--remove-old-files", "--yes"]) == 0
     assert {p: sha(p) for p in own} == own
-    assert "not removed" not in capsys.readouterr().out
+    assert not_removed_lines(capsys.readouterr().out) == [kept_backup_line(legacy)]
     # the old files outside the folders in use were migrated and removed as usual
     assert not os.path.exists(os.path.join(legacy["app"], "trading_config.json"))
     assert not os.path.exists(os.path.join(legacy["root"], "market_data.db"))
@@ -1028,3 +1041,97 @@ def test_a_folder_replaced_by_a_link_after_the_migration_is_refused(legacy, tmp_
     assert (status, pt_migrate.LINKED) in result.refused and status not in result.removed
     assert os.path.isfile(os.path.join(moved, "trader_status.json")) and os.path.isdir(paper)
 
+# --- credential files go only when the keyring holds each value (review item 8) -----------------
+
+
+UNCONFIRMED = pt_migrate.UNCONFIRMED
+
+
+def test_a_backup_key_file_holding_another_key_is_kept_and_named(legacy, capsys, caplog):
+    """The review's case: r_key.txt.bak holds an older key than the keyring.
+    It was removed as soon as the keyring held any Robinhood key, which
+    destroys the only copy of that key. It is kept now, named by field; no
+    value appears in a reason, the CLI output, the report or the log."""
+    caplog.set_level(logging.DEBUG)
+    bak = os.path.join(legacy["app"], "r_key.txt.bak_20260101_000000")  # "rh.older-key"
+    pt_migrate.migrate()
+    reason = f"kept: {UNCONFIRMED}: robinhood:api_key differs from the keyring"
+    plan = pt_migrate.remove_old_files([bak])
+    result = pt_migrate.remove_old_files([bak], confirmed=True)
+    assert plan.kept == [(bak, reason)] and plan.removable == []
+    assert result.kept == [(bak, reason)] and result.removed == []
+    assert pt_migrate.main(["--remove-old-files", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert f"not removed: {bak}: {reason}" in out
+    assert os.path.isfile(bak)
+    with open(pt_paths.config_file("migration-report.md"), encoding="utf-8") as f:
+        report_text = f.read()
+    assert f"`{bak}` ({reason})" in report_text
+    for value in ("rh.older-key", "rh.legacy-key", legacy["seed"]):
+        assert value not in out and value not in caplog.text and value not in report_text
+
+
+def test_a_backup_key_file_holding_the_keyring_value_is_removed(legacy):
+    bak = write(os.path.join(legacy["app"], "r_secret.txt.bak_20260102_000000"), legacy["seed"] + "\n")
+    pt_migrate.migrate()
+    result = pt_migrate.remove_old_files([bak], confirmed=True)
+    assert result.removed == [bak] and result.kept == [] and result.refused == []
+
+
+def test_credential_files_whose_keyring_value_was_replaced_are_kept(legacy):
+    """After the migration the keys were replaced in the keyring (the setup
+    window): the legacy files hold the old values, so they are kept."""
+    app = legacy["app"]
+    pt_migrate.migrate()
+    pt_secrets.set_secret("robinhood", "api_key", "rh.rotated-key")
+    pt_secrets.set_secret("coinbase", "key_name", "organizations/org/apiKeys/rotated")
+    r_key, r_secret = os.path.join(app, "r_key.txt"), os.path.join(app, "r_secret.txt")
+    trading = os.path.join(app, "trading_config.json")
+    result = pt_migrate.remove_old_files([r_key, r_secret, trading], confirmed=True)
+    assert dict(result.kept) == {
+        r_key: f"kept: {UNCONFIRMED}: robinhood:api_key differs from the keyring",
+        trading: f"kept: {UNCONFIRMED}: coinbase:key_name differs from the keyring",
+    }
+    assert result.removed == [r_secret]  # its value is still the one in the keyring
+    assert os.path.isfile(r_key) and os.path.isfile(trading)
+
+
+def test_a_config_holding_a_credential_with_no_keyring_field_is_kept(legacy):
+    """The safety audit's note: a credential-named key the migration cannot
+    put in the keyring (here at the top of pt_config.json) is left out of the
+    migrated copy; the legacy file was still offered for removal."""
+    path = write(os.path.join(legacy["app"], "pt_config.json"),
+                 {"trading": {"mode": "paper"}, "api_key": "stray-value"})
+    pt_migrate.migrate()
+    result = pt_migrate.remove_old_files([path], confirmed=True)
+    assert result.kept == [(path, f"kept: {UNCONFIRMED}: api_key has no keyring field")]
+    assert os.path.isfile(path)
+
+
+def make_vault(folder, key, seed):
+    from pt_credentials import SecureCredentialManager
+
+    assert SecureCredentialManager(folder).encrypt_credentials(key, seed)
+    return [os.path.join(folder, n) for n in pt_migrate.RH_VAULT]
+
+
+def test_the_old_vault_goes_whole_when_the_keyring_holds_its_keys(isolated_user_dirs):
+    vault = make_vault(isolated_user_dirs["legacy"], "rh.vault-key", base64.b64encode(b"v" * 32).decode())
+    pt_migrate.migrate()
+    result = pt_migrate.remove_old_files([vault[0]], confirmed=True)
+    assert sorted(result.removed) == sorted(vault) and result.kept == [] and result.refused == []
+
+
+def test_the_old_vault_stays_whole_and_readable_when_a_key_differs(isolated_user_dirs):
+    from pt_credentials import SecureCredentialManager
+
+    folder = isolated_user_dirs["legacy"]
+    seed = base64.b64encode(b"v" * 32).decode()
+    vault = make_vault(folder, "rh.vault-key", seed)
+    pt_migrate.migrate()
+    pt_secrets.set_secret("robinhood", "private_key", base64.b64encode(b"w" * 32).decode())
+    result = pt_migrate.remove_old_files(confirmed=True)
+    reason = f"kept: {UNCONFIRMED}: robinhood:private_key differs from the keyring"
+    assert [(p, reason) for p in vault] == [k for k in result.kept if k[0] in vault]
+    assert not set(vault) & set(result.removed)
+    assert SecureCredentialManager(folder).decrypt_credentials() == ("rh.vault-key", seed)

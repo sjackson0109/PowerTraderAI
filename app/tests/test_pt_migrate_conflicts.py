@@ -27,7 +27,9 @@ import pt_secrets  # noqa: E402
 from helpers_coinbase import KEY_NAME  # noqa: E402
 from pt_migrate import APP, CHANGED, KEPT_FOR_BRANCHES, NO_COPY, ROOT  # noqa: E402
 from test_pt_migrate import digest_tree, entries, legacy, no_credential_env, write  # noqa: E402,F401
-from test_pt_migrate_removal import legacy_db, migrated_db, sha, state, tk_root  # noqa: E402,F401
+from test_pt_migrate_removal import (  # noqa: E402,F401
+    kept_backup_line, legacy_db, migrated_db, not_removed_lines, sha, state, tk_root,
+)
 
 T = 1_700_000_000 * 10**9  # a fixed modification time (ns); offsets below are seconds
 
@@ -466,7 +468,7 @@ def test_old_files_saved_as_conflict_copies_are_removed_after_the_same_checks(le
     in_use = user_tree()
 
     assert pt_migrate.main(["--remove-old-files", "--yes"]) == 0
-    assert "not removed" not in capsys.readouterr().out
+    assert not_removed_lines(capsys.readouterr().out) == [kept_backup_line(legacy)]
     for path in conflicted + [paths["root log"], root_db]:
         assert not os.path.exists(path), path
     assert user_tree() == in_use  # every file in the new location, conflict copies included, untouched

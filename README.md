@@ -174,7 +174,10 @@ checkout `app/pt_config.json` and `app/gui_settings.json` are always kept, becau
 use them. Files in the folders PowerTrader uses now (for example `data/` and `logs/` when
 `POWERTRADER_HOME` is the install root) are never treated as old files. Files reached through a link or
 junction are neither copied nor removed, and an old config file that is the same file as the one in use
-(a hard link or link) is left alone. To import a config file from
+(a hard link or link) is left alone. An old file that holds keys (the Robinhood key files and their
+`.bak` copies, the old vault, `trading_config.json`, ...) is removed only when every key in it is in the
+credential store with the same value; otherwise it is kept and the window names the key that differs or
+is missing (never its value). To import a config file from
 somewhere else (for example a backup): `python app/pt_migrate.py --from <path>`.
 
 ## 📁 Project Structure

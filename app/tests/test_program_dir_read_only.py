@@ -45,7 +45,9 @@ def install_snapshot(monkeypatch, tmp_path):
     before = snapshot(pt_paths.install_dir())
     yield
     after = snapshot(pt_paths.install_dir())
-    changed = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+    changed = sorted(
+        k for k in set(before) | set(after) if before.get(k) != after.get(k)
+    )
     assert changed == [], f"written inside the program folder: {changed[:20]}"
 
 
@@ -80,7 +82,9 @@ def test_logs_audit_and_credentials_metadata(install_snapshot, isolated_user_dir
 
     PowerTraderLogger().main_logger.info("hello")
     KeyringCredentialManager().encrypt_credentials("rh.k", "c2VlZA==")
-    PermissionValidator().validate(lambda: ["read_account", "read_positions"], require_trading=False)
+    PermissionValidator().validate(
+        lambda: ["read_account", "read_positions"], require_trading=False
+    )
     names = user_files(isolated_user_dirs["home"])
     assert any(n.startswith("logs" + os.sep) for n in names)
     assert os.path.join("logs", "credential_audit.jsonl") in names
@@ -125,4 +129,6 @@ def test_folder_settings_inside_the_program_dir_are_refused(caplog):
     assert "read-only" in caplog.text
     elsewhere = os.path.join(pt_paths.data_dir(), "my_models")
     assert pt_paths.neural_dir(elsewhere) == elsewhere
-    assert pt_paths.neural_dir("relative_models") == os.path.join(pt_paths.data_dir(), "relative_models")
+    assert pt_paths.neural_dir("relative_models") == os.path.join(
+        pt_paths.data_dir(), "relative_models"
+    )

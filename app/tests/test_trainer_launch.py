@@ -81,7 +81,9 @@ def launches(monkeypatch, tmp_path):
 
     monkeypatch.setattr(pt_hub.subprocess, "Popen", popen)
     monkeypatch.setattr(
-        pt_hub.messagebox, "showerror", lambda *args, **kwargs: started.errors.append(args)
+        pt_hub.messagebox,
+        "showerror",
+        lambda *args, **kwargs: started.errors.append(args),
     )
     return started
 
@@ -101,11 +103,15 @@ def make_hub(coins=("BTC", "ETH"), root=False):
     hub.settings = hub._load_settings()
     hub.settings["coins"] = list(coins)
     hub.project_dir = pt_paths.program_dir()
-    hub.settings["main_neural_dir"] = pt_paths.neural_dir(hub.settings.get("main_neural_dir"))
+    hub.settings["main_neural_dir"] = pt_paths.neural_dir(
+        hub.settings.get("main_neural_dir")
+    )
     hub.hub_dir = pt_paths.hub_dir_for(hub.settings.get("hub_data_dir"))
     hub.coins = list(coins)
     hub._ensure_alt_coin_folders_and_trainer_on_startup()
-    hub.coin_folders = pt_hub.build_coin_folders(hub.settings["main_neural_dir"], hub.coins)
+    hub.coin_folders = pt_hub.build_coin_folders(
+        hub.settings["main_neural_dir"], hub.coins
+    )
     hub.proc_neural = pt_hub.ProcInfo(name="Neural Runner", path="")
     hub._refresh_trainer_path()
     hub.trainers = {}
@@ -164,7 +170,9 @@ def trainer_results_expression():
     with open(TRAINER, encoding="utf-8") as f:
         tree = ast.parse(f.read(), filename=TRAINER)
     trainer = next(
-        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "NeuralTrainer"
+        n
+        for n in tree.body
+        if isinstance(n, ast.ClassDef) and n.name == "NeuralTrainer"
     )
     train = next(
         n for n in trainer.body if isinstance(n, ast.FunctionDef) and n.name == "train"
@@ -197,7 +205,9 @@ def test_the_trainer_writes_its_results_to_the_user_data_folder(isolated_user_di
     for coin in ("BTC", "ETH"):
         # the trainer's own expression, evaluated for this coin
         written = eval(code, {"pt_paths": pt_paths}, {"coin": coin})
-        expected = pt_paths.data_file("training_results", f"{coin.lower()}_training_results.json")
+        expected = pt_paths.data_file(
+            "training_results", f"{coin.lower()}_training_results.json"
+        )
         assert written == expected
         assert_in_user_data(written, isolated_user_dirs["home"])
 
@@ -233,7 +243,9 @@ def open_settings(hub):
 def type_into(win, label, value):
     """Replace the text of the Settings field on the row labelled ``label``."""
     lbl = next(
-        w for w in widgets(win) if isinstance(w, ttk.Label) and str(w.cget("text")) == label
+        w
+        for w in widgets(win)
+        if isinstance(w, ttk.Label) and str(w.cget("text")) == label
     )
     row = int(lbl.grid_info()["row"])
     entry = next(
@@ -247,7 +259,9 @@ def type_into(win, label, value):
 
 def press(win, text):
     next(
-        w for w in widgets(win) if isinstance(w, ttk.Button) and str(w.cget("text")) == text
+        w
+        for w in widgets(win)
+        if isinstance(w, ttk.Button) and str(w.cget("text")) == text
     ).invoke()
 
 
@@ -275,7 +289,10 @@ def test_a_trainer_script_saved_in_settings_is_used_by_the_next_launch(
     # same hub, no restart: the next launches use the saved script
     for coin, folder in (
         ("BTC", pt_paths.models_dir()),
-        ("SOL", os.path.join(pt_paths.models_dir(), "SOL")),  # coin added in the same save
+        (
+            "SOL",
+            os.path.join(pt_paths.models_dir(), "SOL"),
+        ),  # coin added in the same save
     ):
         call = launch(hub, coin, launches)
         assert call.args == [sys.executable, "-u", "-W", "ignore", STANDALONE, coin]

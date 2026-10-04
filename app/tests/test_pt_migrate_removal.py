@@ -29,8 +29,18 @@ for folder in (APP_DIR, TESTS_DIR):
 import pt_migrate  # noqa: E402
 import pt_paths  # noqa: E402
 import pt_secrets  # noqa: E402
-from pt_migrate import CHANGED, IN_USE, KEPT_FOR_BRANCHES, NO_COPY, NOT_MIGRATED  # noqa: E402
-from test_pt_migrate import legacy, no_credential_env, write  # noqa: E402,F401  (fixtures)
+from pt_migrate import (
+    CHANGED,
+    IN_USE,
+    KEPT_FOR_BRANCHES,
+    NO_COPY,
+    NOT_MIGRATED,
+)  # noqa: E402
+from test_pt_migrate import (
+    legacy,
+    no_credential_env,
+    write,
+)  # noqa: E402,F401  (fixtures)
 
 
 def sha(path):
@@ -59,8 +69,13 @@ def make_checkout(folder, git=True):
     """``<folder>/app`` with the legacy settings files, and a ``.git`` folder."""
     app = os.path.join(folder, "app")
     write(os.path.join(app, "pt_config.json"), {"trading": {"mode": "paper"}})
-    write(os.path.join(app, "gui_settings.json"), {"coins": ["BTC"], "trade_start_level": 3})
-    write(os.path.join(app, "trading_config.json"), {"user_region": "EU", "exchanges": []})
+    write(
+        os.path.join(app, "gui_settings.json"),
+        {"coins": ["BTC"], "trade_start_level": 3},
+    )
+    write(
+        os.path.join(app, "trading_config.json"), {"user_region": "EU", "exchanges": []}
+    )
     if git:
         os.makedirs(os.path.join(folder, ".git"))
     return app
@@ -148,7 +163,8 @@ def kept_backup_line(legacy):
 
 
 not_as_root = pytest.mark.skipif(
-    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root may write to a read-only file"
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root may write to a read-only file",
 )
 READ_ONLY = "could not be removed (read-only)"
 
@@ -165,14 +181,19 @@ def test_the_record_holds_the_hash_and_copy_of_every_removable_file(legacy):
     app = legacy["app"]
     assert files[os.path.join(app, "trading_config.json")]["copy"] == [
         pt_paths.trading_config_file(),
-        "keyring:coinbase:key_name", "keyring:coinbase:private_key",
-        "keyring:binance:api_key", "keyring:binance:api_secret",
+        "keyring:coinbase:key_name",
+        "keyring:coinbase:private_key",
+        "keyring:binance:api_key",
+        "keyring:binance:api_secret",
     ]
     assert files[os.path.join(app, "r_key.txt")]["copy"] == [
-        "keyring:robinhood:api_key", "keyring:robinhood:private_key",
+        "keyring:robinhood:api_key",
+        "keyring:robinhood:private_key",
     ]
     paper = os.path.join(app, "hub_data", "paper", "trader_status.json")
-    assert files[paper]["copy"] == [os.path.join(pt_paths.hub_dir(), "paper", "trader_status.json")]
+    assert files[paper]["copy"] == [
+        os.path.join(pt_paths.hub_dir(), "paper", "trader_status.json")
+    ]
     # a database and its -wal are one unit; the copy of each part is the migrated .db
     db = legacy_db(legacy)
     assert [db, db + "-wal"] in state()["removable"]
@@ -193,7 +214,14 @@ def test_remove_old_files_refuses_what_main_changed_after_the_migration(legacy, 
     runner = os.path.join(app, "hub_data", "runner_ready.json")
     assert {gui, paper, runner} <= set(report.removable)
 
-    write(gui, {"coins": ["BTC", "ETH", "SOL"], "main_neural_dir": app, "trade_start_level": 4})
+    write(
+        gui,
+        {
+            "coins": ["BTC", "ETH", "SOL"],
+            "main_neural_dir": app,
+            "trade_start_level": 4,
+        },
+    )
     with open(paper, "a", encoding="utf-8") as f:
         f.write('\n{"account": 2}')
     os.remove(os.path.join(pt_paths.hub_dir(), "runner_ready.json"))
@@ -206,10 +234,18 @@ def test_remove_old_files_refuses_what_main_changed_after_the_migration(legacy, 
     assert f"not removed: {runner}: no migrated copy" in out
     assert {p: sha(p) for p in refused} == refused  # still there, untouched
     # unchanged files whose migrated copy exists are removed
-    for rel in ("pt_config.json", "trading_config.json", "exchange_config.json", "r_key.txt",
-                "r_secret.txt", "memories_1hour.txt", os.path.join("ETH", "memories_1hour.txt"),
-                os.path.join("hub_data", "candles", "BTCUSDT_1h.csv"),
-                "order_management.db", "order_management.db-wal"):
+    for rel in (
+        "pt_config.json",
+        "trading_config.json",
+        "exchange_config.json",
+        "r_key.txt",
+        "r_secret.txt",
+        "memories_1hour.txt",
+        os.path.join("ETH", "memories_1hour.txt"),
+        os.path.join("hub_data", "candles", "BTCUSDT_1h.csv"),
+        "order_management.db",
+        "order_management.db-wal",
+    ):
         assert not os.path.exists(os.path.join(app, rel)), rel
     assert not os.path.exists(os.path.join(legacy["root"], "market_data.db"))
     assert os.path.exists(os.path.join(app, "ETH", "pt_trainer.py"))
@@ -241,7 +277,9 @@ def test_a_credential_file_whose_keyring_entry_is_gone_is_refused(legacy):
 def test_files_not_in_the_record_are_refused(legacy):
     pt_secrets.set_secret("binance", "api_secret", "already-in-keyring")
     report = pt_migrate.migrate()
-    conflicted = os.path.join(legacy["app"], "trading_config.json")  # not migrated: a keyring conflict
+    conflicted = os.path.join(
+        legacy["app"], "trading_config.json"
+    )  # not migrated: a keyring conflict
     code = os.path.join(legacy["app"], "ETH", "pt_trainer.py")
     assert conflicted not in report.removable
     assert conflicted not in pt_migrate.remove_old_files().removable
@@ -269,16 +307,31 @@ def test_a_record_without_hash_or_copy_is_refused(legacy):
     assert os.path.exists(no_hash) and os.path.exists(no_copy)
 
 
-def test_a_config_file_with_a_credential_that_could_not_be_moved_is_not_offered(isolated_user_dirs):
+def test_a_config_file_with_a_credential_that_could_not_be_moved_is_not_offered(
+    isolated_user_dirs,
+):
     path = write(
         os.path.join(isolated_user_dirs["legacy"], "trading_config.json"),
-        {"exchanges": [{"exchange_type": "coinbase", "api_key": "organizations/o/apiKeys/k",
-                        "api_secret": "secret", "passphrase": "old-pro-passphrase"}]},
+        {
+            "exchanges": [
+                {
+                    "exchange_type": "coinbase",
+                    "api_key": "organizations/o/apiKeys/k",
+                    "api_secret": "secret",
+                    "passphrase": "old-pro-passphrase",
+                }
+            ]
+        },
     )
     report = pt_migrate.migrate()
-    assert (path, "coinbase.passphrase: no keyring field for it, not moved") in report.errors
+    assert (
+        path,
+        "coinbase.passphrase: no keyring field for it, not moved",
+    ) in report.errors
     assert path not in report.removable
-    assert pt_migrate.remove_old_files([path], confirmed=True).refused == [(path, NOT_MIGRATED)]
+    assert pt_migrate.remove_old_files([path], confirmed=True).refused == [
+        (path, NOT_MIGRATED)
+    ]
     assert os.path.exists(path)
 
 
@@ -286,14 +339,18 @@ def test_a_config_file_with_a_credential_that_could_not_be_moved_is_not_offered(
 
 
 @pytest.mark.parametrize("git", ["folder", "file"])
-def test_in_a_git_checkout_the_settings_other_branches_use_are_kept(legacy, capsys, git):
+def test_in_a_git_checkout_the_settings_other_branches_use_are_kept(
+    legacy, capsys, git
+):
     git_path = os.path.join(legacy["root"], ".git")
     if git == "folder":
         os.mkdir(git_path)
     else:  # a worktree or submodule
         write(git_path, "gitdir: ../elsewhere/.git/worktrees/x\n")
     report = pt_migrate.migrate()
-    settings = [os.path.join(legacy["app"], n) for n in ("pt_config.json", "gui_settings.json")]
+    settings = [
+        os.path.join(legacy["app"], n) for n in ("pt_config.json", "gui_settings.json")
+    ]
     assert set(settings) <= set(report.removable)  # migrated, but kept
     with open(report.report_path, encoding="utf-8") as f:
         assert f"* `{settings[0]}` ({KEPT_FOR_BRANCHES})" in f.read()
@@ -304,14 +361,20 @@ def test_in_a_git_checkout_the_settings_other_branches_use_are_kept(legacy, caps
         assert os.path.exists(path)
         assert f"not removed: {path}: {KEPT_FOR_BRANCHES}" in out
     assert not os.path.exists(os.path.join(legacy["app"], "trading_config.json"))
-    result = pt_migrate.remove_old_files(settings, confirmed=True)  # asked for by name: still kept
-    assert result.kept == [(p, KEPT_FOR_BRANCHES) for p in settings] and result.removed == []
+    result = pt_migrate.remove_old_files(
+        settings, confirmed=True
+    )  # asked for by name: still kept
+    assert (
+        result.kept == [(p, KEPT_FOR_BRANCHES) for p in settings]
+        and result.removed == []
+    )
 
 
 @pytest.mark.parametrize("flag", [True, False], ids=["recorded", "not recorded"])
 @pytest.mark.parametrize("other", ["checkout", "release folder"])
-def test_the_git_rule_follows_the_file_not_the_program_that_runs(tmp_path, monkeypatch, capsys,
-                                                                 other, flag):
+def test_the_git_rule_follows_the_file_not_the_program_that_runs(
+    tmp_path, monkeypatch, capsys, other, flag
+):
     """The record is per user, so it can list another checkout's files. The hub
     migrated checkout A; Remove old files then runs from B (another clone or
     worktree, or a release folder without .git). Before this fix the rule
@@ -333,7 +396,9 @@ def test_the_git_rule_follows_the_file_not_the_program_that_runs(tmp_path, monke
     for path in settings:
         assert os.path.exists(path)
         assert f"not removed: {path}: {KEPT_FOR_BRANCHES}" in out
-    assert not os.path.exists(os.path.join(app_a, "trading_config.json"))  # not a shared setting
+    assert not os.path.exists(
+        os.path.join(app_a, "trading_config.json")
+    )  # not a shared setting
 
 
 def test_the_keep_flag_recorded_at_migration_is_honoured(legacy, tmp_path, monkeypatch):
@@ -342,17 +407,24 @@ def test_the_keep_flag_recorded_at_migration_is_honoured(legacy, tmp_path, monke
     can keep the settings once Remove old files runs from a release folder."""
     os.mkdir(os.path.join(legacy["root"], ".git"))
     pt_migrate.migrate()
-    settings = [os.path.join(legacy["app"], n) for n in ("pt_config.json", "gui_settings.json")]
+    settings = [
+        os.path.join(legacy["app"], n) for n in ("pt_config.json", "gui_settings.json")
+    ]
     files = state()["files"]
     assert [files[p].get("keep") for p in settings] == [True, True]
     assert "keep" not in files[os.path.join(legacy["app"], "trading_config.json")]
     run_from(monkeypatch, str(tmp_path / "release"))
     result = pt_migrate.remove_old_files(settings, confirmed=True)
-    assert result.kept == [(p, KEPT_FOR_BRANCHES) for p in settings] and result.removed == []
+    assert (
+        result.kept == [(p, KEPT_FOR_BRANCHES) for p in settings]
+        and result.removed == []
+    )
     assert all(os.path.exists(p) for p in settings)
 
 
-def test_the_git_rule_holds_through_another_spelling_of_the_checkout(tmp_path, monkeypatch, capsys):
+def test_the_git_rule_holds_through_another_spelling_of_the_checkout(
+    tmp_path, monkeypatch, capsys
+):
     """``alias`` is a junction (a symlink off Windows) to the checkout ``real``.
     The hub migrated through ``alias``; Remove old files runs from ``real``.
     Before this fix the paths were compared as text, so both settings were
@@ -369,11 +441,16 @@ def test_the_git_rule_holds_through_another_spelling_of_the_checkout(tmp_path, m
         out = capsys.readouterr().out
         for name in ("pt_config.json", "gui_settings.json"):
             assert os.path.exists(os.path.join(real, "app", name))
-            assert f"not removed: {os.path.join(alias, 'app', name)}: {KEPT_FOR_BRANCHES}" in out
+            assert (
+                f"not removed: {os.path.join(alias, 'app', name)}: {KEPT_FOR_BRANCHES}"
+                in out
+            )
         assert not os.path.exists(os.path.join(real, "app", "trading_config.json"))
     finally:
         os.unlink(alias) if os.path.islink(alias) else os.rmdir(alias)
-    assert os.path.isdir(os.path.join(real, ".git"))  # removing the junction left the checkout alone
+    assert os.path.isdir(
+        os.path.join(real, ".git")
+    )  # removing the junction left the checkout alone
 
 
 # --- the folders PowerTrader uses now are never an old copy ------------------------------------
@@ -381,7 +458,8 @@ def test_the_git_rule_holds_through_another_spelling_of_the_checkout(tmp_path, m
 
 @pytest.mark.parametrize("home", ["install root", "app"])
 def test_with_powertrader_home_in_the_checkout_its_own_files_are_never_old_copies(
-        legacy, monkeypatch, capsys, home):
+    legacy, monkeypatch, capsys, home
+):
     """README allows ``POWERTRADER_HOME`` inside a checkout. At the install
     root its data/ and logs/ are also legacy locations (data/holdings.db,
     logs/); in app/ the same holds for app/data/ and app/logs/. Before this fix
@@ -411,7 +489,9 @@ def test_with_powertrader_home_in_the_checkout_its_own_files_are_never_old_copie
     assert not os.path.exists(os.path.join(legacy["root"], "market_data.db"))
 
 
-def test_a_recorded_file_in_a_folder_powertrader_uses_now_is_refused(legacy, monkeypatch):
+def test_a_recorded_file_in_a_folder_powertrader_uses_now_is_refused(
+    legacy, monkeypatch
+):
     """A record made with another ``POWERTRADER_HOME`` (its config folder
     copied along): an old file that is now in the data folder in use is the
     new app's file, even though it is unchanged and its copy still exists."""
@@ -480,7 +560,9 @@ def test_a_write_between_the_check_and_the_delete_keeps_the_file(legacy, monkeyp
     assert no_aside(os.path.dirname(paper))
 
 
-def test_a_file_that_appears_at_an_old_name_during_the_delete_keeps_the_database(legacy, monkeypatch):
+def test_a_file_that_appears_at_an_old_name_during_the_delete_keeps_the_database(
+    legacy, monkeypatch
+):
     """SQLite opens the database by its old name while its parts are renamed
     aside, which creates a new -shm: every part is put back."""
     pt_migrate.migrate()
@@ -495,12 +577,17 @@ def test_a_file_that_appears_at_an_old_name_during_the_delete_keeps_the_database
 
     monkeypatch.setattr(pt_migrate.os, "rename", rename)
     result = pt_migrate.remove_old_files([db], confirmed=True)
-    assert result.removed == [] and result.refused == [(db, CHANGED), (db + "-wal", CHANGED)]
+    assert result.removed == [] and result.refused == [
+        (db, CHANGED),
+        (db + "-wal", CHANGED),
+    ]
     assert {p: sha(p) for p in before} == before and os.path.exists(db + "-shm")
     assert no_aside(legacy["app"])
 
 
-def test_a_part_written_again_at_its_old_name_during_the_delete_keeps_the_database(legacy, monkeypatch):
+def test_a_part_written_again_at_its_old_name_during_the_delete_keeps_the_database(
+    legacy, monkeypatch
+):
     """A -wal of the unit is written again under its old name once renamed
     aside: nothing is deleted. The .db is put back; the old -wal cannot be put
     back over the new one, so it stays renamed aside, with its content."""
@@ -517,7 +604,10 @@ def test_a_part_written_again_at_its_old_name_during_the_delete_keeps_the_databa
     monkeypatch.setattr(pt_migrate.os, "rename", rename)
     result = pt_migrate.remove_old_files([db], confirmed=True)
     left = f"{CHANGED}, left as order_management.db-wal{pt_migrate.REMOVING_SUFFIX}"
-    assert result.removed == [] and result.refused == [(db, CHANGED), (db + "-wal", left)]
+    assert result.removed == [] and result.refused == [
+        (db, CHANGED),
+        (db + "-wal", left),
+    ]
     assert sha(db) == before[db]
     with open(db + "-wal", "rb") as f:
         assert f.read() == b"a new wal"
@@ -535,10 +625,15 @@ def test_an_identical_database_unit_is_not_copied_again_and_can_be_removed(legac
     assert db not in {s for s, _ in report.conflicts}
     assert db not in {s for s, _ in report.copied}
     assert {db, db + "-wal"} <= set(report.removable)
-    assert pt_migrate.remove_old_files([db], confirmed=True).removed == [db, db + "-wal"]
+    assert pt_migrate.remove_old_files([db], confirmed=True).removed == [
+        db,
+        db + "-wal",
+    ]
 
 
-@pytest.mark.parametrize("target_wal", [b"another wal", None], ids=["different", "missing"])
+@pytest.mark.parametrize(
+    "target_wal", [b"another wal", None], ids=["different", "missing"]
+)
 def test_a_different_or_missing_wal_makes_the_database_a_conflict(legacy, target_wal):
     db, target = legacy_db(legacy), migrated_db()
     shutil.copy2(db, target)  # the .db alone is identical
@@ -552,7 +647,9 @@ def test_a_different_or_missing_wal_makes_the_database_a_conflict(legacy, target
     assert sha(copy) == sha(db) and sha(copy + "-wal") == sha(db + "-wal")
     assert db in report.removable and db + "-wal" in report.removable
     if target_wal is None:
-        assert not os.path.exists(target + "-wal")  # nothing copied next to the existing database
+        assert not os.path.exists(
+            target + "-wal"
+        )  # nothing copied next to the existing database
     else:
         with open(target + "-wal", "rb") as f:
             assert f.read() == target_wal  # never overwritten
@@ -572,7 +669,9 @@ def test_a_database_unit_is_copied_whole_or_not_at_all(legacy, monkeypatch):
     report = pt_migrate.migrate()
     assert (db, "copy failed (PermissionError)") in report.errors
     for suffix in ("", "-wal", "-shm"):
-        assert not os.path.exists(target + suffix)  # parts copied before the failure are gone again
+        assert not os.path.exists(
+            target + suffix
+        )  # parts copied before the failure are gone again
         assert db + suffix not in report.removable
     monkeypatch.setattr(pt_migrate.shutil, "copy2", real_copy)
     retry = pt_migrate.migrate()
@@ -614,21 +713,31 @@ def test_a_database_part_that_cannot_be_removed_keeps_every_part(legacy, monkeyp
     monkeypatch.setattr(pt_migrate.os, "rename", rename)
     result = pt_migrate.remove_old_files([db], confirmed=True)
     assert result.removed == []
-    assert result.refused == [(p, "could not be removed (PermissionError)") for p in (db, db + "-wal")]
+    assert result.refused == [
+        (p, "could not be removed (PermissionError)") for p in (db, db + "-wal")
+    ]
     assert {p: sha(p) for p in before} == before
-    assert not [n for n in os.listdir(legacy["app"]) if n.endswith(pt_migrate.REMOVING_SUFFIX)]
+    assert not [
+        n for n in os.listdir(legacy["app"]) if n.endswith(pt_migrate.REMOVING_SUFFIX)
+    ]
 
 
-@pytest.mark.skipif(os.name != "nt", reason="Windows refuses to rename a file another handle holds open")
+@pytest.mark.skipif(
+    os.name != "nt", reason="Windows refuses to rename a file another handle holds open"
+)
 def test_a_database_part_held_open_keeps_every_part_on_windows(legacy):
     pt_migrate.migrate()
     db = legacy_db(legacy)
     with open(db + "-wal", "rb"):
         result = pt_migrate.remove_old_files([db], confirmed=True)
     assert result.removed == []
-    assert result.refused == [(p, "could not be removed (PermissionError)") for p in (db, db + "-wal")]
+    assert result.refused == [
+        (p, "could not be removed (PermissionError)") for p in (db, db + "-wal")
+    ]
     assert os.path.exists(db) and os.path.exists(db + "-wal")
-    assert not [n for n in os.listdir(legacy["app"]) if n.endswith(pt_migrate.REMOVING_SUFFIX)]
+    assert not [
+        n for n in os.listdir(legacy["app"]) if n.endswith(pt_migrate.REMOVING_SUFFIX)
+    ]
 
 
 def test_the_migrated_database_is_the_copy_of_every_part(legacy):
@@ -664,12 +773,20 @@ def test_a_wal_whose_copy_went_before_sqlite_merged_it_is_refused(legacy, tmp_pa
 
     check = pt_migrate.remove_old_files([db])
     result = pt_migrate.remove_old_files([db], confirmed=True)
-    assert check.removable == [] and check.refused == [(db, NO_COPY), (db + "-wal", NO_COPY)]
-    assert result.removed == [] and result.refused == [(db, NO_COPY), (db + "-wal", NO_COPY)]
+    assert check.removable == [] and check.refused == [
+        (db, NO_COPY),
+        (db + "-wal", NO_COPY),
+    ]
+    assert result.removed == [] and result.refused == [
+        (db, NO_COPY),
+        (db + "-wal", NO_COPY),
+    ]
     assert rows(db, work) == ["only in the wal"]  # still in the legacy files
 
 
-def test_once_sqlite_merged_the_wal_into_the_migrated_database_both_parts_go(legacy, tmp_path):
+def test_once_sqlite_merged_the_wal_into_the_migrated_database_both_parts_go(
+    legacy, tmp_path
+):
     """The normal case: the new app opens and closes its database, SQLite
     merges the -wal into the .db (which changes) and deletes the -wal."""
     db, target = legacy_db(legacy), migrated_db()
@@ -679,7 +796,9 @@ def test_once_sqlite_merged_the_wal_into_the_migrated_database_both_parts_go(leg
     pt_migrate.migrate()
     copied = sha(target)
     with closing(sqlite3.connect(target)) as conn:  # the new app uses its database
-        assert [x for x, in conn.execute("select x from t").fetchall()] == ["only in the wal"]
+        assert [x for x, in conn.execute("select x from t").fetchall()] == [
+            "only in the wal"
+        ]
     assert not os.path.exists(target + "-wal") and sha(target) != copied
 
     result = pt_migrate.remove_old_files([db], confirmed=True)
@@ -691,8 +810,13 @@ def test_an_empty_wal_needs_no_copy_of_its_own(legacy):
     pt_migrate.migrate()  # with the fixture's -wal, which holds data
     db, target = legacy_db(legacy), migrated_db()
     os.remove(target + "-wal")
-    assert pt_migrate.remove_old_files([db]).refused == [(db, NO_COPY), (db + "-wal", NO_COPY)]
-    other = os.path.join(legacy["root"], "data", "automation.db")  # an empty -wal: nothing to lose
+    assert pt_migrate.remove_old_files([db]).refused == [
+        (db, NO_COPY),
+        (db + "-wal", NO_COPY),
+    ]
+    other = os.path.join(
+        legacy["root"], "data", "automation.db"
+    )  # an empty -wal: nothing to lose
     write(other, b"SQLite format 3\x00automation")
     write(other + "-wal", b"")
     pt_migrate.migrate()
@@ -738,7 +862,9 @@ def letters(db, work, sidecars=True):
         if os.path.exists(db + side):
             shutil.copy2(db + side, os.path.join(folder, "x.db" + side))
     with closing(sqlite3.connect(os.path.join(folder, "x.db"))) as conn:
-        return conn.execute("select substr(x, 1, 1), count(*) from t group by 1 order by 1").fetchall()
+        return conn.execute(
+            "select substr(x, 1, 1), count(*) from t group by 1 order by 1"
+        ).fetchall()
 
 
 @pytest.fixture
@@ -750,7 +876,9 @@ def crashed(legacy, tmp_path):
     os.makedirs(work)
     make_hot_journal_database(db, work)
     assert letters(db, work) == [("a", ROWS)]  # SQLite rolls the hot journal back
-    assert letters(db, work, sidecars=False) != [("a", ROWS)]  # the .db alone is half-updated
+    assert letters(db, work, sidecars=False) != [
+        ("a", ROWS)
+    ]  # the .db alone is half-updated
     return db, pt_paths.data_file("risk_management.db"), work
 
 
@@ -764,7 +892,9 @@ def test_a_hot_journal_is_migrated_and_removed_with_its_database(crashed):
     assert os.path.isfile(target + "-journal")
     assert letters(target, work) == [("a", ROWS)]
     with closing(sqlite3.connect(target)) as conn:  # the new app opens its database
-        assert conn.execute("select count(*) from t where x like 'a%'").fetchone() == (ROWS,)
+        assert conn.execute("select count(*) from t where x like 'a%'").fetchone() == (
+            ROWS,
+        )
     assert not os.path.exists(target + "-journal")  # SQLite rolled it back into the .db
 
     result = pt_migrate.remove_old_files([db], confirmed=True)
@@ -777,7 +907,9 @@ def test_a_hot_journal_whose_copy_went_before_sqlite_rolled_it_back_is_refused(c
     db, target, work = crashed
     pt_migrate.migrate()
     os.remove(target + "-journal")  # before the new app ever opened its database
-    assert letters(target, work) != [("a", ROWS)]  # the migrated .db alone is half-updated
+    assert letters(target, work) != [
+        ("a", ROWS)
+    ]  # the migrated .db alone is half-updated
 
     result = pt_migrate.remove_old_files([db], confirmed=True)
     assert result.removed == []
@@ -801,13 +933,18 @@ def test_a_read_only_part_keeps_the_whole_database(legacy, read_only, part):
     check = pt_migrate.remove_old_files()
     assert db not in check.removable and (db, READ_ONLY) in check.refused  # not offered
     result = pt_migrate.remove_old_files([db], confirmed=True)
-    assert result.removed == [] and result.refused == [(db, READ_ONLY), (db + "-wal", READ_ONLY)]
+    assert result.removed == [] and result.refused == [
+        (db, READ_ONLY),
+        (db + "-wal", READ_ONLY),
+    ]
     assert {p: sha(p) for p in before} == before
     assert no_aside(legacy["app"])
 
 
 @not_as_root
-def test_a_read_only_credential_file_is_kept_and_the_cli_says_so(legacy, read_only, capsys):
+def test_a_read_only_credential_file_is_kept_and_the_cli_says_so(
+    legacy, read_only, capsys
+):
     """The review's probe: read-only ``r_key.txt`` and ``trading_config.json``
     (plaintext keys). Before this fix the CLI said they were removed (exit 0)
     and left them as <name>.pt-removing, a name git did not ignore."""
@@ -827,8 +964,9 @@ def test_a_read_only_credential_file_is_kept_and_the_cli_says_so(legacy, read_on
 
 
 @pytest.mark.parametrize("failing", ["-wal", ""], ids=["first (-wal)", "last (.db)"])
-def test_a_part_whose_delete_fails_after_the_rename_is_not_reported_as_removed(legacy, monkeypatch,
-                                                                               failing):
+def test_a_part_whose_delete_fails_after_the_rename_is_not_reported_as_removed(
+    legacy, monkeypatch, failing
+):
     """``os.remove`` fails on a part already renamed aside (another program
     opened it meanwhile). Before this fix the unit was reported as removed and
     the part was left as <name>.pt-removing. Now it is put back and refused.
@@ -849,7 +987,10 @@ def test_a_part_whose_delete_fails_after_the_rename_is_not_reported_as_removed(l
     result = pt_migrate.remove_old_files([db], confirmed=True)
     reason = "could not be removed (PermissionError)"
     if failing == "-wal":
-        assert result.removed == [] and result.refused == [(db, reason), (db + "-wal", reason)]
+        assert result.removed == [] and result.refused == [
+            (db, reason),
+            (db + "-wal", reason),
+        ]
         assert {p: sha(p) for p in before} == before
     else:
         assert result.removed == [db + "-wal"] and result.refused == [(db, reason)]
@@ -857,8 +998,9 @@ def test_a_part_whose_delete_fails_after_the_rename_is_not_reported_as_removed(l
     assert no_aside(legacy["app"])
 
 
-def test_a_credential_file_whose_delete_fails_is_put_back_and_the_cli_says_so(legacy, monkeypatch,
-                                                                              capsys):
+def test_a_credential_file_whose_delete_fails_is_put_back_and_the_cli_says_so(
+    legacy, monkeypatch, capsys
+):
     app = legacy["app"]
     pt_migrate.migrate()
     r_key = os.path.join(app, "r_key.txt")
@@ -884,7 +1026,10 @@ def test_a_file_left_renamed_aside_earlier_is_never_overwritten(legacy):
     macOS and Linux a rename overwrites), so the file is refused instead."""
     pt_migrate.migrate()
     path = os.path.join(legacy["app"], "memories_1hour.txt")
-    left = write(path + pt_migrate.REMOVING_SUFFIX, "content an earlier removal could not put back")
+    left = write(
+        path + pt_migrate.REMOVING_SUFFIX,
+        "content an earlier removal could not put back",
+    )
     kept = sha(left)
     reason = f"could not be removed (memories_1hour.txt{pt_migrate.REMOVING_SUFFIX} is in the way)"
     assert (path, reason) in pt_migrate.remove_old_files().refused
@@ -894,7 +1039,9 @@ def test_a_file_left_renamed_aside_earlier_is_never_overwritten(legacy):
 
 
 def test_git_ignores_a_file_left_renamed_aside():
-    with open(os.path.join(os.path.dirname(APP_DIR), ".gitignore"), encoding="utf-8") as f:
+    with open(
+        os.path.join(os.path.dirname(APP_DIR), ".gitignore"), encoding="utf-8"
+    ) as f:
         assert "*" + pt_migrate.REMOVING_SUFFIX in {line.strip() for line in f}
 
 
@@ -926,7 +1073,9 @@ def test_the_dialog_uses_the_same_checks(legacy, tk_root):
     box.askyesno.return_value = True
     win = pt_migrate.show_migration_dialog(tk_root, report, messagebox=box)
     try:
-        with mock.patch.object(pt_migrate, "remove_old_files", wraps=pt_migrate.remove_old_files) as shared:
+        with mock.patch.object(
+            pt_migrate, "remove_old_files", wraps=pt_migrate.remove_old_files
+        ) as shared:
             win.remove_old_files()
     finally:
         win.destroy()
@@ -938,13 +1087,18 @@ def test_the_dialog_uses_the_same_checks(legacy, tk_root):
     assert f"{paper}: changed since it was migrated" in not_removed
     assert f"{runner}: no migrated copy" in not_removed
     done = box.showinfo.call_args[0][1]
-    assert f"{paper}: changed since it was migrated" in done and f"{runner}: no migrated copy" in done
+    assert (
+        f"{paper}: changed since it was migrated" in done
+        and f"{runner}: no migrated copy" in done
+    )
     assert os.path.exists(paper) and os.path.exists(runner)
     assert not os.path.exists(os.path.join(app, "r_key.txt"))
 
 
 @not_as_root
-def test_the_dialog_reports_what_it_could_not_delete(legacy, tk_root, read_only, monkeypatch):
+def test_the_dialog_reports_what_it_could_not_delete(
+    legacy, tk_root, read_only, monkeypatch
+):
     """A read-only key file is not offered; a database whose delete fails
     after the rename is put back and not counted as removed. Before this fix
     the dialog counted both as removed and only the log said otherwise."""
@@ -970,11 +1124,18 @@ def test_the_dialog_reports_what_it_could_not_delete(legacy, tk_root, read_only,
     question = box.askyesno.call_args[0][1]
     offered, not_removed = question.split("Not removed:")
     assert r_key not in offered.splitlines() and f"{r_key}: {READ_ONLY}" in not_removed
-    count =int(re.search(r"Delete these (\d+) old file", question).group(1))
+    count = int(re.search(r"Delete these (\d+) old file", question).group(1))
     done = box.showinfo.call_args[0][1]
-    assert f"Removed {count - 1} file(s)." in done  # the -wal went, its database did not
-    assert f"{db}: could not be removed (PermissionError)" in done and f"{r_key}: {READ_ONLY}" in done
-    assert os.path.exists(db) and os.path.exists(r_key) and not os.path.exists(db + "-wal")
+    assert (
+        f"Removed {count - 1} file(s)." in done
+    )  # the -wal went, its database did not
+    assert (
+        f"{db}: could not be removed (PermissionError)" in done
+        and f"{r_key}: {READ_ONLY}" in done
+    )
+    assert (
+        os.path.exists(db) and os.path.exists(r_key) and not os.path.exists(db + "-wal")
+    )
     assert no_aside(app)
 
 
@@ -994,7 +1155,9 @@ def copied_sources(report):
     return {os.path.normcase(source) for source, _ in report.copied}
 
 
-def test_a_folder_linked_into_a_legacy_folder_is_neither_copied_nor_removed(legacy, tmp_path):
+def test_a_folder_linked_into_a_legacy_folder_is_neither_copied_nor_removed(
+    legacy, tmp_path
+):
     """The safety audit's probe: a junction in app/hub_data pointing at a folder
     outside every legacy folder. Its files were copied, recorded as migrated,
     and then deleted by Remove old files (and the junction pruned)."""
@@ -1002,7 +1165,9 @@ def test_a_folder_linked_into_a_legacy_folder_is_neither_copied_nor_removed(lega
     link = os.path.join(legacy["app"], "hub_data", "shared")
     link_folder(outside, link)
     report = pt_migrate.migrate()
-    assert os.path.normcase(os.path.join(link, "shared_state.json")) not in copied_sources(report)
+    assert os.path.normcase(
+        os.path.join(link, "shared_state.json")
+    ) not in copied_sources(report)
     assert not os.path.exists(os.path.join(pt_paths.hub_dir(), "shared"))
 
     result = pt_migrate.remove_old_files(confirmed=True)
@@ -1023,7 +1188,9 @@ def test_a_linked_logs_folder_in_the_install_root_is_left_alone(legacy, tmp_path
     assert log not in report.removable
 
     pt_migrate.remove_old_files(confirmed=True)
-    assert os.path.isfile(os.path.join(outside, "powertrader.log")) and os.path.isdir(logs)
+    assert os.path.isfile(os.path.join(outside, "powertrader.log")) and os.path.isdir(
+        logs
+    )
 
 
 def test_a_folder_replaced_by_a_link_after_the_migration_is_refused(legacy, tmp_path):
@@ -1038,8 +1205,14 @@ def test_a_folder_replaced_by_a_link_after_the_migration_is_refused(legacy, tmp_
     status = os.path.join(paper, "trader_status.json")
 
     result = pt_migrate.remove_old_files(confirmed=True)
-    assert (status, pt_migrate.LINKED) in result.refused and status not in result.removed
-    assert os.path.isfile(os.path.join(moved, "trader_status.json")) and os.path.isdir(paper)
+    assert (
+        status,
+        pt_migrate.LINKED,
+    ) in result.refused and status not in result.removed
+    assert os.path.isfile(os.path.join(moved, "trader_status.json")) and os.path.isdir(
+        paper
+    )
+
 
 # --- credential files go only when the keyring holds each value (review item 8) -----------------
 
@@ -1047,7 +1220,9 @@ def test_a_folder_replaced_by_a_link_after_the_migration_is_refused(legacy, tmp_
 UNCONFIRMED = pt_migrate.UNCONFIRMED
 
 
-def test_a_backup_key_file_holding_another_key_is_kept_and_named(legacy, capsys, caplog):
+def test_a_backup_key_file_holding_another_key_is_kept_and_named(
+    legacy, capsys, caplog
+):
     """The review's case: r_key.txt.bak holds an older key than the keyring.
     It was removed as soon as the keyring held any Robinhood key, which
     destroys the only copy of that key. It is kept now, named by field; no
@@ -1068,11 +1243,16 @@ def test_a_backup_key_file_holding_another_key_is_kept_and_named(legacy, capsys,
         report_text = f.read()
     assert f"`{bak}` ({reason})" in report_text
     for value in ("rh.older-key", "rh.legacy-key", legacy["seed"]):
-        assert value not in out and value not in caplog.text and value not in report_text
+        assert (
+            value not in out and value not in caplog.text and value not in report_text
+        )
 
 
 def test_a_backup_key_file_holding_the_keyring_value_is_removed(legacy):
-    bak = write(os.path.join(legacy["app"], "r_secret.txt.bak_20260102_000000"), legacy["seed"] + "\n")
+    bak = write(
+        os.path.join(legacy["app"], "r_secret.txt.bak_20260102_000000"),
+        legacy["seed"] + "\n",
+    )
     pt_migrate.migrate()
     result = pt_migrate.remove_old_files([bak], confirmed=True)
     assert result.removed == [bak] and result.kept == [] and result.refused == []
@@ -1100,8 +1280,10 @@ def test_a_config_holding_a_credential_with_no_keyring_field_is_kept(legacy):
     """The safety audit's note: a credential-named key the migration cannot
     put in the keyring (here at the top of pt_config.json) is left out of the
     migrated copy; the legacy file was still offered for removal."""
-    path = write(os.path.join(legacy["app"], "pt_config.json"),
-                 {"trading": {"mode": "paper"}, "api_key": "stray-value"})
+    path = write(
+        os.path.join(legacy["app"], "pt_config.json"),
+        {"trading": {"mode": "paper"}, "api_key": "stray-value"},
+    )
     pt_migrate.migrate()
     result = pt_migrate.remove_old_files([path], confirmed=True)
     assert result.kept == [(path, f"kept: {UNCONFIRMED}: api_key has no keyring field")]
@@ -1116,10 +1298,18 @@ def make_vault(folder, key, seed):
 
 
 def test_the_old_vault_goes_whole_when_the_keyring_holds_its_keys(isolated_user_dirs):
-    vault = make_vault(isolated_user_dirs["legacy"], "rh.vault-key", base64.b64encode(b"v" * 32).decode())
+    vault = make_vault(
+        isolated_user_dirs["legacy"],
+        "rh.vault-key",
+        base64.b64encode(b"v" * 32).decode(),
+    )
     pt_migrate.migrate()
     result = pt_migrate.remove_old_files([vault[0]], confirmed=True)
-    assert sorted(result.removed) == sorted(vault) and result.kept == [] and result.refused == []
+    assert (
+        sorted(result.removed) == sorted(vault)
+        and result.kept == []
+        and result.refused == []
+    )
 
 
 def test_the_old_vault_stays_whole_and_readable_when_a_key_differs(isolated_user_dirs):
@@ -1129,9 +1319,14 @@ def test_the_old_vault_stays_whole_and_readable_when_a_key_differs(isolated_user
     seed = base64.b64encode(b"v" * 32).decode()
     vault = make_vault(folder, "rh.vault-key", seed)
     pt_migrate.migrate()
-    pt_secrets.set_secret("robinhood", "private_key", base64.b64encode(b"w" * 32).decode())
+    pt_secrets.set_secret(
+        "robinhood", "private_key", base64.b64encode(b"w" * 32).decode()
+    )
     result = pt_migrate.remove_old_files(confirmed=True)
     reason = f"kept: {UNCONFIRMED}: robinhood:private_key differs from the keyring"
     assert [(p, reason) for p in vault] == [k for k in result.kept if k[0] in vault]
     assert not set(vault) & set(result.removed)
-    assert SecureCredentialManager(folder).decrypt_credentials() == ("rh.vault-key", seed)
+    assert SecureCredentialManager(folder).decrypt_credentials() == (
+        "rh.vault-key",
+        seed,
+    )

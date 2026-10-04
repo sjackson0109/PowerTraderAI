@@ -21,10 +21,13 @@ from pt_exchange_abstraction import (
 )
 from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
 
-
 # Exchanges whose credentials are not a plain "API key + secret" pair. Anything not
 # listed uses the default labels and a single-line secret.
-DEFAULT_FIELDS = {"key_label": "API Key:", "secret_label": "API Secret:", "multiline": False}
+DEFAULT_FIELDS = {
+    "key_label": "API Key:",
+    "secret_label": "API Secret:",
+    "multiline": False,
+}
 EXCHANGE_FIELDS = {
     # CDP API key: key *name* + EC *private key* (PEM, several lines).
     "coinbase": {
@@ -47,7 +50,9 @@ def exchange_fields(exchange_name: str) -> dict:
 def saved_secret_hint(exchange_name: str, source: str) -> str:
     """Shown instead of a saved secret, which is never echoed into the form."""
     if source == pt_secrets.SOURCE_ENV:
-        return ENV_CREDENTIALS_HINT.format(names=", ".join(pt_secrets.env_var_names(exchange_name)))
+        return ENV_CREDENTIALS_HINT.format(
+            names=", ".join(pt_secrets.env_var_names(exchange_name))
+        )
     fields = exchange_fields(exchange_name)
     if fields["multiline"]:
         return SAVED_SECRET_HINT
@@ -863,7 +868,9 @@ class ExchangeConfigGUI:
         self.passphrase_var.set("")
         self.api_secret_var.set("")
         self.api_secret_text.delete("1.0", tk.END)
-        self._apply_field_layout(exchange_name, has_saved_secret=bool(api_secret), source=source)
+        self._apply_field_layout(
+            exchange_name, has_saved_secret=bool(api_secret), source=source
+        )
 
     def get_exchange_instructions(self, exchange_name: str) -> str:
         """Get setup instructions for an exchange"""
@@ -1181,7 +1188,9 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             self.passphrase_var.set("")
             saved = self._saved_credentials(exchange_name)
             self.secret_hint_var.set(
-                saved_secret_hint(exchange_name, saved.credential_source if saved else "")
+                saved_secret_hint(
+                    exchange_name, saved.credential_source if saved else ""
+                )
             )
             self.refresh_exchange_list()
             self.status_var.set(f"Saved configuration for {exchange_name.title()}")
@@ -1227,14 +1236,18 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
                 passphrase = passphrase or saved.passphrase or ""
         return api_key, api_secret, passphrase
 
-    def _apply_field_layout(self, exchange_name: str, has_saved_secret: bool, source: str = ""):
+    def _apply_field_layout(
+        self, exchange_name: str, has_saved_secret: bool, source: str = ""
+    ):
         """Labels and input widget for this exchange's credential shape."""
         fields = exchange_fields(exchange_name)
         self.api_key_label.configure(text=fields["key_label"])
         self.api_secret_label.configure(text=fields["secret_label"])
         if fields["multiline"]:
             self.api_secret_entry.grid_remove()
-            self.api_secret_text.grid(row=1, column=1, padx=(10, 0), pady=2, sticky="we")
+            self.api_secret_text.grid(
+                row=1, column=1, padx=(10, 0), pady=2, sticky="we"
+            )
         else:
             self.api_secret_text.grid_remove()
             self.api_secret_entry.grid(row=1, column=1, padx=(10, 0), pady=2)
@@ -1318,7 +1331,9 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
         def on_item(result):
             if result is None:  # job itself failed
                 result = ConnectionTestResult(
-                    exchange_name, ConnectionStatus.ENDPOINT_ERROR, "The test failed unexpectedly."
+                    exchange_name,
+                    ConnectionStatus.ENDPOINT_ERROR,
+                    "The test failed unexpectedly.",
                 )
             self._append_result(format_test_result(exchange_name, result) + "\n")
             self.status_var.set(
@@ -1357,7 +1372,9 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             self._append_result(
                 f"\n📊 Summary: {tally['ok']}/{len(targets)} exchanges tested successfully\n"
             )
-            self.status_var.set(f"Tested {len(targets)} exchanges, {tally['ok']} successful")
+            self.status_var.set(
+                f"Tested {len(targets)} exchanges, {tally['ok']} successful"
+            )
 
         self._run_in_background(job, on_item, on_done)
 

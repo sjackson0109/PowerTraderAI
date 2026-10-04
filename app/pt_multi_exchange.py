@@ -120,7 +120,8 @@ class ExchangeConfigManager:
                     data = json.load(f)
 
                 exchanges = [
-                    self._exchange_from_file(ex, path) for ex in data.get("exchanges", [])
+                    self._exchange_from_file(ex, path)
+                    for ex in data.get("exchanges", [])
                 ]
 
                 self.config = TradingConfig(
@@ -168,7 +169,8 @@ class ExchangeConfigManager:
             "user_region": config.user_region,
             "primary_exchange": config.primary_exchange,
             "exchanges": [
-                {key: getattr(ex, key) for key in _FILE_FIELDS} for ex in config.exchanges
+                {key: getattr(ex, key) for key in _FILE_FIELDS}
+                for ex in config.exchanges
             ],
             "price_comparison_enabled": config.price_comparison_enabled,
             "auto_best_price": config.auto_best_price,

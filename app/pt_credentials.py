@@ -930,7 +930,9 @@ class KeyringCredentialManager(SecureCredentialManager):
 
         with self._lock:
             old = {
-                f: (pt_secrets.get_secret(self.EXCHANGE, f) or pt_secrets.Secret("")).reveal()
+                f: (
+                    pt_secrets.get_secret(self.EXCHANGE, f) or pt_secrets.Secret("")
+                ).reveal()
                 for f in ("api_key", "private_key")
             }
             try:

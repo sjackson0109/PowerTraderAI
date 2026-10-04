@@ -46,7 +46,9 @@ def test_shipped_template_has_no_credential_fields_and_points_to_the_setup_windo
     data = json.loads(read(os.path.join(APP_DIR, "trading_config.example.json")))
     assert "Configure exchange APIs" in data["_note"]
     for ex in data["exchanges"]:
-        assert not {"api_key", "api_secret", "passphrase"} & set(ex), ex["exchange_type"]
+        assert not {"api_key", "api_secret", "passphrase"} & set(ex), ex[
+            "exchange_type"
+        ]
 
 
 def test_settings_window_lists_config_data_and_log_folders():
@@ -70,7 +72,9 @@ def test_settings_window_lists_config_data_and_log_folders():
 
 
 def test_gitignore_covers_the_legacy_runtime_files():
-    lines = {line.strip() for line in read(os.path.join(REPO_DIR, ".gitignore")).splitlines()}
+    lines = {
+        line.strip() for line in read(os.path.join(REPO_DIR, ".gitignore")).splitlines()
+    }
     for pattern in (
         "app/pt_config.json",
         "app/gui_settings.json",

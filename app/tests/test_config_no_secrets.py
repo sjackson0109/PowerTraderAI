@@ -20,7 +20,9 @@ def test_strip_secret_fields_is_recursive_and_quiet_about_values(caplog):
     data = {
         "trading": {"mode": "paper"},
         "llm": {"openai_api_key": "sk-leak-1", "model": "x"},
-        "exchanges": [{"name": "binance", "api_secret": "leak-2", "api_key_length": 32}],
+        "exchanges": [
+            {"name": "binance", "api_secret": "leak-2", "api_key_length": 32}
+        ],
         "security": {"webhook_secret": "leak-3", "key_rotation_days": 90},
         "smtp": {"password": "leak-4", "server": "smtp.example"},
     }
@@ -35,7 +37,9 @@ def test_strip_secret_fields_is_recursive_and_quiet_about_values(caplog):
     }
     for leak in ("sk-leak-1", "leak-2", "leak-3", "leak-4"):
         assert leak not in caplog.text
-    assert "llm.openai_api_key" in caplog.text and "exchanges[0].api_secret" in caplog.text
+    assert (
+        "llm.openai_api_key" in caplog.text and "exchanges[0].api_secret" in caplog.text
+    )
     assert data["llm"]["openai_api_key"] == "sk-leak-1"  # input untouched
 
 
@@ -44,7 +48,10 @@ def test_settings_manager_ignores_and_never_writes_back_a_secret(caplog):
 
     path = pt_paths.settings_file()
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"trading": {"mode": "paper"}, "broker": {"api_secret": "pt-config-leak"}}, f)
+        json.dump(
+            {"trading": {"mode": "paper"}, "broker": {"api_secret": "pt-config-leak"}},
+            f,
+        )
     with caplog.at_level(logging.WARNING):
         sm = SettingsManager()
     assert sm.get("broker.api_secret") is None
@@ -67,7 +74,10 @@ def test_settings_export_and_import_drop_secrets(tmp_path):
     assert sm.export_settings(str(out))
     assert "export-leak" not in out.read_text(encoding="utf-8")
     src = tmp_path / "import.json"
-    src.write_text(json.dumps({"coins": ["BTC"], "x": {"private_key": "import-leak"}}), encoding="utf-8")
+    src.write_text(
+        json.dumps({"coins": ["BTC"], "x": {"private_key": "import-leak"}}),
+        encoding="utf-8",
+    )
     sm.import_settings(str(src))
     assert sm.get("x.private_key") is None
 
@@ -79,7 +89,8 @@ def test_yaml_config_never_holds_credentials(tmp_path):
     folder = tmp_path / "yaml"
     folder.mkdir()
     (folder / "exchange.yaml").write_text(
-        "name: kraken\napi_key: yaml-key-leak\napi_secret: yaml-secret-leak\n", encoding="utf-8"
+        "name: kraken\napi_key: yaml-key-leak\napi_secret: yaml-secret-leak\n",
+        encoding="utf-8",
     )
     cm = ConfigurationManager(str(folder), enable_hot_reload=False)
     assert cm.exchange.name == "kraken"
@@ -89,7 +100,12 @@ def test_yaml_config_never_holds_credentials(tmp_path):
     cm.save_current_config()
     for name in os.listdir(folder):
         text = (folder / name).read_text(encoding="utf-8")
-        for leak in ("yaml-key-leak", "yaml-secret-leak", "runtime-key", "runtime-hook"):
+        for leak in (
+            "yaml-key-leak",
+            "yaml-secret-leak",
+            "runtime-key",
+            "runtime-hook",
+        ):
             assert leak not in text, name
 
 

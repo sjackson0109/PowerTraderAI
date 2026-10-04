@@ -147,7 +147,9 @@ def setup_exchange_credentials(
         return False
     config_manager.enable_exchange(exchange_name, True)
 
-    print(f"✅ {exchange_name.title()} credentials saved in the OS credential store and enabled")
+    print(
+        f"✅ {exchange_name.title()} credentials saved in the OS credential store and enabled"
+    )
     return True
 
 

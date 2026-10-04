@@ -21,7 +21,9 @@ def _real_dirs():
 
 
 def _inside(path, folder):
-    path, folder = os.path.normcase(os.path.abspath(path)), os.path.normcase(os.path.abspath(folder))
+    path, folder = os.path.normcase(os.path.abspath(path)), os.path.normcase(
+        os.path.abspath(folder)
+    )
     try:
         return os.path.commonpath([path, folder]) == folder
     except ValueError:
@@ -61,7 +63,9 @@ def test_keyring_is_in_memory(memory_keyring):
     assert keyring.get_keyring() is memory_keyring
     assert pt_secrets._backend() is memory_keyring
     pt_secrets.set_secret("binance", "api_key", "guard-test-key")
-    assert memory_keyring.entries == {("SJackson.PowerTraderAI", "binance:api_key"): "guard-test-key"}
+    assert memory_keyring.entries == {
+        ("SJackson.PowerTraderAI", "binance:api_key"): "guard-test-key"
+    }
 
 
 def test_child_processes_cannot_reach_the_real_keyring():
@@ -70,7 +74,11 @@ def test_child_processes_cannot_reach_the_real_keyring():
         "sys.stdout.write(type(b).__module__ + '.' + type(b).__name__)"
     )
     out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, env=os.environ.copy()
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=os.environ.copy(),
     )
     assert out.stdout.strip() == "keyring.backends.fail.Keyring", out.stderr
 
@@ -82,14 +90,33 @@ def test_the_guard_is_in_force_wherever_pytest_is_started(start):
     isolated. Only the set-up plan is printed: no test body runs."""
     tests_dir = os.path.dirname(os.path.abspath(__file__))
     repo = os.path.dirname(os.path.dirname(tests_dir))
-    cwd, target = (repo, os.path.join("app", "tests", "test_pt_paths.py")) if start == "repo root" else (
-        tests_dir, "test_pt_paths.py")
+    cwd, target = (
+        (repo, os.path.join("app", "tests", "test_pt_paths.py"))
+        if start == "repo root"
+        else (tests_dir, "test_pt_paths.py")
+    )
     out = subprocess.run(
-        [sys.executable, "-m", "pytest", "--setup-plan", "-p", "no:cacheprovider", target],
-        cwd=cwd, capture_output=True, text=True, timeout=120, env=os.environ.copy(),
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--setup-plan",
+            "-p",
+            "no:cacheprovider",
+            target,
+        ],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=os.environ.copy(),
     )
     assert out.returncode == 0, out.stdout + out.stderr
     lines = out.stdout.splitlines()
     tests = [line for line in lines if "test_pt_paths.py::" in line]
-    setups = [line for line in lines if line.split()[:3] == ["SETUP", "F", "isolated_user_dirs"]]
+    setups = [
+        line
+        for line in lines
+        if line.split()[:3] == ["SETUP", "F", "isolated_user_dirs"]
+    ]
     assert tests and len(setups) == len(tests), out.stdout

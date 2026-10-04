@@ -38,7 +38,9 @@ from test_pt_migrate import entries, legacy, no_credential_env  # noqa: E402,F40
 from test_pt_paths import fresh_pt_paths  # noqa: E402
 
 INSTALL_ALL = "python -m pip install -r requirements.txt"
-OLD_KEYRING_MESSAGE = "No secure credential store (OS keyring) is available on this system"
+OLD_KEYRING_MESSAGE = (
+    "No secure credential store (OS keyring) is available on this system"
+)
 
 
 def missing(monkeypatch, *packages):
@@ -60,10 +62,21 @@ def user_files(isolated_user_dirs):
 def test_without_platformdirs_every_folder_lookup_names_the_package(monkeypatch):
     monkeypatch.delenv("POWERTRADER_HOME")
     missing(monkeypatch, "platformdirs")
-    fresh = fresh_pt_paths()  # the real lookup (conftest blocks it on the shared module)
-    lookups = [lambda kind=kind: fresh._platform_dir(kind) for kind in ("config", "data", "log", "cache")]
-    lookups += [fresh.config_dir, fresh.data_dir, fresh.log_dir, fresh.cache_dir, fresh.describe,
-                fresh.check_dependencies]
+    fresh = (
+        fresh_pt_paths()
+    )  # the real lookup (conftest blocks it on the shared module)
+    lookups = [
+        lambda kind=kind: fresh._platform_dir(kind)
+        for kind in ("config", "data", "log", "cache")
+    ]
+    lookups += [
+        fresh.config_dir,
+        fresh.data_dir,
+        fresh.log_dir,
+        fresh.cache_dir,
+        fresh.describe,
+        fresh.check_dependencies,
+    ]
     for lookup in lookups:
         with pytest.raises(fresh.MissingDependency) as err:
             lookup()
@@ -76,12 +89,16 @@ def test_without_platformdirs_every_folder_lookup_names_the_package(monkeypatch)
         pt_paths.check_dependencies()
 
 
-def test_with_powertrader_home_platformdirs_is_not_needed(isolated_user_dirs, monkeypatch):
+def test_with_powertrader_home_platformdirs_is_not_needed(
+    isolated_user_dirs, monkeypatch
+):
     missing(monkeypatch, "platformdirs")
     pt_paths.check_dependencies()
     fresh = fresh_pt_paths()
     fresh.check_dependencies()
-    assert fresh.config_dir(create=False) == os.path.join(isolated_user_dirs["home"], "config")
+    assert fresh.config_dir(create=False) == os.path.join(
+        isolated_user_dirs["home"], "config"
+    )
 
 
 def test_with_platformdirs_installed_the_check_passes(monkeypatch):
@@ -122,14 +139,19 @@ def start(monkeypatch):
             seen["mainloops"] += 1
 
     monkeypatch.setattr(pt_hub, "PowerTraderHub", Hub)
-    monkeypatch.setattr(pt_hub.messagebox, "showerror",
-                        lambda title, message, **kw: seen["boxes"].append((title, message)))
+    monkeypatch.setattr(
+        pt_hub.messagebox,
+        "showerror",
+        lambda title, message, **kw: seen["boxes"].append((title, message)),
+    )
     monkeypatch.setattr(pt_hub.tk, "Tk", FakeRoot)
     FakeRoot.made = []
     return seen
 
 
-def test_without_platformdirs_the_hub_stops_with_the_message_and_an_error_box(start, monkeypatch, capsys):
+def test_without_platformdirs_the_hub_stops_with_the_message_and_an_error_box(
+    start, monkeypatch, capsys
+):
     monkeypatch.delenv("POWERTRADER_HOME")
     missing(monkeypatch, "platformdirs")
     with pytest.raises(SystemExit) as err:
@@ -159,11 +181,16 @@ def test_without_a_usable_tk_the_hub_still_stops_cleanly(start, monkeypatch, cap
     assert err.value.code == 1
     assert start["hubs"] == 0 and start["boxes"] == []
     stderr = capsys.readouterr().err
-    assert "'platformdirs' is not installed" in stderr and "pip install platformdirs" in stderr
+    assert (
+        "'platformdirs' is not installed" in stderr
+        and "pip install platformdirs" in stderr
+    )
 
 
 @pytest.mark.parametrize("case", ["platformdirs installed", "POWERTRADER_HOME set"])
-def test_when_the_folders_can_be_found_the_hub_starts_as_before(start, monkeypatch, case):
+def test_when_the_folders_can_be_found_the_hub_starts_as_before(
+    start, monkeypatch, case
+):
     if case == "platformdirs installed":
         monkeypatch.delenv("POWERTRADER_HOME")
     else:
@@ -204,21 +231,37 @@ if "--main" in sys.argv:
 def run_hub_child(tmp_path, blocked, home=None, main=False):
     legacy_dir = tmp_path / "child_legacy"
     legacy_dir.mkdir()
-    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8",
-               PYTHON_KEYRING_BACKEND="keyring.backends.fail.Keyring")
+    env = dict(
+        os.environ,
+        PYTHONDONTWRITEBYTECODE="1",
+        PYTHONIOENCODING="utf-8",
+        PYTHON_KEYRING_BACKEND="keyring.backends.fail.Keyring",
+    )
     env.pop("POWERTRADER_HOME", None)
     if home:
         env["POWERTRADER_HOME"] = home
-    args = [sys.executable, "-c", HUB_CHILD, APP_DIR, str(legacy_dir), blocked] + (["--main"] if main else [])
+    args = [sys.executable, "-c", HUB_CHILD, APP_DIR, str(legacy_dir), blocked] + (
+        ["--main"] if main else []
+    )
     cwd = tmp_path / "child_cwd"
     cwd.mkdir()
-    out = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                         timeout=300, env=env, cwd=str(cwd))
+    out = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=300,
+        env=env,
+        cwd=str(cwd),
+    )
     assert os.listdir(cwd) == [] and os.listdir(legacy_dir) == []
     return out
 
 
-def test_the_hub_started_without_platformdirs_says_so_and_exits_without_a_traceback(tmp_path):
+def test_the_hub_started_without_platformdirs_says_so_and_exits_without_a_traceback(
+    tmp_path,
+):
     out = run_hub_child(tmp_path, "platformdirs", main=True)
     text = out.stdout + out.stderr
     assert out.returncode == 1, text
@@ -228,17 +271,29 @@ def test_the_hub_started_without_platformdirs_says_so_and_exits_without_a_traceb
     assert "Warning: The Python package 'platformdirs' is not installed" in out.stdout
     assert "EXCHANGE_SUPPORT_AVAILABLE False" in out.stdout
     # ... and main() stops with it, on the console and in the error box
-    assert "PowerTraderAI cannot start. The Python package 'platformdirs' is not installed" in out.stderr
+    assert (
+        "PowerTraderAI cannot start. The Python package 'platformdirs' is not installed"
+        in out.stderr
+    )
     assert INSTALL_ALL in out.stderr and "pip install platformdirs" in out.stderr
-    assert "ERROR BOX: PowerTraderAI cannot start | The Python package 'platformdirs'" in out.stdout
+    assert (
+        "ERROR BOX: PowerTraderAI cannot start | The Python package 'platformdirs'"
+        in out.stdout
+    )
 
 
-def test_the_multi_exchange_guard_names_another_missing_package(tmp_path, isolated_user_dirs):
+def test_the_multi_exchange_guard_names_another_missing_package(
+    tmp_path, isolated_user_dirs
+):
     out = run_hub_child(tmp_path, "requests", home=isolated_user_dirs["home"])
     text = out.stdout + out.stderr
     assert out.returncode == 0, text
     assert "Traceback" not in text
-    warning = next(line for line in out.stdout.splitlines() if "Multi-exchange support not available" in line)
+    warning = next(
+        line
+        for line in out.stdout.splitlines()
+        if "Multi-exchange support not available" in line
+    )
     assert "requests" in warning and INSTALL_ALL in warning
     assert "EXCHANGE_SUPPORT_AVAILABLE False" in out.stdout
 
@@ -266,7 +321,10 @@ def test_a_missing_keyring_package_is_named_and_nothing_is_stored(
     assert "'keyring' is not installed" in message
     assert INSTALL_ALL in message and "pip install keyring" in message
     assert OLD_KEYRING_MESSAGE not in message
-    assert "POWERTRADER_COINBASE_API_KEY" in message and "POWERTRADER_COINBASE_API_SECRET" in message
+    assert (
+        "POWERTRADER_COINBASE_API_KEY" in message
+        and "POWERTRADER_COINBASE_API_SECRET" in message
+    )
     assert "paper mode" in message and "plain file" in message
     assert "plaintext-must-not-land" not in message
     with pytest.raises(pt_secrets.KeyringUnavailable) as err:
@@ -288,17 +346,26 @@ def test_the_missing_keyring_package_is_logged_once(no_keyring_package, caplog):
             assert pt_secrets.get_credentials("kraken") is None
             with pytest.raises(pt_secrets.KeyringUnavailable):
                 pt_secrets.set_secret("kraken", "api_key", "log-value-123")
-    logged = [r.getMessage() for r in caplog.records if "'keyring' is not installed" in r.getMessage()]
+    logged = [
+        r.getMessage()
+        for r in caplog.records
+        if "'keyring' is not installed" in r.getMessage()
+    ]
     assert len(logged) == 1
     assert INSTALL_ALL in logged[0] and "pip install keyring" in logged[0]
     assert "log-value-123" not in caplog.text
 
 
-def test_environment_credentials_still_work_without_the_keyring_package(no_keyring_package, monkeypatch):
+def test_environment_credentials_still_work_without_the_keyring_package(
+    no_keyring_package, monkeypatch
+):
     monkeypatch.setenv("POWERTRADER_KRAKEN_API_KEY", "k")
     monkeypatch.setenv("POWERTRADER_KRAKEN_API_SECRET", "s")
     creds = pt_secrets.get_credentials("kraken")
-    assert creds.source == "environment" and dict(creds) == {"api_key": "k", "api_secret": "s"}
+    assert creds.source == "environment" and dict(creds) == {
+        "api_key": "k",
+        "api_secret": "s",
+    }
 
 
 def test_without_a_usable_backend_the_message_is_unchanged(caplog):
@@ -319,12 +386,20 @@ def test_the_migration_names_the_missing_keyring_package_and_retries_later(
     report = pt_migrate.migrate()
     assert report.errors
     for _, msg in report.errors:
-        assert "the Python package 'keyring' is not installed" in msg and INSTALL_ALL in msg
+        assert (
+            "the Python package 'keyring' is not installed" in msg
+            and INSTALL_ALL in msg
+        )
         assert "no OS keyring" not in msg
     assert memory_keyring.entries == {}
     with open(pt_paths.trading_config_file(), encoding="utf-8") as f:
         assert "bin-secret" not in f.read()  # settings moved, credentials not
-    for name in ("trading_config.json", "exchange_config.json", "r_key.txt", "r_secret.txt"):
+    for name in (
+        "trading_config.json",
+        "exchange_config.json",
+        "r_key.txt",
+        "r_secret.txt",
+    ):
         assert os.path.join(legacy["app"], name) not in report.removable
     # once the package is installed, the next run moves them
     monkeypatch.setitem(sys.modules, "keyring", keyring)

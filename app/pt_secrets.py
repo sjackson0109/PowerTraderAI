@@ -183,7 +183,9 @@ def _fields(exchange: str) -> Tuple[SecretField, ...]:
         return (
             SecretField("api_key", "api_key", (_env(x, "API_KEY"),)),
             SecretField(
-                "private_key", "api_secret", (_env(x, "PRIVATE_KEY"), _env(x, "API_SECRET"))
+                "private_key",
+                "api_secret",
+                (_env(x, "PRIVATE_KEY"), _env(x, "API_SECRET")),
             ),
         )
     if x in ("aave", "yearn_finance", "lido_finance"):
@@ -193,7 +195,9 @@ def _fields(exchange: str) -> Tuple[SecretField, ...]:
     return (
         SecretField("api_key", "api_key", (_env(x, "API_KEY"),)),
         SecretField("api_secret", "api_secret", (_env(x, "API_SECRET"),)),
-        SecretField("passphrase", "passphrase", (_env(x, "PASSPHRASE"),), required=False),
+        SecretField(
+            "passphrase", "passphrase", (_env(x, "PASSPHRASE"),), required=False
+        ),
     )
 
 
@@ -230,7 +234,14 @@ def is_secret_key(name: str) -> bool:
     return key in SECRET_CONFIG_KEYS or key.endswith(SECRET_KEY_SUFFIXES)
 
 
-SECRET_KEY_SUFFIXES = ("_secret", "_password", "_passphrase", "_token", "_private_key", "_api_key")
+SECRET_KEY_SUFFIXES = (
+    "_secret",
+    "_password",
+    "_passphrase",
+    "_token",
+    "_private_key",
+    "_api_key",
+)
 
 
 def strip_secret_fields(data, where: str = "config", warn: bool = True):
@@ -241,6 +252,7 @@ def strip_secret_fields(data, where: str = "config", warn: bool = True):
     which has just moved those values to the keyring). Use it on every config
     read so a secret that ended up in a file is ignored and never written back.
     """
+
     def walk(node, path):
         if isinstance(node, dict):
             out = {}
@@ -353,7 +365,9 @@ def _backend():
         current = keyring.get_keyring()
     except Exception:
         return None
-    members = list(current.backends) if isinstance(current, ChainerBackend) else [current]
+    members = (
+        list(current.backends) if isinstance(current, ChainerBackend) else [current]
+    )
     for backend in members:
         if not _refused_backend(backend):
             return backend
@@ -372,9 +386,13 @@ def backend_name() -> str:
 def unavailable_message(exchange: Optional[str] = None) -> str:
     """Why credentials were not saved and what to do instead. Names the keyring
     package when that is what is missing, else the OS credential store."""
-    names = env_var_names(exchange) if exchange else (
-        "POWERTRADER_<EXCHANGE>_API_KEY",
-        "POWERTRADER_<EXCHANGE>_API_SECRET",
+    names = (
+        env_var_names(exchange)
+        if exchange
+        else (
+            "POWERTRADER_<EXCHANGE>_API_KEY",
+            "POWERTRADER_<EXCHANGE>_API_SECRET",
+        )
     )
     if keyring_package_missing():
         return (
@@ -403,7 +421,10 @@ def _keyring_get(exchange: str, field: str) -> Optional[str]:
         value = backend.get_password(SERVICE_NAME, f"{exchange}:{field}")
     except Exception as exc:
         logger.warning(
-            "Could not read %s:%s from the OS keyring (%s)", exchange, field, type(exc).__name__
+            "Could not read %s:%s from the OS keyring (%s)",
+            exchange,
+            field,
+            type(exc).__name__,
         )
         return None
     return value or None
@@ -467,7 +488,9 @@ def set_secret(exchange: str, field: str, value) -> None:
         raise SecretsError(
             f"Could not save {exchange}:{f.name} to the OS keyring ({type(exc).__name__})."
         ) from None
-    logger.info("Saved %s:%s to the OS keyring (%s)", exchange, f.name, type(backend).__name__)
+    logger.info(
+        "Saved %s:%s to the OS keyring (%s)", exchange, f.name, type(backend).__name__
+    )
 
 
 def delete_secret(exchange: str, field: str) -> bool:
@@ -483,7 +506,10 @@ def delete_secret(exchange: str, field: str) -> bool:
         backend.delete_password(SERVICE_NAME, f"{exchange}:{f.name}")
     except Exception as exc:
         logger.warning(
-            "Could not delete %s:%s from the OS keyring (%s)", exchange, f.name, type(exc).__name__
+            "Could not delete %s:%s from the OS keyring (%s)",
+            exchange,
+            f.name,
+            type(exc).__name__,
         )
         return False
     return True
@@ -501,7 +527,11 @@ def set_credentials(exchange: str, values: Dict[str, object]) -> None:
     pending = {}
     for field, value in values.items():
         f = _field(exchange, field)
-        text = value.reveal() if isinstance(value, Secret) else ("" if value is None else str(value))
+        text = (
+            value.reveal()
+            if isinstance(value, Secret)
+            else ("" if value is None else str(value))
+        )
         if text.strip():
             check_size(exchange, f.name, text)
         pending[f.name] = text
@@ -563,7 +593,9 @@ def get_credentials(exchange: str) -> Optional[Credentials]:
         chosen, source = kr_values, SOURCE_KEYRING
     else:
         return None
-    kwargs = {f.kwarg: chosen[f.name] for f in secret_fields(exchange) if f.name in chosen}
+    kwargs = {
+        f.kwarg: chosen[f.name] for f in secret_fields(exchange) if f.name in chosen
+    }
     return Credentials(exchange, source, kwargs)
 
 

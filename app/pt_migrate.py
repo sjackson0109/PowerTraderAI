@@ -189,20 +189,36 @@ class Report:
     """What one migration run did. Credentials are listed as ``exchange:field`` only."""
 
     copied: List[Tuple[str, str]] = field(default_factory=list)  # (source, target)
-    secrets: List[Tuple[str, str]] = field(default_factory=list)  # (source, "exchange:field")
-    conflicts: List[Tuple[str, str]] = field(default_factory=list)  # (source, kept target)
-    conflict_copies: Dict[str, str] = field(default_factory=dict)  # legacy part -> its conflict copy
-    newer: Dict[str, str] = field(default_factory=dict)  # kept target -> newer legacy file copied there
-    secret_conflicts: List[Tuple[str, str]] = field(default_factory=list)  # (source, entry)
+    secrets: List[Tuple[str, str]] = field(
+        default_factory=list
+    )  # (source, "exchange:field")
+    conflicts: List[Tuple[str, str]] = field(
+        default_factory=list
+    )  # (source, kept target)
+    conflict_copies: Dict[str, str] = field(
+        default_factory=dict
+    )  # legacy part -> its conflict copy
+    newer: Dict[str, str] = field(
+        default_factory=dict
+    )  # kept target -> newer legacy file copied there
+    secret_conflicts: List[Tuple[str, str]] = field(
+        default_factory=list
+    )  # (source, entry)
     errors: List[Tuple[str, str]] = field(default_factory=list)  # (source, message)
     removable: List[str] = field(default_factory=list)  # legacy copies safe to delete
-    plaintext_left: List[str] = field(default_factory=list)  # legacy files with plaintext secrets
+    plaintext_left: List[str] = field(
+        default_factory=list
+    )  # legacy files with plaintext secrets
     report_path: Optional[str] = None
 
     @property
     def changed(self) -> bool:
         return bool(
-            self.copied or self.secrets or self.conflicts or self.secret_conflicts or self.errors
+            self.copied
+            or self.secrets
+            or self.conflicts
+            or self.secret_conflicts
+            or self.errors
         )
 
     def summary(self) -> str:
@@ -234,15 +250,23 @@ class Report:
             saved = [s for s in sources if s in self.conflict_copies]
             if saved:
                 newer = self.newer.get(target)
-                kept = f"copy of the newer {name(newer)}" if newer else "was already there, kept"
+                kept = (
+                    f"copy of the newer {name(newer)}"
+                    if newer
+                    else "was already there, kept"
+                )
                 lines.append(f"{top}{name(target)}: {kept} (in use)")
             for source in sources:
                 if source not in saved:  # an import (--from): nothing copied
-                    lines.append(f"{top}{name(source)} was not copied; kept {name(target)}")
+                    lines.append(
+                        f"{top}{name(source)} was not copied; kept {name(target)}"
+                    )
                     continue
                 for part in _parts(source):
                     if part in self.conflict_copies:
-                        lines.append(f"{sub}{name(self.conflict_copies[part])}: copy of {name(part)}")
+                        lines.append(
+                            f"{sub}{name(self.conflict_copies[part])}: copy of {name(part)}"
+                        )
         lines += [
             f"{top}{name(e)} from {name(s)} was not stored; the keyring already holds a different value"
             for s, e in self.secret_conflicts
@@ -256,7 +280,9 @@ class Removal:
 
     removable: List[str] = field(default_factory=list)  # passed every check
     removed: List[str] = field(default_factory=list)  # deleted (only when confirmed)
-    refused: List[Tuple[str, str]] = field(default_factory=list)  # (legacy file, reason)
+    refused: List[Tuple[str, str]] = field(
+        default_factory=list
+    )  # (legacy file, reason)
     kept: List[Tuple[str, str]] = field(default_factory=list)  # (legacy file, reason)
 
     def not_removed(self) -> List[str]:
@@ -324,7 +350,9 @@ class _State:
             pass
         return None
 
-    def mark(self, key: str, source, redundant: bool, copy: Optional[str] = None) -> None:
+    def mark(
+        self, key: str, source, redundant: bool, copy: Optional[str] = None
+    ) -> None:
         """Record ``key`` as handled; ``copy``: the conflict copy that holds its content."""
         try:
             item = {"fp": _fingerprint(source), "redundant": bool(redundant)}
@@ -334,8 +362,13 @@ class _State:
         except OSError:
             pass
 
-    def remember(self, path: str, copies: Iterable[str], sha256: Optional[str] = None,
-                 keep: bool = False) -> None:
+    def remember(
+        self,
+        path: str,
+        copies: Iterable[str],
+        sha256: Optional[str] = None,
+        keep: bool = False,
+    ) -> None:
         """Record a migrated legacy file: its SHA-256 (``sha256``, else read now),
         its real path (links resolved) and where its copy is; ``keep`` marks it
         as never to be removed (a mark once set stays). The record of an
@@ -347,11 +380,16 @@ class _State:
             record = self.data["files"].get(path)
             keep = keep or (isinstance(record, dict) and bool(record.get("keep")))
             if not (
-                isinstance(record, dict) and record.get("fp") == fp and record.get("copy") == copies
+                isinstance(record, dict)
+                and record.get("fp") == fp
+                and record.get("copy") == copies
                 and record.get("sha256")
             ):
                 record = self.data["files"][path] = {
-                    "fp": fp, "sha256": sha256 or _sha256(path), "copy": copies, "real": _real(path),
+                    "fp": fp,
+                    "sha256": sha256 or _sha256(path),
+                    "copy": copies,
+                    "real": _real(path),
                 }
             if keep:
                 record["keep"] = True
@@ -361,15 +399,20 @@ class _State:
     def units(self) -> List[List[str]]:
         """The removable units (an older record without units yields none)."""
         return [
-            unit for unit in self.data.get("removable") or []
+            unit
+            for unit in self.data.get("removable") or []
             if isinstance(unit, list) and unit and all(isinstance(p, str) for p in unit)
         ]
 
     def save(self) -> None:
         listed = {p for unit in self.units() for p in unit}
-        self.data["files"] = {p: r for p, r in self.data["files"].items() if p in listed}
+        self.data["files"] = {
+            p: r for p, r in self.data["files"].items() if p in listed
+        }
         if json.dumps(self.data, sort_keys=True) != self._original:
-            pt_paths.write_private_text(self.path, json.dumps(self.data, indent=2, sort_keys=True))
+            pt_paths.write_private_text(
+                self.path, json.dumps(self.data, indent=2, sort_keys=True)
+            )
 
 
 # --- helpers ------------------------------------------------------------------------
@@ -462,8 +505,14 @@ def _conflict_copy(target: str, label: str, same) -> Tuple[str, object]:
         number += 1
 
 
-def _record_unit(source: str, present: List[Tuple[str, str]], copy: str, digests: Dict[str, str],
-                 state: _State, conflict: bool) -> List[str]:
+def _record_unit(
+    source: str,
+    present: List[Tuple[str, str]],
+    copy: str,
+    digests: Dict[str, str],
+    state: _State,
+    conflict: bool,
+) -> List[str]:
     """Record each part of a migrated legacy unit with the SHA-256 of what
     was copied and with ``copy`` (the .db) as its copy: SQLite merges and
     deletes the -wal/-shm files of the migrated database when it closes it
@@ -476,7 +525,9 @@ def _record_unit(source: str, present: List[Tuple[str, str]], copy: str, digests
     return [s for s, _ in present]
 
 
-def _copy_new(source: str, target: str, report: Report, state: _State) -> Optional[List[str]]:
+def _copy_new(
+    source: str, target: str, report: Report, state: _State
+) -> Optional[List[str]]:
     """Copy a legacy unit to ``target``, where nothing is yet. Returns its
     parts, or None if the copy failed (nothing is left at ``target`` then)."""
     present = [(s, t) for s, t in _pairs(source, target) if os.path.isfile(s)]
@@ -489,8 +540,14 @@ def _copy_new(source: str, target: str, report: Report, state: _State) -> Option
     return _record_unit(source, present, target, digests, state, conflict=False)
 
 
-def _save_beside(source: str, target: str, label: str, newer: Optional[str], report: Report,
-                 state: _State) -> List[str]:
+def _save_beside(
+    source: str,
+    target: str,
+    label: str,
+    newer: Optional[str],
+    report: Report,
+    state: _State,
+) -> List[str]:
     """A legacy unit whose ``target`` is taken: if it holds the same parts with
     the same content, nothing is copied; otherwise the unit is copied to its
     conflict copy next to ``target`` (``_conflict_copy``), which is listed
@@ -502,7 +559,9 @@ def _save_beside(source: str, target: str, label: str, newer: Optional[str], rep
         digests = _same_unit(_pairs(source, target))
         if digests is not None:
             return _record_unit(source, present, target, digests, state, conflict=False)
-        copy, digests = _conflict_copy(target, label, lambda name: _same_unit(_pairs(source, name)))
+        copy, digests = _conflict_copy(
+            target, label, lambda name: _same_unit(_pairs(source, name))
+        )
         pairs = [(s, c) for s, c in _pairs(source, copy) if os.path.isfile(s)]
         if digests is None:
             digests = _copy_parts(pairs)
@@ -516,8 +575,9 @@ def _save_beside(source: str, target: str, label: str, newer: Optional[str], rep
     return _record_unit(source, pairs, copy, digests, state, conflict=True)
 
 
-def _copy_files(target: str, sources: List[Tuple[str, str]], report: Report,
-                state: _State) -> List[List[str]]:
+def _copy_files(
+    target: str, sources: List[Tuple[str, str]], report: Report, state: _State
+) -> List[List[str]]:
     """Copy the legacy files that go to ``target`` (``(path, label)`` each, one
     per legacy folder), never overwriting or replacing anything. A database
     comes with its -wal/-shm/-journal files as one unit: compared, copied and recorded
@@ -539,7 +599,9 @@ def _copy_files(target: str, sources: List[Tuple[str, str]], report: Report,
     units, pending = [], []
     for source, label in sources:
         pairs = _pairs(source, target)
-        if _in_new_location(source) or any(os.path.isfile(s) and _same_file(s, t) for s, t in pairs):
+        if _in_new_location(source) or any(
+            os.path.isfile(s) and _same_file(s, t) for s, t in pairs
+        ):
             continue
         seen = state.entry(f"file:{source}", _parts(source))
         if seen is None:
@@ -548,7 +610,9 @@ def _copy_files(target: str, sources: List[Tuple[str, str]], report: Report,
             units.append([p for p in _parts(source) if os.path.isfile(p)])
     newer = None
     if pending and not _taken(target):
-        pending.sort(key=lambda item: _newest(item[0]), reverse=True)  # stable: a tie keeps the order
+        pending.sort(
+            key=lambda item: _newest(item[0]), reverse=True
+        )  # stable: a tie keeps the order
         newer = pending.pop(0)[0]
         unit = _copy_new(newer, target, report, state)
         if unit is None:
@@ -565,8 +629,9 @@ def _copy_files(target: str, sources: List[Tuple[str, str]], report: Report,
     return units
 
 
-def _copy_file(source: str, target: str, report: Report, state: _State,
-               label: str = APP) -> List[str]:
+def _copy_file(
+    source: str, target: str, report: Report, state: _State, label: str = APP
+) -> List[str]:
     """One legacy file (or database unit) to ``target`` (``_copy_files``).
     Returns its parts when they are redundant, else []."""
     units = _copy_files(target, [(source, label)], report, state)
@@ -583,7 +648,9 @@ class _Copies:
 
     def add(self, source: str, target: str, label: str) -> None:
         target = os.path.normpath(target)
-        self.targets.setdefault(os.path.normcase(target), (target, []))[1].append((source, label))
+        self.targets.setdefault(os.path.normcase(target), (target, []))[1].append(
+            (source, label)
+        )
 
     def run(self, report: Report, state: _State) -> List[List[str]]:
         units = []
@@ -603,8 +670,14 @@ def _holds(path: str, content: bytes) -> bool:
         return False
 
 
-def _write_config(source: str, target: str, data, report: Report, state: _State,
-                  label: Optional[str] = None) -> Optional[str]:
+def _write_config(
+    source: str,
+    target: str,
+    data,
+    report: Report,
+    state: _State,
+    label: Optional[str] = None,
+) -> Optional[str]:
     """Write the cleaned config ``data`` to ``target``, never over a file.
     Returns where its content is now (``target``, or the conflict copy), or
     None. A ``target`` that holds something else is kept as it is: ``data``
@@ -630,7 +703,9 @@ def _write_config(source: str, target: str, data, report: Report, state: _State,
         report.conflicts.append((source, target))
         state.mark(key, source, False)
         return None
-    copy, found = _conflict_copy(target, label, lambda name: True if _holds(name, content) else None)
+    copy, found = _conflict_copy(
+        target, label, lambda name: True if _holds(name, content) else None
+    )
     if found is None:
         pt_paths.write_private_text(copy, text)
         report.conflicts.append((source, target))
@@ -654,12 +729,17 @@ def _load_json(path: str, report: Report):
     return _read_json(path, report)[0]
 
 
-def _store_secret(exchange: str, field_name: str, value: str, source: str, report: Report) -> str:
+def _store_secret(
+    exchange: str, field_name: str, value: str, source: str, report: Report
+) -> str:
     """Put one credential in the keyring unless it already holds a different
-    value (the new location wins). Returns "stored", "present", "conflict" or "error"."""
+    value (the new location wins). Returns "stored", "present", "conflict" or "error".
+    """
     entry = f"{exchange}:{field_name}"
     try:
-        current = pt_secrets._keyring_get(pt_secrets.normalise_exchange(exchange), field_name)
+        current = pt_secrets._keyring_get(
+            pt_secrets.normalise_exchange(exchange), field_name
+        )
         if current is not None:
             if current == value:
                 return "present"
@@ -674,16 +754,20 @@ def _store_secret(exchange: str, field_name: str, value: str, source: str, repor
         else:
             why = "no OS keyring available"
         report.errors.append(
-            (source, f"{entry}: {why}, not moved - set it as an environment variable "
-                     "instead (see pt_secrets)")
+            (
+                source,
+                f"{entry}: {why}, not moved - set it as an environment variable "
+                "instead (see pt_secrets)",
+            )
         )
     except pt_secrets.SecretsError as exc:
         report.errors.append((source, f"{entry}: {exc}"))
     return "error"
 
 
-def _migrate_secrets(source: str, items: List[Tuple[str, str, str]], report: Report,
-                     state: _State) -> bool:
+def _migrate_secrets(
+    source: str, items: List[Tuple[str, str, str]], report: Report, state: _State
+) -> bool:
     """Store ``(exchange, field, value)`` items from one legacy file. True when
     every value is now safely in the keyring. Recorded unless something failed,
     so a missing keyring is retried next time."""
@@ -703,12 +787,18 @@ def _secret_field(exchange: str, key: str) -> Optional[str]:
         name = pt_secrets.field_for_kwarg(exchange, key)
         if name:
             return name
-        return key if any(f.name == key for f in pt_secrets.secret_fields(exchange)) else None
+        return (
+            key
+            if any(f.name == key for f in pt_secrets.secret_fields(exchange))
+            else None
+        )
     except pt_secrets.SecretsError:
         return None
 
 
-def _credential_items(source: str, pairs, report: Report) -> Tuple[List[Tuple[str, str, str]], bool]:
+def _credential_items(
+    source: str, pairs, report: Report
+) -> Tuple[List[Tuple[str, str, str]], bool]:
     """``(exchange, field, value)`` per credential, and whether every credential
     has a keyring field (one that has not stays only in the legacy file)."""
     items = []
@@ -722,7 +812,9 @@ def _credential_items(source: str, pairs, report: Report) -> Tuple[List[Tuple[st
             items.append((exchange, field_name, value))
         else:
             complete = False
-            report.errors.append((source, f"{exchange or '?'}.{key}: no keyring field for it, not moved"))
+            report.errors.append(
+                (source, f"{exchange or '?'}.{key}: no keyring field for it, not moved")
+            )
     return items, complete
 
 
@@ -732,7 +824,12 @@ def _config_pairs(kind: str, data) -> Optional[List[Tuple[str, str, object, str]
     place in the file, for messages), or None for a kind that holds none."""
     if kind == pt_paths.TRADING_CONFIG_FILE and isinstance(data, dict):
         return [
-            (str(ex.get("exchange_type", "")).strip().lower(), key, ex.get(key), f"exchanges[{i}].{key}")
+            (
+                str(ex.get("exchange_type", "")).strip().lower(),
+                key,
+                ex.get(key),
+                f"exchanges[{i}].{key}",
+            )
             for i, ex in enumerate(data.get("exchanges", []) or [])
             if isinstance(ex, dict)
             for key in ("api_key", "api_secret", "passphrase")
@@ -753,7 +850,11 @@ def _secret_places(data, where: str = ""):
     if isinstance(data, dict):
         for key, value in data.items():
             place = f"{where}.{key}" if where else str(key)
-            if pt_secrets.is_secret_key(key) and isinstance(value, str) and value.strip():
+            if (
+                pt_secrets.is_secret_key(key)
+                and isinstance(value, str)
+                and value.strip()
+            ):
                 yield place
             yield from _secret_places(value, place)
     elif isinstance(data, list):
@@ -769,8 +870,11 @@ def _unconfirmed_credentials(path: str) -> Optional[str]:
     and never logged, printed or returned; the reason names fields only."""
     name = os.path.basename(path)
     is_config = name in CONFIG_FILES
-    if not (name in RH_PLAINTEXT + RH_VAULT or is_config
-            or any(fnmatch.fnmatch(name, p) for p in RH_BACKUP_PATTERNS)):
+    if not (
+        name in RH_PLAINTEXT + RH_VAULT
+        or is_config
+        or any(fnmatch.fnmatch(name, p) for p in RH_BACKUP_PATTERNS)
+    ):
         return None
     if not pt_secrets.keyring_available():
         return f"{UNCONFIRMED}: no keyring to compare with"
@@ -783,12 +887,21 @@ def _unconfirmed_credentials(path: str) -> Optional[str]:
             creds = SecureCredentialManager(os.path.dirname(path)).decrypt_credentials()
             if not creds:
                 return f"{UNCONFIRMED}: the old vault could not be decrypted"
-            found += [("robinhood", "api_key", creds[0]), ("robinhood", "private_key", creds[1])]
+            found += [
+                ("robinhood", "api_key", creds[0]),
+                ("robinhood", "private_key", creds[1]),
+            ]
         elif not is_config:  # r_key.txt / r_secret.txt and their .bak copies
             with open(path, encoding="utf-8") as f:
                 value = f.read().strip()
             if value:
-                found.append(("robinhood", "api_key" if name.startswith("r_key") else "private_key", value))
+                found.append(
+                    (
+                        "robinhood",
+                        "api_key" if name.startswith("r_key") else "private_key",
+                        value,
+                    )
+                )
         else:
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -804,11 +917,17 @@ def _unconfirmed_credentials(path: str) -> Optional[str]:
                     found.append((exchange, field_name, value))
                 else:
                     problems.append(f"{where} has no keyring field")
-            problems += [f"{where} has no keyring field" for where in _secret_places(data) if where not in covered]
+            problems += [
+                f"{where} has no keyring field"
+                for where in _secret_places(data)
+                if where not in covered
+            ]
     except Exception as exc:  # unreadable, not JSON, cryptography missing, ...
         return f"{UNCONFIRMED}: could not be read to compare ({type(exc).__name__})"
     for exchange, field_name, value in found:
-        stored = pt_secrets._keyring_get(pt_secrets.normalise_exchange(exchange), field_name)
+        stored = pt_secrets._keyring_get(
+            pt_secrets.normalise_exchange(exchange), field_name
+        )
         if stored is None:
             problems.append(f"{exchange}:{field_name} is not in the keyring")
         elif stored != value:
@@ -818,7 +937,10 @@ def _unconfirmed_credentials(path: str) -> Optional[str]:
 
 def _holds_secret(data) -> bool:
     if isinstance(data, dict):
-        return any((pt_secrets.is_secret_key(k) and bool(v)) or _holds_secret(v) for k, v in data.items())
+        return any(
+            (pt_secrets.is_secret_key(k) and bool(v)) or _holds_secret(v)
+            for k, v in data.items()
+        )
     if isinstance(data, list):
         return any(_holds_secret(v) for v in data)
     return False
@@ -858,7 +980,9 @@ def _real(path: str) -> str:
 
 def _linked(path: str) -> bool:
     """Whether ``path`` is a symbolic link or (Windows) a junction."""
-    return os.path.islink(path) or bool(getattr(os.path, "isjunction", lambda p: False)(path))
+    return os.path.islink(path) or bool(
+        getattr(os.path, "isjunction", lambda p: False)(path)
+    )
 
 
 def _through_link(path: str, top: str) -> bool:
@@ -895,10 +1019,14 @@ def _in_new_location(path: str) -> bool:
     """Whether ``path`` is in a folder PowerTrader uses now (config, data, logs,
     cache), however it is spelled. With ``POWERTRADER_HOME`` at the install
     root or in ``app/`` its ``data/`` and ``logs/`` are also legacy locations."""
-    folders = _resolved((
-        pt_paths.config_dir(create=False), pt_paths.data_dir(create=False),
-        pt_paths.log_dir(create=False), pt_paths.cache_dir(create=False),
-    ))
+    folders = _resolved(
+        (
+            pt_paths.config_dir(create=False),
+            pt_paths.data_dir(create=False),
+            pt_paths.log_dir(create=False),
+            pt_paths.cache_dir(create=False),
+        )
+    )
     path = _real(path)
     return any(_inside(path, folder) for folder in folders)
 
@@ -912,7 +1040,7 @@ def _copy_exists(location: str) -> bool:
     """Whether a recorded migrated copy is still there: a file, or a keyring
     entry ``keyring:<exchange>:<field>`` (checked by name)."""
     if location.startswith(KEYRING_COPY):
-        exchange, _, name = location[len(KEYRING_COPY):].partition(":")
+        exchange, _, name = location[len(KEYRING_COPY) :].partition(":")
         try:
             return name in pt_secrets.stored_fields(exchange)
         except pt_secrets.SecretsError:
@@ -923,9 +1051,15 @@ def _copy_exists(location: str) -> bool:
 # --- config files ---------------------------------------------------------------------
 
 
-def _migrate_config(source: str, kind: str, report: Report, state: _State,
-                    legacy_roots: Iterable[str], keep: bool = False,
-                    label: Optional[str] = None) -> bool:
+def _migrate_config(
+    source: str,
+    kind: str,
+    report: Report,
+    state: _State,
+    legacy_roots: Iterable[str],
+    keep: bool = False,
+    label: Optional[str] = None,
+) -> bool:
     """One legacy config file: credentials to the keyring, the rest to the
     config folder (or, if a different file is there, to its conflict copy
     ``<name>.conflict-<label>.json``; ``_write_config``). True when the legacy
@@ -939,7 +1073,9 @@ def _migrate_config(source: str, kind: str, report: Report, state: _State,
     target = pt_paths.config_file(kind)
     if _same_file(source, target) or (label is not None and _in_new_location(source)):
         if label is None:  # --from
-            report.errors.append((source, "is the config file in use; nothing to import"))
+            report.errors.append(
+                (source, "is the config file in use; nothing to import")
+            )
         return False
     data, digest = _read_json(source, report)
     if not isinstance(data, (dict, list)):
@@ -958,7 +1094,9 @@ def _migrate_config(source: str, kind: str, report: Report, state: _State,
         report.plaintext_left.append(source)
     if not (copy and secrets_ok):
         return False
-    state.remember(source, [copy] + [f"{KEYRING_COPY}{ex}:{f}" for ex, f, _ in items], digest, keep)
+    state.remember(
+        source, [copy] + [f"{KEYRING_COPY}{ex}:{f}" for ex, f, _ in items], digest, keep
+    )
     return True
 
 
@@ -966,7 +1104,9 @@ def _detect_kind(path: str, report: Report) -> Optional[str]:
     name = os.path.basename(path).lower()
     for known in CONFIG_FILES:
         stem = known[: -len(".json")]
-        if name == known or any(name.startswith(stem + sep) for sep in (".", "_", "-", " ")):
+        if name == known or any(
+            name.startswith(stem + sep) for sep in (".", "_", "-", " ")
+        ):
             return known
     data = _load_json(path, report)
     if isinstance(data, dict):
@@ -980,8 +1120,11 @@ def _detect_kind(path: str, report: Report) -> Optional[str]:
             return pt_paths.EXCHANGE_CONFIG_FILE
     if data is not None:
         report.errors.append(
-            (path, "unrecognised config file (expected pt_config, gui_settings, "
-                   "trading_config or exchange_config)")
+            (
+                path,
+                "unrecognised config file (expected pt_config, gui_settings, "
+                "trading_config or exchange_config)",
+            )
         )
     return None
 
@@ -1054,12 +1197,17 @@ def _read_robinhood(legacy: str, files: List[str], label: str, report: Report):
 
             creds = SecureCredentialManager(legacy).decrypt_credentials()
         except Exception as exc:  # cryptography missing, damaged vault, ...
-            report.errors.append((files[0], f"old credential vault not readable ({type(exc).__name__})"))
+            report.errors.append(
+                (files[0], f"old credential vault not readable ({type(exc).__name__})")
+            )
             return None
         if not creds:
             report.errors.append(
-                (files[0], "old credential vault could not be decrypted (it may come from "
-                           "another computer); enter the Robinhood keys again in the setup wizard")
+                (
+                    files[0],
+                    "old credential vault could not be decrypted (it may come from "
+                    "another computer); enter the Robinhood keys again in the setup wizard",
+                )
             )
         return creds
     try:
@@ -1077,20 +1225,33 @@ def _robinhood_meta(legacy: str, report: Report, state: _State) -> List[List[str
     meta = os.path.join(legacy, RH_META)
     if not os.path.isfile(meta):
         return []
-    return [_copy_file(meta, pt_paths.config_file("robinhood_rotation.json"), report, state, APP)]
+    return [
+        _copy_file(
+            meta, pt_paths.config_file("robinhood_rotation.json"), report, state, APP
+        )
+    ]
 
 
 # --- data -------------------------------------------------------------------------------
 
 
-def _copy_tree(source_dir: str, target_dir: str, copies: _Copies, label: str,
-               redirect: Optional[Dict[str, str]] = None) -> None:
+def _copy_tree(
+    source_dir: str,
+    target_dir: str,
+    copies: _Copies,
+    label: str,
+    redirect: Optional[Dict[str, str]] = None,
+) -> None:
     """Add every file under ``source_dir`` to ``copies`` (a database with its
     -wal/-shm/-journal files as one unit); a first-level folder named in ``redirect``
     goes to the folder given there instead. Links and junctions are not
     followed (``_through_link``): ``os.walk`` follows a junction on Windows."""
     for folder, dirs, files in os.walk(source_dir):
-        dirs[:] = [d for d in dirs if d != "__pycache__" and not _linked(os.path.join(folder, d))]
+        dirs[:] = [
+            d
+            for d in dirs
+            if d != "__pycache__" and not _linked(os.path.join(folder, d))
+        ]
         rel = os.path.relpath(folder, source_dir)
         top = rel.split(os.sep)[0] if rel != "." else ""
         base = target_dir
@@ -1101,7 +1262,9 @@ def _copy_tree(source_dir: str, target_dir: str, copies: _Copies, label: str,
         for name in files:
             if name.endswith(".tmp") or _linked(os.path.join(folder, name)):
                 continue
-            if any(name.endswith(s) and name[: -len(s)] in names for s in SQLITE_SIDECARS):
+            if any(
+                name.endswith(s) and name[: -len(s)] in names for s in SQLITE_SIDECARS
+            ):
                 continue  # copied with its database
             copies.add(os.path.join(folder, name), os.path.join(base, rel, name), label)
 
@@ -1117,34 +1280,48 @@ def _neural_files(folder: str) -> List[str]:
     return [
         os.path.join(folder, n)
         for n in _listdir(folder)
-        if os.path.isfile(os.path.join(folder, n)) and not _linked(os.path.join(folder, n))
+        if os.path.isfile(os.path.join(folder, n))
+        and not _linked(os.path.join(folder, n))
         and any(fnmatch.fnmatch(n, p) for p in NEURAL_PATTERNS)
     ]
 
 
 def _coin_folders(legacy: str) -> List[str]:
     return [
-        n for n in _listdir(legacy)
-        if n.isupper() and n.isalnum() and len(n) <= 10 and os.path.isdir(os.path.join(legacy, n))
+        n
+        for n in _listdir(legacy)
+        if n.isupper()
+        and n.isalnum()
+        and len(n) <= 10
+        and os.path.isdir(os.path.join(legacy, n))
         and not _linked(os.path.join(legacy, n))
     ]
 
 
 def _dest_dir(kind: str) -> str:
-    return {"data": pt_paths.data_dir, "cache": pt_paths.cache_dir, "log": pt_paths.log_dir}[kind]()
+    return {
+        "data": pt_paths.data_dir,
+        "cache": pt_paths.cache_dir,
+        "log": pt_paths.log_dir,
+    }[kind]()
 
 
 # --- the run ----------------------------------------------------------------------------
 
 
-def migrate(legacy_dir: Optional[str] = None, legacy_install_dir: Optional[str] = None,
-            write_report: bool = True) -> Report:
+def migrate(
+    legacy_dir: Optional[str] = None,
+    legacy_install_dir: Optional[str] = None,
+    write_report: bool = True,
+) -> Report:
     """Copy everything from the legacy folders that is not migrated yet."""
     legacy = os.path.abspath(legacy_dir or pt_paths.legacy_dir())
     root = os.path.abspath(legacy_install_dir or pt_paths.legacy_install_dir())
     report = Report()
     state = _State()
-    units: List[List[str]] = []  # redundant legacy files; a database with its sidecars is one unit
+    units: List[List[str]] = (
+        []
+    )  # redundant legacy files; a database with its sidecars is one unit
 
     # 1-2. config files and credentials; in a git checkout the settings other
     # branches read are recorded as kept, so a later run from elsewhere keeps them too
@@ -1152,7 +1329,12 @@ def migrate(legacy_dir: Optional[str] = None, legacy_install_dir: Optional[str] 
     for name in CONFIG_FILES:
         source = os.path.join(legacy, name)
         if os.path.isfile(source) and _migrate_config(
-            source, name, report, state, (legacy, root), keep=checkout and name in BRANCH_SETTINGS,
+            source,
+            name,
+            report,
+            state,
+            (legacy, root),
+            keep=checkout and name in BRANCH_SETTINGS,
             label=APP,
         ):
             units.append([source])
@@ -1162,7 +1344,9 @@ def migrate(legacy_dir: Optional[str] = None, legacy_install_dir: Optional[str] 
         path = os.path.join(legacy, name)
         if os.path.isfile(path):
             report.plaintext_left.append(path)
-    for pattern in RH_BACKUP_PATTERNS:  # old plaintext copies made by the Robinhood window
+    for (
+        pattern
+    ) in RH_BACKUP_PATTERNS:  # old plaintext copies made by the Robinhood window
         for name in fnmatch.filter(_listdir(legacy), pattern):
             path = os.path.join(legacy, name)
             report.plaintext_left.append(path)
@@ -1177,7 +1361,10 @@ def migrate(legacy_dir: Optional[str] = None, legacy_install_dir: Optional[str] 
     hub = os.path.join(legacy, pt_paths.HUB_DIR_NAME)
     if os.path.isdir(hub) and not _through_link(hub, legacy):
         _copy_tree(
-            hub, pt_paths.hub_dir(), copies, APP,
+            hub,
+            pt_paths.hub_dir(),
+            copies,
+            APP,
             redirect={"candles": os.path.join(pt_paths.cache_dir(), "candles")},
         )
     neural_root = pt_paths.neural_dir()
@@ -1195,7 +1382,11 @@ def migrate(legacy_dir: Optional[str] = None, legacy_install_dir: Optional[str] 
                 copies.add(src, os.path.join(_dest_dir(kind), name), label)
         for name in fnmatch.filter(_listdir(base), "emergency_snapshot_*.json"):
             if not _linked(os.path.join(base, name)):
-                copies.add(os.path.join(base, name), os.path.join(pt_paths.log_dir(), name), label)
+                copies.add(
+                    os.path.join(base, name),
+                    os.path.join(pt_paths.log_dir(), name),
+                    label,
+                )
         logs = os.path.join(base, "logs")
         if os.path.isdir(logs) and not _through_link(logs, base):
             _copy_tree(logs, os.path.join(pt_paths.log_dir(), "legacy"), copies, label)
@@ -1203,10 +1394,13 @@ def migrate(legacy_dir: Optional[str] = None, legacy_install_dir: Optional[str] 
 
     # Safe to remove: every part of the unit exists and is recorded (hash and copy).
     recorded = state.data["files"]
-    units = sorted({
-        tuple(unit) for unit in units
-        if unit and all(os.path.exists(p) and p in recorded for p in unit)
-    })
+    units = sorted(
+        {
+            tuple(unit)
+            for unit in units
+            if unit and all(os.path.exists(p) and p in recorded for p in unit)
+        }
+    )
     state.data["removable"] = [list(unit) for unit in units]
     report.removable = sorted({p for unit in units for p in unit})
     state.save()
@@ -1240,18 +1434,22 @@ def write_report_file(report: Report, records: Optional[Dict[str, dict]] = None)
             "`app/`) or `<name>.conflict-root.<ext>` (from the install folder), with `-2`, `-3`, "
             "... if that name was taken. If both old folders held a different version of a file "
             "the new location did not have yet, the newer one got the normal name. PowerTrader "
-            "uses only the file with the normal name (marked \"in use\"): compare the two and copy "
+            'uses only the file with the normal name (marked "in use"): compare the two and copy '
             "over anything you need. A conflict copy of a config file holds no credentials.",
             "",
         ] + conflicts
     sections = (
         ("Copied", [f"* `{s}` -> `{t}`" for s, t in report.copied]),
-        ("Credentials moved to the OS keyring (field names only)",
-         [f"* `{e}` (from `{s}`)" for s, e in report.secrets]),
+        (
+            "Credentials moved to the OS keyring (field names only)",
+            [f"* `{e}` (from `{s}`)" for s, e in report.secrets],
+        ),
         ("Conflicts (nothing in the new location was replaced)", conflicts),
         ("Not migrated", [f"* `{s}`: {m}" for s, m in report.errors]),
-        ("Old files that still hold plaintext credentials",
-         [f"* `{p}`" for p in dict.fromkeys(report.plaintext_left)]),
+        (
+            "Old files that still hold plaintext credentials",
+            [f"* `{p}`" for p in dict.fromkeys(report.plaintext_left)],
+        ),
     )
     for title, items in sections:
         if items:
@@ -1295,7 +1493,9 @@ def _kept_reason(path: str, record: Optional[dict] = None) -> Optional[str]:
     roots = [os.path.dirname(os.path.dirname(os.path.abspath(path)))]
     if _same_file(path, os.path.join(pt_paths.legacy_dir(), name)):
         roots.append(pt_paths.legacy_install_dir())
-    if (isinstance(record, dict) and record.get("keep")) or any(_git_checkout(r) for r in roots):
+    if (isinstance(record, dict) and record.get("keep")) or any(
+        _git_checkout(r) for r in roots
+    ):
         return KEPT_FOR_BRANCHES
     return None
 
@@ -1303,13 +1503,17 @@ def _kept_reason(path: str, record: Optional[dict] = None) -> Optional[str]:
 def _valid_record(record) -> bool:
     return (
         isinstance(record, dict)
-        and isinstance(record.get("sha256"), str) and len(record["sha256"]) == 64
-        and isinstance(record.get("copy"), list) and bool(record["copy"])
+        and isinstance(record.get("sha256"), str)
+        and len(record["sha256"]) == 64
+        and isinstance(record.get("copy"), list)
+        and bool(record["copy"])
         and all(isinstance(c, str) and c for c in record["copy"])
     )
 
 
-def _refusal(unit: List[str], files: Dict[str, dict], suffix: str = "") -> Optional[str]:
+def _refusal(
+    unit: List[str], files: Dict[str, dict], suffix: str = ""
+) -> Optional[str]:
     """Why ``unit`` must not be deleted now, or None. Every part must be
     (1) recorded as migrated, with a hash and a copy, and not in a folder
     PowerTrader uses now, (2) unchanged: the SHA-256 recorded at migration,
@@ -1326,8 +1530,12 @@ def _refusal(unit: List[str], files: Dict[str, dict], suffix: str = "") -> Optio
         r.get("real") and _real(p + suffix) != r["real"] + os.path.normcase(suffix)
         for p, r in zip(unit, records)
     ):
-        return LINKED  # a folder on its path became a link: the file lives elsewhere now
-    if any(os.path.isfile(unit[0] + s) and unit[0] + s not in unit for s in SQLITE_SIDECARS):
+        return (
+            LINKED  # a folder on its path became a link: the file lives elsewhere now
+        )
+    if any(
+        os.path.isfile(unit[0] + s) and unit[0] + s not in unit for s in SQLITE_SIDECARS
+    ):
         return CHANGED
     for path, record in zip(unit, records):
         if not os.path.isfile(path + suffix):
@@ -1339,7 +1547,10 @@ def _refusal(unit: List[str], files: Dict[str, dict], suffix: str = "") -> Optio
             return f"could not be read ({type(exc).__name__})"
     copies = [c for r in records for c in r["copy"]]
     if not all(_copy_exists(c) for c in copies) or any(
-        _same_file(c, p + suffix) for c in copies if not c.startswith(KEYRING_COPY) for p in unit
+        _same_file(c, p + suffix)
+        for c in copies
+        if not c.startswith(KEYRING_COPY)
+        for p in unit
     ):
         return NO_COPY
     for side in SQLITE_DATA_SIDECARS:
@@ -1401,7 +1612,9 @@ def _restore(aside: List[str]) -> List[str]:
                 continue
             except OSError:
                 pass
-        logger.warning("Could not restore %s (left as %s)", path, path + REMOVING_SUFFIX)
+        logger.warning(
+            "Could not restore %s (left as %s)", path, path + REMOVING_SUFFIX
+        )
         left.append(path)
     return left
 
@@ -1411,12 +1624,21 @@ def _put_back(unit: List[str], aside: List[str], reason: str) -> List[Tuple[str,
     ``reason``, naming the file a part was left as if it could not go back."""
     left = _restore(aside)
     return [
-        (p, f"{reason}, left as {os.path.basename(p)}{REMOVING_SUFFIX}" if p in left else reason)
+        (
+            p,
+            (
+                f"{reason}, left as {os.path.basename(p)}{REMOVING_SUFFIX}"
+                if p in left
+                else reason
+            ),
+        )
         for p in unit
     ]
 
 
-def _delete_unit(unit: List[str], files: Dict[str, dict]) -> Tuple[List[str], List[Tuple[str, str]]]:
+def _delete_unit(
+    unit: List[str], files: Dict[str, dict]
+) -> Tuple[List[str], List[Tuple[str, str]]]:
     """Delete all parts or none. A part that cannot be deleted
     (``_cannot_delete``) stops the unit before anything is touched. Each part
     is then renamed aside, so a part that cannot go (a database another
@@ -1441,11 +1663,14 @@ def _delete_unit(unit: List[str], files: Dict[str, dict]) -> Tuple[List[str], Li
         try:
             os.rename(path, path + REMOVING_SUFFIX)
         except OSError as exc:
-            return [], _put_back(unit, aside, f"could not be removed ({type(exc).__name__})")
+            return [], _put_back(
+                unit, aside, f"could not be removed ({type(exc).__name__})"
+            )
         aside.append(path)
     names = set(unit) | {unit[0] + s for s in SQLITE_SIDECARS}
     reason = (
-        CHANGED if any(os.path.lexists(n) for n in names)
+        CHANGED
+        if any(os.path.lexists(n) for n in names)
         else _refusal(unit, files, REMOVING_SUFFIX)
     )
     if reason is not None:
@@ -1464,7 +1689,9 @@ def _delete_unit(unit: List[str], files: Dict[str, dict]) -> Tuple[List[str], Li
     return list(unit), []
 
 
-def remove_old_files(paths: Optional[List[str]] = None, confirmed: bool = False) -> Removal:
+def remove_old_files(
+    paths: Optional[List[str]] = None, confirmed: bool = False
+) -> Removal:
     """The one code path behind **Remove old files** (the hub dialog and
     ``--remove-old-files``). Each legacy file is checked against the migration
     record (``_refusal``); a file that fails is refused with the reason, and
@@ -1519,7 +1746,9 @@ def remove_old_files(paths: Optional[List[str]] = None, confirmed: bool = False)
             result.removable += deleted
             result.removed += deleted
             result.refused += refused
-    for folder in sorted({os.path.dirname(p) for p in result.removed}, key=len, reverse=True):
+    for folder in sorted(
+        {os.path.dirname(p) for p in result.removed}, key=len, reverse=True
+    ):
         _prune_empty(folder)
     return result
 
@@ -1529,7 +1758,9 @@ def removable_legacy_files() -> List[str]:
     return remove_old_files().removable
 
 
-def remove_legacy_files(paths: Optional[List[str]] = None, confirmed: bool = False) -> List[str]:
+def remove_legacy_files(
+    paths: Optional[List[str]] = None, confirmed: bool = False
+) -> List[str]:
     """Delete migrated legacy copies through ``remove_old_files``; returns the
     deleted files. Does nothing unless ``confirmed`` is True."""
     if not confirmed:
@@ -1541,7 +1772,12 @@ def _prune_empty(folder: str) -> None:
     """Remove now-empty legacy data folders (hub_data/...), never a root folder
     (however its path is spelled) and never a link or junction."""
     roots = {
-        _real(p) for p in (pt_paths.legacy_dir(), pt_paths.legacy_install_dir(), pt_paths.program_dir())
+        _real(p)
+        for p in (
+            pt_paths.legacy_dir(),
+            pt_paths.legacy_install_dir(),
+            pt_paths.program_dir(),
+        )
     }
     while folder and os.path.isdir(folder) and not os.listdir(folder):
         if _real(folder) in roots or _linked(folder):
@@ -1568,7 +1804,9 @@ def _not_removed_text(*results: Removal, limit: int = 15) -> str:
     lines = [line for result in results for line in result.not_removed()]
     if not lines:
         return ""
-    return "\n\nNot removed:\n" + "\n".join(lines[:limit] + (["..."] if len(lines) > limit else []))
+    return "\n\nNot removed:\n" + "\n".join(
+        lines[:limit] + (["..."] if len(lines) > limit else [])
+    )
 
 
 def run_startup_migration() -> Optional[Report]:
@@ -1605,7 +1843,9 @@ def show_migration_dialog(parent, report: Report, messagebox=None):
         + _conflicts_text(report)
         + (f"\n\nFull report: {report.report_path}" if report.report_path else "")
     )
-    ttk.Label(win, text=text, justify="left", wraplength=560).pack(padx=16, pady=(16, 8), anchor="w")
+    ttk.Label(win, text=text, justify="left", wraplength=560).pack(
+        padx=16, pady=(16, 8), anchor="w"
+    )
     buttons = ttk.Frame(win)
     buttons.pack(fill="x", padx=16, pady=(0, 16))
 
@@ -1623,7 +1863,9 @@ def show_migration_dialog(parent, report: Report, messagebox=None):
         if not messagebox.askyesno(
             "Remove old files?",
             f"Delete these {len(files)} old file(s) from the program folder?\n\n{listing}"
-            + _not_removed_text(check) + "\n\n" + PLAINTEXT_WARNING,
+            + _not_removed_text(check)
+            + "\n\n"
+            + PLAINTEXT_WARNING,
             icon="warning",
             parent=win,
         ):
@@ -1655,12 +1897,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         description="Move PowerTraderAI settings, data and credentials out of the program folder."
     )
-    parser.add_argument("--from", dest="source", metavar="PATH",
-                        help="import one config file from any location")
-    parser.add_argument("--remove-old-files", action="store_true",
-                        help="delete migrated legacy copies that are unchanged and still "
-                             "have their migrated copy (asks first)")
-    parser.add_argument("--yes", action="store_true", help="with --remove-old-files: do not ask")
+    parser.add_argument(
+        "--from",
+        dest="source",
+        metavar="PATH",
+        help="import one config file from any location",
+    )
+    parser.add_argument(
+        "--remove-old-files",
+        action="store_true",
+        help="delete migrated legacy copies that are unchanged and still "
+        "have their migrated copy (asks first)",
+    )
+    parser.add_argument(
+        "--yes", action="store_true", help="with --remove-old-files: do not ask"
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -1674,7 +1925,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("\n".join(files))
         _print_not_removed(check)
         print(PLAINTEXT_WARNING)
-        if not args.yes and input(f"Delete these {len(files)} file(s)? Type 'yes': ").strip().lower() != "yes":
+        if (
+            not args.yes
+            and input(f"Delete these {len(files)} file(s)? Type 'yes': ")
+            .strip()
+            .lower()
+            != "yes"
+        ):
             print("Nothing deleted.")
             return 1
         done = remove_old_files(files, confirmed=True)

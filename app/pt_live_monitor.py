@@ -182,7 +182,11 @@ class LiveMonitor:
         try:
             Path(self.config_path).parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_path, "w") as f:
-                json.dump(pt_secrets.strip_secret_fields(config, "monitoring config"), f, indent=2)
+                json.dump(
+                    pt_secrets.strip_secret_fields(config, "monitoring config"),
+                    f,
+                    indent=2,
+                )
             import pt_paths
 
             pt_paths.secure_file(self.config_path)

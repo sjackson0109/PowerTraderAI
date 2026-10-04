@@ -41,9 +41,15 @@ def production_files():
 def docstring_nodes(tree):
     out = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
             body = getattr(node, "body", [])
-            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+            if (
+                body
+                and isinstance(body[0], ast.Expr)
+                and isinstance(body[0].value, ast.Constant)
+            ):
                 out.add(id(body[0].value))
     return out
 
@@ -112,7 +118,10 @@ def relative_database_paths(path):
     skip = docstring_nodes(tree) | pt_paths_call_args(tree)
     found = []
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)) or id(node) in skip:
+        if (
+            not (isinstance(node, ast.Constant) and isinstance(node.value, str))
+            or id(node) in skip
+        ):
             continue
         value = node.value
         if any(ch.isspace() for ch in value) or os.path.isabs(value):

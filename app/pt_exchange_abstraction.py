@@ -361,7 +361,9 @@ class ExchangeFactory:
             creds = cls._get_credentials(exchange_type)
             # Allow public access for market data feeds (no credentials needed)
             if not creds:
-                print(f"Using public access for {exchange_type.value} (market data only)")
+                print(
+                    f"Using public access for {exchange_type.value} (market data only)"
+                )
                 creds = {}
 
         exchange_class = cls._exchanges[exchange_type]

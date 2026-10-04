@@ -24,7 +24,11 @@ import keyring.backends.fail  # noqa: E402
 import pt_secrets  # noqa: E402
 import trading_mode as tm  # noqa: E402
 from helpers_coinbase import KEY_NAME, make_ec_pem, recorded_http  # noqa: E402
-from pt_exchange_abstraction import ExchangeFactory, ExchangeManager, ExchangeType  # noqa: E402
+from pt_exchange_abstraction import (
+    ExchangeFactory,
+    ExchangeManager,
+    ExchangeType,
+)  # noqa: E402
 from pt_exchanges import BinanceExchange, CoinbaseExchange  # noqa: E402
 from pt_multi_exchange import (  # noqa: E402
     ExchangeConfig,
@@ -70,11 +74,19 @@ def file_text(manager):
 # --- one store -------------------------------------------------------------------------
 
 
-def test_gui_saved_coinbase_key_is_what_the_live_gate_builds_with(manager, memory_keyring):
+def test_gui_saved_coinbase_key_is_what_the_live_gate_builds_with(
+    manager, memory_keyring
+):
     pem = make_ec_pem()
     manager.update_exchange_credentials("coinbase", KEY_NAME, pem)
-    assert memory_keyring.entries[("SJackson.PowerTraderAI", "coinbase:key_name")] == KEY_NAME
-    assert memory_keyring.entries[("SJackson.PowerTraderAI", "coinbase:private_key")] == pem
+    assert (
+        memory_keyring.entries[("SJackson.PowerTraderAI", "coinbase:key_name")]
+        == KEY_NAME
+    )
+    assert (
+        memory_keyring.entries[("SJackson.PowerTraderAI", "coinbase:private_key")]
+        == pem
+    )
     with recorded_http() as http:
         target = tm.resolve_order_target(copy.deepcopy(LIVE_COINBASE))
     assert http.calls == []
@@ -92,10 +104,18 @@ def test_paper_mode_still_never_builds_the_exchange(manager):
 
 
 def test_config_file_holds_no_credential(manager):
-    manager.update_exchange_credentials("binance", "binance-key-value", "binance-secret-value")
+    manager.update_exchange_credentials(
+        "binance", "binance-key-value", "binance-secret-value"
+    )
     manager.update_exchange_credentials("kucoin", "ku-key", "ku-secret", "ku-pass")
     text = file_text(manager)
-    for value in ("binance-key-value", "binance-secret-value", "ku-key", "ku-secret", "ku-pass"):
+    for value in (
+        "binance-key-value",
+        "binance-secret-value",
+        "ku-key",
+        "ku-secret",
+        "ku-pass",
+    ):
         assert value not in text
     data = json.loads(text)
     for ex in data["exchanges"]:
@@ -103,7 +123,10 @@ def test_config_file_holds_no_credential(manager):
     reloaded = ExchangeConfigManager(os.path.dirname(manager.config_file))
     reloaded.load_config()
     binance = reloaded.get_exchange_config("binance")
-    assert (binance.api_key, binance.api_secret) == ("binance-key-value", "binance-secret-value")
+    assert (binance.api_key, binance.api_secret) == (
+        "binance-key-value",
+        "binance-secret-value",
+    )
     assert binance.credential_source == "keyring"
     assert reloaded.get_exchange_config("kucoin").passphrase == "ku-pass"
 
@@ -122,7 +145,9 @@ def test_removing_credentials_deletes_them_from_the_keyring(manager, memory_keyr
     assert manager.get_exchange_config("binance").api_key == ""
 
 
-def test_a_legacy_plaintext_config_is_ignored_and_never_written_back(config_dir, caplog):
+def test_a_legacy_plaintext_config_is_ignored_and_never_written_back(
+    config_dir, caplog
+):
     os.makedirs(config_dir)
     legacy = {
         "user_region": "EU",
@@ -139,7 +164,9 @@ def test_a_legacy_plaintext_config_is_ignored_and_never_written_back(config_dir,
             }
         ],
     }
-    with open(os.path.join(config_dir, "trading_config.json"), "w", encoding="utf-8") as f:
+    with open(
+        os.path.join(config_dir, "trading_config.json"), "w", encoding="utf-8"
+    ) as f:
         json.dump(legacy, f)
     m = ExchangeConfigManager(config_dir)
     with caplog.at_level(logging.WARNING):
@@ -155,7 +182,15 @@ def test_a_legacy_plaintext_config_is_ignored_and_never_written_back(config_dir,
 def test_exchange_config_json_never_supplies_credentials(tmp_path, caplog):
     path = tmp_path / "exchange_config.json"
     path.write_text(
-        json.dumps({"binance": {"api_key": "file-key", "api_secret": "file-secret", "testnet": True}}),
+        json.dumps(
+            {
+                "binance": {
+                    "api_key": "file-key",
+                    "api_secret": "file-secret",
+                    "testnet": True,
+                }
+            }
+        ),
         encoding="utf-8",
     )
     with caplog.at_level(logging.WARNING):
@@ -168,7 +203,9 @@ def test_exchange_config_json_never_supplies_credentials(tmp_path, caplog):
 # --- credentials in two places (the latent bug) -------------------------------------------
 
 
-def test_env_and_keyring_both_set_no_longer_drop_the_exchange(manager, monkeypatch, caplog):
+def test_env_and_keyring_both_set_no_longer_drop_the_exchange(
+    manager, monkeypatch, caplog
+):
     manager.update_exchange_credentials("coinbase", KEY_NAME, make_ec_pem())
     env_pem = make_ec_pem()
     monkeypatch.setenv("POWERTRADER_COINBASE_API_KEY", KEY_NAME + "-env")
@@ -190,7 +227,9 @@ def test_explicit_credentials_and_stored_ones_do_not_collide(monkeypatch):
     monkeypatch.setenv("POWERTRADER_BINANCE_API_KEY", "env-k")
     monkeypatch.setenv("POWERTRADER_BINANCE_API_SECRET", "env-s")
     em = ExchangeManager()
-    assert em.add_exchange(ExchangeType.BINANCE, api_key="given-k", api_secret="given-s")
+    assert em.add_exchange(
+        ExchangeType.BINANCE, api_key="given-k", api_secret="given-s"
+    )
     built = em.exchanges[ExchangeType.BINANCE]
     assert isinstance(built, BinanceExchange)
     assert (built.api_key, built.api_secret) == ("given-k", "given-s")
@@ -201,7 +240,9 @@ def test_explicit_credentials_and_stored_ones_do_not_collide(monkeypatch):
 # --- Robinhood ---------------------------------------------------------------------------
 
 
-def test_robinhood_credentials_live_in_the_keyring_not_in_files(memory_keyring, isolated_user_dirs):
+def test_robinhood_credentials_live_in_the_keyring_not_in_files(
+    memory_keyring, isolated_user_dirs
+):
     import base64
 
     from pt_credentials import KeyringCredentialManager, get_credentials
@@ -209,8 +250,14 @@ def test_robinhood_credentials_live_in_the_keyring_not_in_files(memory_keyring, 
     seed = base64.b64encode(os.urandom(32)).decode()
     mgr = KeyringCredentialManager()
     assert mgr.encrypt_credentials("rh.test-key", seed)
-    assert memory_keyring.entries[("SJackson.PowerTraderAI", "robinhood:api_key")] == "rh.test-key"
-    assert memory_keyring.entries[("SJackson.PowerTraderAI", "robinhood:private_key")] == seed
+    assert (
+        memory_keyring.entries[("SJackson.PowerTraderAI", "robinhood:api_key")]
+        == "rh.test-key"
+    )
+    assert (
+        memory_keyring.entries[("SJackson.PowerTraderAI", "robinhood:private_key")]
+        == seed
+    )
     assert get_credentials() == ("rh.test-key", seed)
     assert mgr.has_encrypted_credentials() and not mgr.has_plaintext_credentials()
     assert mgr.check_rotation_warning() is None
@@ -232,7 +279,9 @@ def test_robinhood_env_wins_over_keyring(monkeypatch):
     assert get_credentials() == ("rh.env", "ZW52")
 
 
-def test_robinhood_does_not_read_the_old_plaintext_or_vault_files(isolated_user_dirs, monkeypatch):
+def test_robinhood_does_not_read_the_old_plaintext_or_vault_files(
+    isolated_user_dirs, monkeypatch
+):
     from pt_credentials import get_credentials
 
     legacy = isolated_user_dirs["legacy"]
@@ -252,7 +301,9 @@ def test_without_a_keyring_nothing_is_stored_and_trading_stays_paper(manager):
     with pytest.raises(pt_secrets.KeyringUnavailable) as err:
         manager.update_exchange_credentials("coinbase", KEY_NAME, make_ec_pem())
     assert "POWERTRADER_COINBASE_API_KEY" in str(err.value)
-    assert KEY_NAME not in file_text(manager) and "PRIVATE KEY" not in file_text(manager)
+    assert KEY_NAME not in file_text(manager) and "PRIVATE KEY" not in file_text(
+        manager
+    )
     target = tm.resolve_order_target(copy.deepcopy(PAPER))
     assert not target.is_live
 
@@ -286,7 +337,9 @@ class TestSetupWindowEcho(unittest.TestCase):
             p = mock.patch.object(exchange_config_gui.messagebox, name)
             p.start()
             self.addCleanup(p.stop)
-        p = mock.patch.object(exchange_config_gui, "ExchangeConfigManager", lambda: self.manager)
+        p = mock.patch.object(
+            exchange_config_gui, "ExchangeConfigManager", lambda: self.manager
+        )
         p.start()
         self.addCleanup(p.stop)
         self.gui = exchange_config_gui.ExchangeConfigGUI(self.root)
@@ -312,7 +365,9 @@ class TestSetupWindowEcho(unittest.TestCase):
         self.assertEqual(self.gui.passphrase_var.get(), "")
         self.assertIn("already saved", self.gui.secret_hint_var.get())
         # a blank secret next to the shown key keeps the saved values
-        self.assertEqual(self.gui._form_credentials(), ("ku-key", "ku-secret-value", "ku-pass-value"))
+        self.assertEqual(
+            self.gui._form_credentials(), ("ku-key", "ku-secret-value", "ku-pass-value")
+        )
 
     def test_no_keyring_shows_the_environment_variable_alternative(self):
         import exchange_config_gui

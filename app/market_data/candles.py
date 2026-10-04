@@ -114,7 +114,9 @@ def validate_candles(df: pd.DataFrame, tf: str) -> CandleReport:
         pos = df.index.get_loc(idx)
         prev, cur = times.iloc[pos - 1], times.iloc[pos]
         gaps.append((prev + step, cur - step, int((cur - prev) / step) - 1))
-    return CandleReport(rows=len(df), first=times.iloc[0], last=times.iloc[-1], gaps=gaps)
+    return CandleReport(
+        rows=len(df), first=times.iloc[0], last=times.iloc[-1], gaps=gaps
+    )
 
 
 # --- binance klines ------------------------------------------------------------
@@ -156,8 +158,15 @@ class BinanceKlines:
         self.timeout = timeout
         self.requests_made = 0
 
-    def _page(self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int]) -> List[list]:
-        params = {"symbol": symbol.upper(), "interval": tf, "startTime": start_ms, "limit": PAGE_LIMIT}
+    def _page(
+        self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int]
+    ) -> List[list]:
+        params = {
+            "symbol": symbol.upper(),
+            "interval": tf,
+            "startTime": start_ms,
+            "limit": PAGE_LIMIT,
+        }
         if end_ms is not None:
             params["endTime"] = end_ms
         url = f"{KLINES_URL}?{urllib.parse.urlencode(params)}"
@@ -171,21 +180,29 @@ class BinanceKlines:
                 # 429/418: rate limited -> honour Retry-After; 5xx: transient
                 retryable = exc.code in (418, 429) or exc.code >= 500
                 if not retryable or attempt == self.max_retries:
-                    raise CandleFetchError(f"klines HTTP {exc.code} for {symbol} {tf}") from exc
+                    raise CandleFetchError(
+                        f"klines HTTP {exc.code} for {symbol} {tf}"
+                    ) from exc
                 retry_after = None
                 try:
-                    retry_after = float(exc.headers.get("Retry-After")) if exc.headers else None
+                    retry_after = (
+                        float(exc.headers.get("Retry-After")) if exc.headers else None
+                    )
                 except (TypeError, ValueError):
                     retry_after = None
                 self._sleep(retry_after if retry_after is not None else delay)
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 if attempt == self.max_retries:
-                    raise CandleFetchError(f"klines unreachable for {symbol} {tf}: {exc}") from exc
+                    raise CandleFetchError(
+                        f"klines unreachable for {symbol} {tf}: {exc}"
+                    ) from exc
                 self._sleep(delay)
             delay = min(delay * 2, 30.0)
         raise CandleFetchError("unreachable")  # pragma: no cover
 
-    def fetch(self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int] = None) -> List[list]:
+    def fetch(
+        self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int] = None
+    ) -> List[list]:
         """All klines with open_time in [start_ms, end_ms] (inclusive), paginated."""
         step_ms = timeframe_seconds(tf) * 1000
         out: List[list] = []
@@ -214,7 +231,9 @@ def _read_cache(path: str) -> pd.DataFrame:
     if raw.empty:
         return _frame_from_klines([])
     df = raw.copy()
-    df["open_time"] = pd.to_datetime(df["open_time_ms"].astype("int64"), unit="ms", utc=True)
+    df["open_time"] = pd.to_datetime(
+        df["open_time_ms"].astype("int64"), unit="ms", utc=True
+    )
     return df[CANDLE_COLUMNS].reset_index(drop=True)
 
 
@@ -223,7 +242,11 @@ def _write_cache(path: str, df: pd.DataFrame) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     epoch = pd.Timestamp("1970-01-01", tz="UTC")
     out = df[_NUMERIC].copy()
-    out.insert(0, "open_time_ms", ((df["open_time"] - epoch) // pd.Timedelta(milliseconds=1)).astype("int64"))
+    out.insert(
+        0,
+        "open_time_ms",
+        ((df["open_time"] - epoch) // pd.Timedelta(milliseconds=1)).astype("int64"),
+    )
     tmp = f"{path}.tmp"
     out.to_csv(tmp, index=False)
     os.replace(tmp, path)
@@ -258,7 +281,9 @@ def get_candles(
     now_ts = to_utc(now) if now is not None else pd.Timestamp.now(tz="UTC")
     path = cache_path(symbol, tf, cache_dir)
     cached = _read_cache(path)
-    validate_candles(cached, tf)  # a corrupt cache is an error, not something to repair silently
+    validate_candles(
+        cached, tf
+    )  # a corrupt cache is an error, not something to repair silently
 
     # Ranges are (first open_time, last open_time) INCLUSIVE; bars opening at or
     # after ``end`` (exclusive) or after ``now`` are not wanted.
@@ -286,9 +311,11 @@ def get_candles(
         for a, b in want:
             rows = fetcher.fetch(symbol, tf, _ms(a), _ms(b))
             frames.append(_closed_only(_frame_from_klines(rows), tf, now_ts))
-        merged = pd.concat([f for f in frames if not f.empty], ignore_index=True) if any(
-            not f.empty for f in frames
-        ) else _frame_from_klines([])
+        merged = (
+            pd.concat([f for f in frames if not f.empty], ignore_index=True)
+            if any(not f.empty for f in frames)
+            else _frame_from_klines([])
+        )
         merged = (
             merged.drop_duplicates("open_time", keep="last")
             .sort_values("open_time")

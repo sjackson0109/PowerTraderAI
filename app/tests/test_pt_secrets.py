@@ -81,7 +81,9 @@ def test_credentials_map_fields_to_connector_arguments(memory_keyring):
     creds = pt_secrets.get_credentials("coinbase")
     assert dict(creds) == {"api_key": KEY_NAME, "api_secret": "pem"}
     assert creds.source == "keyring"
-    pt_secrets.set_credentials("kucoin", {"api_key": "k", "api_secret": "s", "passphrase": "p"})
+    pt_secrets.set_credentials(
+        "kucoin", {"api_key": "k", "api_secret": "s", "passphrase": "p"}
+    )
     assert dict(pt_secrets.get_credentials("kucoin")) == {
         "api_key": "k",
         "api_secret": "s",
@@ -94,7 +96,10 @@ def test_passphrase_is_optional_but_key_and_secret_are_required(memory_keyring):
     assert not pt_secrets.has_credentials("binance")
     assert pt_secrets.get_credentials("binance") is None
     pt_secrets.set_secret("binance", "api_secret", "s")
-    assert dict(pt_secrets.get_credentials("binance")) == {"api_key": "k", "api_secret": "s"}
+    assert dict(pt_secrets.get_credentials("binance")) == {
+        "api_key": "k",
+        "api_secret": "s",
+    }
 
 
 def test_empty_value_deletes_and_delete_reports(memory_keyring):
@@ -108,7 +113,9 @@ def test_empty_value_deletes_and_delete_reports(memory_keyring):
 
 def test_unknown_field_is_refused(memory_keyring):
     with pytest.raises(pt_secrets.UnknownSecretField):
-        pt_secrets.set_secret("coinbase", "api_secret", "x")  # coinbase uses private_key
+        pt_secrets.set_secret(
+            "coinbase", "api_secret", "x"
+        )  # coinbase uses private_key
     with pytest.raises(pt_secrets.UnknownSecretField):
         pt_secrets.get_secret("binance:x", "api_key")
 
@@ -116,8 +123,12 @@ def test_unknown_field_is_refused(memory_keyring):
 # --- precedence --------------------------------------------------------------------
 
 
-def test_environment_wins_over_keyring_and_the_source_is_logged(memory_keyring, monkeypatch, caplog):
-    pt_secrets.set_credentials("coinbase", {"key_name": "keyring-key", "private_key": "keyring-pem"})
+def test_environment_wins_over_keyring_and_the_source_is_logged(
+    memory_keyring, monkeypatch, caplog
+):
+    pt_secrets.set_credentials(
+        "coinbase", {"key_name": "keyring-key", "private_key": "keyring-pem"}
+    )
     monkeypatch.setenv("POWERTRADER_COINBASE_API_KEY", "env-key-value")
     monkeypatch.setenv("POWERTRADER_COINBASE_API_SECRET", "env-pem-value")
     with caplog.at_level(logging.WARNING, logger="pt_secrets"):
@@ -131,7 +142,9 @@ def test_environment_wins_over_keyring_and_the_source_is_logged(memory_keyring, 
         assert value not in text
 
 
-def test_an_incomplete_environment_set_is_not_mixed_with_the_keyring(memory_keyring, monkeypatch):
+def test_an_incomplete_environment_set_is_not_mixed_with_the_keyring(
+    memory_keyring, monkeypatch
+):
     pt_secrets.set_credentials("binance", {"api_key": "kr-k", "api_secret": "kr-s"})
     monkeypatch.setenv("POWERTRADER_BINANCE_API_KEY", "env-k")
     creds = pt_secrets.get_credentials("binance")
@@ -144,7 +157,10 @@ def test_environment_alone_works_without_any_keyring(monkeypatch):
     monkeypatch.setenv("POWERTRADER_KRAKEN_API_KEY", "k")
     monkeypatch.setenv("POWERTRADER_KRAKEN_API_SECRET", "s")
     creds = pt_secrets.get_credentials("kraken")
-    assert creds.source == "environment" and dict(creds) == {"api_key": "k", "api_secret": "s"}
+    assert creds.source == "environment" and dict(creds) == {
+        "api_key": "k",
+        "api_secret": "s",
+    }
 
 
 def test_robinhood_private_key_env_name_and_alias(monkeypatch):
@@ -153,7 +169,10 @@ def test_robinhood_private_key_env_name_and_alias(monkeypatch):
     assert pt_secrets.get_secret("robinhood", "private_key").reveal() == "alias"
     monkeypatch.setenv("POWERTRADER_ROBINHOOD_PRIVATE_KEY", "primary")
     assert pt_secrets.get_secret("robinhood", "private_key").reveal() == "primary"
-    assert dict(pt_secrets.get_credentials("robinhood")) == {"api_key": "rk", "api_secret": "primary"}
+    assert dict(pt_secrets.get_credentials("robinhood")) == {
+        "api_key": "rk",
+        "api_secret": "primary",
+    }
 
 
 def test_env_var_table_is_complete_for_every_exchange():
@@ -173,9 +192,13 @@ def test_env_var_table_is_complete_for_every_exchange():
 
 
 @pytest.mark.parametrize(
-    "backend", [keyring.backends.fail.Keyring(), keyring.backends.null.Keyring()], ids=["fail", "null"]
+    "backend",
+    [keyring.backends.fail.Keyring(), keyring.backends.null.Keyring()],
+    ids=["fail", "null"],
 )
-def test_no_backend_refuses_and_writes_no_file(backend, isolated_user_dirs, tmp_path, monkeypatch):
+def test_no_backend_refuses_and_writes_no_file(
+    backend, isolated_user_dirs, tmp_path, monkeypatch
+):
     keyring.set_keyring(backend)
     monkeypatch.chdir(tmp_path)
     before = set(os.listdir(tmp_path))
@@ -183,7 +206,10 @@ def test_no_backend_refuses_and_writes_no_file(backend, isolated_user_dirs, tmp_
     with pytest.raises(pt_secrets.KeyringUnavailable) as err:
         pt_secrets.set_secret("coinbase", "private_key", "plaintext-must-not-land")
     message = str(err.value)
-    assert "POWERTRADER_COINBASE_API_KEY" in message and "POWERTRADER_COINBASE_API_SECRET" in message
+    assert (
+        "POWERTRADER_COINBASE_API_KEY" in message
+        and "POWERTRADER_COINBASE_API_SECRET" in message
+    )
     assert "paper mode" in message
     assert "plaintext-must-not-land" not in message
     with pytest.raises(pt_secrets.KeyringUnavailable):
@@ -266,7 +292,9 @@ def test_secret_never_shows_itself():
 
 
 def test_credentials_repr_is_redacted(memory_keyring):
-    pt_secrets.set_credentials("binance", {"api_key": "visible-key-1234", "api_secret": "hidden-secret-5678"})
+    pt_secrets.set_credentials(
+        "binance", {"api_key": "visible-key-1234", "api_secret": "hidden-secret-5678"}
+    )
     creds = pt_secrets.get_credentials("binance")
     for shown in (repr(creds), str(creds), f"{creds}", repr([creds])):
         assert "visible-key-1234" not in shown and "hidden-secret-5678" not in shown
@@ -275,7 +303,9 @@ def test_credentials_repr_is_redacted(memory_keyring):
 
 def test_values_never_reach_the_logs(memory_keyring, caplog, monkeypatch):
     with caplog.at_level(logging.DEBUG):
-        pt_secrets.set_credentials("binance", {"api_key": "log-key-value", "api_secret": "log-secret-value"})
+        pt_secrets.set_credentials(
+            "binance", {"api_key": "log-key-value", "api_secret": "log-secret-value"}
+        )
         pt_secrets.get_credentials("binance")
         monkeypatch.setenv("POWERTRADER_BINANCE_API_KEY", "env-log-key")
         monkeypatch.setenv("POWERTRADER_BINANCE_API_SECRET", "env-log-secret")
@@ -316,7 +346,9 @@ def test_robinhood_ed25519_seed_fits(memory_keyring):
     import base64
 
     seed_b64 = base64.b64encode(os.urandom(32)).decode()
-    pt_secrets.set_credentials("robinhood", {"api_key": "rh-key", "private_key": seed_b64})
+    pt_secrets.set_credentials(
+        "robinhood", {"api_key": "rh-key", "private_key": seed_b64}
+    )
     assert pt_secrets.get_secret("robinhood", "private_key").reveal() == seed_b64
 
 
@@ -329,12 +361,15 @@ def test_oversized_value_is_refused_with_a_clear_error(memory_keyring):
     assert too_big not in message
     assert memory_keyring.entries == {}
     # largest value that fits is accepted
-    pt_secrets.set_secret("coinbase", "private_key", "A" * (pt_secrets.MAX_SECRET_BYTES // 2))
+    pt_secrets.set_secret(
+        "coinbase", "private_key", "A" * (pt_secrets.MAX_SECRET_BYTES // 2)
+    )
 
 
 def test_set_credentials_checks_every_size_before_writing(memory_keyring):
     with pytest.raises(pt_secrets.SecretTooLarge):
         pt_secrets.set_credentials(
-            "binance", {"api_key": "fine", "api_secret": "B" * pt_secrets.MAX_SECRET_BYTES}
+            "binance",
+            {"api_key": "fine", "api_secret": "B" * pt_secrets.MAX_SECRET_BYTES},
         )
     assert memory_keyring.entries == {}

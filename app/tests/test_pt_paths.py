@@ -62,7 +62,9 @@ def test_named_files_live_in_config_dir(home):
     assert pt_paths.settings_file() == os.path.join(config, "pt_config.json")
     assert pt_paths.gui_settings_file() == os.path.join(config, "gui_settings.json")
     assert pt_paths.trading_config_file() == os.path.join(config, "trading_config.json")
-    assert pt_paths.exchange_config_file() == os.path.join(config, "exchange_config.json")
+    assert pt_paths.exchange_config_file() == os.path.join(
+        config, "exchange_config.json"
+    )
 
 
 def test_program_dir_is_the_app_folder():
@@ -73,7 +75,9 @@ def test_program_dir_is_the_app_folder():
 
 def test_without_override_the_platform_folders_are_used(monkeypatch, tmp_path):
     monkeypatch.delenv("POWERTRADER_HOME")
-    fake = {k: str(tmp_path / f"platform_{k}") for k in ("config", "data", "log", "cache")}
+    fake = {
+        k: str(tmp_path / f"platform_{k}") for k in ("config", "data", "log", "cache")
+    }
     monkeypatch.setattr(pt_paths, "_platform_dir", lambda kind: fake[kind])
     assert pt_paths.config_dir() == fake["config"]
     assert pt_paths.data_dir() == fake["data"]
@@ -117,10 +121,18 @@ def test_windows_layout_matches_the_spec():
     appdata = os.environ["APPDATA"]
     local = os.environ["LOCALAPPDATA"]
     norm = os.path.normcase
-    assert norm(fresh._platform_dir("config")) == norm(os.path.join(appdata, "SJackson", "PowerTraderAI"))
-    assert norm(fresh._platform_dir("data")) == norm(os.path.join(local, "SJackson", "PowerTraderAI"))
-    assert norm(fresh._platform_dir("log")) == norm(os.path.join(local, "SJackson", "PowerTraderAI", "Logs"))
-    assert norm(fresh._platform_dir("cache")) == norm(os.path.join(local, "SJackson", "PowerTraderAI", "Cache"))
+    assert norm(fresh._platform_dir("config")) == norm(
+        os.path.join(appdata, "SJackson", "PowerTraderAI")
+    )
+    assert norm(fresh._platform_dir("data")) == norm(
+        os.path.join(local, "SJackson", "PowerTraderAI")
+    )
+    assert norm(fresh._platform_dir("log")) == norm(
+        os.path.join(local, "SJackson", "PowerTraderAI", "Logs")
+    )
+    assert norm(fresh._platform_dir("cache")) == norm(
+        os.path.join(local, "SJackson", "PowerTraderAI", "Cache")
+    )
 
 
 def test_bare_names_and_no_escape(home):

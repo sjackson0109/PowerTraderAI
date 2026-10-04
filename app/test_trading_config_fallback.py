@@ -26,7 +26,9 @@ class TestShippedExample(unittest.TestCase):
     def test_every_credential_field_is_empty(self):
         for ex in self.data["exchanges"]:
             for field in CREDENTIAL_FIELDS:
-                self.assertEqual(ex.get(field, ""), "", f"{ex['exchange_type']}.{field}")
+                self.assertEqual(
+                    ex.get(field, ""), "", f"{ex['exchange_type']}.{field}"
+                )
 
     def test_has_the_structure_the_loader_expects(self):
         self.assertTrue(self.data["exchanges"])
@@ -66,7 +68,9 @@ class TestFreshCloneFallback(unittest.TestCase):
         fresh = ExchangeConfigManager(self.tmp.name)
         fresh.load_config()
         saved = fresh.get_exchange_config(name)
-        self.assertEqual((saved.api_key, saved.api_secret), ("KEY-NAME", "SECRET-VALUE"))
+        self.assertEqual(
+            (saved.api_key, saved.api_secret), ("KEY-NAME", "SECRET-VALUE")
+        )
 
     def test_real_file_wins_over_the_example_once_it_exists(self):
         self.manager.load_config()

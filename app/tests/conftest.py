@@ -17,7 +17,9 @@ def _load_isolation():
     and .github/scripts/conftest.py load the same module)."""
     name = "powertrader_test_isolation"
     if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, os.path.join(TESTS_DIR, "isolation.py"))
+        spec = importlib.util.spec_from_file_location(
+            name, os.path.join(TESTS_DIR, "isolation.py")
+        )
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
         try:

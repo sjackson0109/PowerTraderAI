@@ -114,7 +114,9 @@ try:
 except ImportError:
     pt_secrets = None  # type: ignore[assignment]
     KeyringCredentialManager = None  # type: ignore[assignment]
-    print("Warning: pt_credentials not available — Robinhood credential setup disabled.")
+    print(
+        "Warning: pt_credentials not available — Robinhood credential setup disabled."
+    )
 
 # API Server imports
 try:
@@ -2160,7 +2162,9 @@ class PowerTraderHub(tk.Tk):
             else:
                 subprocess.Popen(["xdg-open", folder])
         except Exception as e:
-            messagebox.showerror("Couldn't open folder", f"Tried to open:\n{folder}\n\nError:\n{e}")
+            messagebox.showerror(
+                "Couldn't open folder", f"Tried to open:\n{folder}\n\nError:\n{e}"
+            )
 
     # ---- forced dark mode ----
 
@@ -2569,7 +2573,9 @@ class PowerTraderHub(tk.Tk):
         if not isinstance(data, dict):
             data = {}
         # A credential in the settings file is ignored and never written back.
-        data = pt_secrets.strip_secret_fields(data, SETTINGS_FILE) if pt_secrets else data
+        data = (
+            pt_secrets.strip_secret_fields(data, SETTINGS_FILE) if pt_secrets else data
+        )
 
         merged = dict(DEFAULT_SETTINGS)
         merged.update(data)
@@ -2581,7 +2587,9 @@ class PowerTraderHub(tk.Tk):
         data = self.settings
         if pt_secrets:
             data = pt_secrets.strip_secret_fields(data, SETTINGS_FILE)
-        pt_paths.write_private_text(pt_paths.gui_settings_file(), json.dumps(data, indent=2))
+        pt_paths.write_private_text(
+            pt_paths.gui_settings_file(), json.dumps(data, indent=2)
+        )
 
     def _apply_theme(self) -> None:
         """
@@ -7109,7 +7117,8 @@ Platform: {sys.platform}
             if getattr(self, "_coin_folders_sig", None) != sig:
                 self._coin_folders_sig = sig
                 self.coin_folders = build_coin_folders(
-                    pt_paths.neural_dir(self.settings.get("main_neural_dir")), self.coins
+                    pt_paths.neural_dir(self.settings.get("main_neural_dir")),
+                    self.coins,
                 )
         except Exception:
             pass
@@ -7746,7 +7755,10 @@ Platform: {sys.platform}
             KeyringCredentialManager().delete_credentials()
             _refresh_api_status()
             note = ""
-            if pt_secrets and pt_secrets.credential_source("robinhood") == pt_secrets.SOURCE_ENV:
+            if (
+                pt_secrets
+                and pt_secrets.credential_source("robinhood") == pt_secrets.SOURCE_ENV
+            ):
                 note = (
                     "\n\nPOWERTRADER_ROBINHOOD_API_KEY / _PRIVATE_KEY are still set in the "
                     "environment and will keep being used until you unset them."
@@ -8344,12 +8356,14 @@ Platform: {sys.platform}
         r += 1
 
         # --- Paths (FDS-108a): where settings, data and logs live ---
-        ttk.Label(frm, text="Paths (read-only program folder is not used for your files):").grid(
-            row=r, column=0, columnspan=3, sticky="w", pady=(0, 4)
-        )
+        ttk.Label(
+            frm, text="Paths (read-only program folder is not used for your files):"
+        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=(0, 4))
         r += 1
         for label, folder in self._user_folder_rows():
-            ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", padx=(0, 10), pady=3)
+            ttk.Label(frm, text=label).grid(
+                row=r, column=0, sticky="w", padx=(0, 10), pady=3
+            )
             path_row = ttk.Frame(frm)
             path_row.grid(row=r, column=1, columnspan=2, sticky="ew", pady=3)
             path_row.columnconfigure(0, weight=1)

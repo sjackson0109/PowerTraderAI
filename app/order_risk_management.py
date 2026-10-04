@@ -1189,9 +1189,7 @@ class RiskEngine:
 _risk_engine = None
 
 
-def get_risk_engine(
-    config: Dict = None, db_path: Optional[str] = None
-) -> RiskEngine:
+def get_risk_engine(config: Dict = None, db_path: Optional[str] = None) -> RiskEngine:
     """Get the global risk engine instance."""
     global _risk_engine
     if _risk_engine is None:

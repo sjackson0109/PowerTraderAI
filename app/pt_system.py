@@ -57,7 +57,9 @@ class PowerTraderSystem:
         """
         import pt_paths
 
-        self.config_dir = Path(config_dir or os.path.join(pt_paths.config_dir(), "yaml"))
+        self.config_dir = Path(
+            config_dir or os.path.join(pt_paths.config_dir(), "yaml")
+        )
         self.data_dir = Path(data_dir or pt_paths.data_dir())
         self.start_time = None
         self.is_running = False

@@ -51,7 +51,9 @@ pt_paths._platform_dir = _blocked_platform_dir
 
 def real_platform_dirs():
     """The real per-user folders (strings only; nothing is created or read)."""
-    return {kind: _real_platform_dir(kind) for kind in ("config", "data", "log", "cache")}
+    return {
+        kind: _real_platform_dir(kind) for kind in ("config", "data", "log", "cache")
+    }
 
 
 def _snapshot(paths):

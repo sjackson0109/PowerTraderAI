@@ -91,7 +91,9 @@ def _platformdirs():
     try:
         import platformdirs
     except ImportError as exc:
-        raise MissingDependency("platformdirs", "to find its settings and data folders") from exc
+        raise MissingDependency(
+            "platformdirs", "to find its settings and data folders"
+        ) from exc
     return platformdirs
 
 
@@ -201,7 +203,9 @@ def models_dir(create: bool = True) -> str:
     return make_private_dir(path) if create else path
 
 
-def user_dir_setting(configured: Optional[str], default: str, what: str = "folder") -> str:
+def user_dir_setting(
+    configured: Optional[str], default: str, what: str = "folder"
+) -> str:
     """Resolve a folder the user may override in settings (``hub_data_dir``,
     ``main_neural_dir``). Blank -> ``default``. A relative value is resolved
     against ``data_dir()``. A value inside the read-only program/install folder
@@ -229,7 +233,9 @@ def user_dir_setting(configured: Optional[str], default: str, what: str = "folde
 def neural_dir(configured: Optional[str] = None) -> str:
     """Root of the per-coin neural folders (``main_neural_dir``): BTC uses it
     directly, other coins use ``<root>/<SYMBOL>``. Default ``models_dir()``."""
-    return make_private_dir(user_dir_setting(configured, models_dir(), "main_neural_dir"))
+    return make_private_dir(
+        user_dir_setting(configured, models_dir(), "main_neural_dir")
+    )
 
 
 def hub_dir_for(configured: Optional[str] = None) -> str:

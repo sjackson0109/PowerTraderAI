@@ -86,7 +86,8 @@ class Strategy(ABC):
         check_candles(candles)
         if len(candles) < self.warmup_bars:
             return Signal.hold(
-                "WARMUP", {"bars": float(len(candles)), "needed": float(self.warmup_bars)}
+                "WARMUP",
+                {"bars": float(len(candles)), "needed": float(self.warmup_bars)},
             )
         return self.compute(candles)
 

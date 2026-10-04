@@ -58,7 +58,9 @@ def compute_kpis(
 
     years = n_bars * tf_seconds / SECONDS_PER_YEAR
     if years > 0 and final > 0 and initial_equity > 0:
-        out["cagr_pct"] = _num(((final / initial_equity) ** (1.0 / years) - 1.0) * 100.0)
+        out["cagr_pct"] = _num(
+            ((final / initial_equity) ** (1.0 / years) - 1.0) * 100.0
+        )
 
     peaks = np.maximum.accumulate(eq)
     out["max_drawdown_pct"] = _num(float(np.min(eq / peaks - 1.0)) * 100.0)
@@ -71,7 +73,9 @@ def compute_kpis(
             out["sharpe"] = _num(float(np.mean(rets)) / std * math.sqrt(bars_per_year))
         downside = float(np.sqrt(np.mean(np.minimum(rets, 0.0) ** 2)))
         if downside > 0:
-            out["sortino"] = _num(float(np.mean(rets)) / downside * math.sqrt(bars_per_year))
+            out["sortino"] = _num(
+                float(np.mean(rets)) / downside * math.sqrt(bars_per_year)
+            )
 
     if trade_returns_pct:
         wins = sum(1 for r in trade_returns_pct if r > 0)

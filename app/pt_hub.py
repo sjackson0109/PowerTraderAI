@@ -6456,7 +6456,9 @@ Platform: {sys.platform}
         if indicator is None:
             return
         try:
-            path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "pt_config.json")
+            path = os.path.join(
+                os.path.abspath(os.path.dirname(__file__)), "pt_config.json"
+            )
             mtime = os.path.getmtime(path) if os.path.exists(path) else None
         except OSError:
             mtime = None

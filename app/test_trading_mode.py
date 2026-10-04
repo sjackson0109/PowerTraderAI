@@ -260,7 +260,9 @@ class SettingsPersistenceTests(unittest.TestCase):
         m = self.manager()
         m.set_trading_mode("live", broker="kraken", persist=False)
         self.assertEqual(pt_settings_manager.DEFAULT_SETTINGS, before)
-        self.assertEqual(pt_settings_manager.DEFAULT_SETTINGS["trading"]["mode"], "paper")
+        self.assertEqual(
+            pt_settings_manager.DEFAULT_SETTINGS["trading"]["mode"], "paper"
+        )
 
     def test_saved_file_is_complete_json(self):
         m = self.manager()
@@ -343,7 +345,9 @@ class PaperExchangeTests(unittest.TestCase):
     def test_buy_fills_at_ask_and_sell_at_bid(self):
         ex = self.make()
         buy = ex.place_order("BTC-USD", "buy", 1.0)
-        self.assertEqual((buy.status, buy.price, buy.exchange), ("filled", 101.0, "paper"))
+        self.assertEqual(
+            (buy.status, buy.price, buy.exchange), ("filled", 101.0, "paper")
+        )
         sell = ex.place_order("BTC-USD", "sell", 1.0)
         self.assertEqual((sell.status, sell.price), ("filled", 99.0))
 
@@ -381,7 +385,9 @@ class PaperExchangeTests(unittest.TestCase):
     def test_without_a_feed_nothing_fills_by_default(self):
         ex = tm.PaperExchange(settings_source={})  # default policy: pause
         result = ex.place_order("BTC-USD", "buy", 0.01)
-        self.assertEqual((result.status, result.reason), ("rejected", "PRICE_UNAVAILABLE"))
+        self.assertEqual(
+            (result.status, result.reason), ("rejected", "PRICE_UNAVAILABLE")
+        )
 
     def test_state_survives_a_restart(self):
         with tempfile.TemporaryDirectory() as d:
@@ -437,7 +443,9 @@ class TraderGateTests(unittest.TestCase):
         engine = SignalEngine(
             settings_source=settings, candle_provider=lambda *a, **k: pd.DataFrame()
         )
-        t = self.pt_trader.CryptoAPITrading(settings_source=settings, signal_engine=engine)
+        t = self.pt_trader.CryptoAPITrading(
+            settings_source=settings, signal_engine=engine
+        )
         t._order_poll_seconds = 0.0
         return t
 
@@ -470,7 +478,9 @@ class TraderGateTests(unittest.TestCase):
         # paper books live in their own directory, never next to the live ones
         paper_dir = os.path.join(self.tmp.name, "paper")
         self.assertTrue(os.path.isfile(os.path.join(paper_dir, "trade_history.jsonl")))
-        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "trade_history.jsonl")))
+        self.assertFalse(
+            os.path.exists(os.path.join(self.tmp.name, "trade_history.jsonl"))
+        )
 
     def test_paper_trades_update_the_ledger_and_cost_basis(self):
         trader = self.trader(copy.deepcopy(PAPER))
@@ -508,9 +518,7 @@ class TraderGateTests(unittest.TestCase):
 
         with HttpSpy() as spy, mock.patch.object(
             tm.ExchangeFactory, "get_exchange"
-        ) as get_exchange, mock.patch.object(
-            tm.urllib.request, "urlopen"
-        ) as urlopen:
+        ) as get_exchange, mock.patch.object(tm.urllib.request, "urlopen") as urlopen:
             buy = trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
             sell = trader.place_sell_order("id", "sell", "market", "BTC-USD", 1.0)
 

@@ -56,12 +56,14 @@ class TrendCrossover(Strategy):
         k = p["persistence_bars"]
         above = (fast > slow).to_numpy()
         # the last k+1 bars are all above, and the bar before them was not
-        confirmed = bool(above[-(k + 1):].all()) and not bool(above[-(k + 2)])
+        confirmed = bool(above[-(k + 1) :].all()) and not bool(above[-(k + 2)])
         if not confirmed:
             return Signal.hold("NO_FRESH_CROSS", ind)
 
         if p["regime_filter"] == "adx":
-            value = float(adx(candles["high"], candles["low"], close, p["adx_len"]).iloc[-1])
+            value = float(
+                adx(candles["high"], candles["low"], close, p["adx_len"]).iloc[-1]
+            )
             ind["adx"] = value
             ind["adx_min"] = float(p["adx_min"])
             if math.isnan(value):

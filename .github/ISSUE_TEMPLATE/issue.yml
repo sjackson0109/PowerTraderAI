@@ -1,6 +1,7 @@
 name: General issue / task
 description: Chores, refactors, docs, tests, tech debt or questions about the code.
 title: "[Task]: "
+labels: ["task", "needs-triage"]
 body:
   - type: markdown
     attributes:

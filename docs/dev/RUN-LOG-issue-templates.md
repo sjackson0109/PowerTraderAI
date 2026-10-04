@@ -182,16 +182,32 @@ so the "New issue" check is a manual step after merge.
 
 ## Owner steps
 
-1. **Turn on private vulnerability reporting**: Settings → Code security → Private vulnerability
-   reporting → Enable, or `gh api -X PUT repos/sjackson0109/PowerTraderAI/private-vulnerability-reporting`.
-   Until then the "Security vulnerability" link and `SECURITY.md` lead nowhere useful.
-2. Optional: create `task` and `needs-triage` labels, then add them to the forms' `labels:`.
+1. ~~Turn on private vulnerability reporting.~~ Done by the owner after review (`gh api` now returns
+   `{"enabled": true}`).
+2. ~~Create `task` and `needs-triage` labels.~~ Done; see "Review follow-up".
 3. After merge: open "New issue" and confirm exactly three templates (Bug report, Feature request,
    General issue / task), the two contact links, and no blank-issue option.
+
+## Review follow-up (commit 3)
+
+After the review approved the PR:
+
+* Created the labels with the commands from the owner's notes: `task` ("Chore, refactor, docs, tests
+  or tech debt", `#1D76DB`) and `needs-triage` ("New issue awaiting review", `#FBCA04`).
+* Forms: `needs-triage` added to all three; `task` added to `issue.yml`. Labels are now bug report
+  `bug` + `needs-triage`, feature request `enhancement` + `needs-triage`, task `task` + `needs-triage`.
+* `python docs/dev/check_issue_forms.py`: all OK, exit 0 (output as above).
+* The auto-labeller is **disabled**: `gh workflow list` shows `project-management.yml` as
+  `disabled_inactivity` (last run 2026-08-28). The `component-trading` side effect noted in Phase 0
+  only applies if it is re-enabled as it is now.
+* Follow-up issue #139: label from the Area answer, never set priority or phase from text, and clean
+  up the existing priority and phase labels (22 `priority-critical`, 14 issues with two priority labels,
+  8 with two phase labels).
 
 ## Rules followed
 
 * Own worktree (`..\PowerTraderAI-templates`, branch `chore/issue-templates` from `main` `d815910`).
 * Nothing under `app/` changed; no other session's files touched.
-* Staged by explicit path only. Two commits: the forms, then the checker and this log.
+* Staged by explicit path only. Three commits: the forms, the checker and this log, then the review
+  follow-up.
 * Pushed and opened a PR against `main`; not merged.

@@ -101,7 +101,7 @@ This document outlines the development workflow for transitioning PowerTrader AI
 1. **identify Task from TODO.md**
    ```bash
    # Find task in TODO.md
-   # Create GitHub issue using development-task template
+   # Create GitHub issue using the "General issue / task" form
    # Assign appropriate labels and milestone
    ```
 

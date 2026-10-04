@@ -1,0 +1,132 @@
+name: Bug report
+description: Something in PowerTraderAI isn't working as it should.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### ⚠️ Never paste API keys, secrets, private keys or account IDs
+
+        Issues are public. Redact these from logs, screenshots and settings before you submit.
+        Logs are in the folder shown in **Settings → Paths** ("Log folder").
+
+        To report a security vulnerability, don't use this form. Use the
+        **Security vulnerability** link on the "New issue" page instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the problem, including any error message the Hub showed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps that shows the problem.
+      placeholder: |
+        1. Open the Hub
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: trading-mode
+    attributes:
+      label: Trading mode
+      description: "As shown in the Hub's mode indicator (MODE: PAPER or MODE: LIVE)."
+      options:
+        - Paper
+        - Live
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: exchange
+    attributes:
+      label: Exchange
+      options:
+        - Binance
+        - Coinbase
+        - Kraken
+        - KuCoin
+        - Robinhood
+        - Other
+        - Not applicable
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Hub GUI
+        - Paper trading
+        - Live trading
+        - Strategies
+        - Risk overlays
+        - Backtester
+        - Trainer/thinker
+        - Market data
+        - Exchange connection
+        - Settings/migration
+        - Other
+
+  - type: input
+    id: version
+    attributes:
+      label: PowerTraderAI version or commit
+      description: The commit hash (`git rev-parse --short HEAD`), or the date you downloaded the code.
+      placeholder: d815910
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: From `python --version`.
+      placeholder: "3.12.4"
+
+  - type: markdown
+    attributes:
+      value: |
+        ### ⚠️ Before you paste logs
+
+        Remove API keys, secrets, private keys and account IDs. Logs are in the folder shown in
+        **Settings → Paths** ("Log folder").
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The relevant lines only. They're shown as code, so you don't need backticks.
+      render: shell
+
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Before you submit
+      options:
+        - label: I have removed any API keys, secrets and personal account details.
+          required: true

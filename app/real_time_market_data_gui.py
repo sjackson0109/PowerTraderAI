@@ -475,7 +475,7 @@ class MarketDataGUI:
         feed_status_frame = ttk.LabelFrame(self.feeds_tab, text="Feed Status")
         feed_status_frame.pack(fill="x", padx=5, pady=5)
 
-        feeds = ["Binance", "Coinbase Pro", "Kraken", "Bitfinex"]
+        feeds = ["Binance", "Coinbase", "Kraken", "Bitfinex"]
         self.feed_indicators = {}
 
         for i, feed in enumerate(feeds):

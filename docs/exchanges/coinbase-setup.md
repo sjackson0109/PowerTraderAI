@@ -4,7 +4,7 @@
 Coinbase is one of the most user-friendly and trusted cryptocurrency exchanges, especially popular in the United States and Europe. Known for strong regulatory compliance and security.
 
 ## 🌍 Regional Availability
-- **US**: Coinbase Pro/Advanced Trade (all US states except Hawaii)
+- **US**: Coinbase Advanced Trade (all US states except Hawaii)
 - **EU**: Available in 40+ European countries
 - **UK**: Fully licensed and regulated by FCA
 - **Global**: 100+ countries supported
@@ -26,7 +26,7 @@ Coinbase is one of the most user-friendly and trusted cryptocurrency exchanges, 
 ## 🚀 Step 1: Create Coinbase Account
 
 ### Registration Process
-1. **Visit** [coinbase.com](https://coinbase.com) or [pro.coinbase.com](https://pro.coinbase.com)
+1. **Visit** [coinbase.com](https://coinbase.com)
 2. **Click** "Sign up" and enter details
 3. **Verify email** through confirmation link
 4. **Complete phone verification**
@@ -48,113 +48,78 @@ Coinbase is one of the most user-friendly and trusted cryptocurrency exchanges, 
 3. **Save backup codes** in secure location
 4. **Test 2FA** with test login
 
-## 🔑 Step 2: API Key Creation
+## 🔑 Step 2: API Key Creation (Coinbase Developer Platform)
 
-### Access API Settings
-1. **Log in** to Coinbase Pro/Advanced Trade
-2. **Navigate** to Settings → API
-3. **Click** "Create New API Key"
-4. **Complete security verification** (2FA required)
+Coinbase's Advanced Trade API uses **CDP API keys**. The older Coinbase Pro keys
+(key + secret + passphrase) were retired with Coinbase Pro in 2023 and the legacy
+HMAC key/secret scheme is not accepted by the current API, so they cannot be used.
 
-### Configure API Permissions
-Select appropriate permissions:
-- ✅ **View**: Required for account info and balances
-- ✅ **Trade**: Required for placing and managing orders
-- ❌ **Transfer**: Not needed for trading (disable for security)
+1. **Sign in** at the [Coinbase Developer Platform](https://portal.cdp.coinbase.com)
+   (2FA required) and open **API Keys → Secret API Keys → Create API key**.
+2. Give it a nickname, then expand **API restrictions** and **Advanced Settings**.
+3. **Set the signature algorithm to ECDSA.** Ed25519 keys are *not* supported.
+4. Set permissions:
+   - ✅ **View**: required (this is what *Test Connection* needs)
+   - ✅ **Trade**: only if you intend live trading; not needed for paper mode
+   - ❌ **Transfer**: leave off. PowerTraderAI+ never needs to move funds, and
+     *Test Connection* warns if a key has it.
+5. Add your IP address to the **IP allowlist** (recommended).
+6. Click **Create API key**, then copy or download the two values. You cannot
+   retrieve the private key again.
 
-### API Key Configuration
-```
-Nickname: PowerTraderAI+ Bot
-Permissions:
-  ✅ View (accounts, orders, fills, payment methods)
-  ✅ Trade (buy, sell, cancel orders)
-  ❌ Transfer (send, receive crypto)
+### What you get
+- **Key name**: `organizations/<org-id>/apiKeys/<key-id>`
+- **Private key**: an EC key in PEM form, several lines:
+  ```
+  -----BEGIN EC PRIVATE KEY-----
+  ...
+  -----END EC PRIVATE KEY-----
+  ```
 
-IP Whitelist: [Your IP Address] (recommended)
-```
-
-### Save Your Credentials
-You'll receive three pieces of information:
-- **API Key**: `your_api_key_here`
-- **API Secret**: `your_api_secret_here`
-- **Passphrase**: `your_passphrase_here`
-
-⚠️ **Important**: Store all three securely - you cannot retrieve them again!
+Every request is signed with a short-lived (2 minute) ES256 JWT built from these
+two values. Source: [CDP API key authentication](https://docs.cdp.coinbase.com/coinbase-app/authentication-authorization/api-key-authentication).
 
 ## 🔐 Step 3: Configure PowerTraderAI+
 
-### Credential File Setup
-Create `credentials/coinbase_config.json`:
-```json
-{
-  "api_key": "your_api_key",
-  "api_secret": "your_api_secret",
-  "passphrase": "your_passphrase",
-  "sandbox": false,
-  "api_url": "https://api.exchange.coinbase.com"
-}
-```
-
-### Environment Variables (Production)
-```bash
-export COINBASE_API_KEY="your_api_key"
-export COINBASE_API_SECRET="your_api_secret"
-export COINBASE_PASSPHRASE="your_passphrase"
-```
-
 ### GUI Configuration
 1. Launch PowerTraderAI+: `python app/pt_hub.py`
-2. Go to **Settings** → **Exchange Provider Settings**
-3. Set **Region**: "us" or "eu"
-4. Select **Primary Exchange**: "coinbase"
-5. Click **Exchange Setup** button
-6. Enter all three credentials when prompted
+2. Go to **Settings** → **Exchange Provider Settings**, set your **Region** and
+   **Primary Exchange** to "coinbase".
+3. Click **Configure exchange APIs**, open the **Setup Exchange** tab and pick
+   **coinbase**.
+4. Paste the **Key name** and the whole **Private key** (including the BEGIN/END
+   lines; pasting it on one line or with `\n` escapes also works).
+5. Press **Test Connection**, then **Save Configuration**.
+
+Saved credentials are written to `app/trading_config.json` (`api_key` = key name,
+`api_secret` = private key) as **plain text**. That file is tracked by git: never
+commit it with a key in it.
+
+### Environment variables (alternative)
+```bash
+export POWERTRADER_COINBASE_API_KEY="organizations/<org-id>/apiKeys/<key-id>"
+export POWERTRADER_COINBASE_API_SECRET="$(cat coinbase_private_key.pem)"
+```
 
 ## 🔧 Step 4: Testing Connection
 
-### Manual Test
-```bash
-cd app
-python test_exchanges.py --exchange=coinbase
-```
+**Test Connection** makes exactly one read-only request
+(`GET /api/v3/brokerage/key_permissions`). It never places, previews or cancels
+an order, and what you typed is tested without being saved.
 
-### Expected Output
-```
-Testing Coinbase connection...
-✅ API authentication successful
-✅ Account access verified
-✅ Trading permissions confirmed
-✅ Market data retrieved
-Current BTC price: $43,250.50
-```
+| Result | Meaning |
+|---|---|
+| ✅ connection successful | Key accepted; shows whether it can view / trade / transfer |
+| ❌ credentials not valid | The pasted values are malformed; nothing was sent to Coinbase |
+| 🔑❌ authentication failed | Coinbase rejected the key (HTTP 401) |
+| 🚫 permission denied | Key accepted but lacks View (HTTP 403 or `can_view: false`) |
+| 🌐❌ network error | Could not reach Coinbase (DNS, TLS, timeout) |
+| ⚠️ unexpected response | 404 / 429 / 5xx / non-API reply; not a verdict on your key |
 
-### Programmatic Test
-```python
-from pt_exchanges import CoinbaseExchange
-import asyncio
-
-async def test_coinbase():
-    exchange = CoinbaseExchange({
-        "api_key": "your_api_key",
-        "api_secret": "your_api_secret",
-        "passphrase": "your_passphrase"
-    })
-
-    if await exchange.initialize():
-        # Test account access
-        accounts = await exchange.get_balance()
-        print(f"Accounts: {accounts}")
-
-        # Test market data
-        market_data = await exchange.get_market_data("BTC-USD")
-        print(f"BTC price: ${market_data.price}")
-
-        print("✅ Coinbase connection successful")
-    else:
-        print("❌ Connection failed")
-
-asyncio.run(test_coinbase())
-```
+> **Current scope:** the Coinbase connector authenticates and can test the key.
+> Order placement, balances and order status are **not implemented yet**, so
+> selecting Coinbase as a live broker cannot trade. Paper mode never contacts
+> Coinbase for orders.
 
 ## 💰 Step 5: Funding Your Account
 
@@ -206,7 +171,7 @@ Major cryptocurrencies available:
 - **Stop-Limit Orders**: Trigger limit order when price reached
 
 ### Fee Structure
-**Coinbase Pro/Advanced Trade Fees**:
+**Coinbase Advanced Trade Fees**:
 - **Maker**: 0.00% to 0.60% (based on volume)
 - **Taker**: 0.05% to 0.60% (based on volume)
 - **Volume tiers**: Higher volume = lower fees
@@ -220,9 +185,8 @@ Major cryptocurrencies available:
 ### Trading Parameters
 ```json
 {
-  "api_key": "your_api_key",
-  "api_secret": "your_api_secret",
-  "passphrase": "your_passphrase",
+  "api_key": "organizations/<org-id>/apiKeys/<key-id>",
+  "api_secret": "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----\n",
   "trading_config": {
     "default_order_type": "limit",
     "time_in_force": "GTC",
@@ -260,29 +224,28 @@ symbols = ["BTC-USD", "ETH-USD", "ADA-USD"]
 
 ### Common Issues
 
-#### ❌ "Invalid API Key"
+#### ❌ "authentication failed"
 **Causes**:
-- Incorrect API credentials
-- API key not activated
-- Wrong passphrase
+- Key name and private key are from different API keys
+- The key was deleted or the private key was altered when pasting
+- Computer clock is wrong (tokens last 2 minutes)
+- The key's IP allowlist does not include this machine
+- A retired Coinbase Pro key or a key + secret + passphrase set was used
 
 **Solutions**:
-1. Verify all three credentials (key, secret, passphrase)
-2. Check API key is enabled in Coinbase Pro
-3. Regenerate API key if necessary
-4. Ensure you're using Pro/Advanced Trade (not regular Coinbase)
+1. Re-copy both values from the CDP portal (include the BEGIN/END lines)
+2. Check the system clock is synchronised
+3. Check the IP allowlist, or create a new key
+4. Create the key with the ECDSA signature algorithm
 
-#### ❌ "Insufficient permissions"
+#### ❌ "permission denied"
 **Causes**:
-- API missing Trade permissions
-- Account verification incomplete
-- Region restrictions
+- The key lacks the View permission
+- Portfolio restrictions on the key exclude the default portfolio
 
 **Solutions**:
-1. Enable Trade permissions for API key
-2. Complete full account verification
-3. Check if your region supports Pro trading
-4. Verify account is in good standing
+1. Edit the key in the CDP portal and enable View (and Trade only for live use)
+2. Check the portfolio restrictions
 
 #### ❌ "Rate limit exceeded"
 **Causes**:
@@ -306,7 +269,7 @@ symbols = ["BTC-USD", "ETH-USD", "ADA-USD"]
 1. Verify symbol format (BTC-USD not BTCUSD)
 2. Check available products for your region
 3. Use only supported trading pairs
-4. Check Coinbase Pro product list
+4. Check the Coinbase product list
 
 ### Support Resources
 - **Coinbase Support**: help.coinbase.com
@@ -368,10 +331,9 @@ import aiohttp
 import asyncio
 
 class CoinbaseOptimized:
-    def __init__(self, api_key, api_secret, passphrase):
-        self.api_key = api_key
-        self.api_secret = api_secret
-        self.passphrase = passphrase
+    def __init__(self, key_name, private_key_pem):
+        self.key_name = key_name
+        self.private_key_pem = private_key_pem
         self.session = None
 
     async def __aenter__(self):
@@ -394,7 +356,7 @@ class CoinbaseOptimized:
 ```
 
 ### Fee Optimization
-- **Use Pro/Advanced**: Much lower fees than regular Coinbase
+- **Use Advanced Trade**: Much lower fees than regular Coinbase
 - **Maker orders**: Use limit orders to pay maker fees
 - **Volume tiers**: Increase trading volume for better rates
 - **USDC trading**: No fees for USD ↔ USDC conversion

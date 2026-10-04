@@ -6,7 +6,7 @@ Supports all major cryptocurrency exchanges with unified interface
 import abc
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -169,6 +169,41 @@ class OrderResult:
     age_s: Optional[float] = None  # fetched_ts - quote_ts
 
 
+class ConnectionStatus(str, Enum):
+    """Outcome of a read-only connection test (see ``check_connection``)."""
+
+    OK = "ok"
+    # Credentials are malformed; detected locally, nothing was sent.
+    INVALID_CREDENTIALS = "invalid_credentials"
+    # The exchange rejected the credentials (HTTP 401).
+    AUTH_FAILED = "auth_failed"
+    # The credentials were accepted but may not do what we need (HTTP 403, or
+    # the key lacks view permission).
+    PERMISSION_DENIED = "permission_denied"
+    # Could not reach the exchange: DNS, TLS, timeout, connection refused.
+    NETWORK_ERROR = "network_error"
+    # Reached something that did not behave like the exchange API: 404, 429,
+    # 5xx, a redirect or an unparseable body.
+    ENDPOINT_ERROR = "endpoint_error"
+    # No read-only check is implemented for this exchange.
+    UNSUPPORTED = "unsupported"
+
+
+@dataclass
+class ConnectionTestResult:
+    """Result of ``AbstractExchange.check_connection``. ``message`` is
+    user-readable and never contains credentials or tokens."""
+
+    exchange: str
+    status: ConnectionStatus
+    message: str
+    details: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def ok(self) -> bool:
+        return self.status is ConnectionStatus.OK
+
+
 class ExchangeRegion(Enum):
     """Exchange regional availability"""
 
@@ -228,6 +263,22 @@ class AbstractExchange(abc.ABC):
         """Check if exchange is available in region"""
         pass
 
+    def check_connection(self, timeout: float = 10.0) -> ConnectionTestResult:
+        """Verify the credentials with ONE read-only authenticated call.
+
+        Implementations must never place, preview or cancel an order. The
+        default reports that no check exists rather than claiming success.
+        """
+        return ConnectionTestResult(
+            exchange=self.get_exchange_name(),
+            status=ConnectionStatus.UNSUPPORTED,
+            message=(
+                f"A read-only connection test is not implemented for "
+                f"{self.get_exchange_name().title()} yet, so these credentials "
+                "were not checked."
+            ),
+        )
+
 
 class ExchangeFactory:
     """Factory for creating exchange instances"""
@@ -239,6 +290,12 @@ class ExchangeFactory:
     def register_exchange(cls, exchange_type: ExchangeType, exchange_class: type):
         """Register an exchange implementation"""
         cls._exchanges[exchange_type] = exchange_class
+
+    @classmethod
+    def get_exchange_class(cls, exchange_type: ExchangeType) -> Optional[type]:
+        """The registered implementation class, or None. Unlike ``get_exchange``
+        this does not look up any stored credentials."""
+        return cls._exchanges.get(exchange_type)
 
     @classmethod
     def load_credentials(cls, config_path: str = None):

@@ -633,7 +633,7 @@ After setup, verify:
 
 ### Future Integrations
 PowerTraderAI+ is designed to support additional exchanges:
-- **Coinbase Pro**: Planned integration
+- **Coinbase (Advanced Trade)**: connection test implemented; order placement planned
 - **Binance US**: Under development
 - **Kraken**: Research phase
 

@@ -158,9 +158,9 @@ Create `credentials/exchange_config.json`:
 ```bash
 export KRAKEN_API_KEY="your_key"
 export KRAKEN_API_SECRET="your_secret"
-export COINBASE_API_KEY="your_key"
-export COINBASE_API_SECRET="your_secret"
-export COINBASE_PASSPHRASE="your_passphrase"
+# Coinbase CDP key: key name + EC private key (PEM); no passphrase
+export POWERTRADER_COINBASE_API_KEY="organizations/<org-id>/apiKeys/<key-id>"
+export POWERTRADER_COINBASE_API_SECRET="$(cat coinbase_private_key.pem)"
 ```
 
 ## Key Features

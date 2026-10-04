@@ -268,3 +268,22 @@ owner can merge with "bypass rules".
 * Staged by explicit path only. Five commits: the forms, the checker and this log, the review
   follow-up, then two rounds of Copilot review fixes.
 * Pushed and opened a PR against `main`; not merged.
+
+## Merged; follow-up: committed tests
+
+PR #138 was merged by the owner at 2026-10-04 22:51 UTC (merge commit `da79c58`) using the ruleset
+bypass. Copilot never reviewed commit 5: both attempts hit the owner's Copilot quota.
+
+Follow-up branch `chore/issue-forms-checker-tests` (own worktree `..\PowerTraderAI-checker-tests`, from
+`da79c58`) commits the scratch harness as `docs/dev/test_check_issue_forms.py`:
+
+* The 33 cases now break a small built-in set of sample forms (`SAMPLE`), not the real forms, so
+  rewording a real form can't break them. One test still runs the checker on the real forms.
+* Plus: the unmodified sample passes (so each case's failure comes from its change), and the safety
+  net is tested by making `check_config` raise.
+* Skipped when PyYAML is missing. CI doesn't run it: CI collects `app/test_*.py` and `.github/scripts/`.
+* 36/36 pass (run with `POWERTRADER_HOME` in the scratchpad, the fail keyring and
+  `PYTHONDONTWRITEBYTECODE=1`, though the file touches no app state).
+* Against the checker as of `aadd0f6` (commit 2), 22 fail: 8 cases from the first Copilot review, 12
+  from the second review and the audit, the safety net, and "missing id" (message reworded). Against
+  `bf88c02` (commit 4), 14 fail: the 12, the safety net and "missing id".

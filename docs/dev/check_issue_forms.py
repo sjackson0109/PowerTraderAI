@@ -3,7 +3,7 @@
 Usage:  python docs/dev/check_issue_forms.py [folder]
 Needs PyYAML (``pip install pyyaml``). Prints one line per file and exits 1 if any
 check fails. Malformed input is reported as a problem, never a traceback, and the
-remaining files are still checked.
+remaining files are still checked. Tests: docs/dev/test_check_issue_forms.py.
 
 GitHub rules checked (a subset of GitHub's schema):
 * every .yml/.yaml file parses;

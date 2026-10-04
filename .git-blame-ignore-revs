@@ -1,0 +1,7 @@
+# Black formatting of app/ so CI's Code Quality check passes (formatting only).
+# PR #132, feat/strategy-batch-1
+85e7a63b12a8918031278c8f72700be45a84cae6
+# PR #133, fix/coinbase-connector
+34b8b7420826ccf51380457db6d178a08716bbac
+# PR #134, feat/user-data-separation
+156640d6be4092055a9e12232f762f9025a32072

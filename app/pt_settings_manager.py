@@ -3,6 +3,7 @@ PowerTrader AI+ Settings Management
 Centralized configuration management with validation and persistence
 """
 
+import copy
 import json
 import os
 from dataclasses import dataclass, asdict, fields
@@ -11,6 +12,37 @@ from pathlib import Path
 import threading
 from datetime import datetime
 import shutil
+
+# Trading-mode setting keys (see trading_mode.py for the order gate that enforces them)
+TRADING_MODE_KEY = "trading.mode"
+TRADING_ACTIVE_BROKER_KEY = "trading.active_broker"
+TRADING_MODES = ("paper", "live")
+
+PAPER_POLICY_KEY = "paper.price_fallback_policy"
+PAPER_MAX_QUOTE_AGE_KEY = "paper.max_quote_age_s"
+EMERGENCY_DRAWDOWN_KEY = "risk.emergency_drawdown_pct"
+PRICE_FALLBACK_POLICIES = ("pause", "simulate_and_flag")
+DEFAULT_PRICE_FALLBACK_POLICY = "pause"
+DEFAULT_MAX_QUOTE_AGE_S = 30.0
+DEFAULT_EMERGENCY_DRAWDOWN_PCT = 8.0
+EMERGENCY_DRAWDOWN_RANGE = (1.0, 50.0)
+MAX_QUOTE_AGE_RANGE = (1.0, 3600.0)
+
+
+def _is_number_in(value: Any, bounds: tuple) -> bool:
+    """True for a real number (not bool) within bounds, inclusive."""
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value == value  # not NaN
+        and bounds[0] <= value <= bounds[1]
+    )
+
+
+def trading_testnet_key(broker: str) -> str:
+    """Settings key holding the testnet/sandbox flag for ``broker``."""
+    return f"trading.{broker}_testnet"
+
 
 # Default settings configuration
 DEFAULT_SETTINGS = {
@@ -40,6 +72,33 @@ DEFAULT_SETTINGS = {
         "retry_attempts": 3,
         "rate_limit_buffer": 0.9,
     },
+    # Trading-mode gate. Paper is always the default; Live needs an active broker.
+    # "<broker>_testnet" keys default to True when absent (see get_testnet()).
+    "trading": {
+        "mode": "paper",
+        "active_broker": None,
+        "binance_testnet": True,
+    },
+    # Paper-fill price integrity (FDS-096b). "pause" never fills on a stale or
+    # simulated price; "simulate_and_flag" fills but marks the fill.
+    "paper": {
+        "price_fallback_policy": "pause",
+        "max_quote_age_s": 30,
+    },
+    # Account drawdown (from the peak the trader has seen) that halts trading.
+    "risk": {
+        "emergency_drawdown_pct": 8.0,
+    },
+    # Signal source (FDS-121). "catalogue" = deterministic rule-based strategies;
+    # "legacy_neural" = the old (untrained, mock) trainer files. An unknown engine
+    # or strategy id places no orders (the trader fails closed).
+    "strategy": {
+        "engine": "catalogue",
+        "active_id": "STRAT-001",
+        "symbols": ["BTCUSDT"],
+        "timeframe": "1h",
+        "overlays": [],
+    },
     "neural_config": {
         "training_epochs": 100,
         "batch_size": 32,
@@ -57,6 +116,30 @@ DEFAULT_SETTINGS = {
 }
 
 SETTINGS_FILE = "pt_config.json"
+
+
+STRATEGY_ENGINES = ("catalogue", "legacy_neural")
+
+
+def _is_valid_timeframe(value: Any) -> bool:
+    from market_data.timeframes import TIMEFRAME_SECONDS
+
+    return isinstance(value, str) and value in TIMEFRAME_SECONDS
+
+
+def _is_valid_broker_id(value: Any) -> bool:
+    """True for None (no broker) or a string matching an ``ExchangeType`` value."""
+    if value is None:
+        return True
+    if not isinstance(value, str):
+        return False
+    from pt_exchange_abstraction import ExchangeType
+
+    try:
+        ExchangeType(value)
+    except ValueError:
+        return False
+    return True
 
 
 @dataclass
@@ -138,6 +221,74 @@ class SettingsValidator:
             lambda v: max(
                 0.001, min(1.0, float(v) if isinstance(v, (int, float)) else 0.05)
             ),
+        )
+
+        # Trading mode / broker validation (fail closed: bad values fall back to
+        # paper / no broker, never to live)
+        self.add_rule(
+            TRADING_MODE_KEY,
+            lambda v: isinstance(v, str) and v in TRADING_MODES,
+            "Trading mode must be 'paper' or 'live'",
+            lambda v: "paper",
+        )
+
+        self.add_rule(
+            TRADING_ACTIVE_BROKER_KEY,
+            _is_valid_broker_id,
+            "Active broker must be null or a supported exchange id",
+            lambda v: None,
+        )
+
+        # Paper price integrity + drawdown stop (invalid -> safe default)
+        self.add_rule(
+            PAPER_POLICY_KEY,
+            lambda v: isinstance(v, str) and v in PRICE_FALLBACK_POLICIES,
+            "Price fallback policy must be 'pause' or 'simulate_and_flag'",
+            lambda v: DEFAULT_PRICE_FALLBACK_POLICY,
+        )
+        self.add_rule(
+            PAPER_MAX_QUOTE_AGE_KEY,
+            lambda v: _is_number_in(v, MAX_QUOTE_AGE_RANGE),
+            "Max quote age must be between 1 and 3600 seconds",
+            lambda v: DEFAULT_MAX_QUOTE_AGE_S,
+        )
+        self.add_rule(
+            EMERGENCY_DRAWDOWN_KEY,
+            lambda v: _is_number_in(v, EMERGENCY_DRAWDOWN_RANGE),
+            "Emergency drawdown must be between 1 and 50 percent",
+            lambda v: DEFAULT_EMERGENCY_DRAWDOWN_PCT,
+        )
+
+        # Strategy engine settings. No auto-fix on purpose: a wrong engine / id is
+        # reported, kept as written, and makes the trader place no orders, rather
+        # than silently trading a strategy the user did not choose.
+        self.add_rule(
+            "strategy.engine",
+            lambda v: v in STRATEGY_ENGINES,
+            "Strategy engine must be 'catalogue' or 'legacy_neural'",
+        )
+        self.add_rule(
+            "strategy.active_id",
+            lambda v: isinstance(v, str) and bool(v.strip()),
+            "Active strategy id must be a non-empty string",
+        )
+        self.add_rule(
+            "strategy.symbols",
+            lambda v: isinstance(v, list)
+            and bool(v)
+            and all(isinstance(s, str) and s.strip() for s in v),
+            "Strategy symbols must be a non-empty list of symbol strings",
+        )
+        self.add_rule(
+            "strategy.timeframe",
+            _is_valid_timeframe,
+            "Strategy timeframe must be a supported candle timeframe",
+        )
+        self.add_rule(
+            "strategy.overlays",
+            lambda v: isinstance(v, list)
+            and all(isinstance(o, dict) and isinstance(o.get("id"), str) for o in v),
+            "Strategy overlays must be a list of {id, params} objects",
         )
 
         # Neural config validation
@@ -267,9 +418,11 @@ class SettingsManager:
                 else:
                     loaded_settings = {}
 
-                # Merge with defaults
+                # Merge with defaults (deep copy: nested sections such as
+                # "trading" must never alias DEFAULT_SETTINGS, or a later set()
+                # would rewrite the defaults themselves)
                 self._settings = self._merge_settings(
-                    DEFAULT_SETTINGS.copy(), loaded_settings
+                    copy.deepcopy(DEFAULT_SETTINGS), loaded_settings
                 )
 
                 # Normalize coins
@@ -309,7 +462,7 @@ class SettingsManager:
                     print(f"Failed to load settings: {e}")
 
                 # Fall back to defaults
-                self._settings = DEFAULT_SETTINGS.copy()
+                self._settings = copy.deepcopy(DEFAULT_SETTINGS)
                 return False
 
     def save_settings(self) -> bool:
@@ -327,9 +480,12 @@ class SettingsManager:
                     # Keep only last 5 backups
                     self._cleanup_backups()
 
-                # Write settings
-                with open(self.settings_path, "w", encoding="utf-8") as f:
+                # Write settings atomically so another process (the trader reads
+                # trading.mode before every order) never sees a half-written file
+                tmp_path = f"{self.settings_path}.tmp"
+                with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(self._settings, f, indent=2, sort_keys=True)
+                os.replace(tmp_path, self.settings_path)
 
                 # Notify callbacks
                 for callback in self._callbacks:
@@ -423,7 +579,7 @@ class SettingsManager:
                 # Replace settings entirely
                 original_settings = self._settings.copy()
                 self._settings = self._merge_settings(
-                    DEFAULT_SETTINGS.copy(), new_settings
+                    copy.deepcopy(DEFAULT_SETTINGS), new_settings
                 )
 
             # Validate the updated settings
@@ -443,8 +599,85 @@ class SettingsManager:
     def reset_to_defaults(self) -> bool:
         """Reset all settings to defaults."""
         with self._lock:
-            self._settings = DEFAULT_SETTINGS.copy()
+            self._settings = copy.deepcopy(DEFAULT_SETTINGS)
             return self.save_settings()
+
+    # --- Trading mode accessors -------------------------------------------
+    # These only expose/validate the persisted values. The enforcement point
+    # that every order passes through is trading_mode.resolve_order_target().
+
+    def get_trading_mode(self) -> str:
+        """Return "live" only when explicitly set to live; anything else is "paper"."""
+        mode = self.get(TRADING_MODE_KEY, "paper")
+        return "live" if mode == "live" else "paper"
+
+    def get_active_broker(self) -> Optional[str]:
+        """Return the active broker id, or None when unset/invalid."""
+        broker = self.get(TRADING_ACTIVE_BROKER_KEY)
+        return broker if broker and _is_valid_broker_id(broker) else None
+
+    def get_testnet(self, broker: str) -> bool:
+        """Testnet flag for ``broker``; defaults to True (the safe choice)."""
+        return bool(self.get(trading_testnet_key(broker), True))
+
+    def get_price_fallback_policy(self) -> str:
+        """ "simulate_and_flag" only when explicitly set; anything else is "pause"."""
+        policy = self.get(PAPER_POLICY_KEY, DEFAULT_PRICE_FALLBACK_POLICY)
+        return (
+            policy
+            if policy in PRICE_FALLBACK_POLICIES
+            else DEFAULT_PRICE_FALLBACK_POLICY
+        )
+
+    def set_price_fallback_policy(self, policy: str, persist: bool = True) -> bool:
+        if policy not in PRICE_FALLBACK_POLICIES:
+            return False
+        if not self.set(PAPER_POLICY_KEY, policy):
+            return False
+        return self.save_settings() if persist else True
+
+    def set_active_broker(self, broker: Optional[str], persist: bool = True) -> bool:
+        """Select the broker used when trading live (None clears it)."""
+        if not _is_valid_broker_id(broker):
+            return False
+        # Clearing the broker while live would leave live mode half-configured,
+        # so fall back to paper in the same write.
+        if broker is None and self.get_trading_mode() == "live":
+            self.set(TRADING_MODE_KEY, "paper")
+        if not self.set(TRADING_ACTIVE_BROKER_KEY, broker):
+            return False
+        return self.save_settings() if persist else True
+
+    def set_testnet(self, broker: str, enabled: bool, persist: bool = True) -> bool:
+        """Persist the testnet/sandbox flag for ``broker``."""
+        if not _is_valid_broker_id(broker) or broker is None:
+            return False
+        if not self.set(trading_testnet_key(broker), bool(enabled)):
+            return False
+        return self.save_settings() if persist else True
+
+    def set_trading_mode(
+        self, mode: str, broker: Optional[str] = None, persist: bool = True
+    ) -> bool:
+        """
+        Switch between paper and live.
+
+        Live is refused (returns False, nothing changed) unless a valid broker
+        is passed or already active. ``broker`` also updates the active broker.
+        """
+        if mode not in TRADING_MODES:
+            return False
+        if broker is not None and not _is_valid_broker_id(broker):
+            return False
+        effective_broker = broker if broker is not None else self.get_active_broker()
+        if mode == "live" and not effective_broker:
+            return False
+
+        if broker is not None and not self.set(TRADING_ACTIVE_BROKER_KEY, broker):
+            return False
+        if not self.set(TRADING_MODE_KEY, mode):
+            return False
+        return self.save_settings() if persist else True
 
     def get_coins(self) -> List[str]:
         """Get the list of coins."""

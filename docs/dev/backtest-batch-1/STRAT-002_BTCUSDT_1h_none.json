@@ -1,0 +1,114 @@
+{
+  "strategy_id": "STRAT-002",
+  "params": {
+    "atr_len": 10,
+    "mult": 3.0,
+    "confirm_bars": 1
+  },
+  "overlays": [],
+  "symbol": "BTCUSDT",
+  "timeframe": "1h",
+  "data": {
+    "source": {
+      "kind": "binance_klines_cache",
+      "path": "C:\\Users\\Simon\\Documents\\sjackson0109\\PowerTraderAI\\app\\hub_data\\candles\\BTCUSDT_1h.csv",
+      "sha256": "7171bc667f3db6032a721770c6128545b2bc3f089432e8861181034493171893"
+    },
+    "candles": 32855,
+    "first": "2023-01-01T00:00:00+00:00",
+    "last": "2026-09-30T23:00:00+00:00",
+    "gaps": {
+      "rows": 32855,
+      "first": "2023-01-01T00:00:00+00:00",
+      "last": "2026-09-30T23:00:00+00:00",
+      "gaps": [
+        {
+          "from": "2023-03-24T13:00:00+00:00",
+          "to": "2023-03-24T13:00:00+00:00",
+          "missing_bars": 1
+        }
+      ],
+      "missing_bars": 1
+    }
+  },
+  "cost_model": {
+    "fee_bps": 10.0,
+    "slippage_bps": 5.0,
+    "size_fraction": 1.0
+  },
+  "split": {
+    "in_sample_fraction": 0.7,
+    "out_of_sample_starts": "2025-08-16T07:00:00+00:00"
+  },
+  "in_sample": {
+    "bars": 22998,
+    "from": "2023-01-01T00:00:00+00:00",
+    "to": "2025-08-16T06:00:00+00:00",
+    "strategy": {
+      "total_return_pct": 61.83242316724464,
+      "cagr_pct": 20.140149606027368,
+      "max_drawdown_pct": -41.10615564842913,
+      "sharpe": 0.7180572173468314,
+      "sortino": 1.0489618713362503,
+      "trade_count": 251,
+      "win_rate_pct": 33.864541832669325,
+      "avg_trade_pct": 0.28611369276515647,
+      "exposure_pct": 51.14792590660058,
+      "fees_paid": 7956.049130103721,
+      "vs_buy_hold_pct": -545.7271467413506
+    },
+    "buy_and_hold": {
+      "total_return_pct": 607.5595699085952,
+      "cagr_pct": 110.81364157932909,
+      "max_drawdown_pct": -32.31069072207685,
+      "sharpe": 1.809387091863676,
+      "sortino": 2.582851740336246,
+      "trade_count": 1,
+      "win_rate_pct": 100.0,
+      "avg_trade_pct": 607.5595699085952,
+      "exposure_pct": 100.0,
+      "fees_paid": 80.82678377463417,
+      "vs_buy_hold_pct": null
+    },
+    "slippage_cost": {
+      "strategy": 3976.042623189946,
+      "buy_and_hold": 40.4236111891542
+    }
+  },
+  "out_of_sample": {
+    "bars": 9857,
+    "from": "2025-08-16T07:00:00+00:00",
+    "to": "2026-09-30T23:00:00+00:00",
+    "strategy": {
+      "total_return_pct": -48.46141388709795,
+      "cagr_pct": -44.53813485139195,
+      "max_drawdown_pct": -55.11677017964498,
+      "sharpe": -1.9877913678829389,
+      "sortino": -2.827550221069535,
+      "trade_count": 124,
+      "win_rate_pct": 27.419354838709676,
+      "avg_trade_pct": -0.4977664749123273,
+      "exposure_pct": 45.155726894592675,
+      "fees_paid": 1610.6306504556028,
+      "vs_buy_hold_pct": -19.480858807701594
+    },
+    "buy_and_hold": {
+      "total_return_pct": -28.980555079396353,
+      "cagr_pct": -26.238923279253946,
+      "max_drawdown_pct": -53.74206479139391,
+      "sharpe": -0.501380336358286,
+      "sortino": -0.7025240334669322,
+      "trade_count": 1,
+      "win_rate_pct": 0.0,
+      "avg_trade_pct": -28.980555079396353,
+      "exposure_pct": 100.0,
+      "fees_paid": 17.10905354560597,
+      "vs_buy_hold_pct": null
+    },
+    "slippage_cost": {
+      "strategy": 804.9110492032956,
+      "buy_and_hold": 8.548808673390525
+    }
+  },
+  "note": "Fills at the next bar open, with fees and slippage; indicator history for the out-of-sample window is taken from before the split but never traded."
+}

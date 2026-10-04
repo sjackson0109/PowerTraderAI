@@ -8,7 +8,8 @@ Provides:
 - A sample-trade runner that pulls a live BTC price from Binance's public
   ticker endpoint and routes a simulated BUY then SELL through
   PaperTradingAccount.
-- Persistence helper so the File-menu toggle survives a restart.
+- Helpers that read the persisted `trading.mode` (the source of truth, owned by
+  trading_mode.py) so the hub can paint itself correctly at start-up.
 
 This module is deliberately small and self-contained so pt_hub.py changes
 remain surgical. All side effects on the hub happen through the helper
@@ -28,6 +29,7 @@ from tkinter import ttk
 from typing import Any, Callable, Dict, Optional
 
 from pt_paper_trading import OrderSide, OrderType, PaperTradingAccount
+from trading_mode import read_trading_settings
 
 # --- Palettes -----------------------------------------------------------------
 # Owner spec (PR #90 comment): "paper mode changes the CSS of the background.
@@ -70,14 +72,19 @@ def get_palette(paper_mode: bool) -> Dict[str, str]:
 
 
 # --- Settings persistence -----------------------------------------------------
-PAPER_MODE_SETTING_KEY = "paper_mode_enabled"
+# The mode itself lives in `trading.mode` (see trading_mode.py) - the single
+# source of truth shared with the trader's order gate. The old
+# `paper_mode_enabled` flag in gui_settings.json is no longer read.
 PAPER_MODE_BALANCE_KEY = "paper_mode_balance"
 
 
-def is_paper_mode(settings: Optional[Dict[str, Any]]) -> bool:
-    if not settings:
-        return False
-    return bool(settings.get(PAPER_MODE_SETTING_KEY, False))
+def is_paper_mode(settings: Any = None) -> bool:
+    """True unless `trading.mode` is explicitly "live" (fail closed to paper).
+
+    `settings` may be a nested dict, a SettingsManager, a settings-file path, or
+    None to read the settings file.
+    """
+    return not read_trading_settings(settings).is_live
 
 
 # --- Live BTC price (Binance public ticker, no auth) -------------------------
@@ -343,20 +350,16 @@ def install_classic_widget_defaults(root: tk.Misc, palette: Dict[str, str]) -> N
 
 
 # --- Read settings without instantiating the hub ----------------------------
-def read_paper_mode_from_disk(settings_path: str) -> bool:
+def read_paper_mode_from_disk(settings_path: Optional[str] = None) -> bool:
     """
     Used by pt_hub before settings are loaded into self so the very first
     `_apply_forced_dark_mode` call can paint the window the right color
     immediately - no flash of dark theme before paper mode kicks in.
+
+    Reads `trading.mode` from the settings file (default: pt_config.json next
+    to the app). A missing, unreadable or malformed file means paper.
     """
-    try:
-        with open(settings_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        return False
-    if not isinstance(data, dict):
-        return False
-    return bool(data.get(PAPER_MODE_SETTING_KEY, False))
+    return is_paper_mode(settings_path)
 
 
 def settings_path_for(app_dir: str, filename: str = "gui_settings.json") -> str:

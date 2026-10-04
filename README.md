@@ -77,8 +77,11 @@ pip install -r requirements.txt --no-warn-script-location --upgrade
 # Verify installation
 python -c "import flask, openai, ccxt; print('All dependencies installed successfully!')"
 
-# Launch PowerTrader AI+
+# Smoke-test paper trading first (no GUI, no keys; needs internet for the live price)
 cd app
+python demo_paper_trading.py
+
+# Launch PowerTrader AI+
 python pt_hub.py
 ```
 

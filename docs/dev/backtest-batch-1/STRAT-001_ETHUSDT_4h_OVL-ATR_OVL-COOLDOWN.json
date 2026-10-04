@@ -1,0 +1,121 @@
+{
+  "strategy_id": "STRAT-001",
+  "params": {
+    "ma_type": "TEMA",
+    "fast_len": 12,
+    "slow_len": 48,
+    "persistence_bars": 2,
+    "regime_filter": "adx",
+    "adx_len": 14,
+    "adx_min": 20.0
+  },
+  "overlays": [
+    {
+      "id": "OVL-ATR",
+      "params": {}
+    },
+    {
+      "id": "OVL-COOLDOWN",
+      "params": {}
+    }
+  ],
+  "symbol": "ETHUSDT",
+  "timeframe": "4h",
+  "data": {
+    "source": {
+      "kind": "binance_klines_cache",
+      "path": "C:\\Users\\Simon\\Documents\\sjackson0109\\PowerTraderAI\\app\\hub_data\\candles\\ETHUSDT_4h.csv",
+      "sha256": "11c6946a168f25bb96d2f6b6415db9990c3a53b70c1585864cd3ab8f5dce8722"
+    },
+    "candles": 8214,
+    "first": "2023-01-01T00:00:00+00:00",
+    "last": "2026-09-30T20:00:00+00:00",
+    "gaps": {
+      "rows": 8214,
+      "first": "2023-01-01T00:00:00+00:00",
+      "last": "2026-09-30T20:00:00+00:00",
+      "gaps": [],
+      "missing_bars": 0
+    }
+  },
+  "cost_model": {
+    "fee_bps": 10.0,
+    "slippage_bps": 5.0,
+    "size_fraction": 1.0
+  },
+  "split": {
+    "in_sample_fraction": 0.7,
+    "out_of_sample_starts": "2025-08-16T04:00:00+00:00"
+  },
+  "in_sample": {
+    "bars": 5749,
+    "from": "2023-01-01T00:00:00+00:00",
+    "to": "2025-08-16T00:00:00+00:00",
+    "strategy": {
+      "total_return_pct": -6.993208603725288,
+      "cagr_pct": -2.725749744980588,
+      "max_drawdown_pct": -35.5132360950582,
+      "sharpe": 0.05477106070193885,
+      "sortino": 0.07883455102314416,
+      "trade_count": 74,
+      "win_rate_pct": 35.13513513513514,
+      "avg_trade_pct": 0.05719301854028212,
+      "exposure_pct": 21.777700469646895,
+      "fees_paid": 1406.9260112342827,
+      "vs_buy_hold_pct": -276.43121140212037
+    },
+    "buy_and_hold": {
+      "total_return_pct": 269.4380027983951,
+      "cagr_pct": 64.5678478651138,
+      "max_drawdown_pct": -65.11965227823642,
+      "sharpe": 1.1240614059269458,
+      "sortino": 1.607579861587606,
+      "trade_count": 1,
+      "win_rate_pct": 100.0,
+      "avg_trade_pct": 269.4380027983951,
+      "exposure_pct": 100.0,
+      "fees_paid": 46.98078106090041,
+      "vs_buy_hold_pct": null
+    },
+    "slippage_cost": {
+      "strategy": 703.1116278295063,
+      "buy_and_hold": 23.49214409875106
+    }
+  },
+  "out_of_sample": {
+    "bars": 2465,
+    "from": "2025-08-16T04:00:00+00:00",
+    "to": "2026-09-30T20:00:00+00:00",
+    "strategy": {
+      "total_return_pct": -17.28006208193674,
+      "cagr_pct": -15.52044376334506,
+      "max_drawdown_pct": -49.0648337448235,
+      "sharpe": -0.40266875679026615,
+      "sortino": -0.5989015871156629,
+      "trade_count": 29,
+      "win_rate_pct": 31.03448275862069,
+      "avg_trade_pct": -0.42352958614960634,
+      "exposure_pct": 21.176470588235293,
+      "fees_paid": 442.1216334345303,
+      "vs_buy_hold_pct": 22.300030083566135
+    },
+    "buy_and_hold": {
+      "total_return_pct": -39.580092165502876,
+      "cagr_pct": -36.10617861808905,
+      "max_drawdown_pct": -68.02938133664391,
+      "sharpe": -0.45371125129067524,
+      "sortino": -0.6306260937088974,
+      "trade_count": 1,
+      "win_rate_pct": 0.0,
+      "avg_trade_pct": -39.58009216550288,
+      "exposure_pct": 100.0,
+      "fees_paid": 16.048038822271984,
+      "vs_buy_hold_pct": null
+    },
+    "slippage_cost": {
+      "strategy": 220.94964315034153,
+      "buy_and_hold": 8.018035925349732
+    }
+  },
+  "note": "Fills at the next bar open, with fees and slippage; indicator history for the out-of-sample window is taken from before the split but never traded."
+}

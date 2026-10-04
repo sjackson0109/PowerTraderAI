@@ -160,6 +160,13 @@ class OrderResult:
     status: str
     exchange: str
     timestamp: float
+    # Why an order was rejected (e.g. "PRICE_UNAVAILABLE"); "" otherwise.
+    reason: str = ""
+    # Price provenance, set by exchanges that simulate fills (paper):
+    # "live" | "stale" | "simulated" | "n/a"; "" when not tracked.
+    price_source: str = ""
+    quote_ts: Optional[float] = None  # exchange timestamp of the quote (epoch s, UTC)
+    age_s: Optional[float] = None  # fetched_ts - quote_ts
 
 
 class ExchangeRegion(Enum):

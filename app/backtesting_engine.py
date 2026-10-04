@@ -645,8 +645,16 @@ class BacktestEngine:
         }
 
 
-# Example usage and testing
+# DEMO ONLY - SYNTHETIC DATA.
+# The block below exercises the API on randomly generated prices. Its numbers say
+# nothing about any strategy's performance. For real results use the honest
+# backtester on cached Binance candles: ``python -m app.backtest`` (see
+# app/backtest/cli.py): next-bar-open fills, fees + slippage, out-of-sample split.
 if __name__ == "__main__":
+    print("=" * 70)
+    print("DEMO ONLY - SYNTHETIC DATA (random prices; results are meaningless)")
+    print("=" * 70)
+
     # Create sample data for testing
     np.random.seed(42)
 

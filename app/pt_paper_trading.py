@@ -96,6 +96,10 @@ class Order:
     commission: Decimal = field(default=Decimal("0"))
     created_time: datetime = field(default_factory=datetime.now)
     filled_time: Optional[datetime] = None
+    # Price provenance of the fill (FDS-096b); "unknown" when not recorded.
+    price_source: str = "unknown"
+    quote_ts: Optional[float] = None
+    age_s: Optional[float] = None
 
     @property
     def is_filled(self) -> bool:
@@ -121,6 +125,10 @@ class TradeRecord:
     commission: Decimal = field(default=Decimal("0"))
     timestamp: datetime = field(default_factory=datetime.now)
     pnl: Decimal = field(default=Decimal("0"))
+    # Price provenance of the fill (FDS-096b); "unknown" when not recorded.
+    price_source: str = "unknown"
+    quote_ts: Optional[float] = None
+    age_s: Optional[float] = None
 
 
 @dataclass

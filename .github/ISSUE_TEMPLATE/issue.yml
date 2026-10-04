@@ -1,0 +1,68 @@
+name: General issue / task
+description: Chores, refactors, docs, tests, tech debt or questions about the code.
+title: "[Task]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For anything that isn't a bug or a feature request. Questions about using PowerTraderAI are
+        better asked in **Questions and ideas** (GitHub Discussions) on the "New issue" page.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What needs doing, and why.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Type
+      options:
+        - Chore
+        - Refactor
+        - Documentation
+        - Testing
+        - Tech debt
+        - Question
+        - Other
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Hub GUI
+        - Paper trading
+        - Live trading
+        - Strategies
+        - Risk overlays
+        - Backtester
+        - Trainer/thinker
+        - Market data
+        - Exchange connection
+        - Settings/migration
+        - Other
+
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Files, functions, background or anything else that helps.
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How we'll know it's done.
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+
+  - type: textarea
+    id: related
+    attributes:
+      label: Related issues or PRs
+      placeholder: "#123, #456"

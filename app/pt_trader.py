@@ -319,7 +319,9 @@ class _TraderRiskAdapter:
 
 
 class CryptoAPITrading:
-    def __init__(self, settings_source: Any = None, signal_engine: Optional[SignalEngine] = None):
+    def __init__(
+        self, settings_source: Any = None, signal_engine: Optional[SignalEngine] = None
+    ):
         """
         ``settings_source`` is where the trading-mode gate reads trading.mode /
         trading.active_broker from (None = the settings file, re-read fresh on
@@ -328,7 +330,9 @@ class CryptoAPITrading:
         is "catalogue" (tests inject one with scripted candles).
         """
         self._settings_source = settings_source
-        self.signal_engine = signal_engine or SignalEngine(settings_source=settings_source)
+        self.signal_engine = signal_engine or SignalEngine(
+            settings_source=settings_source
+        )
         self._catalogue_mode = False
 
         # This mode's own ledger / history / status files
@@ -342,7 +346,9 @@ class CryptoAPITrading:
             self.data_dir, "account_value_history.jsonl"
         )
         # Open strategy positions + overlay state (stops, cooldowns) survive a restart
-        self.signal_engine.attach_state(os.path.join(self.data_dir, "strategy_state.json"))
+        self.signal_engine.attach_state(
+            os.path.join(self.data_dir, "strategy_state.json")
+        )
         if not self._settings.is_live:
             # Keep the paper book across restarts so it matches the paper ledger
             configure_paper_exchange(
@@ -1061,7 +1067,9 @@ class CryptoAPITrading:
                 continue
 
             # Buys after the most recent sell belong to the current trade
-            last_sell_ts = max((ts for ts, side in fills if side == "sell"), default=None)
+            last_sell_ts = max(
+                (ts for ts, side in fills if side == "sell"), default=None
+            )
             current_buys = sorted(
                 ts
                 for ts, side in fills
@@ -1256,7 +1264,9 @@ class CryptoAPITrading:
 
     def get_trading_pairs(self) -> Any:
         # AbstractExchange has no pair listing; trade the configured coins.
-        return [f"{str(s).upper().strip()}-USD" for s in crypto_symbols if str(s).strip()]
+        return [
+            f"{str(s).upper().strip()}-USD" for s in crypto_symbols if str(s).strip()
+        ]
 
     def calculate_cost_basis(self):
         """
@@ -1369,7 +1379,9 @@ class CryptoAPITrading:
         # (or unusable strategy settings) means no orders at all.
         problem = read_strategy_settings(self._settings_source).problem
         if problem:
-            print(f"{Fore.RED}ORDER REFUSED: invalid strategy configuration: {problem}{Style.RESET_ALL}")
+            print(
+                f"{Fore.RED}ORDER REFUSED: invalid strategy configuration: {problem}{Style.RESET_ALL}"
+            )
             logger.error(f"Order refused: invalid strategy configuration: {problem}")
             return None
         try:
@@ -1413,7 +1425,9 @@ class CryptoAPITrading:
             # e.g. PRICE_UNAVAILABLE: nothing was filled, nothing is pending; the
             # next cycle simply tries again.
             self._note_price_event("unavailable")
-            print(f"{Fore.YELLOW}ORDER REJECTED ({symbol} {side}): {result.reason}{Style.RESET_ALL}")
+            print(
+                f"{Fore.YELLOW}ORDER REJECTED ({symbol} {side}): {result.reason}{Style.RESET_ALL}"
+            )
             logger.warning(
                 f"Order rejected ({symbol} {side} via {target.key}): {result.reason}; "
                 "will retry next cycle"
@@ -1521,11 +1535,17 @@ class CryptoAPITrading:
             return 0.0
         return max(0.0, min(float(holding_qty), ledger_qty))
 
-    def _report_position_stops(self, symbol: str, pos, decision, positions: dict) -> None:
+    def _report_position_stops(
+        self, symbol: str, pos, decision, positions: dict
+    ) -> None:
         """Per-cycle telemetry for an open strategy position: effective stop, which
         overlay owns it, and each overlay's state (console + trader_status.json)."""
-        overlays = [o["id"] for o in read_strategy_settings(self._settings_source).overlays]
-        stop = decision.stop_price if decision.stop_price is not None else pos.current_stop
+        overlays = [
+            o["id"] for o in read_strategy_settings(self._settings_source).overlays
+        ]
+        stop = (
+            decision.stop_price if decision.stop_price is not None else pos.current_stop
+        )
         owner = decision.stop_owner or pos.stop_owner
         entry = positions.get(symbol)
         if entry is not None:
@@ -1536,7 +1556,9 @@ class CryptoAPITrading:
                 overlay_state=pos.overlay_state,
             )
             if stop:
-                entry["trail_line"] = float(stop)  # the hub charts this as the sell line
+                entry["trail_line"] = float(
+                    stop
+                )  # the hub charts this as the sell line
                 entry["trail_active"] = True
         stop_txt = self._fmt_price(stop) if stop else "none"
         print(
@@ -1741,7 +1763,9 @@ class CryptoAPITrading:
         # buying power
         try:
             if isinstance(account, dict) and "error" in account:
-                raise ValueError(account["error"])  # transient/unsupported: not a $0 balance
+                raise ValueError(
+                    account["error"]
+                )  # transient/unsupported: not a $0 balance
             buying_power = float(account.get("buying_power", 0))
         except Exception:
             buying_power = 0.0
@@ -2036,10 +2060,16 @@ class CryptoAPITrading:
                             pnl_pct=gain_loss_percentage_sell,
                             tag=f"EXIT:{decision.exit_rule or 'strategy'}",
                         )
-                        if response and isinstance(response, dict) and "errors" not in response:
+                        if (
+                            response
+                            and isinstance(response, dict)
+                            and "errors" not in response
+                        ):
                             trades_made = True
                             self.signal_engine.record_exit(
-                                symbol, response.get("price") or current_sell_price, decision.bar_time
+                                symbol,
+                                response.get("price") or current_sell_price,
+                                decision.bar_time,
                             )
                             self.trailing_pm.pop(symbol, None)
                             self._reset_dca_window_for_trade(symbol, sold=True)
@@ -2320,7 +2350,10 @@ class CryptoAPITrading:
                 # Not held -> the strategy's record of a position (if any) is stale.
                 self.signal_engine.forget(base_symbol)
                 entry_decision = self.signal_engine.decide(base_symbol, None)
-                if entry_decision is None or entry_decision.action is not Action.ENTER_LONG:
+                if (
+                    entry_decision is None
+                    or entry_decision.action is not Action.ENTER_LONG
+                ):
                     start_index += 1
                     continue
             else:

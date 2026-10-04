@@ -38,10 +38,16 @@ def make_ed25519_pem() -> str:
     ).decode()
 
 
-def make_response(status: int, body=None, raw: Optional[bytes] = None) -> requests.Response:
+def make_response(
+    status: int, body=None, raw: Optional[bytes] = None
+) -> requests.Response:
     resp = requests.Response()
     resp.status_code = status
-    resp._content = raw if raw is not None else json.dumps(body if body is not None else {}).encode()
+    resp._content = (
+        raw
+        if raw is not None
+        else json.dumps(body if body is not None else {}).encode()
+    )
     resp.headers["Content-Type"] = "application/json"
     return resp
 
@@ -54,7 +60,9 @@ class HttpRecorder:
 
     def __init__(self) -> None:
         self.calls: List[Tuple[str, str, dict]] = []
-        self._responder: Callable[[str, str], object] = lambda m, u: make_response(200, {})
+        self._responder: Callable[[str, str], object] = lambda m, u: make_response(
+            200, {}
+        )
 
     def respond(self, responder) -> None:
         """``responder(method, url)`` returns a Response or raises."""

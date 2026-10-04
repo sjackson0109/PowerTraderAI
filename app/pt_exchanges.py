@@ -994,7 +994,9 @@ class CoinbaseExchange(AbstractExchange):
         places, previews or cancels an order.
         """
 
-        def result(status: ConnectionStatus, message: str, **details) -> ConnectionTestResult:
+        def result(
+            status: ConnectionStatus, message: str, **details
+        ) -> ConnectionTestResult:
             return ConnectionTestResult("coinbase", status, message, details)
 
         try:
@@ -1083,7 +1085,9 @@ class CoinbaseExchange(AbstractExchange):
             f"{mark(can_trade)}, transfer: {mark(can_transfer)}."
         )
         if not can_trade:
-            message += " This key cannot trade; it is fine for paper mode and monitoring."
+            message += (
+                " This key cannot trade; it is fine for paper mode and monitoring."
+            )
         if can_transfer:
             message += (
                 " Warning: this key can move funds out of the account. PowerTrader does "

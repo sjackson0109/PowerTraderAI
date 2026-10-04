@@ -165,11 +165,7 @@ class TradingSettings:
 
     @property
     def uses_testnet(self) -> bool:
-        return (
-            self.is_live
-            and self.active_broker in TESTNET_BROKERS
-            and self.testnet
-        )
+        return self.is_live and self.active_broker in TESTNET_BROKERS and self.testnet
 
     @property
     def label(self) -> str:
@@ -330,7 +326,7 @@ class PriceUnavailable(RuntimeError):
 
 
 def classify_quote(quote: Optional[Quote], max_age_s: float, now: float) -> str:
-    """"live" if fresh; "stale" if older than ``max_age_s`` (or its age is
+    """ "live" if fresh; "stale" if older than ``max_age_s`` (or its age is
     unknown, which is treated as stale); "simulated" if there is no quote."""
     if quote is None:
         return "simulated"
@@ -467,7 +463,12 @@ class PaperExchange(AbstractExchange):
 
         if source == "live":
             priced = PricedQuote(
-                quote.bid, quote.ask, "live", quote.quote_ts, quote.fetched_ts, quote.age_s
+                quote.bid,
+                quote.ask,
+                "live",
+                quote.quote_ts,
+                quote.fetched_ts,
+                quote.age_s,
             )
         elif paper.price_fallback_policy != "simulate_and_flag":
             logger.warning(
@@ -482,7 +483,12 @@ class PaperExchange(AbstractExchange):
                 "simulate_and_flag)"
             )
             priced = PricedQuote(
-                quote.bid, quote.ask, "stale", quote.quote_ts, quote.fetched_ts, quote.age_s
+                quote.bid,
+                quote.ask,
+                "stale",
+                quote.quote_ts,
+                quote.fetched_ts,
+                quote.age_s,
             )
         else:
             mid = float(MarketDataSimulator.get_current_price(self._simulator, base))
@@ -516,7 +522,9 @@ class PaperExchange(AbstractExchange):
             bid=priced.bid,
             ask=priced.ask,
             volume=0.0,
-            timestamp=priced.quote_ts if priced.quote_ts is not None else priced.fetched_ts,
+            timestamp=(
+                priced.quote_ts if priced.quote_ts is not None else priced.fetched_ts
+            ),
             exchange="paper",
         )
 
@@ -561,7 +569,9 @@ class PaperExchange(AbstractExchange):
             self._save_state()
             return self._order_result(order_id)
 
-    def _reject(self, symbol: str, side: str, amount: float, reason: str) -> OrderResult:
+    def _reject(
+        self, symbol: str, side: str, amount: float, reason: str
+    ) -> OrderResult:
         result = OrderResult(
             order_id=f"rejected-{uuid.uuid4().hex[:12]}",
             symbol=f"{_base_asset(symbol)}-USD",
@@ -667,7 +677,9 @@ class PaperExchange(AbstractExchange):
                 )
                 for sym, p in state.get("positions", {}).items()
             }
-            initial = Decimal(state.get("initial_balance", self.account.initial_balance))
+            initial = Decimal(
+                state.get("initial_balance", self.account.initial_balance)
+            )
         except (OSError, ValueError, KeyError, TypeError, ArithmeticError):
             return False
         self.account.cash_balance = cash

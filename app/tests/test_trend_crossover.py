@@ -26,7 +26,9 @@ from strategies.factory import build_runner
 from strategies.runner import StrategyRunner
 from strategies.settings import read_strategy_settings
 
-FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "BTCUSDT_1h.csv")
+FIXTURE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fixtures", "BTCUSDT_1h.csv"
+)
 ZERO = CostModel(0, 0)
 WARMUP = 3 * 48 + 14  # default STRAT-001
 
@@ -86,15 +88,29 @@ class ConstructionTests(unittest.TestCase):
         s = create("STRAT-001")
         self.assertEqual(
             s.params,
-            {"ma_type": "TEMA", "fast_len": 12, "slow_len": 48, "persistence_bars": 2,
-             "regime_filter": "adx", "adx_len": 14, "adx_min": 20},
+            {
+                "ma_type": "TEMA",
+                "fast_len": 12,
+                "slow_len": 48,
+                "persistence_bars": 2,
+                "regime_filter": "adx",
+                "adx_len": 14,
+                "adx_min": 20,
+            },
         )
         self.assertEqual(s.warmup_bars, WARMUP)
 
     def test_catalogue_entry(self):
         e = CATALOGUE["STRAT-001"]
-        self.assertEqual((e["family"], e["class_type"], e["long_short_mode"], e["timeframe_primary"]),
-                         ("trend", "main", "long_only", "1h"))
+        self.assertEqual(
+            (
+                e["family"],
+                e["class_type"],
+                e["long_short_mode"],
+                e["timeframe_primary"],
+            ),
+            ("trend", "main", "long_only", "1h"),
+        )
         self.assertEqual(e["param_bounds"]["slow_len"], {"min": 20, "max": 200})
         self.assertEqual(e["param_bounds"]["ma_type"], {"values": ["DEMA", "TEMA"]})
 
@@ -106,14 +122,25 @@ class ConstructionTests(unittest.TestCase):
             self.assertIn("fast_len", str(ctx.exception))
 
     def test_out_of_bounds_parameters_are_rejected(self):
-        for bad in ({"ma_type": "SMA"}, {"slow_len": 10}, {"slow_len": 300}, {"fast_len": 4},
-                    {"persistence_bars": 6}, {"persistence_bars": -1}, {"regime_filter": "maybe"},
-                    {"adx_len": 6}, {"adx_min": 5}, {"adx_min": 41}):
+        for bad in (
+            {"ma_type": "SMA"},
+            {"slow_len": 10},
+            {"slow_len": 300},
+            {"fast_len": 4},
+            {"persistence_bars": 6},
+            {"persistence_bars": -1},
+            {"regime_filter": "maybe"},
+            {"adx_len": 6},
+            {"adx_min": 5},
+            {"adx_min": 41},
+        ):
             with self.subTest(bad=bad), self.assertRaises(ParamError):
                 create("STRAT-001", **bad)
 
     def test_warmup_depends_on_slow_len_and_adx_len(self):
-        self.assertEqual(create("STRAT-001", slow_len=20, fast_len=5, adx_len=7).warmup_bars, 67)
+        self.assertEqual(
+            create("STRAT-001", slow_len=20, fast_len=5, adx_len=7).warmup_bars, 67
+        )
 
     def test_it_is_the_default_active_strategy(self):
         self.assertEqual(read_strategy_settings({}).active_id, "STRAT-001")
@@ -124,9 +151,15 @@ class EntryTests(unittest.TestCase):
         self.frame = make_candles(wave_series())
         self.above, self.fast, self.slow = above_flags(self.frame, ind.tema, 12, 48)
         late = [c for c in up_crosses(self.above) if c >= WARMUP]
-        self.assertEqual(len(late), 1, "fixture must have exactly one golden cross after warm-up")
+        self.assertEqual(
+            len(late), 1, "fixture must have exactly one golden cross after warm-up"
+        )
         self.up = late[0]
-        self.down = next(i for i in range(self.up + 1, len(self.frame)) if self.fast.iloc[i] < self.slow.iloc[i])
+        self.down = next(
+            i
+            for i in range(self.up + 1, len(self.frame))
+            if self.fast.iloc[i] < self.slow.iloc[i]
+        )
 
     def test_fixture_geometry(self):
         self.assertEqual((self.up, self.down), (229, 298))
@@ -141,7 +174,9 @@ class EntryTests(unittest.TestCase):
         s = create("STRAT-001", persistence_bars=3, regime_filter="none")
         signals = scan(s, self.frame)
         for i in range(self.up, self.up + 3):
-            self.assertEqual(signals[i].action, Action.HOLD, f"bar {i} is before persistence")
+            self.assertEqual(
+                signals[i].action, Action.HOLD, f"bar {i} is before persistence"
+            )
         self.assertEqual(signals[self.up + 3].action, Action.ENTER_LONG)
 
     def test_it_fires_once_not_on_every_bar_of_the_uptrend(self):
@@ -151,17 +186,28 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(signals[i].action, Action.HOLD, f"stale state at bar {i}")
             self.assertEqual(signals[i].reason, "NO_FRESH_CROSS")
 
-    def test_entries_match_an_independent_restatement_of_the_rule_on_a_choppy_market(self):
+    def test_entries_match_an_independent_restatement_of_the_rule_on_a_choppy_market(
+        self,
+    ):
         # many short-lived crosses: a cross that does not persist must never enter
         frame = make_candles(chop_series())
         for ma_name, ma in (("TEMA", ind.tema), ("DEMA", ind.dema)):
             above, _, _ = above_flags(frame, ma, 12, 48)
             for k in (0, 1, 2, 4):
                 with self.subTest(ma=ma_name, persistence_bars=k):
-                    s = create("STRAT-001", ma_type=ma_name, persistence_bars=k, regime_filter="none")
+                    s = create(
+                        "STRAT-001",
+                        ma_type=ma_name,
+                        persistence_bars=k,
+                        regime_filter="none",
+                    )
                     got = enter_bars(scan(s, frame))
                     self.assertEqual(got, reference_entries(above, k, s.warmup_bars))
-                    self.assertGreater(len(up_crosses(above)), len(got) or 1, "some crosses must be rejected" if k >= 2 else "")
+                    self.assertGreater(
+                        len(up_crosses(above)),
+                        len(got) or 1,
+                        "some crosses must be rejected" if k >= 2 else "",
+                    )
 
     def test_a_cross_that_reverses_before_persistence_completes_never_enters(self):
         # tight persistence=5 on chop: the vast majority of crosses reverse first
@@ -174,8 +220,12 @@ class EntryTests(unittest.TestCase):
 
     def test_dema_variant_enters_on_the_same_kind_of_cross(self):
         above, _, _ = above_flags(self.frame, ind.dema, 12, 48)
-        s = create("STRAT-001", ma_type="DEMA", persistence_bars=2, regime_filter="none")
-        self.assertEqual(enter_bars(scan(s, self.frame)), reference_entries(above, 2, s.warmup_bars))
+        s = create(
+            "STRAT-001", ma_type="DEMA", persistence_bars=2, regime_filter="none"
+        )
+        self.assertEqual(
+            enter_bars(scan(s, self.frame)), reference_entries(above, 2, s.warmup_bars)
+        )
         self.assertTrue(enter_bars(scan(s, self.frame)))
 
     def test_indicators_are_reported_with_the_signal(self):
@@ -193,10 +243,17 @@ class RegimeFilterTests(unittest.TestCase):
         self.chop = make_candles(chop_series())
 
     def test_adx_below_min_blocks_every_entry_in_a_choppy_market(self):
-        free = scan(create("STRAT-001", persistence_bars=1, regime_filter="none"), self.chop)
-        self.assertGreaterEqual(len(enter_bars(free)), 3, "the chop fixture must cross repeatedly")
+        free = scan(
+            create("STRAT-001", persistence_bars=1, regime_filter="none"), self.chop
+        )
+        self.assertGreaterEqual(
+            len(enter_bars(free)), 3, "the chop fixture must cross repeatedly"
+        )
 
-        signals = scan(create("STRAT-001", persistence_bars=1, regime_filter="adx", adx_min=20), self.chop)
+        signals = scan(
+            create("STRAT-001", persistence_bars=1, regime_filter="adx", adx_min=20),
+            self.chop,
+        )
         self.assertEqual(enter_bars(signals), [])
         blocked = [s for s in signals if s.reason == "ADX_BELOW_MIN"]
         self.assertGreaterEqual(len(blocked), 3)
@@ -209,13 +266,19 @@ class RegimeFilterTests(unittest.TestCase):
         self.assertLess(hi, 20, "fixture assumption")
         mid = int((lo + hi) / 2)
         self.assertGreaterEqual(mid, 10)
-        signals = scan(create("STRAT-001", persistence_bars=1, regime_filter="adx", adx_min=mid), self.chop)
+        signals = scan(
+            create("STRAT-001", persistence_bars=1, regime_filter="adx", adx_min=mid),
+            self.chop,
+        )
         for s in signals:
             if s.action is Action.ENTER_LONG:
                 self.assertGreaterEqual(s.indicators["adx"], mid)
             if s.reason == "ADX_BELOW_MIN":
                 self.assertLess(s.indicators["adx"], mid)
-        self.assertTrue(enter_bars(signals), "some entries should clear a threshold inside the ADX range")
+        self.assertTrue(
+            enter_bars(signals),
+            "some entries should clear a threshold inside the ADX range",
+        )
 
     def test_a_strong_trend_passes_the_default_filter(self):
         frame = make_candles(wave_series())
@@ -253,7 +316,12 @@ class ExitTests(unittest.TestCase):
     def test_runner_closes_the_position_on_that_bar_via_the_strategy_rule(self):
         runner = StrategyRunner(self.strategy)
         entry = enter_bars(self.signals)[0]
-        pos = runner.open_position("X", self.frame["close"].iloc[entry], self.frame["open_time"].iloc[entry], self.frame)
+        pos = runner.open_position(
+            "X",
+            self.frame["close"].iloc[entry],
+            self.frame["open_time"].iloc[entry],
+            self.frame,
+        )
         exits = []
         for i in range(entry + 1, len(self.frame)):
             d = runner.evaluate(runner.window(self.frame, i), pos, "X")
@@ -263,19 +331,27 @@ class ExitTests(unittest.TestCase):
         self.assertEqual(exits, [(self.down, "strategy")])
 
     def test_exit_has_no_persistence_a_single_bar_below_is_enough(self):
-        closes = list(wave_series()[: self.up + 20]) + [60.0]  # one crash bar mid-uptrend
+        closes = list(wave_series()[: self.up + 20]) + [
+            60.0
+        ]  # one crash bar mid-uptrend
         frame = make_candles(closes)
         s = create("STRAT-001", persistence_bars=2, regime_filter="none")
         signals = scan(s, frame)
         self.assertNotEqual(signals[-2].action, Action.EXIT_LONG)
         self.assertEqual(signals[-1].action, Action.EXIT_LONG)
 
-    def test_the_backtest_round_trip_enters_after_persistence_and_exits_at_the_cross_back(self):
-        runner = build_runner("STRAT-001", {"persistence_bars": 2, "regime_filter": "none"})
+    def test_the_backtest_round_trip_enters_after_persistence_and_exits_at_the_cross_back(
+        self,
+    ):
+        runner = build_runner(
+            "STRAT-001", {"persistence_bars": 2, "regime_filter": "none"}
+        )
         res = run_backtest(self.frame, runner, "X", "1h", cost=ZERO)
         (trade,) = res.trades
         times = self.frame["open_time"]
-        self.assertEqual(trade.entry_time, times.iloc[self.up + 2 + 1])  # signal bar + 1 = next open
+        self.assertEqual(
+            trade.entry_time, times.iloc[self.up + 2 + 1]
+        )  # signal bar + 1 = next open
         self.assertEqual(trade.exit_time, times.iloc[self.down + 1])
         self.assertEqual(trade.exit_rule, "strategy")
 
@@ -289,7 +365,9 @@ class WarmupTests(unittest.TestCase):
         self.assertLess(up_crosses(above_flags(frame, ind.tema, 12, 48)[0])[0], WARMUP)
         for k in range(1, s.warmup_bars):
             sig = s.on_bar(frame.iloc[:k])
-            self.assertEqual((sig.action, sig.reason), (Action.HOLD, "WARMUP"), f"bars={k}")
+            self.assertEqual(
+                (sig.action, sig.reason), (Action.HOLD, "WARMUP"), f"bars={k}"
+            )
         self.assertTrue(all(i >= WARMUP for i in enter_bars(scan(s, frame))))
 
     def test_signals_start_exactly_at_the_warmup_length(self):
@@ -305,8 +383,20 @@ class BacktestOnRealCandlesTests(unittest.TestCase):
             out = os.path.join(d, "r.json")
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                code = cli.main(["--strategy", "STRAT-001", "--symbol", "BTCUSDT", "--tf", "1h",
-                                 "--candles-file", FIXTURE, "--out", out])
+                code = cli.main(
+                    [
+                        "--strategy",
+                        "STRAT-001",
+                        "--symbol",
+                        "BTCUSDT",
+                        "--tf",
+                        "1h",
+                        "--candles-file",
+                        FIXTURE,
+                        "--out",
+                        out,
+                    ]
+                )
             self.assertEqual(code, 0)
             res = json.load(open(out, encoding="utf-8"))
         self.assertEqual(res["strategy_id"], "STRAT-001")
@@ -331,14 +421,19 @@ class PaperTraderTests(PaperTraderCase):
 
     def test_trader_enters_and_exits_on_strat_001_with_no_runtime_errors(self):
         frame = make_candles(wave_series())
-        settings = {"trading": {"mode": "paper"}, "strategy": {"active_id": "STRAT-001"}}
+        settings = {
+            "trading": {"mode": "paper"},
+            "strategy": {"active_id": "STRAT-001"},
+        }
         feed = Feed(frame)
         engine = SignalEngine(settings, feed.provider, feed.clock)
         feed.set_after_bar(160)
         sleep = mock.patch.object(self.pt_trader.time, "sleep")
         sleep.start()
         self.addCleanup(sleep.stop)
-        trader = self.pt_trader.CryptoAPITrading(settings_source=settings, signal_engine=engine)
+        trader = self.pt_trader.CryptoAPITrading(
+            settings_source=settings, signal_engine=engine
+        )
         trader._order_poll_seconds = 0.0
 
         want_runner = build_runner("STRAT-001")
@@ -346,7 +441,9 @@ class PaperTraderTests(PaperTraderCase):
         for i in range(len(frame)):
             d = want_runner.evaluate(want_runner.window(frame, i), pos, "BTC")
             if d.action is Action.ENTER_LONG and pos is None:
-                pos = want_runner.open_position("BTC", frame["close"].iloc[i], d.bar_time, frame)
+                pos = want_runner.open_position(
+                    "BTC", frame["close"].iloc[i], d.bar_time, frame
+                )
                 expected.append((i, "buy"))
             elif d.action is Action.EXIT_LONG and pos is not None:
                 pos = None
@@ -362,7 +459,9 @@ class PaperTraderTests(PaperTraderCase):
             if len(orders) > before:
                 acted[k] = orders[-1].side.value
         self.assertEqual(acted, dict(expected))
-        self.assertEqual([r["tag"] for r in self.ledger_rows()], ["ENTRY", "EXIT:strategy"])
+        self.assertEqual(
+            [r["tag"] for r in self.ledger_rows()], ["ENTRY", "EXIT:strategy"]
+        )
 
 
 if __name__ == "__main__":

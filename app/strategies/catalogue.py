@@ -31,7 +31,9 @@ REQUIRED_FIELDS = (
     "version",
 )
 CLASS_TYPES = ("main", "risk_overlay")
-CATALOGUE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "catalogue.json")
+CATALOGUE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "catalogue.json"
+)
 
 
 class CatalogueError(RuntimeError):
@@ -82,7 +84,9 @@ def _check_bound_spec(strategy_id: str, name: str, spec: Any, default: Any) -> N
         raise CatalogueError(f"default for {where} is invalid: {exc}") from exc
 
 
-def check_value(strategy_id: str, name: str, value: Any, spec: Mapping[str, Any]) -> None:
+def check_value(
+    strategy_id: str, name: str, value: Any, spec: Mapping[str, Any]
+) -> None:
     """Raise ParamError if ``value`` violates ``spec`` (min/max, values, type)."""
     where = f"{strategy_id}.{name}"
     kind = spec.get("type")
@@ -121,12 +125,18 @@ def _check_stages(where: str, value: Any) -> None:
             or len(stage) != 2
             or not all(_is_number(x) for x in stage)
         ):
-            raise ParamError(f"{where}: each stage must be [gain_pct, lock_pct], got {stage!r}")
+            raise ParamError(
+                f"{where}: each stage must be [gain_pct, lock_pct], got {stage!r}"
+            )
         gain, lock = float(stage[0]), float(stage[1])
         if gain <= last_gain:
-            raise ParamError(f"{where}: stage gains must be positive and strictly increasing")
+            raise ParamError(
+                f"{where}: stage gains must be positive and strictly increasing"
+            )
         if lock < 0 or lock >= gain:
-            raise ParamError(f"{where}: lock_pct must be >= 0 and below gain_pct ({stage!r})")
+            raise ParamError(
+                f"{where}: lock_pct must be >= 0 and below gain_pct ({stage!r})"
+            )
         last_gain = gain
 
 
@@ -156,7 +166,9 @@ def build_catalogue(
         from market_data.timeframes import TIMEFRAME_SECONDS
 
         if entry["timeframe_primary"] not in TIMEFRAME_SECONDS:
-            raise CatalogueError(f"{sid}: unsupported timeframe_primary {entry['timeframe_primary']!r}")
+            raise CatalogueError(
+                f"{sid}: unsupported timeframe_primary {entry['timeframe_primary']!r}"
+            )
         for key in ("default_params", "param_bounds"):
             if not isinstance(entry[key], dict):
                 raise CatalogueError(f"{sid}: {key} must be an object")
@@ -208,7 +220,9 @@ def get_entry(strategy_id: str) -> dict:
 
 def list_ids(class_type: Optional[str] = None) -> List[str]:
     return sorted(
-        sid for sid, e in CATALOGUE.items() if class_type is None or e["class_type"] == class_type
+        sid
+        for sid, e in CATALOGUE.items()
+        if class_type is None or e["class_type"] == class_type
     )
 
 
@@ -230,7 +244,9 @@ def resolve_params(strategy_id: str, overrides: Mapping[str, Any]) -> Dict[str, 
         ):
             # lengths and bar counts must be whole numbers (a float would break the
             # indicators downstream); float-valued parameters have a float default
-            raise ParamError(f"{strategy_id}.{name} must be a whole number, got {value!r}")
+            raise ParamError(
+                f"{strategy_id}.{name} must be a whole number, got {value!r}"
+            )
     return params
 
 

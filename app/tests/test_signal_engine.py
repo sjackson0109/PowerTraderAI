@@ -23,7 +23,10 @@ from strategies.factory import build_runner
 from strategies.settings import ENGINES, read_strategy_settings
 
 HOUR = pd.Timedelta(hours=1)
-PAPER = {"trading": {"mode": "paper"}, "strategy": {"active_id": "STRAT-000"}}  # engine/trader tests pin the simple baseline strategy
+PAPER = {
+    "trading": {"mode": "paper"},
+    "strategy": {"active_id": "STRAT-000"},
+}  # engine/trader tests pin the simple baseline strategy
 
 
 def trend_series():
@@ -52,7 +55,10 @@ def expected_actions(frame, active="STRAT-000"):
 class SettingsReaderTests(unittest.TestCase):
     def test_defaults(self):
         s = read_strategy_settings({})
-        self.assertEqual((s.engine, s.active_id, s.symbols, s.timeframe), ("catalogue", "STRAT-001", ("BTCUSDT",), "1h"))
+        self.assertEqual(
+            (s.engine, s.active_id, s.symbols, s.timeframe),
+            ("catalogue", "STRAT-001", ("BTCUSDT",), "1h"),
+        )
         self.assertIsNone(s.problem)
         self.assertEqual(s.note, "SIGNALS: STRAT-001 1h")
 
@@ -68,18 +74,40 @@ class SettingsReaderTests(unittest.TestCase):
             self.assertIn("unknown strategy.active_id", s.problem, bad)
 
     def test_bad_timeframe_symbols_and_overlays_are_problems(self):
-        self.assertIn("timeframe", read_strategy_settings({"strategy": {"timeframe": "7m"}}).problem)
-        self.assertIn("symbols", read_strategy_settings({"strategy": {"symbols": []}}).problem)
-        self.assertIn("symbols", read_strategy_settings({"strategy": {"symbols": [1]}}).problem)
-        self.assertIn("overlay", read_strategy_settings({"strategy": {"overlays": [{"id": "OVL-NOPE"}]}}).problem)
-        self.assertIn("overlays", read_strategy_settings({"strategy": {"overlays": "x"}}).problem)
+        self.assertIn(
+            "timeframe",
+            read_strategy_settings({"strategy": {"timeframe": "7m"}}).problem,
+        )
+        self.assertIn(
+            "symbols", read_strategy_settings({"strategy": {"symbols": []}}).problem
+        )
+        self.assertIn(
+            "symbols", read_strategy_settings({"strategy": {"symbols": [1]}}).problem
+        )
+        self.assertIn(
+            "overlay",
+            read_strategy_settings(
+                {"strategy": {"overlays": [{"id": "OVL-NOPE"}]}}
+            ).problem,
+        )
+        self.assertIn(
+            "overlays", read_strategy_settings({"strategy": {"overlays": "x"}}).problem
+        )
 
     def test_a_main_strategy_id_is_not_an_overlay(self):
         s = read_strategy_settings({"strategy": {"overlays": [{"id": "STRAT-000"}]}})
         self.assertIn("unknown overlay", s.problem)
 
     def test_legacy_engine_ignores_catalogue_settings(self):
-        s = read_strategy_settings({"strategy": {"engine": "legacy_neural", "active_id": "nope", "timeframe": "7m"}})
+        s = read_strategy_settings(
+            {
+                "strategy": {
+                    "engine": "legacy_neural",
+                    "active_id": "nope",
+                    "timeframe": "7m",
+                }
+            }
+        )
         self.assertIsNone(s.problem)
         self.assertEqual(s.note, "SIGNALS: LEGACY (UNTRAINED)")
 
@@ -89,7 +117,9 @@ class SettingsReaderTests(unittest.TestCase):
 
     def test_signature_changes_with_strategy_overlays_and_timeframe(self):
         a = read_strategy_settings({}).signature
-        self.assertNotEqual(a, read_strategy_settings({"strategy": {"timeframe": "4h"}}).signature)
+        self.assertNotEqual(
+            a, read_strategy_settings({"strategy": {"timeframe": "4h"}}).signature
+        )
         self.assertEqual(a, read_strategy_settings({}).signature)
 
     def test_engines_constant(self):
@@ -107,8 +137,13 @@ class SettingsManagerTests(unittest.TestCase):
             self.assertEqual(m.get("strategy.overlays"), [])
             self.assertTrue(m.set("strategy.engine", "legacy_neural"))
             m.save_settings()
-            self.assertEqual(SettingsManager("pt_config.json", d).get("strategy.engine"), "legacy_neural")
-            self.assertEqual(read_strategy_settings(m.settings_path).engine, "legacy_neural")
+            self.assertEqual(
+                SettingsManager("pt_config.json", d).get("strategy.engine"),
+                "legacy_neural",
+            )
+            self.assertEqual(
+                read_strategy_settings(m.settings_path).engine, "legacy_neural"
+            )
 
     def test_invalid_values_are_rejected_on_set(self):
         with tempfile.TemporaryDirectory() as d:
@@ -118,14 +153,18 @@ class SettingsManagerTests(unittest.TestCase):
             self.assertFalse(m.set("strategy.symbols", []))
             self.assertEqual(m.get("strategy.engine"), "catalogue")
 
-    def test_a_bad_value_on_disk_is_kept_and_blocks_trading_rather_than_being_fixed(self):
+    def test_a_bad_value_on_disk_is_kept_and_blocks_trading_rather_than_being_fixed(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "pt_config.json")
             with open(path, "w", encoding="utf-8") as f:
                 json.dump({"strategy": {"engine": "magic"}}, f)
             m = SettingsManager("pt_config.json", d)
             self.assertEqual(m.get("strategy.engine"), "magic")
-            self.assertIn("unknown strategy.engine", read_strategy_settings(path).problem)
+            self.assertIn(
+                "unknown strategy.engine", read_strategy_settings(path).problem
+            )
 
 
 class EngineTests(unittest.TestCase):
@@ -158,7 +197,7 @@ class EngineTests(unittest.TestCase):
 
     def test_forming_bar_is_never_evaluated_even_if_a_provider_returns_it(self):
         def greedy(symbol, tf, n, now):
-            return self.frame.iloc[: 211]  # includes a bar that has not closed yet
+            return self.frame.iloc[:211]  # includes a bar that has not closed yet
 
         engine = SignalEngine(PAPER, greedy, self.feed.clock)
         self.feed.set_after_bar(209)  # bars up to 209 are closed; 210 is still forming
@@ -174,7 +213,9 @@ class EngineTests(unittest.TestCase):
         return SignalEngine(PAPER, lambda s, tf, n, now: old, feed.clock)
 
     def test_stale_candles_hold_and_warn(self):
-        engine = self.stuck_engine(hours_behind=3)  # last closed bar is 3 h old > 2x the 1 h timeframe
+        engine = self.stuck_engine(
+            hours_behind=3
+        )  # last closed bar is 3 h old > 2x the 1 h timeframe
         with mock.patch.object(se.logger, "warning") as warn:
             d = engine.decide("BTC")
         self.assertEqual((d.action, d.reason), (Action.HOLD, "STALE_CANDLES"))
@@ -216,13 +257,21 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(self.feed.calls, 0)
 
     def test_legacy_engine_makes_no_decisions(self):
-        engine = SignalEngine({"strategy": {"engine": "legacy_neural"}}, self.feed.provider, self.feed.clock)
+        engine = SignalEngine(
+            {"strategy": {"engine": "legacy_neural"}},
+            self.feed.provider,
+            self.feed.clock,
+        )
         self.feed.set_after_bar(200)
         self.assertIsNone(engine.decide("BTC"))
         self.assertIsNone(engine.block_reason())
 
     def test_unknown_strategy_blocks_and_logs_an_error(self):
-        engine = SignalEngine({"strategy": {"active_id": "STRAT-999"}}, self.feed.provider, self.feed.clock)
+        engine = SignalEngine(
+            {"strategy": {"active_id": "STRAT-999"}},
+            self.feed.provider,
+            self.feed.clock,
+        )
         with mock.patch.object(se.logger, "error") as err:
             self.assertIsNone(engine.decide("BTC"))
         self.assertIn("STRAT-999", str(err.call_args_list))
@@ -231,13 +280,17 @@ class EngineTests(unittest.TestCase):
 
     def test_the_engine_replays_exactly_what_the_backtester_would_decide(self):
         want = expected_actions(self.frame)
-        self.assertEqual([a for _, a in want], ["ENTER", "EXIT"], "fixture must cross up then down")
+        self.assertEqual(
+            [a for _, a in want], ["ENTER", "EXIT"], "fixture must cross up then down"
+        )
         seen, pos = [], None
         for k in range(len(self.frame)):
             self.feed.set_after_bar(k)
             d = self.engine.decide("BTC", pos)
             if d.action is Action.ENTER_LONG and pos is None:
-                pos = self.engine.record_entry("BTC", self.frame["close"].iloc[k], d.bar_time)
+                pos = self.engine.record_entry(
+                    "BTC", self.frame["close"].iloc[k], d.bar_time
+                )
                 seen.append((k, "ENTER"))
             elif d.action is Action.EXIT_LONG and pos is not None:
                 self.engine.record_exit("BTC", self.frame["close"].iloc[k], d.bar_time)
@@ -283,14 +336,18 @@ class TraderIntegrationTests(PaperTraderCase):
         settings = settings if settings is not None else copy.deepcopy(PAPER)
         engine = SignalEngine(settings, self.feed.provider, self.feed.clock)
         self.feed.set_after_bar(150)
-        trader = self.pt_trader.CryptoAPITrading(settings_source=settings, signal_engine=engine)
+        trader = self.pt_trader.CryptoAPITrading(
+            settings_source=settings, signal_engine=engine
+        )
         trader._order_poll_seconds = 0.0
         return trader
 
     def orders(self):
         return list(tm.get_paper_exchange().account.orders.values())
 
-    def test_scripted_candles_drive_one_enter_and_one_exit_through_the_trader_into_paper(self):
+    def test_scripted_candles_drive_one_enter_and_one_exit_through_the_trader_into_paper(
+        self,
+    ):
         want = expected_actions(self.frame)
         (enter_bar, _), (exit_bar, _) = want
         trader = self.catalogue_trader()
@@ -313,7 +370,9 @@ class TraderIntegrationTests(PaperTraderCase):
         self.assertNotIn("BTC", tm.get_paper_exchange().get_balance())  # flat again
         self.assertEqual(trader._pnl_ledger["open_positions"], {})
 
-    def test_every_decision_is_logged_with_strategy_reason_indicators_and_bar_time(self):
+    def test_every_decision_is_logged_with_strategy_reason_indicators_and_bar_time(
+        self,
+    ):
         trader = self.catalogue_trader()
         with mock.patch.object(se.logger, "info") as info:
             for k in range(150, 200):
@@ -321,8 +380,15 @@ class TraderIntegrationTests(PaperTraderCase):
                 trader.manage_trades()
         decisions = [str(c) for c in info.call_args_list if "Decision BTC" in str(c)]
         self.assertGreaterEqual(len(decisions), 40)
-        self.assertTrue(all("strategy=STRAT-000" in d and "bar=" in d and "indicators=" in d
-                            and "reason=" in d for d in decisions))
+        self.assertTrue(
+            all(
+                "strategy=STRAT-000" in d
+                and "bar=" in d
+                and "indicators=" in d
+                and "reason=" in d
+                for d in decisions
+            )
+        )
 
     def test_legacy_dca_and_trailing_pm_are_off_in_catalogue_mode(self):
         trader = self.catalogue_trader()
@@ -333,7 +399,10 @@ class TraderIntegrationTests(PaperTraderCase):
         self.assertEqual(tags, {"ENTRY", "EXIT:strategy"})  # no DCA / TRAIL_SELL
 
     def test_unknown_strategy_id_places_no_orders_and_logs_an_error(self):
-        settings = {"trading": {"mode": "paper"}, "strategy": {"active_id": "STRAT-999"}}
+        settings = {
+            "trading": {"mode": "paper"},
+            "strategy": {"active_id": "STRAT-999"},
+        }
         trader = self.catalogue_trader(settings)
         with mock.patch.object(se.logger, "error") as engine_err, mock.patch.object(
             self.pt_trader.logger, "error"
@@ -342,35 +411,50 @@ class TraderIntegrationTests(PaperTraderCase):
                 self.feed.set_after_bar(k)
                 trader.manage_trades()
             direct_buy = trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
-            direct_sell = trader.place_sell_order("id", "sell", "market", "BTC-USD", 0.01)
+            direct_sell = trader.place_sell_order(
+                "id", "sell", "market", "BTC-USD", 0.01
+            )
         self.assertEqual(self.orders(), [])
         self.assertIsNone(direct_buy)
         self.assertIsNone(direct_sell)
         self.assertEqual(self.ledger_rows(), [])
         self.assertTrue(engine_err.called or trader_err.called)
-        self.assertIn("STRAT-999", str(engine_err.call_args_list) + str(trader_err.call_args_list))
+        self.assertIn(
+            "STRAT-999", str(engine_err.call_args_list) + str(trader_err.call_args_list)
+        )
 
     def test_unknown_engine_places_no_orders_and_logs_an_error(self):
         settings = {"trading": {"mode": "paper"}, "strategy": {"engine": "skynet"}}
         trader = self.catalogue_trader(settings)
-        with mock.patch.object(self.pt_trader.logger, "error") as trader_err, mock.patch.object(
+        with mock.patch.object(
+            self.pt_trader.logger, "error"
+        ) as trader_err, mock.patch.object(
             self.pt_trader.logger, "warning"
         ) as trader_warn:
             for k in range(150, 230):
                 self.feed.set_after_bar(k)
                 trader.manage_trades()
-            self.assertIsNone(trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0))
+            self.assertIsNone(
+                trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
+            )
         self.assertEqual(self.orders(), [])
-        self.assertIn("skynet", str(trader_err.call_args_list) + str(trader_warn.call_args_list))
+        self.assertIn(
+            "skynet", str(trader_err.call_args_list) + str(trader_warn.call_args_list)
+        )
 
     def test_legacy_engine_does_not_use_the_catalogue(self):
-        settings = {"trading": {"mode": "paper"}, "strategy": {"engine": "legacy_neural"}}
+        settings = {
+            "trading": {"mode": "paper"},
+            "strategy": {"engine": "legacy_neural"},
+        }
         trader = self.catalogue_trader(settings)
         for k in range(150, 230):
             self.feed.set_after_bar(k)
             trader.manage_trades()
         self.assertEqual(self.feed.calls, 0)  # no candles requested for signals
-        self.assertEqual(self.orders(), [])  # no neural signal files -> legacy start gate stays shut
+        self.assertEqual(
+            self.orders(), []
+        )  # no neural signal files -> legacy start gate stays shut
         with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
             signals = json.load(f)["signals"]
         self.assertEqual(signals["engine"], "legacy_neural")
@@ -380,13 +464,17 @@ class TraderIntegrationTests(PaperTraderCase):
         trader = self.catalogue_trader()
         # BTC bought outside the trader (no ledger entry)
         self.feed.set_after_bar(150)
-        tm.get_paper_exchange()._price_feed = lambda base: tm.Quote(99.0, 101.0, __import__("time").time(), __import__("time").time())
+        tm.get_paper_exchange()._price_feed = lambda base: tm.Quote(
+            99.0, 101.0, __import__("time").time(), __import__("time").time()
+        )
         tm.get_paper_exchange().place_order("BTC-USD", "buy", 0.01)
         before = len(self.orders())
         for k in range(150, len(self.frame)):
             self.feed.set_after_bar(k)
             trader.manage_trades()
-        self.assertEqual(len(self.orders()), before)  # only the outside buy; no strategy sell
+        self.assertEqual(
+            len(self.orders()), before
+        )  # only the outside buy; no strategy sell
 
     def test_exit_sells_only_what_the_ledger_says_the_trader_bought(self):
         trader = self.catalogue_trader()
@@ -401,17 +489,23 @@ class TraderIntegrationTests(PaperTraderCase):
         trader.manage_trades()
         with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
             signals = json.load(f)["signals"]
-        self.assertEqual((signals["engine"], signals["strategy_id"], signals["timeframe"]),
-                         ("catalogue", "STRAT-000", "1h"))
+        self.assertEqual(
+            (signals["engine"], signals["strategy_id"], signals["timeframe"]),
+            ("catalogue", "STRAT-000", "1h"),
+        )
         self.assertIsNone(signals["blocked"])
         self.assertIn("BTC", signals["last_decisions"])
 
     def test_the_strategy_config_is_rechecked_on_every_order(self):
         settings = copy.deepcopy(PAPER)
         trader = self.catalogue_trader(settings)
-        self.assertIsNotNone(trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0))
+        self.assertIsNotNone(
+            trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
+        )
         settings["strategy"] = {"active_id": "STRAT-999"}  # edited while running
-        self.assertIsNone(trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0))
+        self.assertIsNone(
+            trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
+        )
         self.assertEqual(len(self.orders()), 1)
 
 
@@ -428,14 +522,20 @@ class HubNoteTests(unittest.TestCase):
         self.addCleanup(root.destroy)
         root.withdraw()
         ind = TradingModeIndicator(root, tm.read_trading_settings(PAPER))
-        ind.update_signals_note(read_strategy_settings({"strategy": {"engine": "legacy_neural"}}).note)
+        ind.update_signals_note(
+            read_strategy_settings({"strategy": {"engine": "legacy_neural"}}).note
+        )
         self.assertEqual(ind.cget("text"), "MODE: PAPER · SIGNALS: LEGACY (UNTRAINED)")
         ind.update_signals_note(read_strategy_settings({}).note)
         self.assertEqual(ind.cget("text"), "MODE: PAPER · SIGNALS: STRAT-001 1h")
-        live = tm.read_trading_settings({"trading": {"mode": "live", "active_broker": "kraken"}})
+        live = tm.read_trading_settings(
+            {"trading": {"mode": "live", "active_broker": "kraken"}}
+        )
         ind.update_settings(live)
         ind.update_signals_note("SIGNALS: LEGACY (UNTRAINED)")
-        self.assertEqual(ind.cget("text"), "MODE: LIVE — kraken · SIGNALS: LEGACY (UNTRAINED)")
+        self.assertEqual(
+            ind.cget("text"), "MODE: LIVE — kraken · SIGNALS: LEGACY (UNTRAINED)"
+        )
 
 
 if __name__ == "__main__":

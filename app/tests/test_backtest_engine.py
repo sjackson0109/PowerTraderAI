@@ -11,7 +11,13 @@ import pandas as pd
 from helpers import make_candles
 from scripted import Scripted
 
-from backtest.engine import CostModel, buy_and_hold, evaluate_split, run_backtest, split_index
+from backtest.engine import (
+    CostModel,
+    buy_and_hold,
+    evaluate_split,
+    run_backtest,
+    split_index,
+)
 from backtest.kpis import KPI_KEYS, compute_kpis
 from strategies import create
 from strategies.base import Action
@@ -42,7 +48,9 @@ class FillTests(unittest.TestCase):
         frame = stepped(20)
         runner = runner_for(frame, {5: Action.ENTER_LONG, 9: Action.EXIT_LONG})
         cost = CostModel(fee_bps=10, slippage_bps=5)
-        res = run_backtest(frame, runner, "BTCUSDT", "1h", cost=cost, initial_equity=10_000)
+        res = run_backtest(
+            frame, runner, "BTCUSDT", "1h", cost=cost, initial_equity=10_000
+        )
 
         (trade,) = res.trades
         open6, open10 = 106.0, 110.0  # bar t+1 opens (t = 5 and 9)
@@ -65,53 +73,92 @@ class FillTests(unittest.TestCase):
 
     def test_fill_price_is_never_the_signal_bars_close(self):
         frame = stepped(20)
-        res = run_backtest(frame, runner_for(frame, {5: Action.ENTER_LONG, 9: Action.EXIT_LONG}),
-                           "X", "1h", cost=ZERO)
-        self.assertEqual(res.trades[0].entry_price, 106.0)  # bar 6 open, not bar 5 close (105.5)
+        res = run_backtest(
+            frame,
+            runner_for(frame, {5: Action.ENTER_LONG, 9: Action.EXIT_LONG}),
+            "X",
+            "1h",
+            cost=ZERO,
+        )
+        self.assertEqual(
+            res.trades[0].entry_price, 106.0
+        )  # bar 6 open, not bar 5 close (105.5)
         self.assertEqual(res.trades[0].exit_price, 110.0)
 
     def test_zero_cost_round_trip_is_exact(self):
         frame = stepped(20)
-        res = run_backtest(frame, runner_for(frame, {5: Action.ENTER_LONG, 9: Action.EXIT_LONG}),
-                           "X", "1h", cost=ZERO, initial_equity=10_000)
+        res = run_backtest(
+            frame,
+            runner_for(frame, {5: Action.ENTER_LONG, 9: Action.EXIT_LONG}),
+            "X",
+            "1h",
+            cost=ZERO,
+            initial_equity=10_000,
+        )
         self.assertAlmostEqual(res.equity[-1], 10_000 / 106.0 * 110.0, places=8)
 
     def test_costs_are_applied_to_every_fill_and_reduce_the_result(self):
         frame = stepped(20)
-        script = {5: Action.ENTER_LONG, 9: Action.EXIT_LONG, 12: Action.ENTER_LONG, 15: Action.EXIT_LONG}
+        script = {
+            5: Action.ENTER_LONG,
+            9: Action.EXIT_LONG,
+            12: Action.ENTER_LONG,
+            15: Action.EXIT_LONG,
+        }
         free = run_backtest(frame, runner_for(frame, script), "X", "1h", cost=ZERO)
-        paid = run_backtest(frame, runner_for(frame, script), "X", "1h", cost=CostModel(10, 5))
+        paid = run_backtest(
+            frame, runner_for(frame, script), "X", "1h", cost=CostModel(10, 5)
+        )
         self.assertEqual(len(paid.trades), 2)
         self.assertLess(paid.equity[-1], free.equity[-1])
-        self.assertAlmostEqual(paid.fees_paid, sum(t.fees for t in paid.trades), places=9)
+        self.assertAlmostEqual(
+            paid.fees_paid, sum(t.fees for t in paid.trades), places=9
+        )
         self.assertGreater(paid.slippage_cost, 0)
 
     def test_size_fraction_commits_only_part_of_equity(self):
         frame = stepped(20)
         script = {5: Action.ENTER_LONG, 9: Action.EXIT_LONG}
-        res = run_backtest(frame, runner_for(frame, script), "X", "1h",
-                           cost=CostModel(0, 0, size_fraction=0.5), initial_equity=10_000)
+        res = run_backtest(
+            frame,
+            runner_for(frame, script),
+            "X",
+            "1h",
+            cost=CostModel(0, 0, size_fraction=0.5),
+            initial_equity=10_000,
+        )
         self.assertAlmostEqual(res.trades[0].qty, 5_000 / 106.0, places=9)
         self.assertAlmostEqual(res.equity[-1], 5_000 + 5_000 / 106.0 * 110.0, places=8)
 
     def test_signals_on_the_last_bar_cannot_fill(self):
         frame = stepped(10)
-        res = run_backtest(frame, runner_for(frame, {9: Action.ENTER_LONG}), "X", "1h", cost=ZERO)
+        res = run_backtest(
+            frame, runner_for(frame, {9: Action.ENTER_LONG}), "X", "1h", cost=ZERO
+        )
         self.assertEqual(res.trades, [])
 
     def test_position_open_at_the_end_is_closed_at_the_final_close_with_costs(self):
         frame = stepped(12)
         cost = CostModel(10, 5)
-        res = run_backtest(frame, runner_for(frame, {3: Action.ENTER_LONG}), "X", "1h", cost=cost)
+        res = run_backtest(
+            frame, runner_for(frame, {3: Action.ENTER_LONG}), "X", "1h", cost=cost
+        )
         (trade,) = res.trades
         self.assertTrue(trade.forced_close)
         self.assertEqual(trade.exit_rule, "end_of_data")
         self.assertEqual(trade.exit_time, frame["open_time"].iloc[-1])
-        self.assertAlmostEqual(trade.exit_price, frame["close"].iloc[-1] * (1 - 0.0005), places=9)
+        self.assertAlmostEqual(
+            trade.exit_price, frame["close"].iloc[-1] * (1 - 0.0005), places=9
+        )
 
     def test_enter_while_long_and_exit_while_flat_are_ignored(self):
         frame = stepped(20)
-        script = {3: Action.EXIT_LONG, 5: Action.ENTER_LONG, 6: Action.ENTER_LONG, 9: Action.EXIT_LONG}
+        script = {
+            3: Action.EXIT_LONG,
+            5: Action.ENTER_LONG,
+            6: Action.ENTER_LONG,
+            9: Action.EXIT_LONG,
+        }
         res = run_backtest(frame, runner_for(frame, script), "X", "1h", cost=ZERO)
         self.assertEqual(len(res.trades), 1)
         self.assertEqual(res.trades[0].entry_time, frame["open_time"].iloc[6])
@@ -156,9 +203,13 @@ class NoLookaheadTests(unittest.TestCase):
         cut_time = self.frame["open_time"].iloc[cut]
         a = [t for t in full.trades if t.exit_time <= cut_time and not t.forced_close]
         b = [t for t in other.trades if t.exit_time <= cut_time and not t.forced_close]
-        self.assertGreater(len(a), 2, "fixture should trade several times before the cut")
-        self.assertEqual([(t.entry_time, t.exit_time, t.entry_price, t.exit_price) for t in a],
-                         [(t.entry_time, t.exit_time, t.entry_price, t.exit_price) for t in b])
+        self.assertGreater(
+            len(a), 2, "fixture should trade several times before the cut"
+        )
+        self.assertEqual(
+            [(t.entry_time, t.exit_time, t.entry_price, t.exit_price) for t in a],
+            [(t.entry_time, t.exit_time, t.entry_price, t.exit_price) for t in b],
+        )
         self.assertEqual(full.equity[:cut], other.equity[:cut])
 
 
@@ -186,15 +237,25 @@ class WarmupTests(unittest.TestCase):
 
     def test_the_backtester_enforces_warmup_through_the_strategy_contract(self):
         frame = stepped(40)
-        runner = runner_for(frame, {2: Action.ENTER_LONG, 4: Action.EXIT_LONG, 25: Action.ENTER_LONG,
-                                    28: Action.EXIT_LONG}, warmup=20)
+        runner = runner_for(
+            frame,
+            {
+                2: Action.ENTER_LONG,
+                4: Action.EXIT_LONG,
+                25: Action.ENTER_LONG,
+                28: Action.EXIT_LONG,
+            },
+            warmup=20,
+        )
         res = run_backtest(frame, runner, "X", "1h", cost=ZERO)
         self.assertEqual(len(res.trades), 1)  # the signals at bars 2 and 4 are warm-up
         self.assertEqual(res.trades[0].entry_time, frame["open_time"].iloc[26])
 
 
 class BuyAndHoldTests(unittest.TestCase):
-    def test_benchmark_is_one_buy_at_the_first_open_and_one_sell_at_the_last_close(self):
+    def test_benchmark_is_one_buy_at_the_first_open_and_one_sell_at_the_last_close(
+        self,
+    ):
         frame = stepped(50)
         cost = CostModel(10, 5)
         bh = buy_and_hold(frame, "1h", 10, 40, cost, 10_000)
@@ -204,7 +265,9 @@ class BuyAndHoldTests(unittest.TestCase):
         gross = qty * sell
         final = gross - gross * 0.001
         self.assertAlmostEqual(bh.equity[-1], final, places=8)
-        self.assertAlmostEqual(bh.kpis["total_return_pct"], (final / 10_000 - 1) * 100, places=9)
+        self.assertAlmostEqual(
+            bh.kpis["total_return_pct"], (final / 10_000 - 1) * 100, places=9
+        )
         self.assertEqual(bh.kpis["trade_count"], 1)
         self.assertAlmostEqual(bh.fees_paid, 10_000 * 0.001 + gross * 0.001, places=9)
         self.assertEqual(bh.bars, 30)
@@ -213,18 +276,27 @@ class BuyAndHoldTests(unittest.TestCase):
         frame = wavy(300)
         runner = StrategyRunner(create("STRAT-000", fast_len=3, slow_len=8))
         cost = CostModel(25, 10)
-        out = evaluate_split(frame, lambda: StrategyRunner(create("STRAT-000", fast_len=3, slow_len=8)),
-                             "X", "1h", cost)
+        out = evaluate_split(
+            frame,
+            lambda: StrategyRunner(create("STRAT-000", fast_len=3, slow_len=8)),
+            "X",
+            "1h",
+            cost,
+        )
         for name in ("in_sample", "out_of_sample"):
             a, b = out[name]["window"]
             strat, bench = out[name]["strategy"], out[name]["buy_and_hold"]
-            self.assertEqual((strat.first_bar, strat.last_bar), (bench.first_bar, bench.last_bar))
+            self.assertEqual(
+                (strat.first_bar, strat.last_bar), (bench.first_bar, bench.last_bar)
+            )
             self.assertEqual(strat.bars, b - a)
             expected = buy_and_hold(frame, "1h", a, b, cost)
             self.assertEqual(bench.kpis, expected.kpis)
             self.assertAlmostEqual(
                 strat.kpis["vs_buy_hold_pct"],
-                strat.kpis["total_return_pct"] - bench.kpis["total_return_pct"], places=9)
+                strat.kpis["total_return_pct"] - bench.kpis["total_return_pct"],
+                places=9,
+            )
 
     def test_higher_costs_lower_the_benchmark_too(self):
         frame = stepped(50)
@@ -252,7 +324,10 @@ class SplitTests(unittest.TestCase):
         # in-sample: entered at 651, still long at the split -> closed at bar 699's close
         (is_trade,) = is_res.trades
         self.assertEqual(is_trade.entry_time, times.iloc[651])
-        self.assertEqual((is_trade.exit_time, is_trade.exit_rule), (times.iloc[cut - 1], "end_of_data"))
+        self.assertEqual(
+            (is_trade.exit_time, is_trade.exit_rule),
+            (times.iloc[cut - 1], "end_of_data"),
+        )
         # out-of-sample: the ENTER at 650 is history only; the position at bar 800 does not
         # exist, so only the later ENTER (820) trades
         (oos_trade,) = oos_res.trades
@@ -272,7 +347,9 @@ class SplitTests(unittest.TestCase):
 
     def test_tiny_windows_are_rejected(self):
         with self.assertRaises(ValueError):
-            evaluate_split(stepped(3), lambda: runner_for(stepped(3), {}), "X", "1h", ZERO)
+            evaluate_split(
+                stepped(3), lambda: runner_for(stepped(3), {}), "X", "1h", ZERO
+            )
 
 
 class KpiTests(unittest.TestCase):
@@ -280,14 +357,25 @@ class KpiTests(unittest.TestCase):
 
     def test_keys_and_json_safety(self):
         frame = wavy(300)
-        res = run_backtest(frame, StrategyRunner(create("STRAT-000", fast_len=3, slow_len=8)),
-                           "X", "1h")
+        res = run_backtest(
+            frame,
+            StrategyRunner(create("STRAT-000", fast_len=3, slow_len=8)),
+            "X",
+            "1h",
+        )
         self.assertEqual(set(res.kpis), set(KPI_KEYS))
         json.dumps(res.kpis)  # None / floats only; no NaN or inf
 
     def test_total_return_drawdown_and_exposure_hand_values(self):
         equity = [11_000, 12_000, 9_000, 9_900]
-        k = compute_kpis(equity, 10_000, self.TF, [5.0, -2.0, 3.0], bars_in_position=2, fees_paid=12.5)
+        k = compute_kpis(
+            equity,
+            10_000,
+            self.TF,
+            [5.0, -2.0, 3.0],
+            bars_in_position=2,
+            fees_paid=12.5,
+        )
         self.assertAlmostEqual(k["total_return_pct"], -1.0)
         self.assertAlmostEqual(k["max_drawdown_pct"], -25.0)
         self.assertAlmostEqual(k["exposure_pct"], 50.0)
@@ -336,7 +424,12 @@ class KpiTests(unittest.TestCase):
 
 class CostModelTests(unittest.TestCase):
     def test_validation(self):
-        for bad in ({"fee_bps": -1}, {"slippage_bps": -1}, {"size_fraction": 0}, {"size_fraction": 1.5}):
+        for bad in (
+            {"fee_bps": -1},
+            {"slippage_bps": -1},
+            {"size_fraction": 0},
+            {"size_fraction": 1.5},
+        ):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 CostModel(**bad)
 

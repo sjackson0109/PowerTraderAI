@@ -14,10 +14,46 @@ TOL = 1e-6
 
 # 40 closes (the classic Wilder/StockCharts example series)
 CLOSES = [
-    44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08,
-    45.89, 46.03, 45.61, 46.28, 46.28, 46.00, 46.03, 46.41, 46.22, 45.64,
-    46.21, 46.25, 45.71, 46.45, 45.78, 45.35, 44.03, 44.18, 44.22, 44.57,
-    43.42, 42.66, 43.13, 43.70, 44.50, 45.20, 45.60, 46.10, 46.55, 46.30,
+    44.34,
+    44.09,
+    44.15,
+    43.61,
+    44.33,
+    44.83,
+    45.10,
+    45.42,
+    45.84,
+    46.08,
+    45.89,
+    46.03,
+    45.61,
+    46.28,
+    46.28,
+    46.00,
+    46.03,
+    46.41,
+    46.22,
+    45.64,
+    46.21,
+    46.25,
+    45.71,
+    46.45,
+    45.78,
+    45.35,
+    44.03,
+    44.18,
+    44.22,
+    44.57,
+    43.42,
+    42.66,
+    43.13,
+    43.70,
+    44.50,
+    45.20,
+    45.60,
+    46.10,
+    46.55,
+    46.30,
 ]
 # deterministic, irregular wicks so true range and directional movement vary
 HIGHS = [c + 0.25 + 0.05 * (i % 5) for i, c in enumerate(CLOSES)]
@@ -50,7 +86,8 @@ def ref_tema(xs, n):
 
 def ref_tr(h, l, c):
     return [h[0] - l[0]] + [
-        max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1])) for i in range(1, len(c))
+        max(h[i] - l[i], abs(h[i] - c[i - 1]), abs(l[i] - c[i - 1]))
+        for i in range(1, len(c))
     ]
 
 
@@ -133,7 +170,11 @@ class MovingAverageTests(unittest.TestCase):
 
     def test_dema_and_tema_track_a_trend_with_less_lag_than_ema(self):
         trend = pd.Series(np.arange(100, dtype=float))
-        e, d, t = ind.ema(trend, 10).iloc[-1], ind.dema(trend, 10).iloc[-1], ind.tema(trend, 10).iloc[-1]
+        e, d, t = (
+            ind.ema(trend, 10).iloc[-1],
+            ind.dema(trend, 10).iloc[-1],
+            ind.tema(trend, 10).iloc[-1],
+        )
         # on a straight line the EMA lags by (n-1)/2 = 4.5 bars; DEMA/TEMA remove it
         self.assertGreater(99 - e, 4.0)
         self.assertLess(abs(99 - d), 0.01)
@@ -170,10 +211,16 @@ class AtrTests(unittest.TestCase):
     def test_atr_matches_reference(self):
         for n in (3, 7, 14):
             with self.subTest(n=n):
-                assert_series_close(self, ind.atr(self.h, self.l, self.c, n), ref_atr(HIGHS, LOWS, CLOSES, n))
+                assert_series_close(
+                    self,
+                    ind.atr(self.h, self.l, self.c, n),
+                    ref_atr(HIGHS, LOWS, CLOSES, n),
+                )
 
     def test_true_range_uses_the_gap_to_the_previous_close(self):
-        h = pd.Series([10.0, 20.0]); l = pd.Series([9.0, 19.0]); c = pd.Series([9.5, 19.5])
+        h = pd.Series([10.0, 20.0])
+        l = pd.Series([9.0, 19.0])
+        c = pd.Series([9.5, 19.5])
         tr = ind.true_range(h, l, c)
         self.assertEqual(tr.iloc[0], 1.0)
         self.assertAlmostEqual(tr.iloc[1], 10.5)  # |20 - 9.5|, not the 1.0 bar range
@@ -190,7 +237,11 @@ class AdxTests(unittest.TestCase):
     def test_adx_matches_reference(self):
         for n in (3, 5, 10, 14):
             with self.subTest(n=n):
-                assert_series_close(self, ind.adx(self.h, self.l, self.c, n), ref_adx(HIGHS, LOWS, CLOSES, n))
+                assert_series_close(
+                    self,
+                    ind.adx(self.h, self.l, self.c, n),
+                    ref_adx(HIGHS, LOWS, CLOSES, n),
+                )
 
     def test_adx_warmup_is_two_n_minus_one_bars(self):
         got = ind.adx(self.h, self.l, self.c, 10)
@@ -204,7 +255,9 @@ class AdxTests(unittest.TestCase):
         n = 120
         up = pd.Series(np.arange(n, dtype=float) + 100)
         trend = ind.adx(up + 0.5, up - 0.5, up, 14).iloc[-1]
-        rng = np.random.default_rng(7)  # synthetic noise: only used to compare against a trend
+        rng = np.random.default_rng(
+            7
+        )  # synthetic noise: only used to compare against a trend
         noise = pd.Series(100 + rng.normal(0, 1, n))
         chop = ind.adx(noise + 0.5, noise - 0.5, noise, 14).iloc[-1]
         self.assertGreater(trend, 80)
@@ -213,7 +266,9 @@ class AdxTests(unittest.TestCase):
     def test_does_not_use_future_bars(self):
         full = ind.adx(self.h, self.l, self.c, 5)
         for cut in (15, 25, 38):
-            partial = ind.adx(self.h.iloc[:cut], self.l.iloc[:cut], self.c.iloc[:cut], 5)
+            partial = ind.adx(
+                self.h.iloc[:cut], self.l.iloc[:cut], self.c.iloc[:cut], 5
+            )
             a, b = partial.to_numpy(), full.iloc[:cut].to_numpy()
             self.assertTrue(np.allclose(a, b, equal_nan=True, atol=1e-12))
 

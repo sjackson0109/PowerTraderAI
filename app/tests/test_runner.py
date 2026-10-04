@@ -11,7 +11,28 @@ from backtest.engine import CostModel, run_backtest
 from strategies.base import Action
 from strategies.runner import StrategyRunner
 
-CLOSES = [100, 101, 102, 103, 104, 105, 104, 103, 102, 101, 100, 99, 98, 97, 96, 95, 94, 93, 92, 91]
+CLOSES = [
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    104,
+    103,
+    102,
+    101,
+    100,
+    99,
+    98,
+    97,
+    96,
+    95,
+    94,
+    93,
+    92,
+    91,
+]
 
 
 def frame():
@@ -30,7 +51,9 @@ class CompositionTests(unittest.TestCase):
         return StrategyRunner(Scripted(self.f, script or {}), list(overlays))
 
     def open_position(self, runner, i=3, price=103.0):
-        return runner.open_position("X", price, self.f["open_time"].iloc[i], runner.window(self.f, i))
+        return runner.open_position(
+            "X", price, self.f["open_time"].iloc[i], runner.window(self.f, i)
+        )
 
     def test_effective_stop_is_the_max_of_all_overlay_stops(self):
         a = StubOverlay("OVL-A", self.f, stops={4: 100.0})
@@ -39,7 +62,9 @@ class CompositionTests(unittest.TestCase):
         runner = self.runner(overlays=[a, b, c])
         pos = self.open_position(runner)
         d = evaluate_at(runner, self.f, 4, pos)
-        self.assertEqual((d.action, d.stop_price, d.stop_owner), (Action.HOLD, 102.0, "OVL-B"))
+        self.assertEqual(
+            (d.action, d.stop_price, d.stop_owner), (Action.HOLD, 102.0, "OVL-B")
+        )
         self.assertEqual((pos.current_stop, pos.stop_owner), (102.0, "OVL-B"))
 
     def test_stop_only_ever_moves_up_whichever_overlay_sets_it(self):
@@ -78,7 +103,9 @@ class CompositionTests(unittest.TestCase):
         d = evaluate_at(runner, self.f, 8, pos)
         self.assertEqual((d.action, d.exit_rule), (Action.EXIT_LONG, "strategy"))
 
-    def test_when_several_rules_fire_the_overlay_is_named_first_and_all_are_listed(self):
+    def test_when_several_rules_fire_the_overlay_is_named_first_and_all_are_listed(
+        self,
+    ):
         a = StubOverlay("OVL-A", self.f, stops={4: 110.0}, exit_now={8: "X"})
         runner = self.runner({8: Action.EXIT_LONG}, [a])
         pos = self.open_position(runner)
@@ -123,7 +150,9 @@ class CompositionTests(unittest.TestCase):
         res = run_backtest(self.f, runner, "X", "1h", cost=CostModel(0, 0))
         self.assertEqual(len(res.trades), 1)
         self.assertEqual(len(a.exits_seen), 1)
-        self.assertEqual(a.exits_seen[0][0], self.f["open_time"].iloc[9])  # exit executes at bar 9 open
+        self.assertEqual(
+            a.exits_seen[0][0], self.f["open_time"].iloc[9]
+        )  # exit executes at bar 9 open
 
     def test_decision_carries_bar_time_and_strategy_id(self):
         runner = self.runner()

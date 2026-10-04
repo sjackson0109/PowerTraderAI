@@ -26,7 +26,6 @@ import pandas as pd
 
 from strategies.base import Action, Signal, Strategy
 
-
 # --- overlay contract -----------------------------------------------------------------
 
 
@@ -49,7 +48,9 @@ class PositionState:
             "entry_price": float(self.entry_price),
             "entry_bar_time": pd.Timestamp(self.entry_bar_time).isoformat(),
             "highest_close": float(self.highest_close),
-            "current_stop": None if self.current_stop is None else float(self.current_stop),
+            "current_stop": (
+                None if self.current_stop is None else float(self.current_stop)
+            ),
             "stop_owner": self.stop_owner,
             "overlay_state": {k: dict(v) for k, v in self.overlay_state.items()},
         }
@@ -61,9 +62,13 @@ class PositionState:
             entry_price=float(d["entry_price"]),
             entry_bar_time=pd.Timestamp(d["entry_bar_time"]),
             highest_close=float(d["highest_close"]),
-            current_stop=None if d.get("current_stop") is None else float(d["current_stop"]),
+            current_stop=(
+                None if d.get("current_stop") is None else float(d["current_stop"])
+            ),
             stop_owner=d.get("stop_owner"),
-            overlay_state={k: dict(v) for k, v in (d.get("overlay_state") or {}).items()},
+            overlay_state={
+                k: dict(v) for k, v in (d.get("overlay_state") or {}).items()
+            },
         )
 
 
@@ -115,7 +120,9 @@ class Overlay(ABC):
     def allow_entry(self, symbol: str, now_bar_time: pd.Timestamp) -> GateResult:
         return GateResult(True, "")
 
-    def on_exit(self, pos: PositionState, bar_time: pd.Timestamp, exit_price: float) -> None:
+    def on_exit(
+        self, pos: PositionState, bar_time: pd.Timestamp, exit_price: float
+    ) -> None:
         """Called when the position is closed (cooldowns need to know)."""
         return None
 
@@ -142,7 +149,9 @@ class StrategyRunner:
 
     @property
     def lookback_bars(self) -> int:
-        return max([self.strategy.lookback_bars] + [o.lookback_bars for o in self.overlays])
+        return max(
+            [self.strategy.lookback_bars] + [o.lookback_bars for o in self.overlays]
+        )
 
     def set_timeframe(self, tf_seconds: int) -> None:
         """Tell overlays how long a bar is (cooldowns count bars)."""
@@ -165,7 +174,11 @@ class StrategyRunner:
     # -- lifecycle ---------------------------------------------------------------------
 
     def open_position(
-        self, symbol: str, entry_price: float, entry_bar_time: pd.Timestamp, candles: pd.DataFrame
+        self,
+        symbol: str,
+        entry_price: float,
+        entry_bar_time: pd.Timestamp,
+        candles: pd.DataFrame,
     ) -> PositionState:
         pos = PositionState(
             symbol=symbol,
@@ -200,7 +213,11 @@ class StrategyRunner:
 
         if position is None:
             if signal.action is not Action.ENTER_LONG:
-                reason = signal.reason if signal.action is Action.HOLD else f"FLAT:{signal.reason}"
+                reason = (
+                    signal.reason
+                    if signal.action is Action.HOLD
+                    else f"FLAT:{signal.reason}"
+                )
                 return Decision(Action.HOLD, reason, indicators, bar_time, sid)
             for overlay in self.overlays:
                 gate = overlay.allow_entry(symbol, bar_time)

@@ -92,7 +92,9 @@ def _run(out: Callable[[str], None], workdir: str, settings: dict) -> int:
     paper = tm.read_paper_settings(settings)
     source = tm.classify_quote(quote, paper.max_quote_age_s, time.time())
     if quote is None or source != "live":
-        out("Live BTC price   : unavailable" + (f" (feed is {source})" if quote else ""))
+        out(
+            "Live BTC price   : unavailable" + (f" (feed is {source})" if quote else "")
+        )
         out("")
         out("Paper trading system: DEGRADED (no live price)")
         return EXIT_DEGRADED
@@ -104,21 +106,29 @@ def _run(out: Callable[[str], None], workdir: str, settings: dict) -> int:
     buy = target.place_order(SYMBOL, "buy", QUANTITY)
     if buy.status != "filled":
         return _degraded(out, "BUY", buy)
-    out(f"BUY  {QUANTITY:g} BTC @ {_money(buy.price)}  -> {buy.status}"
-        f"  (price_source={buy.price_source})")
+    out(
+        f"BUY  {QUANTITY:g} BTC @ {_money(buy.price)}  -> {buy.status}"
+        f"  (price_source={buy.price_source})"
+    )
     position = exchange.account.positions.get("BTC")
     marked = tm.fetch_public_quote("BTC") or quote
     unrealized = float(position.quantity) * (marked.bid - float(position.average_price))
-    out(f"Position         : {float(position.quantity):g} BTC @ avg {_money(float(position.average_price))}")
-    out(f"Unrealized PnL   : {_money(unrealized)}  (marked at bid {_money(marked.bid)})")
+    out(
+        f"Position         : {float(position.quantity):g} BTC @ avg {_money(float(position.average_price))}"
+    )
+    out(
+        f"Unrealized PnL   : {_money(unrealized)}  (marked at bid {_money(marked.bid)})"
+    )
     out("")
 
     # 5. SELL.
     sell = target.place_order(SYMBOL, "sell", QUANTITY)
     if sell.status != "filled":
         return _degraded(out, "SELL", sell)
-    out(f"SELL {QUANTITY:g} BTC @ {_money(sell.price)}  -> {sell.status}"
-        f"  (price_source={sell.price_source})")
+    out(
+        f"SELL {QUANTITY:g} BTC @ {_money(sell.price)}  -> {sell.status}"
+        f"  (price_source={sell.price_source})"
+    )
     final_cash = exchange.get_balance()["USD"]
     fees = float(exchange.account.total_commission_paid)
     out(f"Realized PnL     : {_money(final_cash - start_cash)}  (fees {_money(fees)})")

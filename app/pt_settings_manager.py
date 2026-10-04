@@ -632,9 +632,13 @@ class SettingsManager:
         return bool(self.get(trading_testnet_key(broker), True))
 
     def get_price_fallback_policy(self) -> str:
-        """"simulate_and_flag" only when explicitly set; anything else is "pause"."""
+        """ "simulate_and_flag" only when explicitly set; anything else is "pause"."""
         policy = self.get(PAPER_POLICY_KEY, DEFAULT_PRICE_FALLBACK_POLICY)
-        return policy if policy in PRICE_FALLBACK_POLICIES else DEFAULT_PRICE_FALLBACK_POLICY
+        return (
+            policy
+            if policy in PRICE_FALLBACK_POLICIES
+            else DEFAULT_PRICE_FALLBACK_POLICY
+        )
 
     def set_price_fallback_policy(self, policy: str, persist: bool = True) -> bool:
         if policy not in PRICE_FALLBACK_POLICIES:

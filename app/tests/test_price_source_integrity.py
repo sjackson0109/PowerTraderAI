@@ -18,7 +18,10 @@ from pt_settings_manager import SettingsManager
 from trading_mode_ui import price_note
 
 PAUSE = {"trading": {"mode": "paper"}}  # policy absent -> default "pause"
-SIM = {"trading": {"mode": "paper"}, "paper": {"price_fallback_policy": "simulate_and_flag"}}
+SIM = {
+    "trading": {"mode": "paper"},
+    "paper": {"price_fallback_policy": "simulate_and_flag"},
+}
 
 
 def spy_warnings():
@@ -79,7 +82,8 @@ class PolicySettingTests(unittest.TestCase):
             got = tm.read_paper_settings({"paper": {"max_quote_age_s": bad}})
             self.assertEqual(got.max_quote_age_s, 30.0, bad)
         self.assertEqual(
-            tm.read_paper_settings({"paper": {"max_quote_age_s": 5}}).max_quote_age_s, 5.0
+            tm.read_paper_settings({"paper": {"max_quote_age_s": 5}}).max_quote_age_s,
+            5.0,
         )
 
     def test_settings_manager_persists_and_repairs_the_new_keys(self):
@@ -96,7 +100,10 @@ class PolicySettingTests(unittest.TestCase):
             with open(os.path.join(d, "pt_config.json"), "w", encoding="utf-8") as f:
                 json.dump(
                     {
-                        "paper": {"price_fallback_policy": "yolo", "max_quote_age_s": -1},
+                        "paper": {
+                            "price_fallback_policy": "yolo",
+                            "max_quote_age_s": -1,
+                        },
                         "risk": {"emergency_drawdown_pct": 500},
                     },
                     f,
@@ -146,7 +153,9 @@ class PaperExchangePolicyTests(unittest.TestCase):
     def test_rejected_order_can_still_be_looked_up(self):
         ex = self.exchange(None, PAUSE)
         result = ex.place_order("BTC-USD", "buy", 0.01)
-        self.assertEqual(ex.get_order_status(result.order_id).reason, "PRICE_UNAVAILABLE")
+        self.assertEqual(
+            ex.get_order_status(result.order_id).reason, "PRICE_UNAVAILABLE"
+        )
 
     def test_price_reads_raise_under_pause(self):
         ex = self.exchange(None, PAUSE)
@@ -166,7 +175,9 @@ class PaperExchangePolicyTests(unittest.TestCase):
         now = time.time()
         stale = tm.Quote(bid=99, ask=101, quote_ts=now - 120, fetched_ts=now)
         result = self.exchange(stale, PAUSE).place_order("BTC-USD", "buy", 0.01)
-        self.assertEqual((result.status, result.reason), ("rejected", "PRICE_UNAVAILABLE"))
+        self.assertEqual(
+            (result.status, result.reason), ("rejected", "PRICE_UNAVAILABLE")
+        )
 
     def test_stale_quote_with_simulate_and_flag_fills_marked_stale_with_its_age(self):
         now = time.time()
@@ -228,7 +239,11 @@ class PublicQuoteFeedTests(PaperTraderCase):
         q = tm.fetch_public_quote("BTC")
         self.assertAlmostEqual(q.age_s, 4.0, delta=1.5)
         self.assertEqual((q.bid, q.ask), (99.0, 101.0))
-        self.assertTrue(self.binance.urls[0].startswith("https://api.binance.com/api/v3/ticker/bookTicker"))
+        self.assertTrue(
+            self.binance.urls[0].startswith(
+                "https://api.binance.com/api/v3/ticker/bookTicker"
+            )
+        )
 
     def test_missing_date_header_means_stale_not_live(self):
         self.binance.send_date = False
@@ -266,7 +281,9 @@ class TraderLedgerTests(PaperTraderCase):
     def test_trader_retries_next_cycle_once_the_feed_returns(self):
         self.binance.reachable = False
         trader = self.trader(copy.deepcopy(PAUSE))
-        self.assertIsNone(trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0))
+        self.assertIsNone(
+            trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
+        )
         self.binance.reachable = True
         tm._quote_cache.clear()
         self.assertEqual(
@@ -294,18 +311,36 @@ class TraderLedgerTests(PaperTraderCase):
     def test_stale_feed_with_pause_places_no_order(self):
         self.binance.age_s = 90.0
         trader = self.trader(copy.deepcopy(PAUSE))
-        self.assertIsNone(trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0))
+        self.assertIsNone(
+            trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
+        )
         self.assertEqual(self.ledger_rows(), [])
 
-    def test_legacy_ledger_without_new_columns_loads_as_unknown_and_is_not_rewritten(self):
+    def test_legacy_ledger_without_new_columns_loads_as_unknown_and_is_not_rewritten(
+        self,
+    ):
         paper_dir = os.path.join(self.tmp.name, "paper")
         os.makedirs(paper_dir)
         path = os.path.join(paper_dir, "trade_history.jsonl")
         legacy = [
-            {"ts": time.time() - 100, "side": "buy", "tag": None, "symbol": "BTC-USD",
-             "qty": 0.01, "price": 100.0, "order_id": "old-1"},
-            {"ts": time.time() - 50, "side": "sell", "tag": None, "symbol": "BTC-USD",
-             "qty": 0.01, "price": 101.0, "order_id": "old-2"},
+            {
+                "ts": time.time() - 100,
+                "side": "buy",
+                "tag": None,
+                "symbol": "BTC-USD",
+                "qty": 0.01,
+                "price": 100.0,
+                "order_id": "old-1",
+            },
+            {
+                "ts": time.time() - 50,
+                "side": "sell",
+                "tag": None,
+                "symbol": "BTC-USD",
+                "qty": 0.01,
+                "price": 101.0,
+                "order_id": "old-2",
+            },
         ]
         with open(path, "w", encoding="utf-8") as f:
             for row in legacy:
@@ -435,7 +470,9 @@ class EmergencyDrawdownTests(PaperTraderCase):
         for bad in ("abc", 0, 0.5, 51, -4, None, True, float("nan"), [8]):
             with self.subTest(bad=bad), mock.patch.object(tm.logger, "warning") as warn:
                 self.assertEqual(
-                    tm.read_emergency_drawdown_pct({"risk": {"emergency_drawdown_pct": bad}}),
+                    tm.read_emergency_drawdown_pct(
+                        {"risk": {"emergency_drawdown_pct": bad}}
+                    ),
                     8.0,
                 )
                 if bad is not None:
@@ -444,7 +481,9 @@ class EmergencyDrawdownTests(PaperTraderCase):
     def test_bounds_are_inclusive(self):
         for ok in (1, 1.0, 50, 25.5):
             self.assertEqual(
-                tm.read_emergency_drawdown_pct({"risk": {"emergency_drawdown_pct": ok}}),
+                tm.read_emergency_drawdown_pct(
+                    {"risk": {"emergency_drawdown_pct": ok}}
+                ),
                 float(ok),
             )
 
@@ -452,9 +491,13 @@ class EmergencyDrawdownTests(PaperTraderCase):
         settings = {"trading": {"mode": "paper"}}
         trader = self.trader(settings)
         trader.risk_manager.peak_value = 1000.0
-        self.assertFalse(trader.risk_manager.check_emergency_conditions(950.0)["emergency_stop"])
+        self.assertFalse(
+            trader.risk_manager.check_emergency_conditions(950.0)["emergency_stop"]
+        )
         settings["risk"] = {"emergency_drawdown_pct": 4}
-        self.assertTrue(trader.risk_manager.check_emergency_conditions(950.0)["emergency_stop"])
+        self.assertTrue(
+            trader.risk_manager.check_emergency_conditions(950.0)["emergency_stop"]
+        )
 
 
 class NoNetworkTests(PaperTraderCase):
@@ -465,7 +508,10 @@ class NoNetworkTests(PaperTraderCase):
         self.assertTrue(self.binance.urls)
         for url in self.binance.urls:
             self.assertTrue(
-                url.startswith("https://api.binance.com/api/v3/ticker/bookTicker?symbol="), url
+                url.startswith(
+                    "https://api.binance.com/api/v3/ticker/bookTicker?symbol="
+                ),
+                url,
             )
 
 

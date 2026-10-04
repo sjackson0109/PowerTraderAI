@@ -393,11 +393,10 @@ class InstitutionalTradingEngine:
     def _init_database(self):
         """Initialize institutional trading database"""
         try:
-            # Ensure we use absolute path to database
-            import os
+            # Database in the user data folder (pt_paths)
+            import pt_paths
 
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            db_path = os.path.join(current_dir, "institutional_trading.db")
+            db_path = pt_paths.data_file("institutional_trading.db")
 
             self.db_conn = sqlite3.connect(db_path, check_same_thread=False)
 

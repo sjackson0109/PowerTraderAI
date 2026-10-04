@@ -92,7 +92,10 @@ class LiveTradingRefused(TradingModeError):
 
 
 def default_settings_path() -> str:
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), SETTINGS_FILE)
+    """``pt_config.json`` in the user config folder (see pt_paths)."""
+    import pt_paths
+
+    return os.path.join(pt_paths.config_dir(), SETTINGS_FILE)
 
 
 def _lookup(settings: Any, dotted_key: str, default: Any = None) -> Any:

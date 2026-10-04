@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import sys
 from datetime import datetime, timedelta
@@ -13,6 +14,33 @@ app_dir = os.path.join(
 )
 if app_dir not in sys.path:
     sys.path.insert(0, app_dir)
+
+# FDS-108a: the same isolation guard as the tests under app/ (app/tests/isolation.py).
+# Loaded here, before any test module imports pt_trader & co.: a temp POWERTRADER_HOME,
+# an in-memory keyring (the "fail" backend for child processes), the real per-user
+# folders blocked, and an autouse fixture that isolates and checks every test.
+REPO_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def _load_isolation():
+    """app/tests/isolation.py, loaded once per session under one name."""
+    name = "powertrader_test_isolation"
+    if name not in sys.modules:
+        path = os.path.join(REPO_DIR, "app", "tests", "isolation.py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            del sys.modules[name]
+            raise
+    return sys.modules[name]
+
+
+_isolation = _load_isolation()
+isolated_user_dirs = _isolation.isolated_user_dirs
+memory_keyring = _isolation.memory_keyring
 
 
 @pytest.fixture

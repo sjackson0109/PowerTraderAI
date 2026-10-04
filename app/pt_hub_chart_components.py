@@ -493,10 +493,9 @@ class AccountValueChart(ttk.Frame):
         """Load account value history from file."""
         try:
             # Try to load from hub data directory
-            hub_data_dir = os.environ.get(
-                "POWERTRADER_HUB_DIR",
-                os.path.join(os.path.dirname(__file__), "hub_data"),
-            )
+            import pt_paths
+
+            hub_data_dir = os.environ.get("POWERTRADER_HUB_DIR") or pt_paths.hub_dir()
 
             # Load account value history
             account_file = os.path.join(hub_data_dir, "account_value_history.jsonl")

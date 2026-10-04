@@ -102,7 +102,13 @@ class SecureCredentialManager:
     """Manages encrypted storage and rotation of API credentials."""
 
     def __init__(self, base_dir: str = None):
-        self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
+        # Default: the pre-FDS-108a location. The file vault is only read by
+        # the migration now; the app stores credentials through pt_secrets.
+        if base_dir is None:
+            import pt_paths
+
+            base_dir = pt_paths.legacy_dir()
+        self.base_dir = base_dir
         self.salt_file = os.path.join(self.base_dir, ".pt_salt")
         self.encrypted_key_file = os.path.join(self.base_dir, "r_key.enc")
         self.encrypted_secret_file = os.path.join(self.base_dir, "r_secret.enc")
@@ -584,7 +590,11 @@ class PermissionValidator:
     AUDIT_ROTATION_KEEP = 1  # Number of rotated backups to keep
 
     def __init__(self, base_dir: str = None):
-        self.base_dir = base_dir or os.path.dirname(os.path.abspath(__file__))
+        if base_dir is None:
+            import pt_paths
+
+            base_dir = pt_paths.log_dir()
+        self.base_dir = base_dir
         self._audit_log = os.path.join(self.base_dir, self.AUDIT_LOG_FILE)
 
     def validate(
@@ -843,53 +853,128 @@ class CredentialRotationScheduler:
 
 
 # ---------------------------------------------------------------------------
+# KeyringCredentialManager (FDS-108a)
+# ---------------------------------------------------------------------------
+class KeyringCredentialManager(SecureCredentialManager):
+    """Robinhood credentials in the OS credential store, through ``pt_secrets``.
+
+    This is the store the app reads and writes since FDS-108a. It keeps the
+    ``SecureCredentialManager`` method names (``encrypt_credentials`` stores,
+    ``decrypt_credentials`` reads; the OS store encrypts at rest), so callers
+    did not change shape. Nothing secret is written to a file: only the
+    rotation dates go to ``robinhood_rotation.json`` in the config folder.
+
+    ``SecureCredentialManager`` (the old file vault) is now only read by the
+    migration (``pt_migrate``) to move existing credentials into the keyring.
+    """
+
+    EXCHANGE = "robinhood"
+    METADATA_FILE = "robinhood_rotation.json"
+
+    def __init__(self):
+        import pt_paths
+
+        super().__init__(pt_paths.config_dir())
+        self.metadata_file = pt_paths.config_file(self.METADATA_FILE)
+        self.salt_file = self.encrypted_key_file = self.encrypted_secret_file = None
+
+    def encrypt_credentials(
+        self,
+        api_key: str,
+        private_key_b64: str,
+        rotation_interval_days: int = DEFAULT_ROTATION_DAYS,
+    ) -> bool:
+        """Store both values in the OS keyring. Raises
+        ``pt_secrets.KeyringUnavailable`` / ``pt_secrets.SecretTooLarge``
+        (nothing stored, no file written) when that is not possible."""
+        import pt_secrets
+
+        with self._lock:
+            pt_secrets.set_credentials(
+                self.EXCHANGE, {"api_key": api_key, "private_key": private_key_b64}
+            )
+            prior = self._load_metadata()
+            meta = CredentialMetadata.new(rotation_interval_days)
+            if prior is not None:
+                meta.created_at = prior.created_at
+            self._save_metadata(meta)
+            return True
+
+    def decrypt_credentials(self) -> Optional[Tuple[str, str]]:
+        """(api_key, private_key_b64) from the environment or the keyring, or None."""
+        import pt_secrets
+
+        creds = pt_secrets.get_credentials(self.EXCHANGE)
+        if not creds:
+            return None
+        return creds["api_key"], creds["api_secret"]
+
+    def has_encrypted_credentials(self) -> bool:
+        import pt_secrets
+
+        return pt_secrets.has_credentials(self.EXCHANGE)
+
+    def has_plaintext_credentials(self) -> bool:
+        return False
+
+    def migrate_from_plaintext(self) -> bool:
+        return False  # pt_migrate moves legacy files into the keyring
+
+    def rotate_credentials(
+        self,
+        new_api_key: str,
+        new_private_key_b64: str,
+        rotation_interval_days: int = DEFAULT_ROTATION_DAYS,
+    ) -> bool:
+        import pt_secrets
+
+        with self._lock:
+            old = {
+                f: (
+                    pt_secrets.get_secret(self.EXCHANGE, f) or pt_secrets.Secret("")
+                ).reveal()
+                for f in ("api_key", "private_key")
+            }
+            try:
+                return self.encrypt_credentials(
+                    new_api_key, new_private_key_b64, rotation_interval_days
+                )
+            except pt_secrets.SecretsError as exc:
+                logger.error("Credential rotation failed: %s", exc)
+                try:
+                    pt_secrets.set_credentials(self.EXCHANGE, old)
+                except pt_secrets.SecretsError:
+                    pass
+                return False
+
+    def delete_credentials(self) -> None:
+        """Remove the Robinhood entries from the keyring and the rotation dates."""
+        import pt_secrets
+
+        with self._lock:
+            pt_secrets.delete_credentials(self.EXCHANGE)
+            try:
+                os.remove(self.metadata_file)
+            except OSError:
+                pass
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 def get_credentials() -> Optional[Tuple[str, str]]:
     """
-    Get API credentials with priority:
-    1. Encrypted vault
-    2. Environment variables (CI/CD)
-    3. Auto-migrate from plaintext (last resort — also preserves plaintext
-       fallback if vault write fails, to prevent user lockout)
+    Robinhood API credentials through ``pt_secrets``:
+    1. Environment variables ``POWERTRADER_ROBINHOOD_API_KEY`` and
+       ``POWERTRADER_ROBINHOOD_PRIVATE_KEY`` (CI, headless)
+    2. The OS keyring
+
+    Credentials still in the old file vault or the plaintext ``r_key.txt``
+    files are not read here; ``pt_migrate`` moves them into the keyring.
 
     Returns (api_key, private_key_b64) or None.
     """
-    manager = SecureCredentialManager()
-
-    if manager.has_encrypted_credentials():
-        return manager.decrypt_credentials()
-
-    env_key = os.environ.get("POWERTRADER_ROBINHOOD_API_KEY")
-    env_secret = os.environ.get("POWERTRADER_ROBINHOOD_PRIVATE_KEY")
-    if env_key and env_secret:
-        return env_key.strip(), env_secret.strip()
-
-    if manager.has_plaintext_credentials():
-        if manager.migrate_from_plaintext():
-            return manager.decrypt_credentials()
-        # Plaintext fallback: migration failed (e.g. vault write permission
-        # denied). Return plaintext creds rather than locking the user out.
-        # Logged at error level so the degraded security posture is visible.
-        logger.error(
-            "SECURITY DEGRADATION: encrypted vault write failed — returning "
-            "PLAINTEXT credentials. Callers cannot distinguish vault-backed "
-            "from plaintext via this API. Fix vault permissions and re-run "
-            "to migrate."
-        )
-        try:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            with open(os.path.join(base_dir, "r_key.txt"), "r", encoding="utf-8") as f:
-                api_key = f.read().strip()
-            with open(
-                os.path.join(base_dir, "r_secret.txt"), "r", encoding="utf-8"
-            ) as f:
-                private_key = f.read().strip()
-            return api_key, private_key
-        except OSError:
-            pass
-
-    return None
+    return KeyringCredentialManager().decrypt_credentials()
 
 
 def validate_credentials_on_startup(

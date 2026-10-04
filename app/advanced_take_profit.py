@@ -542,7 +542,7 @@ class RiskRewardManager:
 class TakeProfitEngine:
     """Main engine for managing take-profit orders."""
 
-    def __init__(self, db_path: str = "order_management.db"):
+    def __init__(self, db_path: Optional[str] = None):
         self.db = OrderManagementDB(db_path) if TAKE_PROFIT_AVAILABLE else None
         self.ladder_manager = ProfitLadderManager(self)
         self.trailing_manager = TrailingProfitManager(self)
@@ -969,7 +969,7 @@ class TakeProfitEngine:
 _take_profit_engine = None
 
 
-def get_take_profit_engine(db_path: str = "order_management.db") -> TakeProfitEngine:
+def get_take_profit_engine(db_path: Optional[str] = None) -> TakeProfitEngine:
     """Get the global take-profit engine instance."""
     global _take_profit_engine
     if _take_profit_engine is None:

@@ -70,7 +70,11 @@ class LiveIntegrationTester:
     Tests all components with live data and real API connections.
     """
 
-    def __init__(self, config_path: str = "config/integration_test.json"):
+    def __init__(self, config_path: str = None):
+        if config_path is None:
+            import pt_paths
+
+            config_path = pt_paths.config_file("integration_test.json")
         self.config_path = config_path
         self.logger = get_logger("integration_tester")
         self.performance_monitor = PerformanceMonitor(enable_system_metrics=True)
@@ -733,8 +737,10 @@ class LiveIntegrationTester:
     def _save_test_results(self, report: Dict[str, Any]):
         """Save test results to file."""
         try:
-            results_dir = Path("test_results")
-            results_dir.mkdir(exist_ok=True)
+            import pt_paths
+
+            results_dir = Path(pt_paths.data_dir()) / "test_results"
+            results_dir.mkdir(parents=True, exist_ok=True)
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             results_file = results_dir / f"integration_test_{timestamp}.json"

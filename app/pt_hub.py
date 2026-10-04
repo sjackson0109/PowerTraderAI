@@ -28,6 +28,12 @@ from matplotlib.patches import Rectangle
 from matplotlib.ticker import FuncFormatter
 from matplotlib.transforms import blended_transform_factory
 
+import pt_paths
+
+try:
+    import pt_migrate
+except ImportError:  # the hub must start even without it
+    pt_migrate = None
 from pt_paper_mode import (
     PAPER_MODE_BALANCE_KEY,
     PaperBanner,
@@ -48,11 +54,20 @@ try:
     from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
 
     EXCHANGE_SUPPORT_AVAILABLE = True
-except ImportError:
+except ImportError as exc:
     EXCHANGE_SUPPORT_AVAILABLE = False
-    print(
-        "Warning: Multi-exchange support not available. Exchange status will be disabled."
-    )
+    # A missing package is reported as such, not as a multi-exchange problem.
+    if isinstance(exc, pt_paths.MissingDependency):
+        print(f"Warning: {exc}")  # platformdirs: main() stops on it
+    elif isinstance(exc, ModuleNotFoundError):
+        print(
+            f"Warning: Multi-exchange support not available: {exc}. Install the requirements "
+            f"with: {pt_paths.REQUIREMENTS_COMMAND}. Exchange status will be disabled."
+        )
+    else:
+        print(
+            "Warning: Multi-exchange support not available. Exchange status will be disabled."
+        )
 
 # Order management imports
 try:
@@ -92,12 +107,16 @@ except ImportError:
     DEPENDENCY_CHECKER_AVAILABLE = False
     print("Warning: Dependency checker not available.")
 
-# Secure credential manager (encrypted vault for API key + secret)
+# Robinhood credentials live in the OS credential store (pt_secrets / keyring)
 try:
-    from pt_credentials import SecureCredentialManager
+    import pt_secrets
+    from pt_credentials import KeyringCredentialManager
 except ImportError:
-    SecureCredentialManager = None  # type: ignore[assignment]
-    print("Warning: pt_credentials not available — encrypted vault disabled.")
+    pt_secrets = None  # type: ignore[assignment]
+    KeyringCredentialManager = None  # type: ignore[assignment]
+    print(
+        "Warning: pt_credentials not available — Robinhood credential setup disabled."
+    )
 
 # API Server imports
 try:
@@ -612,7 +631,7 @@ DEFAULT_SETTINGS = {
 }
 
 
-SETTINGS_FILE = "gui_settings.json"
+SETTINGS_FILE = pt_paths.GUI_SETTINGS_FILE  # in pt_paths.config_dir()
 
 
 def _safe_read_json(path: str) -> Optional[dict]:
@@ -739,7 +758,7 @@ def build_coin_folders(main_dir: str, coins: List[str]) -> Dict[str, str]:
     Returns { "BTC": "...", "ETH": "...", ... }
     """
     out: Dict[str, str] = {}
-    main_dir = main_dir or os.getcwd()
+    main_dir = main_dir or pt_paths.neural_dir()
 
     # BTC folder
     out["BTC"] = main_dir
@@ -1936,6 +1955,18 @@ class PowerTraderHub(tk.Tk):
         # Debounce map for panedwindow clamp operations
         self._paned_clamp_after_ids: Dict[str, str] = {}
 
+        # User config/data live outside the (read-only) program folder. Before
+        # anything reads settings: move files left by older releases (copies
+        # only; nothing is deleted or overwritten), then, on first run, copy
+        # the shipped exchange template into the config folder.
+        self._migration_report = (
+            pt_migrate.run_startup_migration() if pt_migrate is not None else None
+        )
+        try:
+            pt_paths.install_default("trading_config.example.json")
+        except OSError as exc:
+            print(f"Warning: could not install the default exchange config: {exc}")
+
         # Trading mode must be known BEFORE the first theme paint, otherwise
         # the window flashes dark for one frame before settling on blue. It is
         # `trading.mode` from pt_config.json (paper unless explicitly live).
@@ -1975,21 +2006,15 @@ class PowerTraderHub(tk.Tk):
         # Store the training status writer for use by other components
         self._write_training_status = _write_training_status
 
-        self.project_dir = os.path.abspath(os.path.dirname(__file__))
+        # Program folder (read-only): runner scripts are executed from here.
+        self.project_dir = pt_paths.program_dir()
 
-        main_dir = str(self.settings.get("main_neural_dir") or "").strip()
-        if main_dir and not os.path.isabs(main_dir):
-            main_dir = os.path.abspath(os.path.join(self.project_dir, main_dir))
-        if (not main_dir) or (not os.path.isdir(main_dir)):
-            main_dir = self.project_dir
-        self.settings["main_neural_dir"] = main_dir
-
-        # hub data dir
-        hub_dir = self.settings.get("hub_data_dir") or os.path.join(
-            self.project_dir, "hub_data"
+        # Neural folders (models + signals) and hub data live in the user data
+        # folder; a setting pointing inside the program folder is ignored.
+        self.settings["main_neural_dir"] = pt_paths.neural_dir(
+            self.settings.get("main_neural_dir")
         )
-        self.hub_dir = os.path.abspath(hub_dir)
-        _ensure_dir(self.hub_dir)
+        self.hub_dir = pt_paths.hub_dir_for(self.settings.get("hub_data_dir"))
 
         # file paths written by pt_trader.py. The trader keeps each trading mode's
         # books in its own sub-directory (paper / testnet / live), so show the ones
@@ -2017,7 +2042,9 @@ class PowerTraderHub(tk.Tk):
         # coin folders (neural outputs)
         self.coins = [c.upper().strip() for c in self.settings["coins"]]
 
-        # On startup (like on Settings-save), create missing alt folders and copy the trainer into them.
+        # On startup (like on Settings-save), create any missing alt coin neural
+        # folders. Nothing is copied into them: the trainer runs from the
+        # program folder with the coin folder as its working directory.
         self._ensure_alt_coin_folders_and_trainer_on_startup()
 
         # Rebuild folder map after potential folder creation
@@ -2045,9 +2072,8 @@ class PowerTraderHub(tk.Tk):
             ),
         )
 
-        self.proc_trainer_path = os.path.abspath(
-            os.path.join(self.project_dir, self.settings["script_neural_trainer"])
-        )
+        # Resolved again on every Settings save (see _refresh_trainer_path).
+        self._refresh_trainer_path()
 
         # live log queues
         self.runner_log_q: "queue.Queue[str]" = queue.Queue()
@@ -2104,6 +2130,41 @@ class PowerTraderHub(tk.Tk):
         self.after(250, self._tick)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        if self._migration_report is not None:
+            self.after(800, self._show_migration_report)
+
+    def _show_migration_report(self) -> None:
+        """Summary of the FDS-108a migration with a 'Remove old files' button
+        (which asks for confirmation before deleting anything)."""
+        try:
+            pt_migrate.show_migration_dialog(self, self._migration_report)
+        except Exception as exc:
+            print(f"Warning: could not show the migration report: {exc}")
+
+    @staticmethod
+    def _user_folder_rows() -> List[Tuple[str, str]]:
+        """(label, folder) for the Settings window's Paths section."""
+        return [
+            ("Config folder:", pt_paths.config_dir()),
+            ("Data folder:", pt_paths.data_dir()),
+            ("Log folder:", pt_paths.log_dir()),
+        ]
+
+    def _open_user_folder(self, folder: str) -> None:
+        """Open ``folder`` in the system file manager."""
+        try:
+            pt_paths.make_private_dir(folder)
+            if os.name == "nt":
+                os.startfile(folder)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+        except Exception as e:
+            messagebox.showerror(
+                "Couldn't open folder", f"Tried to open:\n{folder}\n\nError:\n{e}"
+            )
 
     # ---- forced dark mode ----
 
@@ -2507,12 +2568,14 @@ class PowerTraderHub(tk.Tk):
     # ---- settings ----
 
     def _load_settings(self) -> dict:
-        settings_path = os.path.join(
-            os.path.abspath(os.path.dirname(__file__)), SETTINGS_FILE
-        )
+        settings_path = pt_paths.gui_settings_file()
         data = _safe_read_json(settings_path)
         if not isinstance(data, dict):
             data = {}
+        # A credential in the settings file is ignored and never written back.
+        data = (
+            pt_secrets.strip_secret_fields(data, SETTINGS_FILE) if pt_secrets else data
+        )
 
         merged = dict(DEFAULT_SETTINGS)
         merged.update(data)
@@ -2521,10 +2584,12 @@ class PowerTraderHub(tk.Tk):
         return merged
 
     def _save_settings(self) -> None:
-        settings_path = os.path.join(
-            os.path.abspath(os.path.dirname(__file__)), SETTINGS_FILE
+        data = self.settings
+        if pt_secrets:
+            data = pt_secrets.strip_secret_fields(data, SETTINGS_FILE)
+        pt_paths.write_private_text(
+            pt_paths.gui_settings_file(), json.dumps(data, indent=2)
         )
-        _safe_write_json(settings_path, self.settings)
 
     def _apply_theme(self) -> None:
         """
@@ -2546,58 +2611,32 @@ class PowerTraderHub(tk.Tk):
 
     def _ensure_alt_coin_folders_and_trainer_on_startup(self) -> None:
         """
-        Startup behavior (mirrors Settings-save behavior):
-        - For every alt coin in the coin list that does NOT have its folder yet:
-            - create the folder
-            - copy neural_trainer.py from the MAIN (BTC) folder into the new folder
+        Startup behavior (mirrors Settings-save behavior): create the per-coin
+        neural folder for every alt coin that does not have one yet. The trainer
+        is run from the program folder with the coin folder as its working
+        directory, so no code is copied into the data folders. (The name is
+        historical: older versions also copied the trainer into each folder.)
         """
         try:
-            coins = [
-                str(c).strip().upper()
-                for c in (self.settings.get("coins") or [])
-                if str(c).strip()
-            ]
-            main_dir = (
-                self.settings.get("main_neural_dir") or self.project_dir or os.getcwd()
-            ).strip()
-
-            trainer_name = os.path.basename(
-                str(self.settings.get("script_neural_trainer", "neural_trainer.py"))
-            )
-
-            # Source trainer: MAIN folder (BTC folder)
-            src_main_trainer = os.path.join(main_dir, trainer_name)
-
-            # Best-effort fallback if the main folder doesn't have it (keeps behavior robust)
-            src_cfg_trainer = str(
-                self.settings.get("script_neural_trainer", trainer_name)
-            )
-            src_trainer_path = (
-                src_main_trainer
-                if os.path.isfile(src_main_trainer)
-                else src_cfg_trainer
-            )
-
-            for coin in coins:
-                if coin == "BTC":
-                    continue  # BTC uses main folder; no per-coin folder needed
-
-                coin_dir = os.path.join(main_dir, coin)
-
-                created = False
-                if not os.path.isdir(coin_dir):
-                    os.makedirs(coin_dir, exist_ok=True)
-                    created = True
-
-                # Only copy into folders created at startup (per your request)
-                if created:
-                    dst_trainer_path = os.path.join(coin_dir, trainer_name)
-                    if (not os.path.isfile(dst_trainer_path)) and os.path.isfile(
-                        src_trainer_path
-                    ):
-                        shutil.copy2(src_trainer_path, dst_trainer_path)
+            main_dir = pt_paths.neural_dir(self.settings.get("main_neural_dir"))
+            for coin in self.settings.get("coins") or []:
+                coin = str(coin).strip().upper()
+                if coin and coin != "BTC":  # BTC uses the main folder itself
+                    os.makedirs(os.path.join(main_dir, coin), exist_ok=True)
         except Exception:
             pass
+
+    def _refresh_trainer_path(self) -> str:
+        """
+        Set ``proc_trainer_path`` from the ``script_neural_trainer`` setting,
+        resolved against the (read-only) program folder. Called at start-up and
+        on every Settings save, so a changed trainer script is used by the next
+        training run without restarting the hub.
+        """
+        self.proc_trainer_path = os.path.abspath(
+            os.path.join(self.project_dir, self.settings["script_neural_trainer"])
+        )
+        return self.proc_trainer_path
 
     # ---- menu / layout ----
 
@@ -3819,7 +3858,8 @@ class PowerTraderHub(tk.Tk):
         try:
             p.proc = subprocess.Popen(
                 [sys.executable, "-u", p.path],  # -u for unbuffered prints
-                cwd=self.project_dir,
+                # never the program folder: any relative write lands in user data
+                cwd=pt_paths.data_dir(),
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -5371,15 +5411,18 @@ Platform: {sys.platform}
             proc_info = ProcessInfo(
                 name=f"Neural Runner ({coin})",
                 script_path=script_path,
-                cwd=self.project_dir,
+                cwd=pt_paths.data_dir(),
             )
 
             # Start the process with the coin argument
             import subprocess
 
+            env = os.environ.copy()
+            env["POWERTRADER_HUB_DIR"] = self.hub_dir
             proc = subprocess.Popen(
                 [sys.executable, script_path, coin],
                 cwd=proc_info.cwd,
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -5586,31 +5629,13 @@ Platform: {sys.platform}
         # Match the trader's folder convention:
         #   BTC runs from the main neural folder
         #   Alts run from their own coin subfolder
-        coin_cwd = self.coin_folders.get(coin, self.project_dir)
+        coin_cwd = self.coin_folders.get(coin, self.settings["main_neural_dir"])
+        os.makedirs(coin_cwd, exist_ok=True)
 
-        # Use the trainer script that lives INSIDE that coin's folder so outputs land in the right place.
-        trainer_name = os.path.basename(
-            str(self.settings.get("script_neural_trainer", "pt_trainer.py"))
-        )
-
-        # If an alt coin folder doesn't exist yet, create it and copy the trainer script from the main (BTC) folder.
-        # (Also: overwrite to avoid running stale trainer copies in alt folders.)
-
-        if coin != "BTC":
-            try:
-                if not os.path.isdir(coin_cwd):
-                    os.makedirs(coin_cwd, exist_ok=True)
-
-                src_main_folder = self.coin_folders.get("BTC", self.project_dir)
-                src_trainer_path = os.path.join(src_main_folder, trainer_name)
-                dst_trainer_path = os.path.join(coin_cwd, trainer_name)
-
-                if os.path.isfile(src_trainer_path):
-                    shutil.copy2(src_trainer_path, dst_trainer_path)
-            except Exception:
-                pass
-
-        trainer_path = os.path.join(coin_cwd, trainer_name)
+        # The trainer runs from the (read-only) program folder with the coin's
+        # neural folder as its working directory, so its outputs land there.
+        # proc_trainer_path follows the Settings (see _refresh_trainer_path).
+        trainer_path = self.proc_trainer_path
         print(f"DEBUG: Looking for trainer at: {trainer_path}")
 
         if not os.path.isfile(trainer_path):
@@ -6456,9 +6481,7 @@ Platform: {sys.platform}
         if indicator is None:
             return
         try:
-            path = os.path.join(
-                os.path.abspath(os.path.dirname(__file__)), "pt_config.json"
-            )
+            path = pt_paths.settings_file()
             mtime = os.path.getmtime(path) if os.path.exists(path) else None
         except OSError:
             mtime = None
@@ -6900,7 +6923,7 @@ Platform: {sys.platform}
             c.upper().strip() for c in (self.settings.get("coins") or []) if c.strip()
         ]
         self.coin_folders = build_coin_folders(
-            self.settings.get("main_neural_dir") or self.project_dir, self.coins
+            pt_paths.neural_dir(self.settings.get("main_neural_dir")), self.coins
         )
 
         # Refresh coin dropdowns (they don't auto-update)
@@ -7094,7 +7117,8 @@ Platform: {sys.platform}
             if getattr(self, "_coin_folders_sig", None) != sig:
                 self._coin_folders_sig = sig
                 self.coin_folders = build_coin_folders(
-                    self.settings.get("main_neural_dir") or self.project_dir, self.coins
+                    pt_paths.neural_dir(self.settings.get("main_neural_dir")),
+                    self.coins,
                 )
         except Exception:
             pass
@@ -7691,120 +7715,63 @@ Platform: {sys.platform}
         add_row(r, "pt_trader.py path:", trader_script_var)
         r += 1
 
-        # --- Robinhood API setup (writes r_key.txt + r_secret.txt used by pt_trader.py) ---
-        def _api_paths() -> Tuple[str, str]:
-            key_path = os.path.join(self.project_dir, "r_key.txt")
-            secret_path = os.path.join(self.project_dir, "r_secret.txt")
-            return key_path, secret_path
-
-        def _read_api_files() -> Tuple[str, str]:
-            # Try encrypted vault first; only fall back to plaintext when no
-            # vault exists (legacy install). If the vault exists but is
-            # unreadable, surface the error rather than silently returning
-            # empty credentials (plaintext files may already be deleted).
-            _logger = logging.getLogger(__name__)
-            if SecureCredentialManager is not None:
-                mgr = SecureCredentialManager(self.project_dir)
-                if mgr.has_encrypted_credentials():
-                    try:
-                        creds = mgr.decrypt_credentials()
-                        if creds:
-                            return creds[0], creds[1]
-                        raise RuntimeError(
-                            "Credential vault exists but decrypt_credentials returned None. "
-                            "The vault may be corrupted or was encrypted on a different machine."
-                        )
-                    except RuntimeError:
-                        raise  # surface vault-broken error to caller
-                    except Exception as exc:
-                        _logger.warning("Encrypted vault read failed: %s", exc)
-                        raise RuntimeError(
-                            f"Credential vault is present but unreadable: {exc}"
-                        ) from exc
-            # Plaintext fallback for legacy installs (no vault present)
-            key_path, secret_path = _api_paths()
-            try:
-                with open(key_path, "r", encoding="utf-8") as f:
-                    k = (f.read() or "").strip()
-            except Exception:
-                k = ""
-            try:
-                with open(secret_path, "r", encoding="utf-8") as f:
-                    s = (f.read() or "").strip()
-            except Exception:
-                s = ""
-            return k, s
+        # --- Robinhood API setup (OS credential store via pt_secrets; no files) ---
+        def _read_saved_credentials() -> Tuple[str, str]:
+            """Saved Robinhood (api_key, private_key_b64): environment variables
+            first, then the OS keyring. ("", "") when none."""
+            if KeyringCredentialManager is None:
+                return "", ""
+            creds = KeyringCredentialManager().decrypt_credentials()
+            return (creds[0], creds[1]) if creds else ("", "")
 
         api_status_var = tk.StringVar(value="")
 
         def _refresh_api_status() -> None:
-            key_path, secret_path = _api_paths()
-            k, s = _read_api_files()
-
-            missing = []
-            if not k:
-                missing.append("r_key.txt (API Key)")
-            if not s:
-                missing.append("r_secret.txt (PRIVATE key)")
-
-            if missing:
-                api_status_var.set(
-                    "Not configured ❌ (missing " + ", ".join(missing) + ")"
-                )
-            else:
-                api_status_var.set("Configured ✅ (credentials found)")
-
-        def _open_api_folder() -> None:
-            """Open the folder where r_key.txt / r_secret.txt live."""
-            try:
-                folder = os.path.abspath(self.project_dir)
-                if os.name == "nt":
-                    os.startfile(folder)  # type: ignore[attr-defined]
-                    return
-                if sys.platform == "darwin":
-                    subprocess.Popen(["open", folder])
-                    return
-                subprocess.Popen(["xdg-open", folder])
-            except Exception as e:
-                messagebox.showerror(
-                    "Couldn't open folder",
-                    f"Tried to open:\n{self.project_dir}\n\nError:\n{e}",
-                )
+            k, s = _read_saved_credentials()
+            if not (k and s):
+                api_status_var.set("Not configured ❌ (no API key / private key saved)")
+                return
+            source = pt_secrets.credential_source("robinhood") if pt_secrets else None
+            where = (
+                "environment variables"
+                if source == pt_secrets.SOURCE_ENV
+                else "OS credential store"
+            )
+            api_status_var.set(f"Configured ✅ (from {where})")
 
         def _clear_api_files() -> None:
-            """Delete r_key.txt / r_secret.txt (with a big confirmation)."""
-            key_path, secret_path = _api_paths()
+            """Remove the Robinhood credentials from the OS keyring (with a confirmation)."""
+            if KeyringCredentialManager is None:
+                return
             if not messagebox.askyesno(
                 "Delete API credentials?",
-                "This will delete:\n"
-                f"  {key_path}\n"
-                f"  {secret_path}\n\n"
+                "This removes your Robinhood API key and private key from the "
+                "operating system's credential store.\n\n"
                 "After deleting, the trader can NOT authenticate until you run the setup wizard again.\n\n"
-                "Are you sure you want to delete these files?",
+                "Are you sure?",
             ):
                 return
 
-            try:
-                if os.path.isfile(key_path):
-                    os.remove(key_path)
-                if os.path.isfile(secret_path):
-                    os.remove(secret_path)
-            except Exception as e:
-                messagebox.showerror(
-                    "Delete failed", f"Couldn't delete the files:\n\n{e}"
-                )
-                return
-
+            KeyringCredentialManager().delete_credentials()
             _refresh_api_status()
-            messagebox.showinfo("Deleted", "Deleted r_key.txt and r_secret.txt.")
+            note = ""
+            if (
+                pt_secrets
+                and pt_secrets.credential_source("robinhood") == pt_secrets.SOURCE_ENV
+            ):
+                note = (
+                    "\n\nPOWERTRADER_ROBINHOOD_API_KEY / _PRIVATE_KEY are still set in the "
+                    "environment and will keep being used until you unset them."
+                )
+            messagebox.showinfo("Deleted", "Robinhood credentials removed." + note)
 
         def _open_robinhood_api_wizard() -> None:
             """
             Beginner-friendly wizard that creates + stores Robinhood Crypto Trading API credentials.
 
-            What we store:
-              - r_key.txt    = your Robinhood *API Key* (safe-ish to store, still treat as sensitive)
-              - r_secret.txt = your *PRIVATE key* (treat like a password — never share it)
+            Both values go to the operating system's credential store (Windows
+            Credential Manager / macOS Keychain / Secret Service) through
+            pt_secrets. Nothing is written to a file.
             """
             import base64
             import platform
@@ -7917,26 +7884,10 @@ Platform: {sys.platform}
                 "<Button-5>", lambda _e: wiz_canvas.yview_scroll(3, "units"), add="+"
             )  # Linux
 
-            key_path, secret_path = _api_paths()
-
-            # Load any existing credentials so users can update without re-generating keys.
-            existing_api_key, existing_private_b64 = _read_api_files()
+            # Load any existing credentials so users can update without re-generating
+            # keys. The private key stays in memory only; it is never shown.
+            existing_api_key, existing_private_b64 = _read_saved_credentials()
             private_b64_state = {"value": (existing_private_b64 or "").strip()}
-
-            def _backup_existing_credentials() -> None:
-                """Create timestamped backups of existing credentials before changes."""
-                try:
-                    from datetime import datetime
-
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    if os.path.isfile(key_path):
-                        backup_key = f"{key_path}.bak_{ts}"
-                        shutil.copy2(key_path, backup_key)
-                    if os.path.isfile(secret_path):
-                        backup_secret = f"{secret_path}.bak_{ts}"
-                        shutil.copy2(secret_path, backup_secret)
-                except Exception:
-                    pass
 
             def _validate_api_key(api_key: str) -> Tuple[bool, str]:
                 """Enhanced API key validation with user-friendly feedback."""
@@ -7955,23 +7906,8 @@ Platform: {sys.platform}
                 return True, "API key format looks correct"
 
             # -----------------------------
-            # Helpers (open folder, copy, etc.)
+            # Helpers
             # -----------------------------
-            def _open_in_file_manager(path: str) -> None:
-                try:
-                    p = os.path.abspath(path)
-                    if os.name == "nt":
-                        os.startfile(p)  # type: ignore[attr-defined]
-                        return
-                    if sys.platform == "darwin":
-                        subprocess.Popen(["open", p])
-                        return
-                    subprocess.Popen(["xdg-open", p])
-                except Exception as e:
-                    messagebox.showerror(
-                        "Couldn't open folder", f"Tried to open:\n{path}\n\nError:\n{e}"
-                    )
-
             def _copy_to_clipboard(txt: str, title: str = "Copied") -> None:
                 try:
                     wiz.clipboard_clear()
@@ -7979,12 +7915,6 @@ Platform: {sys.platform}
                     messagebox.showinfo(title, "Copied to clipboard.")
                 except Exception:
                     pass
-
-            def _mask_path(p: str) -> str:
-                try:
-                    return os.path.abspath(p)
-                except Exception:
-                    return p
 
             # -----------------------------
             # Big, beginner-friendly instructions
@@ -8007,9 +7937,9 @@ Platform: {sys.platform}
                 "  G) Permissions: this TRADER needs READ + TRADE. (READ-only cannot place orders.)\n"
                 "  H) Click Save. Robinhood shows your API Key — copy it right away (it may only show once).\n\n"
                 "📱 Mobile note: if you can't find API Trading in the app, use robinhood.com in a browser.\n\n"
-                "This wizard will save two files in the same folder as pt_hub.py:\n"
-                "  - r_key.txt    (your API Key)\n"
-                "  - r_secret.txt (your PRIVATE key in base64)  ← keep this secret like a password\n"
+                "When you click Save, both your API Key and your PRIVATE key are stored in your\n"
+                "operating system's credential store (Windows Credential Manager, macOS Keychain\n"
+                "or the Linux Secret Service). Nothing is written to a file.\n"
             )
 
             intro_lbl = ttk.Label(container, text=intro, justify="left")
@@ -8034,11 +7964,6 @@ Platform: {sys.platform}
                 command=lambda: webbrowser.open(
                     "https://docs.robinhood.com/crypto/trading/"
                 ),
-            ).pack(side="left", padx=8)
-            ttk.Button(
-                top_btns,
-                text="Open Folder With r_key.txt / r_secret.txt",
-                command=lambda: _open_in_file_manager(self.project_dir),
             ).pack(side="left", padx=8)
 
             # -----------------------------
@@ -8204,20 +8129,6 @@ Platform: {sys.platform}
                     ):
                         return
 
-                # Create backup of existing credentials before saving new ones
-                try:
-                    from datetime import datetime
-
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    if os.path.isfile(key_path):
-                        backup_key = f"{key_path}.bak_{ts}"
-                        shutil.copy2(key_path, backup_key)
-                    if os.path.isfile(secret_path):
-                        backup_secret = f"{secret_path}.bak_{ts}"
-                        shutil.copy2(secret_path, backup_secret)
-                except Exception:
-                    pass  # Non-critical backup failure
-
                 # Safe test: market-data endpoint (no trading)
                 base_url = "https://trading.robinhood.com"
                 path = "/api/v1/crypto/marketdata/best_bid_ask/?symbol=BTC-USD"
@@ -8246,7 +8157,7 @@ Platform: {sys.platform}
                 except Exception as e:
                     messagebox.showerror(
                         "Bad private key",
-                        f"Couldn't use your private key (r_secret.txt).\n\nError:\n{e}",
+                        f"Couldn't use your private key.\n\nError:\n{e}",
                     )
                     return
 
@@ -8309,14 +8220,16 @@ Platform: {sys.platform}
             # -----------------------------
             # Step 3 — Save
             # -----------------------------
-            step3 = ttk.LabelFrame(container, text="Step 3 — Save to files (required)")
+            step3 = ttk.LabelFrame(
+                container, text="Step 3 — Save to the OS credential store (required)"
+            )
             step3.grid(row=4, column=0, sticky="nsew")
             step3.columnconfigure(0, weight=1)
 
             ack_var = tk.BooleanVar(value=False)
             ack = ttk.Checkbutton(
                 step3,
-                text="I understand r_secret.txt is PRIVATE and I will not share it.",
+                text="I understand my PRIVATE key is secret and I will not share it.",
                 variable=ack_var,
             )
             ack.grid(row=0, column=0, sticky="w", padx=10, pady=(10, 6))
@@ -8336,7 +8249,7 @@ Platform: {sys.platform}
 
                 # Normalize private key so pt_thinker.py can load it:
                 # - Accept 32 bytes (seed) OR 64 bytes (seed+pub) from older hub versions
-                # - Save ONLY base64(seed32) to r_secret.txt
+                # - Save ONLY base64(seed32)
                 try:
                     raw = base64.b64decode(priv_b64)
                     if len(raw) == 64:
@@ -8368,7 +8281,7 @@ Platform: {sys.platform}
                 if not bool(ack_var.get()):
                     messagebox.showwarning(
                         "Please confirm",
-                        "For safety, please check the box confirming you understand r_secret.txt is private.",
+                        "For safety, please check the box confirming you understand your private key is secret.",
                     )
                     return
 
@@ -8380,65 +8293,29 @@ Platform: {sys.platform}
                     ):
                         return
 
-                # Back up existing files (so user can undo mistakes)
                 try:
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    if os.path.isfile(key_path):
-                        shutil.copy2(key_path, f"{key_path}.bak_{ts}")
-                    if os.path.isfile(secret_path):
-                        shutil.copy2(secret_path, f"{secret_path}.bak_{ts}")
-                except Exception:
-                    pass
-
-                try:
-                    # Encrypt credentials via SecureCredentialManager
-                    # (replaces plaintext r_key.txt / r_secret.txt writes)
-                    if SecureCredentialManager is None:
+                    # Store via pt_secrets in the OS credential store (no file is written)
+                    if KeyringCredentialManager is None:
                         raise RuntimeError(
                             "pt_credentials module not available — "
-                            "cannot encrypt credentials."
+                            "cannot store credentials."
                         )
-                    mgr = SecureCredentialManager(self.project_dir)
-                    if not mgr.encrypt_credentials(api_key, priv_b64):
-                        raise RuntimeError(
-                            "Encryption failed - check disk space and permissions."
-                        )
+                    KeyringCredentialManager().encrypt_credentials(api_key, priv_b64)
                 except Exception as e:
+                    # pt_secrets messages never contain the values; a missing
+                    # keyring names the environment variables to use instead.
                     messagebox.showerror(
                         "Save failed",
-                        f"Couldn't save credentials.\n\nError:\n{e}",
+                        f"Couldn't save credentials.\n\n{e}",
                     )
                     return
-
-                # Secure-erase stale plaintext files before unlinking
-                _hub_logger = logging.getLogger(__name__)
-                for stale_path in (key_path, secret_path):
-                    if not os.path.isfile(stale_path):
-                        continue
-                    try:
-                        size = os.path.getsize(stale_path)
-                        with open(stale_path, "r+b") as sf:
-                            sf.write(b"\x00" * size)
-                            sf.flush()
-                            os.fsync(sf.fileno())
-                    except OSError:
-                        pass  # best-effort; still remove
-                    try:
-                        os.remove(stale_path)
-                    except OSError as rm_exc:
-                        _hub_logger.warning(
-                            "Could not remove stale plaintext credential %s: %s",
-                            stale_path,
-                            rm_exc,
-                        )
 
                 _refresh_api_status()
                 messagebox.showinfo(
                     "Saved",
                     "✅ Saved!\n\n"
-                    "The trader will automatically read these files next time it starts:\n"
-                    f"  API Key → {_mask_path(key_path)}\n"
-                    f"  Private Key → {_mask_path(secret_path)}\n\n"
+                    "Your API Key and Private Key are in the operating system's credential "
+                    "store. The trader reads them from there when it starts.\n\n"
                     "Next steps:\n"
                     "  1) Close this window\n"
                     "  2) Start the trader (pt_trader.py)\n"
@@ -8465,16 +8342,41 @@ Platform: {sys.platform}
         ttk.Button(
             api_row, text="Setup Wizard", command=_open_robinhood_api_wizard
         ).grid(row=0, column=1, sticky="e", padx=(10, 0))
-        ttk.Button(api_row, text="Open Folder", command=_open_api_folder).grid(
-            row=0, column=2, sticky="e", padx=(8, 0)
-        )
         ttk.Button(api_row, text="Clear", command=_clear_api_files).grid(
-            row=0, column=3, sticky="e", padx=(8, 0)
+            row=0, column=2, sticky="e", padx=(8, 0)
         )
 
         r += 1
 
         _refresh_api_status()
+
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        )
+        r += 1
+
+        # --- Paths (FDS-108a): where settings, data and logs live ---
+        ttk.Label(
+            frm, text="Paths (read-only program folder is not used for your files):"
+        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        r += 1
+        for label, folder in self._user_folder_rows():
+            ttk.Label(frm, text=label).grid(
+                row=r, column=0, sticky="w", padx=(0, 10), pady=3
+            )
+            path_row = ttk.Frame(frm)
+            path_row.grid(row=r, column=1, columnspan=2, sticky="ew", pady=3)
+            path_row.columnconfigure(0, weight=1)
+            path_entry = ttk.Entry(path_row)
+            path_entry.insert(0, folder)
+            path_entry.configure(state="readonly")
+            path_entry.grid(row=0, column=0, sticky="ew")
+            ttk.Button(
+                path_row,
+                text="Open folder",
+                command=lambda f=folder: self._open_user_folder(f),
+            ).grid(row=0, column=1, sticky="e", padx=(10, 0))
+            r += 1
 
         ttk.Separator(frm, orient="horizontal").grid(
             row=r, column=0, columnspan=3, sticky="ew", pady=10
@@ -8578,7 +8480,9 @@ Platform: {sys.platform}
                     ]
                 )
 
-                self.settings["main_neural_dir"] = main_dir_var.get().strip()
+                self.settings["main_neural_dir"] = pt_paths.neural_dir(
+                    main_dir_var.get().strip()
+                )
                 self.settings["coins"] = [
                     c.strip().upper() for c in coins_var.get().split(",") if c.strip()
                 ]
@@ -8694,6 +8598,8 @@ Platform: {sys.platform}
                     trainer_script_var.get().strip()
                 )
                 self.settings["script_trader"] = trader_script_var.get().strip()
+                # The next training run uses the new trainer script (no restart).
+                self._refresh_trainer_path()
 
                 self.settings["ui_refresh_seconds"] = float(
                     ui_refresh_var.get().strip()
@@ -8751,52 +8657,9 @@ Platform: {sys.platform}
                         self._api_server = None
                     self.toggle_api_server(self._api_server_enabled)
 
-                # If new coin(s) were added and their training folder doesn't exist yet,
-                # create the folder and copy neural_trainer.py into it RIGHT AFTER saving settings.
-                try:
-                    new_coins = [
-                        c.strip().upper()
-                        for c in (self.settings.get("coins") or [])
-                        if c.strip()
-                    ]
-                    added = [c for c in new_coins if c and c not in prev_coins]
-
-                    main_dir = self.settings.get("main_neural_dir") or self.project_dir
-                    trainer_name = os.path.basename(
-                        str(
-                            self.settings.get(
-                                "script_neural_trainer", "neural_trainer.py"
-                            )
-                        )
-                    )
-
-                    # Best-effort resolve source trainer path:
-                    # Prefer trainer living in the main (BTC) folder; fallback to the configured trainer path.
-                    src_main_trainer = os.path.join(main_dir, trainer_name)
-                    src_cfg_trainer = str(
-                        self.settings.get("script_neural_trainer", trainer_name)
-                    )
-                    src_trainer_path = (
-                        src_main_trainer
-                        if os.path.isfile(src_main_trainer)
-                        else src_cfg_trainer
-                    )
-
-                    for coin in added:
-                        if coin == "BTC":
-                            continue  # BTC uses main folder; no per-coin folder needed
-
-                        coin_dir = os.path.join(main_dir, coin)
-                        if not os.path.isdir(coin_dir):
-                            os.makedirs(coin_dir, exist_ok=True)
-
-                        dst_trainer_path = os.path.join(coin_dir, trainer_name)
-                        if (not os.path.isfile(dst_trainer_path)) and os.path.isfile(
-                            src_trainer_path
-                        ):
-                            shutil.copy2(src_trainer_path, dst_trainer_path)
-                except Exception:
-                    pass
+                # If new coin(s) were added, create their neural folders right away
+                # (the trainer itself stays in the program folder).
+                self._ensure_alt_coin_folders_and_trainer_on_startup()
 
                 # Refresh all coin-driven UI (dropdowns + chart tabs)
                 self._refresh_coin_dependent_ui(prev_coins)
@@ -8998,8 +8861,27 @@ Platform: {sys.platform}
         self.destroy()
 
 
+def _show_startup_error(message: str) -> None:
+    """Print ``message`` and, when Tk can open a window, show it in an error box."""
+    print(f"PowerTraderAI cannot start. {message}", file=sys.stderr)
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("PowerTraderAI cannot start", message, parent=root)
+        root.destroy()
+    except Exception:  # no display, or Tcl/Tk not usable: the printed message is enough
+        pass
+
+
 def main():
     """Entry point for console script installation."""
+    # Before the window opens: without platformdirs the hub cannot find its
+    # folders and would stop later with a traceback.
+    try:
+        pt_paths.check_dependencies()
+    except pt_paths.MissingDependency as exc:
+        _show_startup_error(str(exc))
+        sys.exit(1)
     app = PowerTraderHub()
     app.mainloop()
 

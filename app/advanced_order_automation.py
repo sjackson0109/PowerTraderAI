@@ -178,8 +178,11 @@ class BracketOrder:
 class OrderAutomationEngine:
     """Engine for processing advanced order types and automation"""
 
-    def __init__(self, db_path: str = "data/automation.db"):
-        os.makedirs("data", exist_ok=True)
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            import pt_paths
+
+            db_path = pt_paths.data_file("automation.db")
         self.db_path = db_path
         self._init_db()
 

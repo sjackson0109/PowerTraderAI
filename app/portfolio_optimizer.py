@@ -37,8 +37,12 @@ class PortfolioOptimizer:
     efficient frontier calculation, and sophisticated rebalancing strategies.
     """
 
-    def __init__(self, db_path: str = "portfolio_optimization.db"):
+    def __init__(self, db_path: Optional[str] = None):
         """Initialize the portfolio optimizer with database storage."""
+        if db_path is None:
+            import pt_paths
+
+            db_path = pt_paths.data_file("portfolio_optimization.db")
         self.db_path = db_path
         self.logger = self._setup_logging()
         self._init_database()

@@ -88,8 +88,11 @@ class RiskMetrics:
 class PortfolioAnalytics:
     """Main portfolio analytics engine"""
 
-    def __init__(self, db_path: str = "data/portfolio_analytics.db"):
-        os.makedirs("data", exist_ok=True)
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            import pt_paths
+
+            db_path = pt_paths.data_file("portfolio_analytics.db")
         self.db_path = db_path
         self._init_db()
 

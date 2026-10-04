@@ -29,11 +29,15 @@ class UpdateManager:
         self.app_dir = Path(app_dir or os.path.dirname(os.path.abspath(__file__)))
         self.current_version = self._get_current_version()
         self.update_url = "https://api.github.com/repos/powertrader/releases/latest"
-        self.backup_dir = self.app_dir / "backup"
-        self.temp_dir = self.app_dir / "temp"
+        # Updater state lives in the user folders (pt_paths); the program
+        # folder is only touched when an update is actually applied.
+        import pt_paths
+
+        self.backup_dir = Path(pt_paths.data_dir()) / "backup"
+        self.temp_dir = Path(pt_paths.cache_dir()) / "update"
 
         # Update settings
-        self.settings_file = self.app_dir / "config" / "update_settings.json"
+        self.settings_file = Path(pt_paths.config_file("update_settings.json"))
         self.settings = self._load_settings()
 
     def _get_current_version(self) -> str:

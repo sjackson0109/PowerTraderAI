@@ -656,9 +656,14 @@ class ResearchReportGenerator:
 class LLMResearchEngine:
     """Main LLM research engine coordinating all components."""
 
-    def __init__(self, config: Dict = None, db_path: str = "order_management.db"):
+    def __init__(self, config: Dict = None, db_path: Optional[str] = None):
         if config is None:
             config = {}
+        if db_path is None:
+            import pt_paths
+
+            # The same order database as the rest of the app (user data folder)
+            db_path = pt_paths.data_file("order_management.db")
 
         # Initialize components
         llm_config = config.get("llm", {})
@@ -1019,13 +1024,13 @@ _research_engine = None
 
 
 def get_research_engine(
-    config: Dict = None, db_path: str = "order_management.db"
+    config: Dict = None, db_path: Optional[str] = None
 ) -> LLMResearchEngine:
     """Get the global research engine instance."""
     global _research_engine
     if _research_engine is None:
         # Ensure proper SQLAlchemy URL format
-        if not db_path.startswith("sqlite://"):
+        if db_path and not db_path.startswith("sqlite://"):
             db_path = f"sqlite:///{db_path}"
         _research_engine = LLMResearchEngine(config, db_path)
     return _research_engine

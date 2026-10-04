@@ -427,7 +427,9 @@ if __name__ == "__main__":
     # Direct execution for testing
     import sys
 
-    hub_dir = sys.argv[1] if len(sys.argv) > 1 else "hub_data"
+    import pt_paths
+
+    hub_dir = sys.argv[1] if len(sys.argv) > 1 else pt_paths.hub_dir()
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 8080
 
     server = create_api_server(hub_dir, port)

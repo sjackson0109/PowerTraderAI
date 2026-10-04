@@ -8,6 +8,7 @@ Tracks performance, risk metrics, and system health.
 import asyncio
 import json
 import os
+import pt_secrets
 import queue
 import sys
 import threading
@@ -100,7 +101,11 @@ class LiveMonitor:
     Tracks system performance, trading metrics, and generates alerts.
     """
 
-    def __init__(self, config_path: str = "config/monitoring.json"):
+    def __init__(self, config_path: str = None):
+        if config_path is None:
+            import pt_paths
+
+            config_path = pt_paths.config_file("monitoring.json")
         self.config_path = config_path
         self.logger = get_logger("live_monitor")
         self.config = self._load_config()
@@ -135,7 +140,10 @@ class LiveMonitor:
         try:
             if Path(self.config_path).exists():
                 with open(self.config_path, "r") as f:
-                    return json.load(f)
+                    # the SMTP password lives in the OS keyring (pt_secrets "smtp")
+                    return pt_secrets.strip_secret_fields(
+                        json.load(f), os.path.basename(self.config_path)
+                    )
             else:
                 # Default configuration
                 default_config = {
@@ -160,7 +168,6 @@ class LiveMonitor:
                             "server": "smtp.gmail.com",
                             "port": 587,
                             "username": "",
-                            "password": "",
                         },
                     },
                 }
@@ -175,7 +182,14 @@ class LiveMonitor:
         try:
             Path(self.config_path).parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_path, "w") as f:
-                json.dump(config, f, indent=2)
+                json.dump(
+                    pt_secrets.strip_secret_fields(config, "monitoring config"),
+                    f,
+                    indent=2,
+                )
+            import pt_paths
+
+            pt_paths.secure_file(self.config_path)
         except Exception as e:
             self.logger.error(f"Failed to save config: {e}")
 
@@ -504,12 +518,13 @@ class LiveMonitor:
         try:
             email_config = self.config.get("alerts", {})
             smtp_config = email_config.get("smtp_settings", {})
+            password = pt_secrets.get_secret("smtp", "password")
 
             if not all(
                 [
                     smtp_config.get("server"),
                     smtp_config.get("username"),
-                    smtp_config.get("password"),
+                    password,
                 ]
             ):
                 self.logger.warning(
@@ -545,7 +560,7 @@ Alert ID: {alert.alert_id}
             # Send email
             server = smtplib.SMTP(smtp_config["server"], smtp_config.get("port", 587))
             server.starttls()
-            server.login(smtp_config["username"], smtp_config["password"])
+            server.login(smtp_config["username"], password.reveal())
             text = msg.as_string()
             server.sendmail(
                 smtp_config["username"], email_config["email_recipients"], text

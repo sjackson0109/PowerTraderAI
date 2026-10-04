@@ -110,8 +110,12 @@ class DemoTests(unittest.TestCase):
 
     # 3. never touches the user's config or ledger
     def test_never_reads_or_writes_the_users_config_or_ledger(self):
-        config = os.path.join(APP_DIR, "pt_config.json")
-        hub_data = os.path.join(APP_DIR, "hub_data")
+        # FDS-108a: the user's config and ledger live in the user folders
+        # (POWERTRADER_HOME = a temp folder under the test fixture).
+        import pt_paths
+
+        config = pt_paths.settings_file()
+        hub_data = pt_paths.hub_dir(create=False)
         config_before = os.path.getmtime(config) if os.path.exists(config) else None
         hub_before = set(os.listdir(hub_data)) if os.path.isdir(hub_data) else None
 

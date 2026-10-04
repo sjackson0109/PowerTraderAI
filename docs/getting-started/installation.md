@@ -180,15 +180,18 @@ The first run will prompt you to configure:
 
 ### Configuration Files
 
-PowerTraderAI+ creates these files during setup:
+PowerTraderAI+ keeps settings, data and logs in your per-user folders, and API keys in the
+operating system's credential store (see
+[Where your data lives](../../README.md#where-your-data-lives)). On Windows:
 
 ```
-PowerTraderAI/
+%APPDATA%\SJackson\PowerTraderAI\        # config
 ├── gui_settings.json      # UI preferences
-├── credentials/           # Encrypted API keys
-│   ├── kucoin_keys.enc
-│   └── robinhood_keys.enc
-└── logs/                 # Application logs
+├── pt_config.json         # trading mode, strategy, risk
+└── trading_config.json    # exchange selection (no keys)
+%LOCALAPPDATA%\SJackson\PowerTraderAI\   # data
+├── hub_data\             # trader status, history, models
+└── Logs\                 # Application logs
     ├── powertrader.log
     └── audit.log
 ```

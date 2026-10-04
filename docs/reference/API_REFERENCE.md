@@ -258,22 +258,20 @@ start_allocation_pct = settings.get("start_allocation_pct", 5.0)
 ### Credential Loading Priority
 ```python
 """
-Credential loading order (first found wins):
+Credential loading order (app/pt_secrets.py; a source counts only with a full set):
 1. Environment variables (CI/CD deployments)
-2. Encrypted credential files (desktop use)
-3. Plain JSON files (development/testing)
+2. The OS credential store (desktop use; saved from the exchange setup window)
+There is no file-based or plaintext source.
 """
 
 # Environment variables format
-os.environ["KRAKEN_API_KEY"] = "your_key"
-os.environ["KRAKEN_API_SECRET"] = "your_secret"
+os.environ["POWERTRADER_KRAKEN_API_KEY"] = "your_key"
+os.environ["POWERTRADER_KRAKEN_API_SECRET"] = "your_secret"
 
-# File-based credentials
-# credentials/kraken_config.json
-{
-    "api_key": "your_key",
-    "api_secret": "your_secret"
-}
+# OS keyring (what the setup window does)
+import pt_secrets
+pt_secrets.set_credentials("kraken", {"api_key": "your_key", "api_secret": "your_secret"})
+creds = pt_secrets.get_credentials("kraken")   # repr() is redacted
 ```
 
 ## 📊 Trading APIs

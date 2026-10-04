@@ -246,16 +246,13 @@ PowerTraderAI+/
 │   ├── pt_risk.py                # Risk management
 │   ├── pt_cost.py                # Cost analysis
 │   └── pt_*.py                   # Additional components
-├── config/                        # Configuration files
-│   ├── settings.json             # Main settings
-│   ├── logging_config.json       # Log configuration
-│   └── update_settings.json      # Update preferences
-├── data/                         # Application data
-├── neural_data/                  # Neural network data
-├── hub_data/                     # Trading history and data
-├── logs/                         # Application logs
 └── [Launch Scripts]              # Batch files and shortcuts
 ```
+
+The install folder is read-only while PowerTrader runs. Settings (`gui_settings.json`,
+`pt_config.json`, `update_settings.json`, ...), data (`hub_data/`, neural models, databases), logs and
+cache live in the per-user folders, and API keys in the operating system's credential store; see
+[Where your data lives](../README.md#where-your-data-lives).
 
 ## Update Management
 

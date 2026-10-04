@@ -250,3 +250,38 @@ _brainstorming_tmp/
 # Runtime settings written by the settings manager (trading mode, broker, ...)
 app/pt_config.json
 app/pt_config.json.*
+
+# Legacy exchange configuration (before FDS-108a it held API keys in plain text).
+# Settings now live in the user config folder and keys in the OS keyring; an
+# old copy may still exist here until "Remove old files". Never commit it.
+app/trading_config.json
+
+# FDS-108a: legacy runtime files that older versions wrote into the program
+# folder (or the folder they were started from). The app no longer writes any
+# of these here (see pt_paths.py); they are listed so a stale copy can never be
+# committed before the migration's "Remove old files" deletes it.
+app/gui_settings.json
+app/exchange_config.json
+app/r_key*
+app/r_secret*
+app/.pt_salt
+app/.pt_cred_meta*
+trainer_status.json
+killer.txt
+emergency_snapshot_*.json
+*_current_price.txt
+dependency_report.txt
+PHASE_COMPLETION_REPORT.txt
+cache/
+model_evaluations/
+test_results/
+app/migrations/
+app/backup/
+app/temp/
+app/data/
+data/*_training_results.json
+
+# "Remove old files" renames each old file to <name>.pt-removing just before it
+# deletes it. One it could not delete or put back keeps that name, and its
+# content (it may hold API keys in plain text). Never commit it.
+*.pt-removing

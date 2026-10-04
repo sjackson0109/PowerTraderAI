@@ -57,13 +57,10 @@ def _ms(ts: pd.Timestamp) -> int:
 
 
 def cache_dir_default() -> str:
-    base = os.environ.get(
-        "POWERTRADER_HUB_DIR",
-        os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "hub_data"
-        ),
-    )
-    return os.path.join(base, "candles")
+    """``<cache>/candles`` (see pt_paths): downloaded klines are safe to delete."""
+    import pt_paths
+
+    return os.path.join(pt_paths.cache_dir(), "candles")
 
 
 def cache_path(symbol: str, tf: str, cache_dir: Optional[str] = None) -> str:

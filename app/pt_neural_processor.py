@@ -431,9 +431,11 @@ class NeuralProcessor:
             return self.models[symbol]
 
         try:
-            # Ensure data directory exists
-            os.makedirs("data", exist_ok=True)
-            model_path = os.path.join("data", f"{symbol.lower()}_neural_model.pth")
+            import pt_paths
+
+            model_path = os.path.join(
+                pt_paths.models_dir(), f"{symbol.lower()}_neural_model.pth"
+            )
             if os.path.exists(model_path):
                 model = TradingLSTM(
                     input_size=20, hidden_size=128, num_layers=3, output_size=1

@@ -508,7 +508,7 @@ class DrawdownMonitor:
 class RiskEngine:
     """Main risk management engine."""
 
-    def __init__(self, config: Dict = None, db_path: str = "order_management.db"):
+    def __init__(self, config: Dict = None, db_path: Optional[str] = None):
         if config is None:
             config = {}
 
@@ -1189,9 +1189,7 @@ class RiskEngine:
 _risk_engine = None
 
 
-def get_risk_engine(
-    config: Dict = None, db_path: str = "order_management.db"
-) -> RiskEngine:
+def get_risk_engine(config: Dict = None, db_path: Optional[str] = None) -> RiskEngine:
     """Get the global risk engine instance."""
     global _risk_engine
     if _risk_engine is None:

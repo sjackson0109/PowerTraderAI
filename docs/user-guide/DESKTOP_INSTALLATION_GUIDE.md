@@ -118,13 +118,19 @@ The first time you launch PowerTraderAI+, you'll be guided through:
 
 ### Advanced Configuration
 
-#### Settings File: `config/settings.json`
+#### Settings File: `gui_settings.json` in the config folder
+
+Settings live in the per-user config folder (`%APPDATA%\SJackson\PowerTraderAI\` on Windows), not
+in the program folder; see [Where your data lives](../../README.md#where-your-data-lives). Leave
+`main_neural_dir` and `hub_data_dir` blank to use the data folder; a folder inside the program
+folder is refused.
+
 ```json
 {
   "coins": ["BTC", "ETH", "ADA", "DOT", "MATIC"],
   "auto_start_scripts": false,
-  "main_neural_dir": "./neural_data",
-  "hub_data_dir": "./hub_data",
+  "main_neural_dir": "",
+  "hub_data_dir": "",
   "paper_trading": {
     "initial_balance": 10000.00,
     "commission_rate": 0.001
@@ -255,7 +261,8 @@ The first time you launch PowerTraderAI+, you'll be guided through:
    - Restart computer after installation
 
 3. Clear application cache:
-   - Delete `hub_data` folder contents
+   - Delete the contents of the cache folder (`%LOCALAPPDATA%\SJackson\PowerTraderAI\Cache\`;
+     **Settings → Paths** has an Open folder button)
    - Restart application
 
 #### Trading Features Not Working
@@ -298,7 +305,7 @@ PowerTraderAI+ includes an automatic update system:
 - **Rollback Support:** Ability to restore previous versions
 
 To configure updates:
-1. Open `config\update_settings.json`
+1. Open `update_settings.json` in the config folder (`%APPDATA%\SJackson\PowerTraderAI\`)
 2. Modify settings as needed:
    ```json
    {
@@ -311,10 +318,12 @@ To configure updates:
 
 ### Data Export
 
-Export trading data for analysis:
-- **Trade History:** `hub_data\trade_history.jsonl`
-- **Account Values:** `hub_data\account_value_history.jsonl`
-- **P&L Ledger:** `hub_data\pnl_ledger.json`
+Export trading data for analysis. The files are in the data folder
+(`%LOCALAPPDATA%\SJackson\PowerTraderAI\hub_data\<mode>\`, where `<mode>` is `paper`, `testnet`, or
+empty for live):
+- **Trade History:** `trade_history.jsonl`
+- **Account Values:** `account_value_history.jsonl`
+- **P&L Ledger:** `pnl_ledger.json`
 
 ### Custom Indicators
 
@@ -388,16 +397,13 @@ PowerTraderAI+/
 │   ├── pt_hub.py          # Core GUI interface
 │   ├── pt_*.py            # Phase 4 components
 │   └── requirements.txt   # Python dependencies
-├── config/                # Configuration files
-│   ├── settings.json      # Main application settings
-│   └── logging_config.json # Logging configuration
-├── data/                  # Application data
-├── neural_data/           # Neural network data
-├── hub_data/             # Trading data and history
-├── logs/                 # Application log files
 ├── PowerTrader_AI.bat    # Application launcher script
 └── setup_environment.bat # Environment setup script
 ```
+
+The install folder above is read-only while PowerTrader runs. Settings, data, logs and cache live in
+the per-user folders, and API keys in the Windows Credential Manager; see
+[Where your data lives](../../README.md#where-your-data-lives).
 
 ### B. Default Settings Reference
 

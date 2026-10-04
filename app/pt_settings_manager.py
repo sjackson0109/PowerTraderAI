@@ -13,6 +13,9 @@ import threading
 from datetime import datetime
 import shutil
 
+import pt_paths
+import pt_secrets
+
 # Trading-mode setting keys (see trading_mode.py for the order gate that enforces them)
 TRADING_MODE_KEY = "trading.mode"
 TRADING_ACTIVE_BROKER_KEY = "trading.active_broker"
@@ -47,8 +50,8 @@ def trading_testnet_key(broker: str) -> str:
 # Default settings configuration
 DEFAULT_SETTINGS = {
     "coins": ["BTC", "ETH", "XRP", "DOGE", "BNB"],
-    "main_neural_dir": ".",
-    "hub_data_dir": "hub_data",
+    "main_neural_dir": "",  # blank: pt_paths.neural_dir()
+    "hub_data_dir": "",  # blank: pt_paths.hub_dir()
     "script_neural_runner2": "pt_thinker.py",
     "script_trader": "pt_trader.py",
     "script_neural_trainer": "pt_trainer.py",
@@ -115,7 +118,7 @@ DEFAULT_SETTINGS = {
     },
 }
 
-SETTINGS_FILE = "pt_config.json"
+SETTINGS_FILE = pt_paths.SETTINGS_FILE
 
 
 STRATEGY_ENGINES = ("catalogue", "legacy_neural")
@@ -394,13 +397,11 @@ class SettingsManager:
         self._callbacks: List[Callable[[Dict[str, Any]], None]] = []
         self._lock = threading.RLock()
 
-        # Determine full settings path
+        # Determine full settings path (default: the user config folder)
         if self.settings_dir:
             self.settings_path = os.path.join(self.settings_dir, self.settings_file)
         else:
-            # Default to same directory as this module
-            module_dir = os.path.dirname(os.path.abspath(__file__))
-            self.settings_path = os.path.join(module_dir, self.settings_file)
+            self.settings_path = os.path.join(pt_paths.config_dir(), self.settings_file)
 
         # Load settings
         self.load_settings()
@@ -415,6 +416,10 @@ class SettingsManager:
 
                     if not isinstance(loaded_settings, dict):
                         loaded_settings = {}
+                    # A credential in the settings file is ignored and never written back.
+                    loaded_settings = pt_secrets.strip_secret_fields(
+                        loaded_settings, os.path.basename(self.settings_path)
+                    )
                 else:
                     loaded_settings = {}
 
@@ -484,8 +489,14 @@ class SettingsManager:
                 # trading.mode before every order) never sees a half-written file
                 tmp_path = f"{self.settings_path}.tmp"
                 with open(tmp_path, "w", encoding="utf-8") as f:
-                    json.dump(self._settings, f, indent=2, sort_keys=True)
+                    json.dump(
+                        pt_secrets.strip_secret_fields(self._settings, "settings"),
+                        f,
+                        indent=2,
+                        sort_keys=True,
+                    )
                 os.replace(tmp_path, self.settings_path)
+                pt_paths.secure_file(self.settings_path)
 
                 # Notify callbacks
                 for callback in self._callbacks:
@@ -728,7 +739,12 @@ class SettingsManager:
         """Export settings to a file."""
         try:
             with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(self._settings, f, indent=2, sort_keys=True)
+                json.dump(
+                    pt_secrets.strip_secret_fields(self._settings, "settings"),
+                    f,
+                    indent=2,
+                    sort_keys=True,
+                )
             return True
         except Exception as e:
             try:
@@ -746,6 +762,9 @@ class SettingsManager:
                 imported_settings = json.load(f)
 
             if isinstance(imported_settings, dict):
+                imported_settings = pt_secrets.strip_secret_fields(
+                    imported_settings, os.path.basename(file_path)
+                )
                 return self.update(imported_settings, merge=False)
             else:
                 try:
@@ -884,7 +903,7 @@ def get_coins() -> List[str]:
 
 if __name__ == "__main__":
     # Example usage
-    settings_manager = SettingsManager("test_settings.json")
+    settings_manager = SettingsManager("test_settings.json", pt_paths.cache_dir())
 
     # Test basic operations
     print("Initial settings:")
@@ -920,7 +939,7 @@ if __name__ == "__main__":
 
     # Clean up test file
     try:
-        os.unlink("test_settings.json")
+        os.unlink(settings_manager.settings_path)
         print("Test file cleaned up.")
     except Exception:
         pass

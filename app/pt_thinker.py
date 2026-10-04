@@ -23,6 +23,7 @@ import requests
 from nacl.signing import SigningKey
 
 # Local imports
+import pt_paths
 from pt_credentials import get_credentials
 from pt_data_provider import get_data_provider
 
@@ -285,8 +286,8 @@ last_minute = 0
 # -----------------------------
 # GUI SETTINGS (coins list)
 # -----------------------------
-_GUI_SETTINGS_PATH = os.environ.get("POWERTRADER_GUI_SETTINGS") or os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "gui_settings.json"
+_GUI_SETTINGS_PATH = (
+    os.environ.get("POWERTRADER_GUI_SETTINGS") or pt_paths.gui_settings_file()
 )
 
 _gui_settings_cache = {
@@ -391,7 +392,9 @@ def _get_alerts_version() -> str:
 COIN_SYMBOLS = _load_gui_coins()
 CURRENT_COINS = list(COIN_SYMBOLS)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Neural root (the BTC folder; other coins use <root>/<SYM>), shared with the hub
+# and the trader: gui_settings "main_neural_dir", else the user data folder.
+BASE_DIR = pt_paths.neural_dir(_load_gui_settings().get("main_neural_dir"))
 
 
 def coin_folder(sym: str) -> str:
@@ -433,7 +436,7 @@ def _coin_is_trained(sym: str) -> bool:
 
 # --- GUI HUB "runner ready" gate file (read by gui_hub.py Start All toggle) ---
 
-HUB_DIR = os.environ.get("POWERTRADER_HUB_DIR") or os.path.join(BASE_DIR, "hub_data")
+HUB_DIR = os.environ.get("POWERTRADER_HUB_DIR") or pt_paths.hub_dir()
 try:
     os.makedirs(HUB_DIR, exist_ok=True)
 except Exception:

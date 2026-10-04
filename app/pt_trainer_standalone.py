@@ -12,6 +12,9 @@ import sys
 import time
 from typing import Optional
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pt_paths  # noqa: E402
+
 
 def train_neural_network(coin: str) -> bool:
     """
@@ -65,11 +68,10 @@ def train_neural_network(coin: str) -> bool:
             "status": "completed",
         }
 
-        # Ensure data directory exists
-        data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-        os.makedirs(data_dir, exist_ok=True)
-
-        results_file = os.path.join(data_dir, f"{coin.lower()}_training_results.json")
+        # Training summary goes to the user data folder (pt_paths)
+        results_file = pt_paths.data_file(
+            "training_results", f"{coin.lower()}_training_results.json"
+        )
         with open(results_file, "w") as f:
             json.dump(training_results, f, indent=2)
 

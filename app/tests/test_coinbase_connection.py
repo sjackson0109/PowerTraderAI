@@ -171,7 +171,9 @@ class TestReadOnlyAndSingleCall(unittest.TestCase):
 class TestBadCredentialsNeverLeaveTheMachine(unittest.TestCase):
     def assertInvalid(self, key_name, secret):
         with recorded_http() as http:
-            result = CoinbaseExchange(api_key=key_name, api_secret=secret).check_connection()
+            result = CoinbaseExchange(
+                api_key=key_name, api_secret=secret
+            ).check_connection()
         self.assertIs(result.status, ConnectionStatus.INVALID_CREDENTIALS)
         self.assertEqual(http.calls, [])
         return result
@@ -235,7 +237,9 @@ class TestManager(unittest.TestCase):
 
     def test_method_exists_the_gui_calls(self):
         # Regression: the GUI called a method the manager never defined.
-        self.assertTrue(callable(getattr(MultiExchangeManager, "test_exchange_connection")))
+        self.assertTrue(
+            callable(getattr(MultiExchangeManager, "test_exchange_connection"))
+        )
 
     def test_typed_credentials_are_tested_and_not_saved(self):
         with recorded_http() as http:
@@ -295,7 +299,9 @@ class TestGuiFormatting(unittest.TestCase):
         self.assertEqual(set(STATUS_HEADLINES), set(ConnectionStatus))
         self.assertEqual(len(set(STATUS_HEADLINES.values())), len(ConnectionStatus))
         for status in ConnectionStatus:
-            text = format_test_result("coinbase", ConnectionTestResult("coinbase", status, "msg"))
+            text = format_test_result(
+                "coinbase", ConnectionTestResult("coinbase", status, "msg")
+            )
             self.assertIn("Coinbase", text)
             self.assertIn(STATUS_HEADLINES[status], text)
             self.assertIn("msg", text)

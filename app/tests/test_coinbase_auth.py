@@ -40,7 +40,12 @@ def b64d(part: str) -> bytes:
 
 def split(token: str):
     head, payload, sig = token.split(".")
-    return json.loads(b64d(head)), json.loads(b64d(payload)), b64d(sig), f"{head}.{payload}"
+    return (
+        json.loads(b64d(head)),
+        json.loads(b64d(payload)),
+        b64d(sig),
+        f"{head}.{payload}",
+    )
 
 
 class TestJwt(unittest.TestCase):
@@ -71,7 +76,9 @@ class TestJwt(unittest.TestCase):
 
     def test_uri_claim_has_no_scheme_and_follows_method_and_path(self):
         self.assertEqual(
-            coinbase_auth.build_uri_claim("get", HOST, "/api/v3/brokerage/key_permissions"),
+            coinbase_auth.build_uri_claim(
+                "get", HOST, "/api/v3/brokerage/key_permissions"
+            ),
             "GET api.coinbase.com/api/v3/brokerage/key_permissions",
         )
         _, payload, _, _ = split(
@@ -89,7 +96,9 @@ class TestJwt(unittest.TestCase):
         self.assertEqual(len(sig), 64)  # JWS ES256: r||s, not DER
         r, s = int.from_bytes(sig[:32], "big"), int.from_bytes(sig[32:], "big")
         self.key.public_key().verify(
-            encode_dss_signature(r, s), signing_input.encode(), ec.ECDSA(hashes.SHA256())
+            encode_dss_signature(r, s),
+            signing_input.encode(),
+            ec.ECDSA(hashes.SHA256()),
         )
 
     def test_tampering_or_wrong_key_fails_verification(self):
@@ -156,7 +165,9 @@ class TestNormalisation(unittest.TestCase):
     def test_pkcs8_label_also_works(self):
         pem = make_ec_pem(label="PKCS8")
         self.assertIn("BEGIN PRIVATE KEY", pem)
-        self.assertIsInstance(coinbase_auth.load_private_key(pem), ec.EllipticCurvePrivateKey)
+        self.assertIsInstance(
+            coinbase_auth.load_private_key(pem), ec.EllipticCurvePrivateKey
+        )
         self.assertIn("BEGIN PRIVATE KEY", coinbase_auth.normalise_private_key(pem))
 
     def test_output_is_wrapped_pem_with_markers(self):
@@ -209,8 +220,14 @@ class TestKeyName(unittest.TestCase):
         self.assertEqual(coinbase_auth.validate_key_name(f"  {KEY_NAME}\n"), KEY_NAME)
 
     def test_rejects_other_shapes(self):
-        for bad in ("", "a1b2c3d4e5f6", "organizations/x", "organizations/x/apiKeys/",
-                    "organizations/x/apiKeys/y/z", "keys/abc"):
+        for bad in (
+            "",
+            "a1b2c3d4e5f6",
+            "organizations/x",
+            "organizations/x/apiKeys/",
+            "organizations/x/apiKeys/y/z",
+            "keys/abc",
+        ):
             with self.subTest(bad=bad):
                 with self.assertRaises(CoinbaseCredentialError):
                     coinbase_auth.validate_key_name(bad)

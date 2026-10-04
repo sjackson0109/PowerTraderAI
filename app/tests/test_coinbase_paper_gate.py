@@ -61,13 +61,19 @@ class CoinbaseGateBase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-        env = {k: v for k, v in os.environ.items() if not k.startswith("POWERTRADER_COINBASE")}
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("POWERTRADER_COINBASE")
+        }
         env["POWERTRADER_COINBASE_API_KEY"] = KEY_NAME
         env["POWERTRADER_COINBASE_API_SECRET"] = make_ec_pem()
         for patch in (
             mock.patch.dict(os.environ, env, clear=True),
             mock.patch.object(self.pt_trader, "HUB_DATA_DIR", self.tmp.name),
-            mock.patch.object(tm.urllib.request, "urlopen", side_effect=OSError("no network")),
+            mock.patch.object(
+                tm.urllib.request, "urlopen", side_effect=OSError("no network")
+            ),
             # a stored credentials file must not leak into these tests
             mock.patch.object(ExchangeFactory, "_credentials", {}),
             mock.patch.object(ExchangeFactory, "load_credentials"),
@@ -86,7 +92,9 @@ class CoinbaseGateBase(unittest.TestCase):
         engine = SignalEngine(
             settings_source=settings, candle_provider=lambda *a, **k: pd.DataFrame()
         )
-        t = self.pt_trader.CryptoAPITrading(settings_source=settings, signal_engine=engine)
+        t = self.pt_trader.CryptoAPITrading(
+            settings_source=settings, signal_engine=engine
+        )
         t._order_poll_seconds = 0.0
         return t
 
@@ -120,10 +128,14 @@ class TestPaperModeNeverReachesCoinbase(CoinbaseGateBase):
     def test_trader_orders_in_paper_mode_send_no_http_at_all(self):
         with recorded_http() as http, mock.patch.object(
             ExchangeFactory, "get_exchange"
-        ) as get_exchange, mock.patch.object(CoinbaseExchange, "place_order") as cb_place:
+        ) as get_exchange, mock.patch.object(
+            CoinbaseExchange, "place_order"
+        ) as cb_place:
             trader = self.trader(copy.deepcopy(PAPER_COINBASE))
             self.use_fake_quotes()
-            buy = trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0, tag="T")
+            buy = trader.place_buy_order(
+                "id", "buy", "market", "BTC-USD", 50.0, tag="T"
+            )
             sell = trader.place_sell_order(
                 "id", "sell", "market", "BTC-USD", buy["quantity"], tag="T"
             )
@@ -156,7 +168,20 @@ class TestPaperModeNeverReachesCoinbase(CoinbaseGateBase):
         self.assertNoHttp(http)
 
     def test_anything_that_is_not_exactly_live_stays_paper(self):
-        for mode in (None, "", "paper", "liv", "livee", "true", "1", 1, True, "paper-live", [], {}):
+        for mode in (
+            None,
+            "",
+            "paper",
+            "liv",
+            "livee",
+            "true",
+            "1",
+            1,
+            True,
+            "paper-live",
+            [],
+            {},
+        ):
             with self.subTest(mode=mode):
                 settings = {"trading": {"mode": mode, "active_broker": "coinbase"}}
                 with recorded_http() as http, mock.patch.object(
@@ -182,7 +207,11 @@ class TestPaperModeNeverReachesCoinbase(CoinbaseGateBase):
             )
         )
         manager = MultiExchangeManager(config_manager)
-        env = {k: v for k, v in os.environ.items() if not k.startswith("POWERTRADER_COINBASE")}
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("POWERTRADER_COINBASE")
+        }
         with mock.patch.dict(os.environ, env, clear=True), recorded_http() as http:
             self.assertTrue(manager.initialize())
             self.assertIn("coinbase", manager.get_available_exchanges())
@@ -195,8 +224,12 @@ class TestPaperModeNeverReachesCoinbase(CoinbaseGateBase):
     def test_the_test_button_is_allowed_in_paper_mode_and_is_read_only(self):
         manager = MultiExchangeManager(ExchangeConfigManager(self.tmp.name))
         with recorded_http() as http:
-            http.respond_with(200, {"can_view": True, "can_trade": True, "can_transfer": False})
-            result = manager.test_exchange_connection("coinbase", KEY_NAME, make_ec_pem())
+            http.respond_with(
+                200, {"can_view": True, "can_trade": True, "can_transfer": False}
+            )
+            result = manager.test_exchange_connection(
+                "coinbase", KEY_NAME, make_ec_pem()
+            )
         self.assertTrue(result.ok)
         self.assertEqual(http.methods, ["GET"])
         self.assertEqual(http.order_like(), [])
@@ -221,8 +254,12 @@ class TestLiveModeStillNeedsBrokerAndConfirmation(CoinbaseGateBase):
         self.use_fake_quotes()
         settings["trading"].update(mode="live", active_broker=None)
         with recorded_http() as http:
-            self.assertIsNone(trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0))
-            self.assertIsNone(trader.place_sell_order("id", "sell", "market", "BTC-USD", 1.0))
+            self.assertIsNone(
+                trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
+            )
+            self.assertIsNone(
+                trader.place_sell_order("id", "sell", "market", "BTC-USD", 1.0)
+            )
         self.assertNoHttp(http)
         self.assertEqual(len(tm.get_paper_exchange().account.orders), 0)
 
@@ -234,9 +271,13 @@ class TestLiveModeStillNeedsBrokerAndConfirmation(CoinbaseGateBase):
         self.assertTrue(tm.can_apply("paper", "coinbase", False))
 
         with self.assertRaises(tm.TradingModeError):
-            tm.apply_trading_mode("live", broker="coinbase", live_confirmed=False, manager=manager)
+            tm.apply_trading_mode(
+                "live", broker="coinbase", live_confirmed=False, manager=manager
+            )
         with self.assertRaises(tm.TradingModeError):
-            tm.apply_trading_mode("live", broker=None, live_confirmed=True, manager=manager)
+            tm.apply_trading_mode(
+                "live", broker=None, live_confirmed=True, manager=manager
+            )
         # nothing above changed the effective mode
         self.assertEqual(tm.read_trading_settings(manager.settings_path).key, "paper")
 
@@ -270,13 +311,19 @@ class TestLiveModeStillNeedsBrokerAndConfirmation(CoinbaseGateBase):
         with recorded_http() as http:
             try:
                 trader = self.trader(copy.deepcopy(LIVE_COINBASE))
-            except Exception as exc:  # trader may refuse to start on a broker without balances
+            except (
+                Exception
+            ) as exc:  # trader may refuse to start on a broker without balances
                 self.assertNoHttp(http)
-                self.skipTest(f"trader does not start on live coinbase: {type(exc).__name__}")
+                self.skipTest(
+                    f"trader does not start on live coinbase: {type(exc).__name__}"
+                )
             result = trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
         self.assertIsNone(result)
         self.assertEqual(http.order_like(), [])
-        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "trade_history.jsonl")))
+        self.assertFalse(
+            os.path.exists(os.path.join(self.tmp.name, "trade_history.jsonl"))
+        )
 
 
 class TestTheHarnessCanSeeOrders(unittest.TestCase):

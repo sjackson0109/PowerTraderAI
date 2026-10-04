@@ -84,7 +84,9 @@ def normalise_private_key(raw: str) -> str:
     label = match.group("label")
     body = re.sub(r"\s+", "", match.group("body"))
     if not body:
-        raise CoinbaseCredentialError("The private key has no content between BEGIN and END.")
+        raise CoinbaseCredentialError(
+            "The private key has no content between BEGIN and END."
+        )
     wrapped = "\n".join(textwrap.wrap(body, 64))
     return f"-----BEGIN {label}-----\n{wrapped}\n-----END {label}-----\n"
 

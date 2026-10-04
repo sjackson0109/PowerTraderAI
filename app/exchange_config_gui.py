@@ -20,10 +20,13 @@ from pt_exchange_abstraction import (
 )
 from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
 
-
 # Exchanges whose credentials are not a plain "API key + secret" pair. Anything not
 # listed uses the default labels and a single-line secret.
-DEFAULT_FIELDS = {"key_label": "API Key:", "secret_label": "API Secret:", "multiline": False}
+DEFAULT_FIELDS = {
+    "key_label": "API Key:",
+    "secret_label": "API Secret:",
+    "multiline": False,
+}
 EXCHANGE_FIELDS = {
     # CDP API key: key *name* + EC *private key* (PEM, several lines).
     "coinbase": {
@@ -853,7 +856,9 @@ class ExchangeConfigGUI:
         self.api_secret_var.set("" if multiline else api_secret)
         # Never echo a saved private key into a readable text box.
         self.api_secret_text.delete("1.0", tk.END)
-        self._apply_field_layout(exchange_name, has_saved_secret=multiline and bool(api_secret))
+        self._apply_field_layout(
+            exchange_name, has_saved_secret=multiline and bool(api_secret)
+        )
 
     def get_exchange_instructions(self, exchange_name: str) -> str:
         """Get setup instructions for an exchange"""
@@ -1204,7 +1209,9 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
         self.api_secret_label.configure(text=fields["secret_label"])
         if fields["multiline"]:
             self.api_secret_entry.grid_remove()
-            self.api_secret_text.grid(row=1, column=1, padx=(10, 0), pady=2, sticky="we")
+            self.api_secret_text.grid(
+                row=1, column=1, padx=(10, 0), pady=2, sticky="we"
+            )
             self.secret_hint_label.grid(row=3, column=1, padx=(10, 0), sticky="w")
             self.secret_hint_var.set(SAVED_SECRET_HINT if has_saved_secret else "")
         else:
@@ -1287,7 +1294,9 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
         def on_item(result):
             if result is None:  # job itself failed
                 result = ConnectionTestResult(
-                    exchange_name, ConnectionStatus.ENDPOINT_ERROR, "The test failed unexpectedly."
+                    exchange_name,
+                    ConnectionStatus.ENDPOINT_ERROR,
+                    "The test failed unexpectedly.",
                 )
             self._append_result(format_test_result(exchange_name, result) + "\n")
             self.status_var.set(
@@ -1326,7 +1335,9 @@ Official docs usually found at: https://{exchange_name}.com/api-docs
             self._append_result(
                 f"\n📊 Summary: {tally['ok']}/{len(targets)} exchanges tested successfully\n"
             )
-            self.status_var.set(f"Tested {len(targets)} exchanges, {tally['ok']} successful")
+            self.status_var.set(
+                f"Tested {len(targets)} exchanges, {tally['ok']} successful"
+            )
 
         self._run_in_background(job, on_item, on_done)
 

@@ -50,10 +50,14 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
 
         self.dialogs = mock.MagicMock()
         for name in ("showerror", "showinfo", "showwarning", "askyesno"):
-            p = mock.patch.object(exchange_config_gui.messagebox, name, getattr(self.dialogs, name))
+            p = mock.patch.object(
+                exchange_config_gui.messagebox, name, getattr(self.dialogs, name)
+            )
             p.start()
             self.addCleanup(p.stop)
-        p = mock.patch.object(exchange_config_gui, "ExchangeConfigManager", lambda: self.manager)
+        p = mock.patch.object(
+            exchange_config_gui, "ExchangeConfigManager", lambda: self.manager
+        )
         p.start()
         self.addCleanup(p.stop)
 
@@ -107,7 +111,13 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
     def test_instructions_describe_the_current_scheme(self):
         self.select("coinbase")
         text = self.gui.instructions_text.get("1.0", tk.END)
-        for needle in ("ECDSA", "Key name", "BEGIN EC PRIVATE KEY", "Test Connection", "Transfer"):
+        for needle in (
+            "ECDSA",
+            "Key name",
+            "BEGIN EC PRIVATE KEY",
+            "Test Connection",
+            "Transfer",
+        ):
             self.assertIn(needle, text)
         self.assertNotIn("Copy API Key and Secret", text)
         self.assertNotIn("Coinbase Pro API", text)
@@ -160,7 +170,9 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
         self.select("coinbase")
         self.type_credentials(KEY_NAME, make_ec_pem())
         with recorded_http() as http:
-            http.respond_with(200, {"can_view": True, "can_trade": True, "can_transfer": False})
+            http.respond_with(
+                200, {"can_view": True, "can_trade": True, "can_transfer": False}
+            )
             self.gui.test_exchange_connection()
             self.assertTrue(self.wait_for("Connected to Coinbase"))
         self.assertEqual(http.methods, ["GET"])
@@ -197,7 +209,9 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
         self.gui.save_exchange_config()
         self.select("coinbase")  # box is now blank, key name is shown
         with recorded_http() as http:
-            http.respond_with(200, {"can_view": True, "can_trade": False, "can_transfer": False})
+            http.respond_with(
+                200, {"can_view": True, "can_trade": False, "can_transfer": False}
+            )
             self.gui.test_exchange_connection()
             self.assertTrue(self.wait_for("Connected to Coinbase"))
         self.assertEqual(len(http.calls), 1)
@@ -207,7 +221,9 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
         self.type_credentials(KEY_NAME, make_ec_pem())
         self.gui.save_exchange_config()
         with recorded_http() as http:
-            http.respond_with(200, {"can_view": True, "can_trade": True, "can_transfer": False})
+            http.respond_with(
+                200, {"can_view": True, "can_trade": True, "can_transfer": False}
+            )
             self.gui.test_all_exchanges()
             self.assertTrue(self.wait_for("1/1 exchanges tested successfully"))
         self.assertEqual(http.methods, ["GET"])

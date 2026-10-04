@@ -204,10 +204,32 @@ After the review approved the PR:
   up the existing priority and phase labels (22 `priority-critical`, 14 issues with two priority labels,
   8 with two phase labels).
 
+## Copilot review fixes (commit 4)
+
+The "Protect main" ruleset requires every review thread to be resolved, and Copilot had left four
+unresolved threads, so the merge showed as `BLOCKED` even though every check passed.
+
+* `config.yml` security link: private vulnerability reporting was off. The owner has turned it on; no
+  code change.
+* Three real bugs in `check_issue_forms.py`, which the 13 negative tests above had missed. All three
+  were confirmed against the committed version before fixing:
+  * Dropdown options were converted to strings before checking, so an unquoted `Yes` (a boolean in
+    YAML 1.1), a null or an empty option passed (exit 0). Options must now be non-empty strings.
+    Checkbox labels get the same check.
+  * `area_options` assumed a mapping, so an empty file, a list at the root, or `attributes: null` on
+    the area field crashed the checker with a traceback before it could report anything. It now
+    checks types and returns `None`.
+  * A form with no area dropdown was skipped silently. It is now an error ("no area dropdown with
+    options").
+* Eight new negative cases (unquoted Yes/No, null option, empty-string option, empty file, list at
+  the root, null area attributes, area dropdown removed, null checkbox label) all fail with exit 1 and
+  no traceback. The original 13 still fail, the real forms still pass, and Black, isort and flake8 are
+  clean.
+
 ## Rules followed
 
 * Own worktree (`..\PowerTraderAI-templates`, branch `chore/issue-templates` from `main` `d815910`).
 * Nothing under `app/` changed; no other session's files touched.
-* Staged by explicit path only. Three commits: the forms, the checker and this log, then the review
-  follow-up.
+* Staged by explicit path only. Four commits: the forms, the checker and this log, the review
+  follow-up, then the Copilot review fixes.
 * Pushed and opened a PR against `main`; not merged.

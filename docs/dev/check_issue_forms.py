@@ -12,11 +12,12 @@ GitHub rules checked (a subset of GitHub's schema):
 * body is a non-empty list with at least one element that isn't markdown;
 * each element has a valid type and only the attributes that type allows; markdown
   has a value; every other element has a label and a unique id;
-* dropdown options are non-empty and unique; checkboxes have labelled options.
+* dropdown options are a non-empty list of unique, non-empty strings (an unquoted
+  Yes/No loads as a boolean and fails); checkboxes have labelled options.
 
 Project rules checked:
 * no markdown (.md) templates beside the forms;
-* the "area" dropdown is the same, word for word, in every form;
+* every form has an "area" dropdown, the same word for word in all of them;
 * no field label or option contains a word that
   .github/workflows/project-management.yml turns into a priority, phase or security
   label (markdown text and descriptions are not part of the issue body, so are fine).
@@ -111,15 +112,18 @@ def check_element(i, element, ids):
             problems.append(f"{where}: options must be a non-empty list")
             options = []
         if kind == "dropdown":
+            if not all(isinstance(o, str) and o.strip() for o in options):
+                problems.append(
+                    f"{where}: every option must be non-empty text (quote Yes/No)"
+                )
             names = [str(option) for option in options]
             if len(set(names)) != len(names):
                 problems.append(f"{where}: options must be unique")
         else:
-            names = [
-                str(o.get("label", "")) if isinstance(o, dict) else "" for o in options
-            ]
-            if not all(names):
+            labels = [o.get("label") if isinstance(o, dict) else None for o in options]
+            if not all(isinstance(lab, str) and lab.strip() for lab in labels):
                 problems.append(f"{where}: every checkbox needs a label")
+            names = [str(lab) for lab in labels]
         texts += names
     for text in texts:
         for word in AUTO_LABEL_WORDS:
@@ -149,9 +153,13 @@ def check_form(data):
 
 
 def area_options(data):
-    for element in data.get("body") or []:
+    """The area dropdown's options as a tuple of strings, or None if there is none."""
+    body = data.get("body") if isinstance(data, dict) else None
+    for element in body if isinstance(body, list) else []:
         if isinstance(element, dict) and element.get("id") == "area":
-            return element.get("attributes", {}).get("options")
+            attrs = element.get("attributes")
+            options = attrs.get("options") if isinstance(attrs, dict) else None
+            return tuple(map(str, options)) if isinstance(options, list) else None
     return None
 
 
@@ -176,17 +184,20 @@ def main(argv):
             problems = check_config(data)
         else:
             problems = check_form(data)
-            if area_options(data) is not None:
-                areas[path.name] = area_options(data)
+            options = area_options(data)
+            if options is None:
+                problems.append("no area dropdown with options (id: area)")
+            else:
+                areas[path.name] = options
         print(f"{'FAIL' if problems else 'OK  '} {path.name}")
         for problem in problems:
             print(f"     - {problem}")
         failed = failed or bool(problems)
 
-    if len({tuple(options) for options in areas.values()}) > 1:
+    if len(set(areas.values())) > 1:
         print("FAIL the area dropdown differs between forms:")
         for name, options in areas.items():
-            print(f"     - {name}: {options}")
+            print(f"     - {name}: {list(options)}")
         failed = True
     elif areas:
         print(f"OK   area dropdown identical in {len(areas)} forms")

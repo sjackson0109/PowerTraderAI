@@ -226,10 +226,45 @@ unresolved threads, so the merge showed as `BLOCKED` even though every check pas
   no traceback. The original 13 still fail, the real forms still pass, and Black, isort and flake8 are
   clean.
 
+## Copilot second review fixes (commit 5)
+
+Copilot's review of commit 4 resolved the four threads, but its overview listed three more crash paths
+in the review body (not as threads): `contact_links: true`, `type: [input]` and `id: [summary]`. Each
+raised a `TypeError` that stopped the checker before it reported anything. `id: 123` also passed,
+because the id was converted with `str()`.
+
+Fixed, together with gaps of the same kind found by going through the rest of the file:
+
+* `contact_links` must be a list (it may be omitted), and each link must be a mapping.
+* An element's `type` must be a string. Its `id` must be a string matching the pattern (whole string),
+  and is added to the seen set only once it is valid. `label` must be non-empty text.
+* Keys that aren't strings no longer crash sorting (`unknown_keys` sorts as text).
+* A file that isn't UTF-8 is reported as "does not parse".
+* New: unknown element keys are reported, and `validations` may only hold `required: true/false`.
+* Safety net: any unexpected exception while checking one file is reported as
+  `FAIL <file>: checker error: ...`, and the remaining files are still checked.
+
+The negative tests are now a scratch harness (not committed) with 33 broken-copy cases: the
+original 13, the 8 from commit 4, 4 from this review, and 8 from the audit. Each must exit 1 with the
+expected message, show no traceback, not reach the safety net, and still report every other file.
+Plus: the real forms exit 0, and a forced checker bug is caught by the safety net. 35/35 pass. Against
+commit 4's checker, all 12 new cases fail, and so does "missing id" because its message was reworded.
+Black, isort and flake8 are clean.
+
+## Merge status
+
+Commit 4's four threads are answered and resolved, and every required check passes ("Deployment
+Readiness" is skipped). The PR still shows `BLOCKED`: the "Protect main" ruleset was edited on
+2026-10-04 at 21:35 BST, after #137 merged, and its pull-request rule has
+`require_last_push_approval` and `require_extra_approval_for_unattributed_changes`. Both appear to
+need an approval from someone other than the person who pushed. The API doesn't say which of them
+blocks. The admin role is a bypass actor (`current_user_can_bypass: pull_requests_only`), so the
+owner can merge with "bypass rules".
+
 ## Rules followed
 
 * Own worktree (`..\PowerTraderAI-templates`, branch `chore/issue-templates` from `main` `d815910`).
 * Nothing under `app/` changed; no other session's files touched.
-* Staged by explicit path only. Four commits: the forms, the checker and this log, the review
-  follow-up, then the Copilot review fixes.
+* Staged by explicit path only. Five commits: the forms, the checker and this log, the review
+  follow-up, then two rounds of Copilot review fixes.
 * Pushed and opened a PR against `main`; not merged.

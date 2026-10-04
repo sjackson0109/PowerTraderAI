@@ -2,7 +2,8 @@
 
 Usage:  python docs/dev/check_issue_forms.py [folder]
 Needs PyYAML (``pip install pyyaml``). Prints one line per file and exits 1 if any
-check fails.
+check fails. Malformed input is reported as a problem, never a traceback, and the
+remaining files are still checked.
 
 GitHub rules checked (a subset of GitHub's schema):
 * every .yml/.yaml file parses;
@@ -10,8 +11,9 @@ GitHub rules checked (a subset of GitHub's schema):
   an https url and an about text;
 * every form has a top-level name, description and body, and no unknown top-level keys;
 * body is a non-empty list with at least one element that isn't markdown;
-* each element has a valid type and only the attributes that type allows; markdown
-  has a value; every other element has a label and a unique id;
+* each element has a valid type, only the keys and attributes that type allows, and
+  ``validations`` holding at most ``required: true/false``; markdown has a value;
+  every other element has a label and a unique text id;
 * dropdown options are a non-empty list of unique, non-empty strings (an unquoted
   Yes/No loads as a boolean and fails); checkboxes have labelled options.
 
@@ -48,7 +50,8 @@ ATTRIBUTES = {
     "dropdown": {"label", "description", "multiple", "options", "default"},
     "checkboxes": {"label", "description", "options"},
 }
-ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+ELEMENT_KEYS = {"type", "id", "attributes", "validations"}
+ID_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
 AUTO_LABEL_WORDS = (
     "security",
     "credential",
@@ -65,15 +68,31 @@ def check_config(data):
         return ["not a mapping"]
     if not isinstance(data.get("blank_issues_enabled"), bool):
         problems.append("blank_issues_enabled must be true or false")
-    for i, link in enumerate(data.get("contact_links") or []):
+    links = data.get("contact_links")
+    if links is None:
+        links = []
+    elif not isinstance(links, list):
+        problems.append("contact_links must be a list")
+        links = []
+    for i, link in enumerate(links):
+        if not isinstance(link, dict):
+            problems.append(f"contact_links[{i}]: not a mapping")
+            continue
         for key in ("name", "url", "about"):
-            if not isinstance(link, dict) or not link.get(key):
+            if not is_text(link.get(key)):
                 problems.append(f"contact_links[{i}]: missing {key}")
-        if isinstance(link, dict) and not str(link.get("url", "")).startswith(
-            "https://"
-        ):
+        if is_text(link.get("url")) and not link["url"].startswith("https://"):
             problems.append(f"contact_links[{i}]: url must start with https://")
     return problems
+
+
+def is_text(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+def unknown_keys(mapping, allowed):
+    """Keys not in ``allowed``, sorted as text (YAML keys need not be strings)."""
+    return sorted(set(mapping) - allowed, key=str)
 
 
 def check_element(i, element, ids):
@@ -81,38 +100,51 @@ def check_element(i, element, ids):
     if not isinstance(element, dict):
         return [f"{where}: not a mapping"]
     kind = element.get("type")
-    if kind not in ATTRIBUTES:
+    if not isinstance(kind, str) or kind not in ATTRIBUTES:
         return [f"{where}: invalid type {kind!r}"]
     where = f"body[{i}] ({kind})"
+    problems = [
+        f"{where}: key {key!r} not allowed"
+        for key in unknown_keys(element, ELEMENT_KEYS)
+    ]
+    validations = element.get("validations")
+    if validations is not None and (
+        not isinstance(validations, dict)
+        or unknown_keys(validations, {"required"})
+        or not isinstance(validations.get("required", False), bool)
+    ):
+        problems.append(f"{where}: validations may only hold required: true/false")
     attrs = element.get("attributes")
     if not isinstance(attrs, dict):
-        return [f"{where}: missing attributes"]
-    problems = [
+        return problems + [f"{where}: missing attributes"]
+    problems += [
         f"{where}: attribute {key!r} not allowed"
-        for key in sorted(set(attrs) - ATTRIBUTES[kind])
+        for key in unknown_keys(attrs, ATTRIBUTES[kind])
     ]
     if kind == "markdown":
-        if not attrs.get("value"):
+        if not is_text(attrs.get("value")):
             problems.append(f"{where}: markdown needs a value")
         return problems
 
     element_id = element.get("id")
-    if not element_id or not ID_PATTERN.match(str(element_id)):
-        problems.append(f"{where}: needs an id of letters, digits, '-' or '_'")
+    if not isinstance(element_id, str) or not ID_PATTERN.fullmatch(element_id):
+        problems.append(f"{where}: needs a text id of letters, digits, '-' or '_'")
     elif element_id in ids:
         problems.append(f"{where}: duplicate id {element_id!r}")
-    ids.add(element_id)
-    if not attrs.get("label"):
+    else:
+        ids.add(element_id)
+    label = attrs.get("label")
+    if not is_text(label):
         problems.append(f"{where}: needs a label")
 
-    texts = [str(attrs.get("label", ""))]
+    texts = [label if isinstance(label, str) else ""]
     if kind in ("dropdown", "checkboxes"):
         options = attrs.get("options")
         if not isinstance(options, list) or not options:
             problems.append(f"{where}: options must be a non-empty list")
             options = []
         if kind == "dropdown":
-            if not all(isinstance(o, str) and o.strip() for o in options):
+            if not all(is_text(option) for option in options):
                 problems.append(
                     f"{where}: every option must be non-empty text (quote Yes/No)"
                 )
@@ -121,7 +153,7 @@ def check_element(i, element, ids):
                 problems.append(f"{where}: options must be unique")
         else:
             labels = [o.get("label") if isinstance(o, dict) else None for o in options]
-            if not all(isinstance(lab, str) and lab.strip() for lab in labels):
+            if not all(is_text(lab) for lab in labels):
                 problems.append(f"{where}: every checkbox needs a label")
             names = [str(lab) for lab in labels]
         texts += names
@@ -136,10 +168,10 @@ def check_form(data):
     if not isinstance(data, dict):
         return ["not a mapping"]
     problems = [
-        f"unknown top-level key {key!r}" for key in sorted(set(data) - TOP_LEVEL_KEYS)
+        f"unknown top-level key {key!r}" for key in unknown_keys(data, TOP_LEVEL_KEYS)
     ]
     for key in ("name", "description"):
-        if not isinstance(data.get(key), str) or not data[key].strip():
+        if not is_text(data.get(key)):
             problems.append(f"missing top-level {key}")
     body = data.get("body")
     if not isinstance(body, list) or not body:
@@ -176,19 +208,22 @@ def main(argv):
             continue
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
             print(f"FAIL {path.name}: does not parse: {exc}")
             failed = True
             continue
-        if path.stem == "config":
-            problems = check_config(data)
-        else:
-            problems = check_form(data)
-            options = area_options(data)
-            if options is None:
-                problems.append("no area dropdown with options (id: area)")
+        try:
+            if path.stem == "config":
+                problems = check_config(data)
             else:
-                areas[path.name] = options
+                problems = check_form(data)
+                options = area_options(data)
+                if options is None:
+                    problems.append("no area dropdown with options (id: area)")
+                else:
+                    areas[path.name] = options
+        except Exception as exc:  # a checker bug must not stop the other files
+            problems = [f"checker error: {exc!r}"]
         print(f"{'FAIL' if problems else 'OK  '} {path.name}")
         for problem in problems:
             print(f"     - {problem}")

@@ -908,7 +908,7 @@ Fixed, each in its item's commit, each with a test that fails on the code before
 Not changed; for the owner to decide:
 
 * `--from` still writes no conflict copy; it only lists the conflict (item 4 deviation). Drafted as
-  Issue 1 below.
+  Issue 1 below (#135).
 * `r_key.txt.bak_*` files become removable once the Robinhood keyring entries exist; their content (an
   older key) is not in the keyring (unchanged since phase 4). Fixed in item 8.
 * A credential-named key in `pt_config.json` / `gui_settings.json`, or outside `exchanges[*]` in
@@ -917,7 +917,7 @@ Not changed; for the owner to decide:
 * Copies check that the target is free, then write (no exclusive create). Safe within the hub (the
   migration runs first at start-up), not against another program writing that path in the same instant.
 * `test_trainer_launch` builds the hub with `__new__` and repeats `__init__`'s path set-up, so it would not
-  notice `__init__` dropping `_refresh_trainer_path()`. Drafted as Issue 2 below.
+  notice `__init__` dropping `_refresh_trainer_path()`. Drafted as Issue 2 below (#136).
 * `python app/pt_migrate.py` without `platformdirs` still ends in a traceback (its last line names the
   package). CI's `cd app && python test_*.py` steps (`code-quality.yml`) run outside pytest, so without
   the guard. `test_isolation_guard.py::test_resolving_the_real_folders_fails_inside_tests` calls
@@ -1035,9 +1035,12 @@ The failures and skips are the baseline's, test for test (`test_graceful_degrada
 as at baseline). New: 100 in `app/` (the 94 of the report plus these 6), 4 in `.github/scripts`. No file
 left behind in the clone.
 
-## Draft GitHub issues (not created)
+## GitHub issues (drafted here, created as #135 and #136)
 
-### Issue 1: `pt_migrate --from` writes no conflict copy
+Created on 2026-10-04, after #134 merged. Black moved the line numbers quoted below; the created
+issues cite code by function or symbol, with line numbers as of `main` at `9bc2392` as hints.
+
+### Issue 1 (#135): `pt_migrate --from` writes no conflict copy
 
 **Summary.** `python app/pt_migrate.py --from <path>` imports one config file. When the config folder
 already holds a different file of that kind, the import lists the conflict and writes nothing. The
@@ -1060,7 +1063,7 @@ live, and a repeat import creates nothing new.
 **Where.** `app/pt_migrate.py`: `import_config_file`, `_write_config` (the `label is None` path).
 Recorded as a deviation in `docs/dev/RUN-LOG-paths-2.md` (item 4).
 
-### Issue 2: trainer tests that do not test the launch
+### Issue 2 (#136): trainer tests that do not test the launch
 
 **Summary.** Three trainer tests would not notice a broken trainer launch:
 - `app/tests/test_trainer_launch.py` builds the hub with `PowerTraderHub.__new__` and repeats the path

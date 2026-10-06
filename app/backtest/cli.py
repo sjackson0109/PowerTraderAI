@@ -31,6 +31,7 @@ from market_data.candles import (
     get_candles,
     load_candles_csv,
 )
+from market_data.timeframes import timeframe_seconds
 from strategies.catalogue import CatalogueError, ParamError
 from strategies.factory import build_runner, parse_overlay_ids
 
@@ -77,6 +78,8 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         return build_runner(args.strategy, params, overlay_specs)
 
     factory()  # fail fast on unknown ids / bad params before touching data
+    # a strategy timeframe (the candle layer also accepts the candle-only "1w")
+    timeframe_seconds(args.tf)
 
     source: Dict[str, Any]
     if args.candles_file:

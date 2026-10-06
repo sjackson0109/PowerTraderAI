@@ -12,7 +12,11 @@ writes to while it runs (PowerShell):
     python -m pytest app/tests/audit_trainer_evidence.py -p no:cacheprovider --timeout=900 -q
 
 Every run starts the trainer the way the Trainers tab does: a hub built by its
-real ``__init__`` calls ``start_trainer_for_selected_coin``. The guarded child
+real ``__init__`` calls ``start_trainer_for_selected_coin``. Since FDS-MDL Phase 1
+the default trainer is pt_pattern_trainer.py and the stub refuses to start unless
+allowed, so the harness saves ``script_neural_trainer = pt_trainer.py`` in
+gui_settings.json and ``allow_mock_trainer: true`` in pt_config.json (the user's
+own settings files, in the scratch POWERTRADER_HOME) before it builds the hub. The guarded child
 (helpers_trainer.CHILD_SITE) blocks the network and answers the Binance price
 ticker from a recorded candle CSV (the last close of the chosen rows), so the
 real DataProvider, MultiExchangeManager and BinanceExchange code runs and only
@@ -167,7 +171,11 @@ def records(monkeypatch, tmp_path, isolated_user_dirs):
 
 @pytest.fixture
 def real_hub(monkeypatch, records):
+    ht.configure_trainer(script="pt_trainer.py", allow_mock=True)  # the audited stub
     hub = ht.build_real_hub(monkeypatch)
+    assert hub.proc_trainer_path == os.path.join(
+        pt_paths.program_dir(), "pt_trainer.py"
+    )
     yield hub
     ht.close_hub(hub)
     assert hub.test_callback_errors == []

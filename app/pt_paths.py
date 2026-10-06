@@ -198,7 +198,9 @@ def hub_dir(create: bool = True) -> str:
 
 
 def models_dir(create: bool = True) -> str:
-    """``<data>/hub_data/models``; one ``<model_id>/`` folder per model."""
+    """``<data>/hub_data/models``: the default trainer working root (``neural_dir``).
+    BTC trains in it directly and other coins in ``<root>/<SYMBOL>``; the hub deletes
+    the model files there before each training run. Not a store for model artifacts."""
     path = os.path.join(hub_dir(create), MODELS_DIR_NAME)
     return make_private_dir(path) if create else path
 

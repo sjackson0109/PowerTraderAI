@@ -102,6 +102,9 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | After the baseline | absent | absent | 0 |
 | After the Phase 0 evidence runs and mutation check, 2026-10-05 10:20 | absent | absent | 0 |
 | After the Phase 0 gating suite run, 2026-10-05 10:57 | absent | absent | 0 |
+| Phase 1, after `fetch`, `train` and the first counter-checks, 2026-10-06 02:08 | absent | absent | 0 |
+| Phase 1, after the first gating suite run, 2026-10-06 02:48 | absent | absent | 0 |
+| Phase 1, after the final gating suite run, 2026-10-06 03:01 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -194,3 +197,215 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 - **Owner actions:** (1) choose the Phase 1 route (A or B); (2) confirm `script_neural_trainer` in your
   `gui_settings.json` is `pt_trainer.py` (not opened by this session).
 - **Next:** stop here and report (Phase 0 is a gate). Phase 1 waits for the owner.
+
+## Phase 1 — restore a real trainer — **route B: port of upstream `ba62130`**
+
+- **Session:** 2026-10-06, Claude Opus 5.5. Started after the owner's Phase 1 directions; one commit for the phase.
+- **Owner decisions** (2026-10-06):
+  - Route **B**: port the upstream trainer. Compare `ba62130` (last upstream-authored) with `3407fe7` (last full version
+    on main) and port `ba62130` unless a later change is a genuine bug fix.
+  - Data only from `app/market_data/candles.py`, never `pt_data_provider`.
+  - Do **not** repair the legacy thinker→trader handoff. Draft three separate issues for it, issues for the other unfixed
+    audit bugs, and a release-notes paragraph with scoped wording ("has not worked end to end since February 2026";
+    "the accuracy shown during training since 25 February 2026 was a formula, not a measurement").
+  - **Faithful port:** keep upstream's training bugs (weight updates never saved, the `var3` units mismatch, matching
+    against flushed memories re-read every step). Output-only fixes allowed: flush every timeframe at its end, write all
+    35 files, write the stamp last.
+  - **Older-half rule:** keep it, documented (trainer header, this log, bar counts in the summary).
+  - **Default window:** rolling 3 years (`train_end` = the last full hour, `train_start` = `train_end` − 1,095 days).
+  - `script_neural_trainer` in the owner's `gui_settings.json`: **unknown** ("i don't know"). Not opened by this session.
+    The design does not depend on it: a saved `pt_trainer.py` gets the refusal dialog, which names the setting to change;
+    nothing rewrites the user's settings.
+- **Upstream check** (read-only): upstream's current `pt_trainer.py` on `main` of `garagesteve1155/PowerTrader_AI` is blob
+  `0369182e5685f599ec593600f82e2ecc74dc9384`, the same blob as `ba62130:pt_trainer.py`, checked 2026-10-06 with the
+  GitHub contents API (`gh api`, no clone, no push); upstream head `36cf9fd`. So upstream had not moved on and no stop was
+  needed. The owner asked for this check ("a scratch git remote fetch or a raw file fetch"). **Deviation:** `gh api`
+  sends the stored GitHub token, so this was an authenticated call to a public endpoint, which 00-RUN-ORDER rule 3 ("Do
+  not call any authenticated endpoint") and addendum section 8 (network only in `run_backtest_model1.py fetch`) do not
+  allow as written; an unauthenticated raw-file fetch would have answered the same question. Read-only; nothing written. The vendored test fixture (`app/tests/fixtures/upstream_ba62130_pt_trainer.py.txt`, LF; blob `5359562`) gives
+  exactly blob `0369182` with CRLF line endings; a test checks this.
+- **`ba62130` vs `3407fe7`: zero KEEP items.** Eight commits touched the file (`6d7ba2c`, `91eb984`, `e713ca2`, `fac15d9`,
+  `9ed5736`, `989cc19`, `2d7a0f2`, `b7f563a`). Every hunk was classified; none fixes a bug present in `ba62130`.
+
+  | # | Commit | Change | Keep/drop | Reason |
+  |---|---|---|---|---|
+  | H1 | 6d7ba2c | Imports regrouped; upstream docstring removed | DROP | Cosmetic; the port has its own header |
+  | H2 | 6d7ba2c | `pt_files` import | DROP | Only supports H8, H9, H16 |
+  | H3 | 6d7ba2c | Globals typed, `'no'` → `False`, `starting_amounth0x` renamed | DROP | Overwritten at the loop top; never read |
+  | H4 | 6d7ba2c | TODO comment | DROP | Comment |
+  | H5 | 6d7ba2c | Type hints | DROP | No behaviour change |
+  | H6 | 6d7ba2c | `load_memory`: narrowed `except` plus warnings | DROP | Fixes nothing observable; the port's I/O goes through `pt_paths` |
+  | H7 | 9ed5736 | Warnings hidden when `POWERTRADER_ENV=test` | DROP | CI workaround for H6 |
+  | H8 | 6d7ba2c | `flush_memory` via `secure_write_text` | DROP | `secure_write_text` swallows errors and is not atomic; the port writes atomically and fails loudly |
+  | H9 | 6d7ba2c | Threshold via `secure_write_text` | DROP | As H8 |
+  | H10 | 6d7ba2c | `killer.txt` also accepts `"true"` | DROP | Nothing writes `killer.txt`; the port drops the stop file |
+  | H11 | 6d7ba2c | `restart_processing = True` | DROP | Regression: `.lower()` on a bool raises |
+  | H12 | 9ed5736 | `restart_processing = "y"` | DROP | Repairs H11 only |
+  | H13 | 6d7ba2c | Loop flags → bools, comparisons left as strings | DROP | Regression (statistics code never runs) |
+  | H14 | 6d7ba2c | `no_list` bool | DROP | Never read |
+  | H15 | 6d7ba2c | `next_coin` / `flipped` → `False` | DROP | Unread / feeds H13 |
+  | H16 | 6d7ba2c | Stop path via `secure_write_text` | DROP | Reachable only through `killer.txt` |
+  | H17 | 6d7ba2c | `any_perfect` bool with string initial value | DROP | Regression (noise only) |
+  | H18 | e713ca2 | Tabs → spaces, Black, isort | DROP | Formatting; Black is applied to the port itself |
+  | H19 | 91eb984 | Move to `app/`, CRLF → LF | n/a | The port is a new file, `app/pt_pattern_trainer.py` |
+  | H20 | fac15d9 | KuCoin import guard | DROP | No KuCoin in the port |
+  | H21 | 9ed5736 | `__main__` guard around 8 lines | DROP | Regression: `3407fe7` spins for ever and never trains |
+  | H22 | 2d7a0f2 | KuCoin → `pt_data_provider` | DROP | Owner rule: `candles.py` only; the provider returns one synthetic candle |
+  | H23 | b7f563a | Provider calls `get_historical_data` / `get_price_data` | DROP | Methods did not exist then (one still does not); window reversed |
+
+- **Data source changed (FDS-MDL 4.2):** upstream read KuCoin klines (`market.get_kline`, newest first, up to the wall
+  clock); the port reads Binance klines through the candle cache (`get_candles`), only bars closed by `train_end`. This
+  can change behaviour: prices, volumes and bar alignment differ between exchanges. Weekly bars are Binance's (Monday
+  00:00 UTC). `1w` was added to the candle layer only (`candle_timeframe_seconds`), so strategy settings, the signal
+  engine and the backtester still reject it.
+- **What changed:**
+  - New `app/pt_pattern_trainer.py`: the port. Its header records the upstream repo, commit and blob, the bugs kept on
+    purpose, and deviations 1–9 with reasons (data source and window; row selection; one load per timeframe; passes
+    upstream could never finish are skipped and recorded; output completeness; an empty working folder; removed dead
+    code, ticker, `killer.txt`, statistics and per-step prints; `ERROR` status and exit codes; the seed).
+  - New `app/trainer_guard.py`: reads the first 4 KB of the configured trainer script (never imports it) for the marker,
+    and `allow_mock_trainer` from `pt_config.json` through `trading_mode`'s settings reader. Only JSON `true` counts.
+  - `app/pt_hub.py`: default `script_neural_trainer` = `pt_pattern_trainer.py`; `_trainer_launch_allowed` refuses a
+    marked script (one dialog, status text) before the neural runner is stopped or any file deleted; Train All shows one
+    refusal; an unattended auto-retrain of a refused mock starts nothing and shows no dialog (status text only), and the
+    "Auto-retraining" status is set only when a new trainer process started; the Settings field falls back to the
+    default name.
+  - `app/pt_settings_manager.py`: the same default, plus `"allow_mock_trainer": False`.
+  - The 12 stubs (`app/pt_trainer.py`, `app/pt_trainer_standalone.py` and the 10 per-coin copies) got line 2:
+    `# MOCK - DO NOT USE FOR DECISIONS (FDS-MDL): sleep-loop "training", formula accuracy, nothing learned from market
+    data. See docs/dev/TRAINER-AUDIT.md.` (true of all 12: seven of them write no model files at all). Nothing else in
+    them changed; none was deleted or untracked.
+  - `app/market_data/timeframes.py`: `CANDLE_ONLY_TIMEFRAME_SECONDS = {"1w": ...}`, `candle_timeframe_seconds`,
+    `bar_open_floor` (Monday weeks). `timeframe_seconds` is unchanged. `app/market_data/candles.py` uses
+    `candle_timeframe_seconds`; its docstring now names the real cache folder and warns that a past `now` with
+    `offline=False` can leave a hole in the cache. `app/backtest/cli.py` checks `--tf` with `timeframe_seconds` before
+    touching data, so `1w` is still refused up front.
+  - `app/pt_paths.py`: `models_dir()` docstring corrected (the default trainer working root, not a model store).
+  - `.github/scripts/create_desktop_installer.py`: lists the new files; default trainer name.
+  - `docs/dev/run_backtest_model1.py` (new): `fetch` and `train`; refuses to run without `POWERTRADER_HOME` unless
+    `--use-real-folders`, and always refuses a `POWERTRADER_HOME` inside the repo; prints the folders it resolved.
+  - `docs/dev/ISSUE-DRAFTS-model-1.md` (new): A1–A3, B1a, B1b, B2 (trimmed after the port), B3–B5, D1–D3 (the kept
+    upstream bugs) and the release-notes paragraph.
+- **No lookahead (FDS-MDL 4.3), enforced in the data call:** for each timeframe every run reads the cache with
+  `get_candles(..., offline=True, now=train_end)` for bars opening before the bar that contains `train_end`, so
+  `get_candles` drops any bar that closes after `train_end`; the result is then checked (a later bar is a
+  `TrainerError`). Online runs first fill the cache, with the wall clock deciding what is closed enough to cache (a past
+  `now` there would leave a permanent hole in the shared cache; found in review). Online and offline runs parse the
+  same values. They differ at the window's edges: online, bars the exchange does not have (a pair listed after
+  `train_start`, a missing first or last bar) are counted (`missing_at_start`, `missing_at_end`) and printed, and
+  training goes on; offline, the cache must reach both ends of the window or the run fails, because offline a short
+  cache and a missing exchange bar look the same.
+- **Determinism (FDS-MDL 4.4):** upstream uses no randomness. `--seed` (default 0) is applied to `random` and recorded.
+  Output is identical across processes with different `PYTHONHASHSEED` (test).
+- **Thinker format (FDS-MDL 4.5):** unchanged upstream format; a test runs the thinker's own parse expressions on the
+  output, and checks plain floats and a byte-stable threshold.
+- **Equivalence with upstream (evidence for "faithful"):** `test_the_port_writes_the_same_model_files_as_upstream` runs
+  the vendored `ba62130` trainer in a child process (fake `kucoin.client.Market` serving the same bars plus one forming
+  bar, frozen clock, network blocked) and the port in `--upstream-flush-only` mode on four data sets (10 and 20 weeks of a
+  random walk; coarse ticks, where the threshold falls to its floor; near-identical bodies, where it settles below 0.1;
+  zero closes, where upstream skips learning on a step).
+  All 35 files are byte-identical in every case. One more test shows the only remaining difference, upstream's
+  malformed row from an empty last KuCoin page (deviation 2), disappears when the port keeps one bar fewer.
+- **Counter-checks** (each mutation applied to the production file, the named tests run with the isolation guard on,
+  the file restored and its SHA-1 re-checked):
+
+  | Mutation | Caught by |
+  |---|---|
+  | Read one bar past `train_end` (cut and backstop removed) | both poisoned-bar tests, the loader test |
+  | Threshold step −0.01 → −0.02 | upstream equivalence (coarse ticks, near-identical bodies) |
+  | Fine step −0.001 → −0.002 | upstream equivalence (near-identical bodies) |
+  | Threshold clamp at 0 removed | upstream equivalence (coarse ticks) |
+  | Weight updates saved (fixing D1) | upstream equivalence (all four) |
+  | Older-half count off by one | upstream equivalence; the summary test |
+  | Status `FINISHED` written after the stamp | the stamp-last test |
+  | No final flush | the default-mode test |
+  | Hub refusal removed (single coin / Train All) | the refusal tests (3 and 1) |
+  | Any truthy value allows a mock | the JSON-`true` tests |
+  | Cache fill with `now=train_end` (the review's cache-hole defect) | the cache-hole test |
+  | Window start not rounded up to a bar boundary | the online-vs-offline test |
+  | Online read not clamped to the cached range | the missing-last-bar test |
+  | Zero-close skip removed | upstream equivalence (zero closes) |
+  | `--offline` ignored | the stamp-last test; the inputs test |
+  | `_leave_program_dir` removed (run in a scratch clone, as it writes into `app/`) | the program-folder tests (both coins) |
+  | Auto-retrain refusal removed | the unattended-retrain test |
+  | Backtest CLI `--tf` check removed | the backtest-CLI test |
+  | Window start compared after truncating to whole seconds | the fractional-start test |
+  | Auto-retrain status check reverted to "a live process exists" | the retrain-while-training test |
+  | Auto-retrain status check removed | the retrain-that-starts-nothing test |
+
+  Before the coarse-tick and near-identical data sets were added, the threshold and fine-step mutations survived (the
+  random walk never produced more than 20 matches); that is why those data sets exist.
+- **Runtime (FDS-MDL 4.7):** `run_backtest_model1.py train`, 1h data 2023-01-01 to 2026-01-01, full window, no
+  subsampling, Python 3.13.15, this machine: **BTC 59.9 s, ETH 60.9 s** (well under 30 minutes). Each coin: 26,303 1h
+  bars (one hour missing on Binance, 2023-03-24 13:00, reported in the summary, not filled). Bars used (the older-half
+  rule): every pass 0 and all three 1hour passes, the oldest 13,152 1h bars; passes 1–2 on their own bars, 2hour 6,577
+  of 13,152, 4hour 3,289 of 6,576, 8hour 1,645 of 3,288, 12hour 1,097 of 2,192; 1day and 1week passes 1–2, all 1,096
+  and 156. 368–469 memories per timeframe. Under cProfile (99 s), re-reading the model files took 23% and the memory-text clean-up 18%
+  (issue draft D3).
+- **Network and sandbox:** network use was `run_backtest_model1.py fetch` (public Binance klines: 58 requests per coin,
+  BTCUSDT and ETHUSDT × 7 timeframes) and the one upstream check above (`gh api`, a recorded deviation). Every `run_backtest_model1.py` run used
+  `POWERTRADER_HOME=<scratch>\model1-home` (`<scratch>` is this session's temp scratchpad, outside the repo). Tests use
+  synthetic candles only and block the network in the test process and every child.
+- **Tests:** new `app/tests/test_pattern_trainer.py` (38), `app/tests/test_mock_trainer_refusal.py` (18), helpers
+  `app/tests/helpers_candles.py` and `app/tests/helpers_upstream.py`, the vendored fixture; `test_trainer_launch.py`
+  updated for the new default (the hub tests seed a synthetic cache and run the pattern trainer offline; the Settings test
+  allows mocks before launching the standalone stub); `helpers_trainer.py` gained `configure_trainer`, records the
+  trainer's environment inputs, and sets `POWERTRADER_CANDLES_OFFLINE=1` for every child; the Phase 0 harness
+  `audit_trainer_evidence.py` now pins the stub through the user's settings files (it is not part of the suite).
+- **Black:** Black 26.5.1 (scratch venv) on every changed Python file except the stubs, whose only change is the comment
+  line. The 10 per-coin copies were already not Black-formatted at `7a84250`, and CI's `black --check app/` skips them.
+- **Adversarial review** (two workflow rounds, read-only reviewers, each finding checked by a skeptical verifier):
+  - Round 1, five reviewers (port fidelity, data layer and lookahead, hub and guard, tests, docs and spec): 22
+    findings, 3 refuted. The one high finding was real: an online fill with `now=train_end` dropped the bars between
+    `train_end` and the cache's first bar, leaving a permanent hole in the shared cache, so a later window across it
+    trained on part of its data with nothing reported. Fixed (wall-clock fill, edge counts, regression test). The others:
+    a zero close crashed the port where upstream skips the step (now matched, with an upstream-equivalence case); a
+    misaligned `train_start` was reported as "listed later"; an exchange gap at the window's end failed or passed
+    depending on the cache's history (online now consistent; offline documented); the backtest CLI fetched `1w` before
+    failing; the stub header claimed random weights for seven stubs that write none; auto-retrain overwrote the refusal
+    status; untested online path, program-folder start and `--offline` flag (tests added); run-log and issue-draft
+    inaccuracies (bar counts, the `gh api` call, the `--use-real-folders` wording, the release-notes equivalence claim,
+    B4's torch grep); a cross-drive crash in `run_backtest_model1.py`. All fixed.
+  - Round 2, two reviewers on the fixes: 4 low findings, all fixed: a `train_start` with fractions of a second gave a
+    false "1 bar missing"; auto-retrain claimed a run when the coin was already training; that branch had no test; the
+    guard's docstring still said "random weights".
+  - Refuted in round 1 (no change): the poisoned-bar control reaching only 1d/1w (by the owner's older-half rule the
+    newest bars never reach intraday models; the loader test covers every timeframe), the oracle not comparing memories
+    learned from 4h–1w bars (the learning code is the same for every timeframe and is compared on 1h, 2h and 4h), and
+    B2's line numbers (they follow the drafts' stated convention).
+- **Real data after the fixes:** `run_backtest_model1.py train` again (same scratch home and cache): all 35 model files
+  byte-identical to the first run for both coins (BTC 58.9 s, ETH 58.5 s), and no missing bars at either window edge.
+- **Suite** (`run_suite.py` on a fresh clone, `clone-phase1b`, holding every final code and test file; compare against
+  `suite-cbf7e21-baseline.json`, and against `suite-phase0-final.json`):
+
+  | Suite | Passed | Failed | Skipped |
+  |---|---|---|---|
+  | `app/` | 1065 | 11 | 5 |
+  | `.github/scripts` | 23 | 19 | 1 |
+
+  - Against Phase 0's final run: only NEW `app/tests/test_pattern_trainer.py` (38 passed) and NEW
+    `app/tests/test_mock_trainer_refusal.py` (18 passed). `test_trainer_launch.py` still 3 passed (rewritten for the new
+    default). Nothing else changed; `.github/scripts` identical.
+  - Against the session baseline: as at Phase 0, plus the two new files. The only newly failing test is
+    `app/test_integration.py::TestPowerTraderHubIntegration::test_graceful_degradation`, the known Tk start-up flip
+    (skipped at the baseline, failed at `9bc2392` and at Phase 0).
+  - `run_suite.py`'s real-state check unchanged before and after; no file written into the clone (`git status` showed
+    the same 32 copied files before and after). Results: `<scratch>\suite-phase1b.json`, SHA-256
+    `bf2e9190c253f39ec4eddeeb380196190e4ef4fc882bdbeafb2137b5cbced383`; copy at
+    `..\PowerTraderAI-specs\suite-phase1-final.json`. An earlier full run on the code before the round-2 fixes gave the
+    same picture (1062 passed).
+  - The run log was finished after the clone was made; nothing else changed.
+- **Real-folder and credential checks:** see the table above (three Phase 1 rows): both folders absent and 0
+  credential entries each time.
+- **Commit** (files staged by explicit path, 32 files; not pushed, no PR): this commit, `FDS-MDL Phase 1: port the
+  upstream pattern trainer (ba62130)`.
+- **Owner actions:**
+  1. File the drafts in `docs/dev/ISSUE-DRAFTS-model-1.md` you agree with (A1–A3 for the legacy handoff, B1a–B5, D1–D3),
+     then put their numbers into the release-notes paragraph.
+  2. If your `gui_settings.json` names `pt_trainer.py` (likely if you ever pressed Save in Settings, because the hub
+     saves every setting), the hub will refuse to train and say so. Set Settings > "pt_trainer.py path:" to
+     `pt_pattern_trainer.py`.
+  3. Note the recorded deviation: the upstream check used `gh api` (authenticated) instead of a raw-file fetch.
+- **Next:** Phase 2 (model artifact provenance: `pt_paths.strategy_models_dir()`, manifests, loaders that refuse an
+  artifact without a matching manifest).
+

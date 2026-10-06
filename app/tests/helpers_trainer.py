@@ -107,6 +107,13 @@ if os.environ.get("PT_TEST_TRAINER_CHILD") == "1":
 
         _blocked = []
         _served = []
+        # the pattern trainer's inputs (pt_pattern_trainer.TRAINER_ENV), not credentials
+        _TRAINER_ENV = (
+            "POWERTRADER_TRAIN_START",
+            "POWERTRADER_TRAIN_END",
+            "POWERTRADER_TRAIN_SEED",
+            "POWERTRADER_CANDLES_OFFLINE",
+        )
 
         def _no_network(*args, **kwargs):
             _blocked.append(repr(args)[:200])
@@ -139,12 +146,12 @@ if os.environ.get("PT_TEST_TRAINER_CHILD") == "1":
                     "POWERTRADER_HUB_DIR",
                     "PYTHON_KEYRING_BACKEND",
                     "PYTHONHASHSEED",
-                )
+                ) + _TRAINER_ENV
             },
             "credential_env": sorted(
                 k for k in os.environ
                 if k.startswith("POWERTRADER_")
-                and k not in ("POWERTRADER_HOME", "POWERTRADER_HUB_DIR")
+                and k not in ("POWERTRADER_HOME", "POWERTRADER_HUB_DIR") + _TRAINER_ENV
             ),
             "seed": os.environ.get("PT_TEST_SEED"),
             "ticker_csv": os.path.basename(os.environ.get("PT_TEST_TICKER_CSV", "")),
@@ -261,6 +268,8 @@ def guard_trainer_children(monkeypatch, tmp_path):
     for key in [k for k in os.environ if k.startswith("POWERTRADER_")]:
         if key != "POWERTRADER_HOME":
             monkeypatch.delenv(key)  # no credential or folder override reaches a child
+    # the pattern trainer reads the candle cache only; a test seeds it
+    monkeypatch.setenv("POWERTRADER_CANDLES_OFFLINE", "1")
     for key in (
         "PT_TEST_TICKER_CSV",
         "PT_TEST_TICKER_WINDOW",
@@ -288,6 +297,26 @@ def guard_trainer_children(monkeypatch, tmp_path):
     ):
         monkeypatch.setattr(socket, name, _no_network)
     return records
+
+
+def configure_trainer(script=None, allow_mock=None):
+    """Write the user's settings files under POWERTRADER_HOME, as a user would:
+    ``script_neural_trainer`` in gui_settings.json (read by the hub at start-up)
+    and ``allow_mock_trainer`` in pt_config.json (read at every launch)."""
+    import pt_paths
+
+    for path, key, value in (
+        (pt_paths.gui_settings_file(), "script_neural_trainer", script),
+        (pt_paths.settings_file(), "allow_mock_trainer", allow_mock),
+    ):
+        if value is None:
+            continue
+        data = {}
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        data[key] = value
+        pt_paths.write_private_text(path, json.dumps(data, indent=2))
 
 
 def child_records(records_dir):

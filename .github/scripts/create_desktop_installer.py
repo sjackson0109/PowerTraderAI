@@ -36,6 +36,8 @@ class DesktopInstaller:
             "pt_trader.py",
             "pt_thinker.py",
             "pt_trainer.py",
+            "pt_pattern_trainer.py",
+            "trainer_guard.py",
             "pt_paper_trading.py",
             "pt_live_monitor.py",
             "pt_risk.py",
@@ -56,7 +58,7 @@ class DesktopInstaller:
                 "hub_data_dir": "./hub_data",
                 "script_neural_runner2": "pt_thinker.py",
                 "script_trader": "pt_trader.py",
-                "script_neural_trainer": "pt_trainer.py",
+                "script_neural_trainer": "pt_pattern_trainer.py",
                 "paper_trading": {
                     "initial_balance": 10000.00,
                     "commission_rate": 0.001,

@@ -23,6 +23,7 @@ import requests
 from nacl.signing import SigningKey
 
 # Local imports
+import model_store
 import pt_paths
 from pt_credentials import get_credentials
 from pt_data_provider import get_data_provider
@@ -436,6 +437,67 @@ def _coin_is_trained(sym: str) -> bool:
 
 # --- GUI HUB "runner ready" gate file (read by gui_hub.py Start All toggle) ---
 
+# --- model provenance gate (FDS-MDL Phase 2) ---
+# A coin's model files are used only when a published manifest matches them byte for
+# byte (model_store.find_published). The check runs the first time a coin is stepped
+# and again whenever the training stamp or any model file changes (size or modification
+# time); the model_id and train_end it finds are printed then. Without a match the coin
+# is held like an untrained one.
+_verified_models: Dict[str, tuple] = {}  # sym -> (file signature, manifest or None)
+
+
+def _model_files_signature(folder: str) -> tuple:
+    """The stamp's and every model file's size and modification time, cheap to read
+    every step and different whenever a file is rewritten or replaced. The thresholds
+    are compared by content instead: step_coin rewrites them every step, unchanged."""
+    signature = []
+    for name in ["trainer_last_training_time.txt"] + model_store.model_file_names():
+        path = os.path.join(folder, name)
+        try:
+            if name.startswith("neural_perfect_threshold_"):
+                with open(path, "rb") as f:
+                    signature.append((name, f.read()))
+            else:
+                st = os.stat(path)
+                signature.append((name, st.st_size, st.st_mtime_ns))
+        except OSError:
+            signature.append((name, None))
+    return tuple(signature)
+
+
+def _model_verified(sym: str) -> bool:
+    folder = coin_folder(sym)
+    signature = _model_files_signature(folder)
+    cached = _verified_models.get(sym)
+    if cached is not None and cached[0] == signature:
+        return cached[1] is not None
+    try:
+        manifest = model_store.find_published(folder, trainer_root=BASE_DIR, coin=sym)
+    except model_store.ModelStoreError as exc:
+        print(f"ERROR: {sym}: {exc}")
+        manifest = None
+    except Exception as exc:
+        # for example a model file being rewritten: hold the coin, check again next step
+        _verified_models.pop(sym, None)
+        print(
+            f"ERROR: {sym}: the model files in {folder} could not be checked ({exc}); "
+            "they are not used"
+        )
+        return False
+    _verified_models[sym] = (signature, manifest)
+    if manifest is None:
+        print(
+            f"ERROR: {sym}: no published model manifest matches the model files in "
+            f"{folder}; they are not used (retrain to publish a model)"
+        )
+        return False
+    print(
+        f"Model for {sym}: {manifest['model_id']}, trained "
+        f"{manifest['train_start']} .. {manifest['train_end']}"
+    )
+    return True
+
+
 HUB_DIR = os.environ.get("POWERTRADER_HUB_DIR") or pt_paths.hub_dir()
 try:
     os.makedirs(HUB_DIR, exist_ok=True)
@@ -646,7 +708,9 @@ def step_coin(sym: str):
     # --- training freshness gate ---
     # If GUI would show NOT TRAINED (missing / stale trainer_last_training_time.txt),
     # skip this coin so no new trades can start until it is trained again.
-    if not _coin_is_trained(sym):
+    # A trained coin whose model files match no published manifest is held the same way.
+    trained = _coin_is_trained(sym)
+    if not trained or not _model_verified(sym):
         try:
             # Prevent new trades (and DCA) by forcing signals to 0 and keeping PM at baseline.
             with open("futures_long_profit_margin.txt", "w+") as f:
@@ -660,7 +724,11 @@ def step_coin(sym: str):
         except Exception:
             pass
         try:
-            display_cache[sym] = sym + "  (NOT TRAINED / OUTDATED - run trainer)"
+            display_cache[sym] = sym + (
+                "  (NOT TRAINED / OUTDATED - run trainer)"
+                if not trained
+                else "  (MODEL NOT VERIFIED - no matching manifest; retrain)"
+            )
         except Exception:
             pass
         try:

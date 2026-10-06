@@ -567,6 +567,7 @@ held out for the fit that produced them, not for the published model, which has 
 it: pass 2 of the `1day` and `1week` timeframes walks from the middle of the window to its last bar (pass 1 stops at the
 first quarter; the intraday timeframes and every pass 0 use only the older half). The check should be re-run then, and
 judged on those terms. The harness reads only the training summary, so it needs extending to read the Phase 2 manifest.
+Done: see 11.8 (sections 11.1 to 11.7 stay as the verdict on the trainer at `03f489e`).
 
 ### 11.2 Static
 
@@ -757,3 +758,84 @@ harness first checks that `pt_thinker.py` still contains the expressions the cop
   (the reported-metrics test passes by confirming the FAIL), and the SHA-256 and git blob ID of the harness, both helpers
   modules, the trainer and the fixtures. The SHA-256 values are of the scratch clone's checkout, which has CRLF line
   endings on Windows; the blob IDs identify the committed content. Path prefixes are replaced as in Phase 0.
+
+### 11.8 Re-run after FDS-MDL Phase 2
+
+| | |
+|---|---|
+| Script | `app/pt_pattern_trainer.py` as committed with FDS-MDL Phase 2 (blob `3792be9`), which now scores with `app/pattern_model.py` and publishes through `app/model_store.py` (both new) |
+| Date | 2026-10-06 |
+| Evidence | `docs/dev/trainer-port-evidence-phase2.json`, written by `app/tests/audit_port_evidence.py` (blob `91ef43d`) |
+
+The 12 runs of 11.3 to 11.6, through the hub's real launch path, with the isolation and the command of 11.7, from a
+scratch clone holding the Phase 2 code: all 6 harness tests passed (pytest reported 326 s; the run log records it).
+Every run published its model with a manifest; the harness verified each manifest the way a loader does and read its
+validation window and metrics. Each manifest also records the SHA-256 of the three code files the metrics come from
+(`code_sha256`: the trainer, `pattern_model.py` and `model_store.py`).
+
+**Verdict: REAL by FDS-MDL 3.4 (all four checks pass), with no skill above the up-rate base rate: held-out 1-hour
+direction hit rate against the share of closes that rose, on the same pairs, BTC 50.3% vs 50.4% (n = 5,257 pairs) and
+ETH 51.3% vs 51.0% (n = 5,257 pairs).** Each base rate lies inside its hit rate's 95% interval (BTC 48.9–51.6%, ETH
+50.0–52.7%), and any skill these data could hide is small: a 95% bound on the paired difference (hit rate minus up
+share, on the same pairs) allows at most 1.2 points for BTC and 2.0 for ETH. Those pairs are the last 20% of three years of real Binance bars (2025-05-26 19:00 to 2026-01-01 UTC), scored
+by a separate fit on the first 80%.
+
+| Check (FDS-MDL 3.3) | Result | Evidence |
+|---|---|---|
+| Static | **PASS** | A reading of the trainer file, as in 11.2: still no fixed delay in a loop (the only `time.sleep` is the 0.2 s retry in `_write_text`'s `PermissionError` handler), no `random` draw (only `random.seed`), no accuracy value. New imports: `hashlib`, `shutil`, `tempfile`, `subprocess` (local `git rev-parse` and `git status` only), `pattern_model`, `model_store`. Of those two, only `app/model_store.py` sleeps: 0.2 s between retries when a `PermissionError` holds up the rename of a published model's folder, after training |
+| Determinism | **PASS** | 0 of 35 files differ between D1 and D2 (seed 7), D3 (another `PYTHONHASHSEED`) and D4 (no seed). D1 to D3 publish one model_id; D4 publishes another, because the id also covers the seed (0 by default), which never changes the files |
+| Data dependence | **PASS** | As in 11.4: different bars give different files (10 to 35 of 35 per pair of runs), and the same bars under two coin names (X2, X5) give identical files |
+| Reported metrics | **PASS** (FAIL in 11.5) | Every run publishes validation metrics from a separate fit on the first 80% of its window, scored frozen on the last 20%. For the seven X and L runs the harness asserts that the fit's last bar closes by the cut and the first scored bar opens at or after it; in all 12 runs' records both fall exactly on the cut. The four distinct inputs give four distinct metric sets; the same bars (X2, X5) give identical ones. The training summary still holds no metric. Each run prints one line that matches a metric word, the trainer's `validation: fitting ...` line (the evidence lists those of the X and L runs) |
+
+**What REAL means here, and what it does not.** It is the spec's term: the trainer learns from data, in the limited
+sense of 11.1 and 11.4 (every weight stays 1.0, #149; the only adjusted parameter the evidence shows is the written
+1-hour and 2-hour threshold on three-year windows), and it reports metrics measured on data its fit did not see. It says
+nothing in the model's favour:
+
+- **No detectable skill in any timeframe.** The held-out direction metrics of the three-year runs (L1, L2). "n" counts
+  the scored pairs where both the predicted and the actual close move are non-zero; the interval is a 95% Wilson
+  interval for the hit rate; the up share is the base rate of the verdict line; the best constant is "always up", or
+  "always down" where fewer closes rose; "chance at the model's mix" is the hit rate of guesses that carry no
+  information but have the model's own up/down proportions (predicted up × up share + predicted down × down share).
+
+  | Coin | Timeframe | Scored pairs | n | Hit rate (hits) | 95% interval | Up share | Best constant | Predicted up | Chance at the model's mix | Best constant inside the interval |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | BTC | 1hour | 5,260 | 5,257 | 50.3% (2,644) | 48.9–51.6% | 50.4% | 50.4% | 77.2% | 50.2% | yes |
+  | BTC | 2hour | 2,629 | 2,627 | 52.0% (1,365) | 50.0–53.9% | 50.8% | 50.8% | 73.8% | 50.4% | yes |
+  | BTC | 4hour | 1,314 | 1,313 | 51.5% (676) | 48.8–54.2% | 50.3% | 50.3% | 64.1% | 50.1% | yes |
+  | BTC | 8hour | 656 | 653 | 51.6% (337) | 47.8–55.4% | 51.6% | 51.6% | 60.8% | 50.3% | yes |
+  | BTC | 12hour | 437 | 431 | 43.9% (189) | 39.2–48.6% | 50.3% | 50.3% | 55.5% | 50.0% | **no** (the hit rate is below it) |
+  | BTC | 1day | 218 | 218 | 45.0% (98) | 38.5–51.6% | 49.5% | 50.5% | 49.5% | 50.0% | yes |
+  | BTC | 1week | 29 | 17 | 58.8% (10) | 36.0–78.4% | 35.3% | 64.7% | 52.9% | 49.1% | yes |
+  | ETH | 1hour | 5,260 | 5,257 | 51.3% (2,697) | 50.0–52.7% | 51.0% | 51.0% | 62.1% | 50.2% | yes |
+  | ETH | 2hour | 2,629 | 2,624 | 51.3% (1,346) | 49.4–53.2% | 51.6% | 51.6% | 78.1% | 50.9% | yes |
+  | ETH | 4hour | 1,314 | 1,308 | 50.5% (661) | 47.8–53.2% | 51.6% | 51.6% | 65.0% | 50.5% | yes |
+  | ETH | 8hour | 656 | 655 | 51.5% (337) | 47.6–55.3% | 53.6% | 53.6% | 53.0% | 50.2% | yes |
+  | ETH | 12hour | 437 | 427 | 51.1% (218) | 46.3–55.8% | 51.8% | 51.8% | 53.9% | 50.1% | yes |
+  | ETH | 1day | 218 | 215 | 53.0% (114) | 46.4–59.6% | 50.2% | 50.2% | 52.6% | 50.0% | yes |
+  | ETH | 1week | 29 | 9 | 66.7% (6) | 35.4–87.9% | 33.3% | 66.7% | 66.7% | 44.4% | yes |
+
+  - In 13 of the 14 rows the best constant guess lies inside the hit rate's interval, and so does chance at the model's
+    mix. In the other row the hit rate is the lower one: BTC 12-hour predictions do worse than a constant guess, 43.9%
+    against 50.3% (n = 431), and worse than uninformed guesses at the model's mix (50.0%; z = −2.6, p ≈ 0.01). Taken
+    alone that is significant, but not after correcting for the 14 rows looked at (Bonferroni p ≈ 0.14, a conservative
+    figure because the rows are correlated), and all 14 come from one held-out period, one market regime. So it is not
+    read as a finding either way. Against chance at the mix, every other row is within 1.63 standard errors.
+  - The model's calls are not a constant. Depending on the timeframe and the coin, it predicts a rise for 49.5% to
+    78.1% of the n pairs (BTC 77.2% and ETH 62.1% at 1 hour), and in 13 of the 14 rows its hit rate lands where guesses
+    at that mix would.
+  - In the weekly rows most closes fell, so the up share there (35.3% and 33.3%) lies below the hit rate's interval;
+    "always down" lies inside it. Those rows rest on 17 and 9 pairs and say nothing either way.
+- **Held out for the sibling fit, not for the published model** (owner decision, 2026-10-06; see 11.1). The published
+  model is refit on the whole window, and pass 2 of its `1day` and `1week` timeframes walks through the held-out slice.
+  The sibling fit's own 1-hour timeframe, like every intraday timeframe and every pass 0, learns only from the older half
+  of its 80% span (L1: the oldest 10,522 of 21,042 hourly bars, to about mid-March 2024), some 14 months before the first
+  scored bar. The 1-hour figures above test those memories.
+- **The fixture runs** (X, D, T) score 151 to 302 held-out 1-hour pairs each. They show that the metrics change with the
+  data and repeat for the same data; they are not used for the skill finding.
+- **Every validation metric is new in Phase 2** (the trainer computed none before, 11.5). The predicted-up share
+  (`predicted_up_share_of_considered`) is among them so that a hit rate equal to the up share can be told apart from a
+  model that always predicts a rise.
+
+**For FDS-MDL Phase 4.** This finding is an input to the pre-declared verdict rule in `BACKTEST-REPORT-model-1.md`,
+which will be written and committed before any backtest runs.

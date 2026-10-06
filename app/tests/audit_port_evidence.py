@@ -31,7 +31,13 @@ otherwise.
 
 The evidence file has machine-specific path prefixes replaced, and records the SHA-256
 and git blob ID of this file, the helpers, the trainer and the fixtures, and which
-harness tests passed."""
+harness tests passed.
+
+Since FDS-MDL Phase 2 every run also publishes its model with a manifest
+(app/model_store.py); each run's row then records the model_id, the validation window
+and the held-out metrics from the manifest, and the reported-metrics check tests those
+instead of finding none. The trainer as of 28dbe0f (no manifest) still gives the
+original FAIL."""
 
 import ast
 import hashlib
@@ -54,6 +60,7 @@ for _path in (APP_DIR, TESTS_DIR):
 
 import helpers_candles as hc  # noqa: E402
 import helpers_trainer as ht  # noqa: E402
+import model_store  # noqa: E402
 import pt_hub  # noqa: E402
 import pt_paths  # noqa: E402
 import pt_pattern_trainer as ppt  # noqa: E402
@@ -336,6 +343,13 @@ def train(
     with open(results_path, encoding="utf-8") as f:
         summary = json.load(f)
     dropped = [k for k in WALL_CLOCK_KEYS if summary.pop(k, None) is not None]
+    # since FDS-MDL Phase 2: the published model's manifest, verified like a loader does
+    model_id = summary.get("model_id")
+    manifest = (
+        model_store.verify_folder(model_store.model_dir(model_id), model_id)
+        if model_id
+        else None
+    )
     with open(os.path.join(folder, "trainer_status.json"), encoding="utf-8") as f:
         status = json.load(f)
     added, changed, removed = ht.snapshot_changes(home_before, ht.tree_snapshot(home))
@@ -375,6 +389,9 @@ def train(
         ),
         "training_results": summary,
         "wall_clock_keys_dropped": dropped,
+        "model_id": model_id,
+        "validation": manifest and manifest["validation"],
+        "validation_metrics": manifest and manifest["validation_metrics"],
         "stdout": [ln for ln in lines if any(k in ln for k in STDOUT_KEEP)],
         "stdout_lines": len(lines),
         "metric_like_output_lines": [ln for ln in lines if OUTPUT_PATTERN.search(ln)],
@@ -783,11 +800,71 @@ def test_reported_metrics():
         "distinct_reported_sets": distinct,
     }
     EVIDENCE["checks"]["reported_metrics"] = result
-    assert metric_keys == [] and printed == []
     # X2 and X5 are the same bars; the other four inputs give four different summaries
     assert distinct == 4, reported
-    result["result"] = "FAIL: no metric is computed or reported, held out or otherwise"
+    if not any(r["model_id"] for r in runs):
+        # the trainer before FDS-MDL Phase 2 (28dbe0f): nothing is computed
+        assert metric_keys == [] and printed == []
+        result["result"] = (
+            "FAIL: no metric is computed or reported, held out or otherwise"
+        )
+        EVIDENCE["tests_passed"].append("test_reported_metrics")
+        return
+    result.update(held_out_metrics(runs))
+    result["result"] = (
+        "PASS (since FDS-MDL Phase 2): every run publishes metrics scored on the last "
+        "20% of its window by a separate fit on the first 80%, whose bars all close by "
+        "the cut; they differ between different inputs and repeat for the same bars"
+    )
     EVIDENCE["tests_passed"].append("test_reported_metrics")
+
+
+def held_out_metrics(runs):
+    """The Phase 2 metrics of every run: held out by construction, and dependent on the
+    data. Asserts both; returns the evidence."""
+    windows = {}
+    for r in runs:
+        assert r["model_id"] and r["validation_metrics"], r["label"]
+        v = r["validation"]
+        start, end = (pd.Timestamp(t) for t in r["window"])
+        cut = pd.Timestamp(v["fit_end"])
+        assert (
+            pd.Timestamp(v["fit_start"]) == start and v["holdout_start"] == v["fit_end"]
+        )
+        assert pd.Timestamp(v["holdout_end"]) == end
+        # the last 20% of the window, the cut floored to the hour
+        assert cut == (start + (end - start) * 0.8).floor("h"), r["label"]
+        last_fit_close = max(
+            pd.Timestamp(c["last_open"])
+            + pd.Timedelta(seconds=candle_timeframe_seconds(tf))
+            for tf, c in v["fit_candles"].items()
+        )
+        first_scored = min(
+            pd.Timestamp(c["first_open"]) for c in v["holdout_candles"].values()
+        )
+        assert last_fit_close <= cut <= first_scored, r["label"]
+        assert r["validation_metrics"]["1hour"]["scored_pairs"] > 0, r["label"]
+        windows[r["label"]] = {
+            "fit": [v["fit_start"], v["fit_end"]],
+            "held_out": [v["holdout_start"], v["holdout_end"]],
+            "last_fit_bar_closes": last_fit_close.isoformat(),
+            "first_scored_bar_opens": first_scored.isoformat(),
+            "scored_pairs_1hour": r["validation_metrics"]["1hour"]["scored_pairs"],
+        }
+    x = {r["label"]: r for r in runs if r["label"].startswith("X")}
+    sets = {
+        label: json.dumps(r["validation_metrics"], sort_keys=True)
+        for label, r in x.items()
+    }
+    same_bars = sets["X2 ETH data as BTC"] == sets["X5 ETH coin, ETH data"]
+    assert same_bars
+    assert len(set(sets.values())) == 4
+    return {
+        "validation_windows": windows,
+        "metrics_1hour": {r["label"]: r["validation_metrics"]["1hour"] for r in runs},
+        "distinct_metric_sets_X1_X5": len(set(sets.values())),
+        "X2_and_X5_metrics_equal (same bars)": same_bars,
+    }
 
 
 # --- the thinker's parse (FDS-MDL 4.5) ----------------------------------------------------

@@ -107,6 +107,8 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 1, after the final gating suite run, 2026-10-06 03:01 | absent | absent | 0 |
 | Phase 1 follow-up, after the port-verdict evidence runs, 2026-10-06 17:06 | absent | absent | 0 |
 | Phase 1 follow-up, before its commits, 2026-10-06 19:54 | absent | absent | 0 |
+| Phase 2, after the evidence runs, mutation checks, real-data training and the gating suite run, 2026-10-06 22:53 | absent | absent | 0 |
+| Phase 2, after the final gating suite run, before its commit, 2026-10-06 23:25 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -499,3 +501,188 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   - `ISSUE-DRAFTS-model-1.md` now records each issue number, and the release notes cite #141, #142 and #143.
 - **Commits** (explicit paths; not pushed, no PR): the port verdict (`TRAINER-AUDIT.md`, the harness, the evidence, this
   log), then the issue numbers (`ISSUE-DRAFTS-model-1.md`, this log).
+
+## Phase 2 — model artifact provenance
+
+- **Session:** 2026-10-06, Claude Opus 5.5 (FDS-MDL and the addendum suggest Sonnet 5.5 for Phases 2-4; this session's
+  model is Opus 5.5 throughout). One commit for the phase.
+- **Owner decisions** (2026-10-06):
+  - **Held-out design: refit the full window.** The validation metrics come from a separate fit on the first 80% of the
+    window, scored frozen on the last 20%; the published model is refit on the whole window, so the metrics describe a
+    sibling fit.
+  - **`TRAINER-AUDIT.md` 11.8:** "no skill above the up-rate base rate" goes in the verdict line itself, next to REAL,
+    with the base rate and the held-out score side by side and the sample size. The finding feeds the Phase 4 verdict
+    rule, which is committed before any backtest runs and which the owner reads first.
+  - **For Phase 3, decided now** (asked during Phase 2, because the runner test driver needed the cadence):
+    - **Cadence: just before the close.** For each timeframe, the decision at bar *t* uses the last bar that closed
+      strictly before *t*; the current price is the close of bar *t*. That is the live runner's last evaluation inside
+      bar *t*, in steady state: the bounds and the active guard come from the same predictions.
+    - **Keep the short veto.** `ENTER_LONG` needs at least `min_tf_agree` (default 3, the legacy `trade_start_level`)
+      timeframes on LONG and none on SHORT, as the legacy trader's entry gate (`pt_trader.py`, `buy_count >=
+      start_level and sell_count == 0`). `EXIT_LONG` fires on SHORT on the primary timeframe.
+- **What Phase 2 adds:**
+  - `pt_paths.strategy_models_dir()` = `<data>/hub_data/strategy_models`: a sibling of `models_dir()`, created only when
+    a model is published. Also `trainer_root()` (the configured trainer root, creating nothing) and `paths_overlap()`
+    (realpath; letter case ignored on Windows and macOS).
+  - `app/model_store.py`: `publish`, `verify_folder`, `load`, `find_published`. `publish`, `verify_folder` and `load`
+    refuse with a `ModelStoreError` and log an ERROR (logger `model_store`); `find_published` logs an ERROR and returns
+    None when nothing matches (it raises only for a trainer root that overlaps the store).
+  - `app/pattern_model.py`: the neural runner's per-timeframe prediction (`pt_thinker.step_coin`) reproduced operation
+    for operation, and the validation metrics (`score_timeframe`, `METRIC_DEFINITIONS`).
+  - `app/pt_pattern_trainer.py`: after training, the validation fit and the publish. The summary records the
+    `model_id`; a failed publish ends the run with exit 1, status `ERROR` and no stamp.
+  - `app/pt_thinker.py`: a coin's model files are used only when a published manifest **for that coin** matches them
+    byte for byte. The runner prints the model_id and window it uses at the first step and after any change to the
+    files or the stamp; otherwise it holds the coin like an untrained one (zero signals, "MODEL NOT VERIFIED").
+  - `docs/dev/run_backtest_model1.py`: prints the store folder at start-up, records each run's model_id, and exits
+    non-zero for a run without one.
+- **Manifest** (`<store>/<model_id>/manifest.json`): the fields FDS-MDL section 5 lists (`model_id`, `trainer_path`,
+  `trainer_git_commit`, `upstream_commit`, `symbol`, `timeframes`, `train_start`, `train_end`, `candle_file_sha256` per
+  timeframe, `params`, `seed`, `created_at`, `validation_metrics`) plus `manifest_version`, `coin` and `files` (the
+  SHA-256 of each of the 35 files), all required by the loaders. It also holds the code's hashes (`code_sha256` for the
+  trainer, `pattern_model.py` and `model_store.py`, LF line endings, so equal to what git stores),
+  `trainer_git_dirty`, the bar reports, the validation window (the fit's and the held-out bars, the fit's file hashes,
+  a status), the metric definitions and the training summary. Only relative paths: none starts an absolute path, and
+  none contains the home or data folder (both checked by the tests).
+- **Design choices** (not dictated by the spec):
+  1. **model_id** = `<COIN>-<train_end>-<12 hex>`, the hex being a SHA-256 of the run's identity: coin, window, seed,
+     the files, the candle hashes, the code hashes, the parameters. The same run gives the same id and leaves the
+     published folder as it is; any difference gives a new id.
+  2. **Nothing is written into coin folders.** The runner finds the manifest by the files' hashes: it lists the store,
+     reads the coin's trainer-named models newest `train_end` first and stops at the first window with a match, then
+     tries any folder not named like a trainer model. When a recent model matches (the usual case) it reads one or two
+     manifests however large the store grows; only when nothing matches does it read all of them.
+  3. **The validation split covers the span the 1-hour bars cover** (a pair listed after `train_start`, or whose bars
+     stop before `train_end`). A fit that cannot be trained publishes the model with validation status `unavailable`
+     and an error per timeframe. A validation in which no held-out pair could be scored is also `unavailable`, with a
+     reason.
+  4. **Candle hashes** are of the bars actually read, in the cache's CSV format (the cache files are shared and grow).
+  5. **Metrics** per timeframe: active share, direction hit rate, up share, predicted-up share, close/high/low move
+     errors, next close inside the predicted band (definitions in every manifest).
+  6. **Validation scratch:** a folder per run under `<cache>/pt-validation-<COIN>`; a folder in which nothing changed
+     for an hour belongs to a stopped run and is cleared.
+  7. **Git:** local `git rev-parse` and `git status` (no network, `--no-optional-locks`), recorded only when the install
+     folder is the top of the checkout git finds.
+  8. **No retention rule.** The store keeps every distinct run: each hub training publishes a new folder (35 files and
+     a manifest). Pruning is not in the spec, and deleting a model cannot be undone (Phase 4 needs its models), so it is
+     left to the owner (owner actions).
+- **User-visible change:** models trained before Phase 2 have no manifest, so the runner holds those coins until they
+  are retrained once. A bullet in the release-notes checklist of `ISSUE-DRAFTS-model-1.md` says so.
+- **Acceptance:** 4 (loaders refuse a missing or mismatched manifest): `model_store.load` (11 refusal cases) and the
+  neural runner (an unpublished model, files changed after verification, another coin's model); the backtester and
+  `SignalEngine` loaders arrive with STRAT-003 in Phase 3. 13 (addendum): `strategy_models_dir()` exists with a test,
+  as a sibling of `models_dir()`; nothing is published into the trainer root or a coin folder; an overlap is refused by
+  the loader and the provenance step; a model_id equal to a coin symbol stays in the store; a model folder linked in from
+  outside the store is refused. 14: no absolute path in a manifest, and a model folder copied to another
+  `POWERTRADER_HOME` loads.
+- **Port verdict re-run** (`TRAINER-AUDIT.md` 11.8; evidence `docs/dev/trainer-port-evidence-phase2.json`): all four
+  checks pass, so the trainer is REAL by FDS-MDL 3.4, **with no skill above the up-rate base rate**: held-out 1-hour
+  direction hit rate against the share of closes that rose, BTC 50.3% vs 50.4% (n = 5,257 pairs), ETH 51.3% vs 51.0%
+  (n = 5,257). 13 of the 14 timeframe rows have the best constant guess inside the hit rate's 95% interval; in the
+  other (BTC 12-hour) the hit rate is below it. Same 12 runs through the real hub as the Phase 1 follow-up, from scratch clone
+  `clone-port4` holding the final code: 6 harness tests passed, 326 s. (An earlier run, before the staging fix, gave
+  the same metrics and model files; only the model_ids differ, because they cover `model_store.py`'s hash.)
+- **Real data** (`run_backtest_model1.py train`, `POWERTRADER_HOME=<scratch>\model1-home`, offline from the Phase 1
+  cache, 2023-01-01 to 2026-01-01, seed 0): **BTC 116.1 s, ETH 119.9 s** (Phase 1: 58.9 s and 58.5 s; the validation
+  fit roughly doubles a run). All 35 model files byte-identical to Phase 1's for both coins. Published
+  `BTC-20260101T0000Z-e48833004f99` and `ETH-20260101T0000Z-23fd0822f77a`, validation status `ok`, held-out 1-hour
+  metrics as in 11.8, `trainer_git_dirty` true (the run used the uncommitted Phase 2 tree).
+  - **Found by this run, not by the tests:** the first attempt failed for both coins while publishing. The staging
+    folder was named `.<model_id>.<random>`, so its longest path in this scratch home was 260 characters, one over the
+    Windows limit (long paths are disabled on this machine; the final folder's longest path is 250). pytest's short
+    temporary paths never came near it. The staging folder is now `.stage-<random>` (15 characters, shorter than any of
+    the trainer's model ids, which have at least 29), and a copy that fails anyway is a logged `ModelStoreError` (test added;
+    two mutations caught). The tests,
+    the evidence run and this run were then repeated on the final code.
+- **Tests:** new `app/tests/test_model_provenance.py` (68 tests from 41 functions) and `app/tests/helpers_thinker.py` (the real
+  `pt_thinker.step_coin` in a child process on fixture bars, behind a fake data provider, under the guard). The
+  equivalence of `pattern_model` with the runner is checked on a trained model and on hand-made files (NaN tokens, NaN
+  and zero weights, short weight lists, missing fields, cancelling sums). `app/tests/audit_port_evidence.py` (not in
+  the suite) reads each run's manifest.
+- **Mutation checks** (production code mutated in scratch clones, the provenance tests run with the guard on, the
+  file restored; the clones were unchanged afterwards):
+  - Round 1, on the first version: 15 mutations, 11 caught. Survivors:
+    - `store_isabs_only`: equivalent on Windows, where `os.path.isabs` adds nothing to the drive and root-prefix checks
+      (the same test catches it on POSIX);
+    - `store_model_dir_unchecked`: not equivalent. The realpath check is what makes `load()` refuse a model folder
+      linked into the store from outside, and nothing tested that; a test was added at the end and catches it;
+    - `thinker_cache_forever`: re-checking after the files change without a new stamp; caught from round 2 by the test
+      added with the round-1 fixes;
+    - `pm_np_mean`: numpy's summation order went unnoticed; caught from round 2 by a crafted case with cancelling
+      values, which tells Python's compensated `sum` from numpy's.
+  - Round 2, after the round-1 fixes: 30 mutations, 25 caught. Survivors: `store_isabs_only` again, and four whose tests
+    came with the round-2 fixes: `model_id_match_not_full`, `overlap_case_sensitive_mac`, `pm_hit_inverted` and
+    `pm_band_over_scored` (the hand-computed metric case had one hit and one miss with every pair active, so an
+    inverted hit test still gave 0.5 and a band share over all pairs equalled one over active pairs).
+  - Final pass, after review rounds 2 and 3: 24 mutations, all caught: the four non-equivalent round-2 survivors,
+    mutations of the round-2 and round-3 changes (publish retry, the newest-first scan, stale-folder clearing, status,
+    the span clamps, the own-checkout check, LF hashing, `--no-optional-locks`) and the core gates again. Then 5 more,
+    all caught: the staging name and the staging refusal, `store_model_dir_unchecked` (with its new test), a shared
+    validation folder instead of one per run, and removing the shared parent folder. Not mutated: the `Z` timestamp
+    parse, which is equivalent on the supported Python versions (3.11 and later).
+- **Adversarial review** (three workflow rounds; read-only reviewers, each followed by a skeptical verifier):
+  - Round 1, four reviewers (spec, runner equivalence, store security, validation and tests): 24 findings, 15
+    confirmed, 4 plausible, 5 refuted. Fixed:
+    - the runner re-verified every step, because it rewrites the threshold files unchanged; thresholds are now
+      compared by content;
+    - a pair listed late in the window could no longer be trained (the 80% fit had no bars); the split now covers the
+      bars' span, and a fit that cannot be trained no longer fails the run;
+    - a reused model_id could keep an earlier run's manifest; the id now covers the seed, the candles and the code,
+      whose hashes and git state are recorded;
+    - a loader could fail with a raw `OSError` and no ERROR;
+    - another coin's model passed the runner's check;
+    - a literal `nan` in a memory file was treated as a parse error, where the runner skips that memory;
+    - untested: the provenance step's overlap refusal, metric values, the validation fit's own isolation; one check
+      that could not fail on Windows;
+    - the backtest script printed a placeholder for the store folder; a publish race; letter case on macOS; scratch
+      folders left by a stopped run.
+  - Round 2, two reviewers on the fixes: 14 findings (7 confirmed, 6 plausible, 1 refuted), two of them duplicates of
+    others. Fixed: no
+    retry when a scanner holds the folder rename; every check read every manifest in the store; code hashes depended on
+    line endings; runs of one coin shared a scratch folder; the split was not clamped at the bars' end, and a
+    validation with nothing scored said `ok`; a `Z` timestamp parse that fails before Python 3.11; `git status` could
+    take the index lock; five tests that could not fail when they should.
+  - Round 3, two reviewers: 5 findings, all confirmed and fixed: a run removing the shared scratch parent under another
+    run; a commit recorded from an unrelated enclosing repository; three test gaps.
+  - Refuted (no change): the junction case (verification already refuses it), the trailing-dot id case (no code path
+    produces one), the cross-coin case as a spec violation (fixed anyway, as hardening), the Windows `fromisoformat`
+    case on supported Pythons (fixed anyway).
+- **Section 11.8 checked** by two independent agents against the evidence (every number recomputed; the wording against
+  the owner's requirement). First pass: 201 numbers recomputed with no arithmetic error, 39 claims checked; 1 high
+  finding (a sentence that was false for the BTC 12-hour row, already corrected when it came in), 2 medium (the
+  harness asserts the cut for the X and L runs only; "no skill in any timeframe" switched benchmarks in the weekly
+  rows) and 13 low, all fixed. Second pass on the revision: 58 items, 6 low, fixed (among them: a paired 95% bound gives
+  2.0 points for ETH, not 1.7; the Bonferroni wording).
+- **Suite** (`run_suite.py` on a fresh clone, `clone-phase2b`, holding every final code and test file; 23:15-23:24):
+
+  | Suite | Passed | Failed | Skipped |
+  |---|---|---|---|
+  | `app/` | 1132 | 11 | 6 |
+  | `.github/scripts` | 22 | 20 | 1 |
+
+  - Against Phase 1's final run (`suite-phase1-final.json`): NEW `app/tests/test_model_provenance.py` (68 passed), and
+    two flips in files Phase 2 does not touch, both environmental and both passing when re-run on the same clone with
+    the guard on:
+    - `app/tests/test_trainer_launch.py::test_a_launch_runs_to_completion_on_cached_candles` skipped: "Tk not available
+      (attempt 1): invalid command name "tcl_findLibrary"", the known Tk start-up flake (the test skips when Tk cannot
+      start). Re-run: 3 passed.
+    - `.github/scripts/test_performance.py::TestPerformance::test_cpu_usage_under_load` failed: "CPU usage too high:
+      99.2%", a reading of the whole machine's load. Re-run: 3 passed and the 2 errors this file has had since the
+      baseline.
+  - Against the session baseline (`suite-cbf7e21-baseline.json`): as at Phase 1, plus that file and the two flips. The
+    newly failing app test is still `app/test_integration.py::TestPowerTraderHubIntegration::test_graceful_degradation`,
+    the known Tk start-up flip.
+  - The run before it (`clone-phase2`, 22:44-22:53, the same code with one test fewer and the run log not yet
+    finished) gave app 1132/11/5 and `.github/scripts` 23/19/1: against Phase 1's final run only the new file
+    differed (67 passed). The last test, for a model folder linked in from outside the store, was added after it.
+  - `run_suite.py`'s real-state check unchanged before and after; nothing written into either clone (`git status` the
+    same before and after). Results: `<scratch>\suite-phase2b.json`, SHA-256
+    `ac17ebdd5a2b0fc3c22400b0d3dc5896098c8ced894165d252286a97e0425d73`; copy at
+    `..\PowerTraderAI-specs\suite-phase2-final.json`. The run log was finished after the clone was made; nothing else
+    changed.
+- **Real-folder and credential checks:** see the table above (Phase 2 rows).
+- **Commit** (explicit paths; not pushed, no PR): `FDS-MDL Phase 2: model provenance and manifests`.
+- **Owner actions:**
+  1. Decide a retention rule for `strategy_models` (every hub training adds a folder; nothing is deleted).
+  2. Retrain each coin once after this lands: models trained before it have no manifest and are held.
+  3. Note the 11.8 finding: the held-out direction calls are no better than the base rate.

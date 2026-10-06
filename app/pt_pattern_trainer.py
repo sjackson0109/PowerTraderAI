@@ -15,6 +15,13 @@ close, high and low moves (``memory_weights[_high|_low]_<tf>.txt``) and a match
 threshold (``neural_perfect_threshold_<tf>.txt``). The neural runner (pt_thinker.py)
 reads these files. A training summary goes to ``<data>/training_results/``.
 
+Then the model is published (FDS-MDL Phase 2): a copy of the 35 files with a manifest
+goes to ``<data>/hub_data/strategy_models/<model_id>/`` (app/model_store.py). The
+manifest records the window, the candles, the seed, the code and validation metrics: a
+separate fit on the first 80% of the span the bars cover, scored frozen on the last 20%
+(the published model itself is the whole-window fit). The neural runner uses a coin's
+files only when a published manifest matches them.
+
 Training follows upstream statement for statement, including its quirks (kept on
 purpose, FDS-MDL owner decision; see docs/dev/RUN-LOG-model-1.md):
 
@@ -79,10 +86,14 @@ Inputs (command line, else environment, else default):
 """
 
 import argparse
+import hashlib
 import json
 import os
 import random
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -241,6 +252,7 @@ class BarLoader:
         self.offline = offline
         self.cache_dir = cache_dir
         self._bars = {}
+        self.frames = {}
         self.reports = {}
 
     def bars(self, tf_choice):
@@ -319,8 +331,10 @@ class BarLoader:
         missing_start = int((first_open - first_expected) // step)
         missing_end = int((last_expected - last_open) // step)
         report = df.attrs.get("report")
+        self.frames[tf] = df
         self.reports[tf] = {
             "bars": int(len(df)),
+            "sha256": candle_sha256(df),
             "first_open": _iso(first_open),
             "last_open": _iso(last_open),
             "window_first_open": _iso(first_expected),
@@ -357,6 +371,23 @@ class BarLoader:
             df["open_time"].iloc[0].to_pydatetime(),
             df["open_time"].iloc[-1].to_pydatetime(),
         )
+
+
+def candle_sha256(df) -> str:
+    """SHA-256 of the bars actually read, in the candle cache's CSV format (the cache
+    file itself is shared and grows, so its own hash would not identify them)."""
+    open_ms = df["open_time"].map(lambda t: int(t.timestamp() * 1000))
+    lines = ["open_time_ms,open,high,low,close,volume"]
+    for row in zip(
+        open_ms,
+        df["open"].tolist(),
+        df["high"].tolist(),
+        df["low"].tolist(),
+        df["close"].tolist(),
+        df["volume"].tolist(),
+    ):
+        lines.append(",".join([str(row[0])] + [repr(float(v)) for v in row[1:]]))
+    return hashlib.sha256(("\n".join(lines) + "\n").encode("utf-8")).hexdigest()
 
 
 def select_rows(bars, data_tf, restarted_yet):
@@ -756,6 +787,275 @@ def train(
     return {"timeframes": summary_tfs, "candles": loader.reports}
 
 
+# --- provenance (FDS-MDL Phase 2) -------------------------------------------------------
+
+VALIDATION_FRACTION = 0.2
+VALIDATION_METHOD = (
+    "a separate fit on the first 80% of the span the 1-hour bars cover (from train_start, "
+    "or the first bar if later, to train_end, or the last bar's close if earlier), scored "
+    "frozen on the last 20%; the published model is refit on the whole window"
+)
+# a validation folder no file of which changed for this long belongs to a stopped run
+STALE_VALIDATION_SECONDS = 3600
+# the code a model and its validation metrics come from (hashed into the manifest)
+CODE_FILES = ("pt_pattern_trainer.py", "pattern_model.py", "model_store.py")
+# The trainer's fixed settings (it has no tunable parameters; FDS-MDL 7: nothing tuned).
+TRAINER_PARAMS = {
+    "flush_every_steps": FLUSH_EVERY,
+    "row_selection": "older half for intraday timeframes and every pass 0; all bars for "
+    "1day/1week passes 1-2",
+    "passes": 3,
+    "pass_0_data": "1hour",
+    "number_of_candles": 2,
+    "validation_fraction": VALIDATION_FRACTION,
+}
+
+
+def _quiet(*_args, **_kwargs):
+    pass
+
+
+def validation_cut(train_start, train_end):
+    """Start of the held-out slice: the last 20% of the window, floored to the hour."""
+    cut = train_start + (train_end - train_start) * (1 - VALIDATION_FRACTION)
+    cut = cut.replace(minute=0, second=0, microsecond=0)
+    if not train_start < cut < train_end:
+        raise TrainerError(
+            f"the window {_iso(train_start)} .. {_iso(train_end)} is too short to hold "
+            "out its last 20%"
+        )
+    return cut
+
+
+def validate(coin, train_start, train_end, seed, offline, cache_dir=None, log=print):
+    """FDS-MDL Phase 2 validation metrics: a separate fit on the first 80% of
+    ``[train_start, train_end)``, scored, frozen, on the last 20%. The published model is
+    the whole-window fit (owner decision, 2026-10-06), so the metrics describe this
+    sibling fit, which never saw the held-out bars. Raises TrainerError when the fit
+    cannot be trained."""
+    from market_data.timeframes import candle_timeframe_seconds
+    from pattern_model import PatternModel, model_file_names, score_timeframe
+
+    cut = validation_cut(train_start, train_end)
+    log(
+        f"validation: fitting {_iso(train_start)} .. {_iso(cut)}, "
+        f"scoring .. {_iso(train_end)}"
+    )
+    # a fresh folder per run under <cache>/pt-validation-<COIN>; a run the hub stopped
+    # (terminated, so no clean-up) leaves its folder, cleared here once it is stale. The
+    # parent stays (removing it could pull it from under another run of this coin).
+    parent = os.path.join(pt_paths.cache_dir(), f"pt-validation-{coin}")
+    os.makedirs(parent, exist_ok=True)
+    _clear_stale(parent)
+    work = tempfile.mkdtemp(dir=parent)
+    try:
+        fit = train(
+            coin,
+            work,
+            train_start,
+            cut,
+            seed=seed,
+            offline=offline,
+            cache_dir=cache_dir,
+            log=_quiet,
+        )
+        model = PatternModel.from_folder(work)
+        fit_files = {n: _file_sha256(os.path.join(work, n)) for n in model_file_names()}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    holdout = BarLoader(f"{coin}USDT", cut, train_end, offline, cache_dir)
+    metrics = {}
+    for tf_choice in TF_CHOICES:
+        tf = CANDLE_TF[tf_choice]
+        try:
+            holdout.bars(tf_choice)
+        except TrainerError as exc:
+            metrics[tf_choice] = {"scored_pairs": 0, "error": str(exc)}
+            continue
+        metrics[tf_choice] = score_timeframe(
+            model.timeframes[tf_choice],
+            holdout.frames[tf],
+            candle_timeframe_seconds(tf),
+        )
+    scored = any(m.get("scored_pairs") for m in metrics.values())
+    window = {
+        "status": "ok" if scored else "unavailable",
+        **({} if scored else {"reason": "no held-out bar pair could be scored"}),
+        "method": VALIDATION_METHOD,
+        "fraction": VALIDATION_FRACTION,
+        "fit_start": _iso(train_start),
+        "fit_end": _iso(cut),
+        "fit_candles": fit["candles"],
+        "fit_files_sha256": fit_files,
+        "holdout_start": _iso(cut),
+        "holdout_end": _iso(train_end),
+        "holdout_candles": holdout.reports,
+    }
+    return window, metrics
+
+
+def _clear_stale(parent, now=None):
+    """Remove what in ``parent`` nothing changed in for STALE_VALIDATION_SECONDS: the
+    folders of stopped runs (a live fit rewrites its files many times a second) and any
+    loose files."""
+    now = time.time() if now is None else now
+    for name in os.listdir(parent):
+        path = os.path.join(parent, name)
+        try:
+            newest = os.path.getmtime(path)
+            for root, _dirs, files in os.walk(path):
+                for f in files:
+                    newest = max(newest, os.path.getmtime(os.path.join(root, f)))
+        except OSError:  # removed meanwhile by its own run
+            continue
+        if now - newest <= STALE_VALIDATION_SECONDS:
+            continue
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def _git(*args):
+    """A local git command in the program folder (no network, and no optional index
+    lock, so it never gets in the way of the user's own git): its output, or None."""
+    try:
+        out = subprocess.run(
+            ["git", "--no-optional-locks", "-C", current_dir, *args],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def _own_checkout():
+    """Whether the install folder is the top of the git checkout git finds (not, say, a
+    copy of the program inside some other repository)."""
+    top = (_git("rev-parse", "--show-toplevel") or "").strip()
+    if not top:
+        return False
+    return os.path.normcase(os.path.realpath(top)) == os.path.normcase(
+        os.path.realpath(pt_paths.install_dir())
+    )
+
+
+def _git_commit():
+    """The program's git commit, when the install folder is a checkout (else None)."""
+    if not _own_checkout():
+        return None
+    commit = (_git("rev-parse", "HEAD") or "").strip()
+    return commit if len(commit) == 40 else None
+
+
+def _git_dirty():
+    """Whether CODE_FILES differ from that commit (None outside the program's own
+    checkout)."""
+    if not _own_checkout():
+        return None
+    out = _git("status", "--porcelain", "--", *CODE_FILES)
+    return None if out is None else bool(out.strip())
+
+
+def _file_sha256(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def _text_sha256(path):
+    """SHA-256 of a text file with LF line endings: the same for a Windows (CRLF) and a
+    POSIX checkout of one commit, and equal to the SHA-256 of what git stores."""
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def provenance(coin, folder, cfg, result, log=print):
+    """Publish the model just written to ``folder`` into the model store, with its
+    manifest (FDS-MDL Phase 2). Returns the model_id."""
+    import model_store
+    from pattern_model import METRIC_DEFINITIONS, model_file_names
+
+    start, end = cfg["train_start"], cfg["train_end"]
+    # a pair listed after train_start, or whose bars stop before train_end: split the
+    # span its 1-hour bars cover, not the window
+    hourly = result["candles"]["1h"]
+    first_bar = _parse_time(hourly["first_open"], "first_open")
+    last_close = _parse_time(hourly["last_open"], "last_open") + timedelta(hours=1)
+    data_start, data_end = max(start, first_bar), min(end, last_close)
+    try:
+        validation, metrics = validate(
+            coin, data_start, data_end, cfg["seed"], cfg["offline"], log=log
+        )
+    except TrainerError as exc:
+        # too little data before the cut for a fit: published without metrics, and
+        # recorded as such (a consumer that needs metrics refuses the model)
+        log(f"WARNING: no validation metrics for {coin}: {exc}")
+        validation = {
+            "status": "unavailable",
+            "reason": str(exc),
+            "method": VALIDATION_METHOD,
+            "fraction": VALIDATION_FRACTION,
+        }
+        metrics = {
+            tf: {"scored_pairs": 0, "error": f"no validation fit: {exc}"}
+            for tf in TF_CHOICES
+        }
+    files = {n: _file_sha256(os.path.join(folder, n)) for n in model_file_names()}
+    code = {n: _text_sha256(os.path.join(current_dir, n)) for n in CODE_FILES}
+    candle_hashes = {tf: r["sha256"] for tf, r in result["candles"].items()}
+    # everything the manifest records about the run except when and from which commit:
+    # the same run gives the same id (and reuses the folder), any difference a new one
+    identity = {
+        "coin": coin,
+        "window": [_iso(start), _iso(end)],
+        "seed": cfg["seed"],
+        "files": files,
+        "candle_file_sha256": candle_hashes,
+        "code_sha256": code,
+        "params": TRAINER_PARAMS,
+    }
+    model_id = model_store.content_id(f"{coin}-{end:%Y%m%dT%H%MZ}", identity)
+    trainer_file = os.path.abspath(__file__)
+    manifest = {
+        "manifest_version": model_store.MANIFEST_VERSION,
+        "model_id": model_id,
+        "kind": "pattern memories (pt_pattern_trainer.py)",
+        "trainer_path": os.path.relpath(trainer_file, pt_paths.install_dir()).replace(
+            os.sep, "/"
+        ),
+        "trainer_sha256": code["pt_pattern_trainer.py"],
+        "code_sha256": code,
+        "trainer_git_commit": _git_commit(),
+        "trainer_git_dirty": _git_dirty(),
+        "upstream_commit": UPSTREAM_COMMIT,
+        "upstream": {"repo": UPSTREAM_REPO, "blob": UPSTREAM_BLOB},
+        "symbol": f"{coin}USDT",
+        "coin": coin,
+        "timeframes": list(TF_CHOICES),
+        "candle_timeframes": dict(CANDLE_TF),
+        "train_start": _iso(start),
+        "train_end": _iso(end),
+        "candle_file_sha256": candle_hashes,
+        "candles": result["candles"],
+        "params": TRAINER_PARAMS,
+        "seed": cfg["seed"],
+        "created_at": _iso(datetime.now(timezone.utc)),
+        "validation": validation,
+        "validation_metrics": metrics,
+        "metric_definitions": METRIC_DEFINITIONS,
+        "training": result["timeframes"],
+        "files": files,
+    }
+    model_store.publish(folder, manifest, trainer_root=None)
+    log(f"model published: {model_id}")
+    return model_id
+
+
 # --- process --------------------------------------------------------------------------
 
 
@@ -822,6 +1122,11 @@ def main(argv=None) -> int:
             offline=cfg["offline"],
             upstream_flush_only=cfg["upstream_flush_only"],
         )
+        if cfg["upstream_flush_only"]:
+            # test mode: the incomplete upstream files are not published
+            model_id = None
+        else:
+            model_id = provenance(coin, folder, cfg, result)
     except Exception as exc:
         traceback.print_exc()
         print(f"ERROR: training failed for {coin}: {exc}")
@@ -855,6 +1160,7 @@ def main(argv=None) -> int:
         "started_at": started_at,
         "finished_at": finished_at,
         "runtime_seconds": round(time.time() - started, 1),
+        "model_id": model_id,
         **result,
     }
     _write_text(

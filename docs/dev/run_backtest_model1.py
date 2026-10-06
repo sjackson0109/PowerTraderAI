@@ -16,8 +16,9 @@ the real per-user folders (FDS-MDL-A section 4.3). In PowerShell:
 The script prints the folders it resolved before doing anything. ``fetch`` is the only
 step that uses the network. ``train`` runs ``app/pt_pattern_trainer.py`` once per
 symbol, the way the hub does (the coin as its argument, a working folder of its own),
-with ``--offline`` and an explicit window, and records each run's wall-clock time. It
-never subsamples: the trainer prints and records every bar count it uses.
+with ``--offline`` and an explicit window, and records each run's wall-clock time and
+the model_id it published (FDS-MDL Phase 2: ``<data>/hub_data/strategy_models/<id>/``).
+It never subsamples: the trainer prints and records every bar count it uses.
 
 Declared defaults (FDS-MDL section 4.7: runtime on 1h data from 2023 to 2025):
 
@@ -89,7 +90,7 @@ def sandbox(use_real_folders: bool) -> dict:
         "trainer working folders": os.path.join(
             pt_paths.data_dir(), "backtest-model-1", "trainer"
         ),
-        "strategy models": "(added by the provenance phase, FDS-MDL Phase 2)",
+        "strategy models": pt_paths.strategy_models_dir(create=False),
     }
     for name, path in folders.items():
         print(f"{name}: {path}")
@@ -125,8 +126,23 @@ def fetch(symbols, start, end, timeframes):
             )
 
 
+def published_model_id(sym):
+    """The model_id in the trainer's summary for ``sym`` (None if it has none)."""
+    import pt_paths
+
+    path = os.path.join(
+        pt_paths.data_dir(), "training_results", f"{sym.lower()}_training_results.json"
+    )
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f).get("model_id")
+    except (OSError, ValueError):
+        return None
+
+
 def train(symbols, start, end, seed):
-    """Run the trainer once per symbol, offline; record each run's wall-clock time."""
+    """Run the trainer once per symbol, offline; record each run's wall-clock time and
+    the model_id it published."""
     import pt_paths
 
     root = os.path.join(pt_paths.data_dir(), "backtest-model-1", "trainer")
@@ -171,12 +187,20 @@ def train(symbols, start, end, seed):
                     print(f"   {line.rstrip()}", flush=True)
             code = proc.wait()
         seconds = round(time.time() - started, 1)
+        model_id = published_model_id(sym) if code == 0 else None
         print(
-            f"== {sym}: exit {code} after {seconds} s ({seconds / 60:.1f} min)\n",
+            f"== {sym}: exit {code} after {seconds} s ({seconds / 60:.1f} min), "
+            f"model_id {model_id}\n",
             flush=True,
         )
         runs.append(
-            {"symbol": sym, "exit_code": code, "wall_seconds": seconds, "log": log_path}
+            {
+                "symbol": sym,
+                "exit_code": code,
+                "wall_seconds": seconds,
+                "model_id": model_id,
+                "log": log_path,
+            }
         )
     out = os.path.join(root, "train-runtimes.json")
     with open(out, "w", encoding="utf-8") as f:
@@ -192,7 +216,7 @@ def train(symbols, start, end, seed):
             indent=2,
         )
     print(f"runtimes: {out}")
-    return 0 if all(r["exit_code"] == 0 for r in runs) else 1
+    return 0 if all(r["exit_code"] == 0 and r["model_id"] for r in runs) else 1
 
 
 def main(argv=None):

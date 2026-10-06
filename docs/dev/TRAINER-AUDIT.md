@@ -7,6 +7,7 @@
 | Date | 2026-10-05 |
 | Issue | Closes #136 (trainer tests that don't exercise the real launch); see section 8 |
 | Evidence | `docs/dev/trainer-audit-evidence.json`, written by `app/tests/audit_trainer_evidence.py` (section 10) |
+| Port verdict | Section 11 (2026-10-06): the four checks re-run against the ported trainer, `app/pt_pattern_trainer.py`; static, determinism and data dependence pass; reported metrics (held out) fail; to be re-run after Phase 2 |
 
 Line numbers are as of `7a84250` (after the Black reformat) unless a commit is given; each citation also names the
 function or symbol. "Static" means read from the code; "executed" means observed in the evidence runs; "INFERRED" marks a
@@ -521,3 +522,238 @@ retries only that start-up failure, which leaves nothing behind because creating
   git blob ID of the harness, `helpers_trainer.py` and `pt_trainer.py` that produced it. The harness itself replaces
   machine-specific path prefixes with `<pytest-tmp>`, `<repo>`, `<venv>`, `<tmp>` and `<home>`, and refuses to write the
   file if a user-profile path is left.
+
+## 11. Port verdict (after FDS-MDL Phase 1)
+
+| | |
+|---|---|
+| Script | `app/pt_pattern_trainer.py` at `03f489e` (blob `f34e6ab`), the hub's default trainer since FDS-MDL Phase 1 |
+| Date | 2026-10-06 |
+| Evidence | `docs/dev/trainer-port-evidence.json`, written by `app/tests/audit_port_evidence.py` (method in 11.7) |
+
+The four Phase 0 checks (FDS-MDL 3.3) re-run against the ported trainer, through the hub's real launch path, with the
+Phase 0 isolation. Line numbers in this section are as of `03f489e`. Issues #149 (weights never saved) and #151 (matching
+sees only memories flushed to disk) are the upstream behaviours the port keeps on purpose; they shape what follows.
+
+### 11.1 Result: static, determinism and data dependence pass; reported metrics fail
+
+| Check (FDS-MDL 3.3) | Result | Evidence |
+|---|---|---|
+| Static | **PASS** | No fixed delay in any training loop (the only `time.sleep` is a 0.2 s retry, reached only when a model-file write raises `PermissionError`); no `random` draw; no accuracy value of any kind (11.2) |
+| Determinism | **PASS** | The same fixture twice with seed 7: 0 of 35 model files differ. Also 0 with a different `PYTHONHASHSEED`, and 0 as launched with no seed set (11.3, executed) |
+| Data dependence | **PASS** | Different bars give different model files, and the differences trace to the bars: every memory entry differs, and memories are recomputed exactly from each timeframe's own bars. Beyond the copied bar values, which steps match (and so which memories are kept) changes with the data, and on three years of real bars the written 1-hour and 2-hour thresholds do too. The same bars under another coin name give byte-identical files (11.4, executed) |
+| Reported metrics | **FAIL** | The trainer computes and reports no metric, held out or otherwise (11.5) |
+
+**Verdict: not REAL, by the spec's definition.** FDS-MDL 3.4 calls a trainer REAL only when all four checks pass, and
+the reported-metrics check fails: nothing is held out and nothing measures how well the model predicts.
+
+It is not a STUB in the spec's sense either ("fails in a way that shows outputs are not learned from data"): the matching
+and, on long windows, the threshold respond to the data (11.4). But what the model adjusts is limited, and the
+data-dependence pass should be read with that in mind:
+
+- **On the 9-week fixtures, nothing is fitted.** Every weight is 1.0 (#149); every threshold equals 1.0 plus 0.01 per
+  step of its last pass, because no step ever matched more than 20 memories; and the memories are per-bar % values
+  taken from the bars, the pattern Phase 0 section 3.5 called "a copy of the data". The one data-dependent output beyond
+  the copied values is which steps of the 1-hour timeframe's last pass matched a memory instead of storing a new one:
+  162 against 160 on the same number of BTC and ETH bars.
+- **On three years of real Binance bars**, matching acts in passes 1-2 of every timeframe, on that timeframe's own bars,
+  and the written threshold falls below its step counter in the 1-hour and 2-hour timeframes, differently for BTC and
+  ETH. That threshold is the only adjusted parameter the evidence shows. In the 4-hour to 1-week timeframes the written
+  threshold is still a step counter.
+
+**Re-run after Phase 2.** Phase 2 adds `validation_metrics`: a separate fit on the first 80% of the window, scored on the
+last 20%, while the published model is refit on the whole window (owner decision, 2026-10-06). The metrics will then be
+held out for the fit that produced them, not for the published model, which has seen that slice wherever it trains on
+it: pass 2 of the `1day` and `1week` timeframes walks from the middle of the window to its last bar (pass 1 stops at the
+first quarter; the intraday timeframes and every pass 0 use only the older half). The check should be re-run then, and
+judged on those terms. The harness reads only the training summary, so it needs extending to read the Phase 2 manifest.
+
+### 11.2 Static
+
+`app/pt_pattern_trainer.py` (blob `f34e6ab`), read with Python's `ast` by the harness (`test_static_checks`):
+
+- **Sleep:** one call, `time.sleep(0.2)` (`:398`) in `_write_text`, inside its `except PermissionError` handler: the
+  retry when Windows briefly locks a file that is being replaced. The harness asserts it sits in that handler. Training
+  writes go through `_write_text`, so a step waits only if a write fails. There are no epochs.
+- **`random`:** one use, `random.seed(seed)` (`:707`) in `train` (deviation 9). Nothing draws from the RNG, so weights
+  and memories cannot be random. Upstream `ba62130` has no `random` at all.
+- **Accuracy:** no variable, key or assignment mentions accuracy. The only string that does is the module docstring
+  saying the port removed upstream's "Bounce Accuracy" statistic (printed only, never used, not held out).
+- **Market data is parsed:** bars come from `app/market_data/candles.py` (`BarLoader._load`); `pt_data_provider` is not
+  imported (the Phase 1 test `test_the_trainer_reads_candles_only_through_the_candle_layer` checks this too). The
+  harness records every import: `argparse`, `datetime`, `json`, `market_data.candles`, `market_data.timeframes`, `os`,
+  `pandas`, `pt_paths`, `random`, `sys`, `time`, `traceback`.
+
+The detector looks for `time.sleep` and `random.<name>` written that way. It is a reading of this one file, which has no
+aliased or `from` imports of either module and no other RNG.
+
+### 11.3 Determinism (executed)
+
+| Runs | Setup | Model files that differ (of 35) |
+|---|---|---|
+| D1, D2 | BTC fixture, `POWERTRADER_TRAIN_SEED=7`, `PYTHONHASHSEED=0` (the spec's check) | **0** |
+| D1, D3 | Same, but D3 with `PYTHONHASHSEED=12345` | **0** |
+| D1, D4 | D4 as launched: no seed set, so the trainer's default seed 0 | **0** |
+
+D1's and D2's training summaries (per-pass statistics, thresholds and memory counts) are identical too. The seed is
+recorded but changes nothing, because the trainer draws no random numbers. **PASS.**
+
+Determinism is per window: as launched without `POWERTRADER_TRAIN_START`/`_END`, the hub's trainer trains on the three
+years up to the last full hour, so two launches an hour apart train on different windows. Each summary records the window
+it used.
+
+### 11.4 Data dependence (executed)
+
+All runs with seed 7 and `PYTHONHASHSEED=0`, so any difference has to come from the data.
+
+| Run | Coin | Data |
+|---|---|---|
+| X1 | BTC | `BTCUSDT_1h.csv`, all 1,513 bars (2026-06-10 to 2026-08-12), resampled to 2h-1w |
+| X2 | BTC | `ETHUSDT_1h.csv`, all 1,512 bars, served as BTC's candles |
+| X3 | BTC | `BTCUSDT_1h.csv`, bars 0-755 |
+| X4 | BTC | `BTCUSDT_1h.csv`, bars 756-1512 (no overlap with X3) |
+| X5 | ETH | `ETHUSDT_1h.csv`, all bars |
+| L1 | BTC | Binance BTCUSDT bars for all 7 timeframes, 2023-01-01 to 2026-01-01 (the fetched cache, 11.7) |
+| L2 | ETH | Binance ETHUSDT bars, same window |
+
+Model files that differ (of 35):
+
+| | X2 | X3 | X4 | X5 |
+|---|---|---|---|---|
+| X1 | 10 | 35 | 35 | 10 |
+| X2 | | 35 | 35 | **0** |
+| X3 | | | 11 | 35 |
+| X4 | | | | 35 |
+
+L1 and L2 differ in 30 of 35 files.
+
+In every run the harness checks, from the cache files alone, that each timeframe trained on its own bars: the bar count
+the summary reports per timeframe equals the count in the cache for the window (X1: 1,513 1h, 756 2h, 378 4h, 189 8h, 126
+12h, 63 1d, 8 1w bars), and the 1-hour older half the trainer used (757 bars for X1) equals the harness's own computation.
+
+**What depends on the data, on the fixtures:**
+
+- **The memories' contents.** Between X1 and X2, and between X3 and X4, every entry differs from the entry at the same
+  position, in all 7 timeframes, over all the positions both files have (the shorter file's count: for example 575
+  compared in `memories_1hour.txt`, where X1 holds 575 entries and X2 577). Most entries of the 2h-1w files come from
+  pass 0, which is the same walk over 1-hour bars in every timeframe.
+- **They trace to the bars.** For each run the harness recomputes two memories from the bars in the cache:
+  - the 1-hour pass-0 memory that every timeframe stores first: the body % of bar 9 of the older half, then the close,
+    high and low moves % from bar 9's close to bar 10 (X1:
+    `0.11978147471269857 0.08339455455568094{}0.19737526440883071{}-0.299242161156432`);
+  - for each timeframe, the first memory pass 2 stores, from that timeframe's own bars, at the position the summary's
+    counts give. This applies wherever passes 0 and 1 stayed under the 200-step flush, so nothing could have matched
+    first: all 7 timeframes in X1, X2, X4 and X5, and 6 in X3, whose weekly pass 2 is skipped (3 weekly bars).
+
+  Every recomputed memory equals the stored entry. The harness asserts this.
+- **Matching.** In the 1-hour timeframe's last pass, the only pass on these fixtures long enough to reach upstream's
+  200-step flush (#151), X1 and X2 use the same number of bars (757) and take 380 steps each. The summary counts 162 and
+  161 matched steps; a pass's last step never learns, and X2's matched, so 162 and 160 steps matched instead of storing a
+  memory. X1 therefore stores 217 new memories in that pass and X2 219: 575 against 577 in total. The harness asserts
+  that these counts differ on equal bar counts, which a trainer that only copied the bars would fail.
+- **The coin's name does not matter, the bars do:** X2 (ETH bars as BTC) and X5 (ETH bars as ETH) are byte-identical.
+
+**What does not depend on the data, on the fixtures:**
+
+- **Thresholds.** In every fixture run, every timeframe's final threshold equals 1.0 plus 0.01 per step of its last pass
+  (the harness replays the rule and records the comparison): no step ever matched more than 20 memories, so the threshold
+  only rose. All 7 threshold files are identical between X1 and X2.
+- **Weights.** Every weight in every run is 1.0 (#149), so a weight file differs only when its memory count does. The 10
+  files that differ between X1 and X2 are the 7 memories files and the three 1-hour weight files (575 against 577
+  entries).
+- **X3 against X4** (11 files): the 7 memories files, plus the four 1-week files, which differ because X3's window holds 3
+  complete Monday weeks (its passes 1-2 are skipped) and X4's holds 4. That difference is the calendar, not the prices.
+  No step matches in X3 or X4: no pass reaches the 200-step flush.
+
+**What depends on the data, on three years of real bars (L1, L2):**
+
+| Timeframe | BTC threshold | ETH threshold | Step counter | Matched steps per pass, BTC / ETH |
+|---|---|---|---|---|
+| 1hour | **28.55** | **28.07** | 66.77 | 2993, 3279, 6495 / 2993, 3279, 6489 |
+| 2hour | **27.04** | **24.84** | 33.90 | 2993, 1552, 3235 / 2993, 1538, 3237 |
+| 4hour | 17.46 | 17.46 | 17.46 | 2993, 713, 1600 / 2993, 727, 1594 |
+| 8hour | 9.24 | 9.24 | 9.24 | 2993, 302, 766 / 2993, 299, 773 |
+| 12hour | 6.50 | 6.50 | 6.50 | 2993, 172, 489 / 2993, 166, 490 |
+| 1day | 6.49 | 6.49 | 6.49 | 2993, 150, 492 / 2993, 152, 479 |
+| 1week | 1.79 | 1.79 | 1.79 | 2993, 7, 11 / 2993, 8, 12 |
+
+- **Matching** acts in passes 1-2 of every timeframe, which run on that timeframe's own bars (the harness asserts this
+  for both coins), and the counts differ between BTC and ETH there, except in 1-hour pass 1: it replays pass 0's bars
+  against the memories pass 0 stored from them, so every step matches for both coins. Pass 0 is the same 1-hour walk in
+  every timeframe, so its numbers repeat down the column; that BTC and ETH both end it on 2,993 matched steps is a
+  coincidence (their walks differ along the way).
+- **The written threshold** falls below its step counter only in the 1-hour and 2-hour timeframes, where some steps of
+  the last pass matched more than 20 memories, and it ends differently for each coin. The pass-0 threshold adapts in
+  every timeframe (the run's progress lines show it below the counter part-way through), but every pass starts again at
+  1.0, and in the 4-hour to 1-week timeframes no step of the last pass matched more than 20 memories.
+- Weights are still all 1.0.
+
+**PASS**, as the spec words the check: the outputs differ in a way that traces to the data. What responds to the data is
+which steps match; the only adjusted parameter the evidence shows is the written 1-hour and 2-hour threshold on
+three-year windows.
+
+### 11.5 Reported metrics
+
+- No metric is computed. Every key of the training summary
+  (`<data>/training_results/<coin>_training_results.json`), as the harness lists them: `coin`, `trainer`, `upstream`
+  (`repo`, `commit`, `blob`), `train_start`, `train_end`, `seed`, `offline`, `sources` (`train_start`, `train_end`,
+  `seed`, `offline`), `timeframes.<tf>` (`final_threshold`, `memories`, and per pass `pass`, `data_tf`,
+  `bars_in_window`, `bars_used`, `steps`, `matched_steps`, `new_memories`, `unlearned_steps`, `skipped`), and
+  `candles.<tf>` (`bars`, `first_open`, `last_open`, `window_first_open`, `window_last_open`, `missing_at_start`,
+  `missing_at_end`, `gaps`). The summary also holds the wall-clock fields `started_at`, `finished_at` and
+  `runtime_seconds`, which the harness drops before comparing. None is a metric.
+- Nothing is printed as one: the harness searches every output line of every run (not only the lines it keeps) for
+  accuracy and other metric words, and finds none.
+- What the summary reports is not constant across inputs: the four distinct inputs give four distinct sets of final
+  thresholds and memory counts (X2 and X5 are the same bars). The differences come from window length (X1 and X2 against
+  X3 and X4), the weekly bar count (X3 against X4) and, in one place, the prices (the 1-hour memory count, X1 against X2).
+  None of it is a measure of predictive skill.
+- **FAIL.** See 11.1 for the re-run after Phase 2.
+
+### 11.6 The thinker can read the output (supplementary)
+
+Run T1 (BTC fixture, seed 7): the thinker's own parse expressions (`thinker_reads` in
+`app/tests/test_pattern_trainer.py`, copied from `pt_thinker.py`'s `step_coin`) accept all 7 timeframes: every threshold
+parses, every memory entry has its 2 values and 2 `{}` fields, and each weight list has one entry per memory. The
+harness first checks that `pt_thinker.py` still contains the expressions the copy uses. The thinker itself was not run
+(its candle loop never ends with the current data provider: #141).
+
+### 11.7 Method and reproduction
+
+- **Executed checks:** `app/tests/audit_port_evidence.py`, 12 training runs through the real hub: a hub built by its real
+  `__init__` calls `start_trainer_for_selected_coin`, which launches the default `pt_pattern_trainer.py` (the harness
+  asserts the command line `-u -W ignore <program folder>\pt_pattern_trainer.py <COIN>`) in the coin's folder. The
+  guarded child (`helpers_trainer.CHILD_SITE`) blocks the network and records its command line, folder and environment;
+  no connection was attempted in any run, and the program folder did not change.
+- **Isolation, as in Phase 0:** a scratch clone that nothing else wrote to, `POWERTRADER_HOME=<scratch>\dev-home` (each
+  test also gets its own per-test home from the guard), the fail keyring backend, `PYTHONDONTWRITEBYTECODE=1`, and
+  `PYTHONHASHSEED` pinned in every child. Command (PowerShell):
+
+  ```
+  $env:PT_AUDIT_OUT = '<evidence.json>'
+  $env:PT_AUDIT_LONG_CACHE = '<scratch>\model1-home\cache\candles'
+  $env:POWERTRADER_HOME = '<scratch>\dev-home'
+  $env:PYTHON_KEYRING_BACKEND = 'keyring.backends.fail.Keyring'
+  $env:PYTHONDONTWRITEBYTECODE = '1'
+  python -m pytest app/tests/audit_port_evidence.py -p no:cacheprovider --timeout=3600 -q
+  ```
+
+- **Fixture data (D, X, T runs):** the recorded Binance fixtures used in Phase 0 (`app/tests/fixtures/BTCUSDT_1h.csv`,
+  blob `32dcea1`; `ETHUSDT_1h.csv`, blob `fd4a95f`), resampled to 2h-1w by `helpers_candles.resample` (complete bars
+  only; weekly bars open on Monday, as Binance's do), written to the candle cache under the per-test home, and read
+  offline over the fixture's window. With 9 weeks of data the weekly timeframe has 8 bars, so its pass 1 is skipped and
+  recorded ("fewer than 10 bars").
+- **Three-year data (L runs):** the candle cache that `docs/dev/run_backtest_model1.py fetch` wrote in Phase 1 (public
+  Binance klines, all 7 timeframes, 2023-01-01 to 2026-01-01), copied into the per-test home and read offline. Without
+  `PT_AUDIT_LONG_CACHE` these two runs are skipped, and the evidence says so. The evidence records each cache file's
+  SHA-256 (BTCUSDT_1h.csv `736539ae…`, ETHUSDT_1h.csv `69b99216…`); the prefixes `fetch` printed are recorded in
+  `docs/dev/RUN-LOG-model-1.md` (Phase 1 follow-up).
+- **Evidence file:** per run, the exit code, duration, what the child reported (command line, folder, environment),
+  every model file's SHA-256, each memories file's entry count and first entry, the harness's expectations from the
+  cache (bars per timeframe, the 1-hour older half, the recomputed memories), the thresholds and their step-counter
+  comparison, matched steps that learned, whether every weight is 1.0, the status and stamp, the training summary
+  without its wall-clock fields, the relevant output lines and every output line that looks like a metric, files added,
+  changed or removed under the home folder, and whether the program folder changed. Also which harness tests passed
+  (the reported-metrics test passes by confirming the FAIL), and the SHA-256 and git blob ID of the harness, both helpers
+  modules, the trainer and the fixtures. The SHA-256 values are of the scratch clone's checkout, which has CRLF line
+  endings on Windows; the blob IDs identify the committed content. Path prefixes are replaced as in Phase 0.

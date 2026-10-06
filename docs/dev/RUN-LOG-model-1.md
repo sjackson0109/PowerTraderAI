@@ -105,6 +105,8 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 1, after `fetch`, `train` and the first counter-checks, 2026-10-06 02:08 | absent | absent | 0 |
 | Phase 1, after the first gating suite run, 2026-10-06 02:48 | absent | absent | 0 |
 | Phase 1, after the final gating suite run, 2026-10-06 03:01 | absent | absent | 0 |
+| Phase 1 follow-up, after the port-verdict evidence runs, 2026-10-06 17:06 | absent | absent | 0 |
+| Phase 1 follow-up, before its commits, 2026-10-06 19:54 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -409,3 +411,80 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 - **Next:** Phase 2 (model artifact provenance: `pt_paths.strategy_models_dir()`, manifests, loaders that refuse an
   artifact without a matching manifest).
 
+## Phase 1 follow-up — port verdict and issue filing (before Phase 2)
+
+- **Session:** 2026-10-06, Claude Opus 5.5. The addendum suggests Sonnet 5.5 for Phases 2-4; this session's model is
+  Opus 5.5 throughout.
+- **Owner directions** (2026-10-06, after accepting Phase 1): (1) re-run the four Phase 0 checks against
+  `app/pt_pattern_trainer.py` through the hub's real launch path, with the Phase 0 isolation, and add a "Port verdict"
+  section to `TRAINER-AUDIT.md` ("expect held-out metrics to fail until Phase 2; say so rather than calling it a pass");
+  (2) no more authenticated calls of any kind (gh, git with credentials, API tokens) for the rest of this spec,
+  unauthenticated raw fetches only, and only if needed; (3) create the issues in `ISSUE-DRAFTS-model-1.md` (with
+  `--repo`, existing labels only, plus `needs-triage`), put the numbers into the release notes and commit; then Phases 2
+  and 3, one commit each; stop after committing the Phase 4 pre-declared verdict rule, before any backtest.
+- **Owner decisions** (asked because (2) and (3) conflict, and because the drafts file held 12 drafts, not 11):
+  - One-time exception: `gh` with `--repo sjackson0109/PowerTraderAI` for exactly two things, listing existing labels
+    and creating these issues. No other authenticated call for the rest of the spec.
+  - File 11 issues: B1a and B1b merged into one (B1).
+- **Port verdict** (`TRAINER-AUDIT.md` section 11; harness `app/tests/audit_port_evidence.py`; evidence
+  `docs/dev/trainer-port-evidence.json`):
+
+  | Check | Result |
+  |---|---|
+  | Static | PASS |
+  | Determinism (seed 7; also another `PYTHONHASHSEED`, and as launched) | PASS (0 of 35 files differ) |
+  | Data dependence | PASS as the spec words it. On the 9-week fixtures nothing is fitted: thresholds are step counters, weights 1.0, memories copied bar values; the one data-dependent output beyond those is the 1-hour matching (162 vs 160 learned matches on equal bars). On three years of real bars the written 1-hour and 2-hour thresholds also respond to the data |
+  | Reported metrics | FAIL: no metric computed or reported, nothing held out |
+
+  Verdict: not REAL by the spec's definition (reported metrics fail), and not a STUB (matching and, on long windows, the
+  threshold respond to the data); what is adjusted is limited (#149, #151). To be re-run after Phase 2, whose metrics
+  come from a separate 80% fit while the published model is refit on the whole window (owner decision): held out for
+  that fit, not for the published model.
+- **Evidence run:** 12 training runs through the real hub (D1-D4, X1-X5, T1 on the recorded fixtures resampled to
+  2h-1w; L1, L2 on the Phase 1 fetched cache, BTC and ETH, 2023-01-01 to 2026-01-01), from a scratch clone
+  (`clone-port`) that nothing else wrote to, `POWERTRADER_HOME=<scratch>\dev-home`, the fail keyring backend,
+  `PYTHONDONTWRITEBYTECODE=1`, `PYTHONHASHSEED` pinned, `PT_AUDIT_LONG_CACHE=<scratch>\model1-home\cache\candles`
+  (copied into each per-test home; read offline): 6 harness tests passed, 174 s. No network attempt in any child; the
+  program folder unchanged. Harness blob `77e7904`; evidence written by it, recording the harness's SHA-256.
+- **The fetched cache** behind L1 and L2 is the one Phase 1's `run_backtest_model1.py fetch` wrote. The SHA-256 prefixes
+  `fetch` printed then (the evidence records the full values, which match):
+
+  | Timeframe | BTCUSDT | ETHUSDT |
+  |---|---|---|
+  | 1h | `736539aef4587b59` | `69b9921681daabda` |
+  | 2h | `9773898f9af96e7d` | `c1c8de3ce58b3c73` |
+  | 4h | `d64d77248560a48d` | `67e8d561a1377aae` |
+  | 8h | `97bc0fbb9197fb2c` | `216d594a32108fe3` |
+  | 12h | `6f317460a1724d21` | `3dda5b58df4d727d` |
+  | 1d | `303e05de5fc2c3bd` | `5f01a8791c5eb38b` |
+  | 1w | `6c49a14c9a2c57ac` | `c046da136416d9e5` |
+
+- **Adversarial review of the port verdict, round 1** (three reviewers, each finding checked by a skeptical verifier): 22
+  findings: 9 confirmed, 2 plausible, 11 refuted. The confirmed and plausible ones were fixed, and some refuted ones
+  prompted clarifications:
+  - **High:** the first version said the checks "show" the outputs are learned. On the fixtures every threshold is a
+    step counter, every weight 1.0 and the memories are per-bar copies of the data (Phase 0 3.5's standard). Section 11
+    now says what responds to the data and what does not, and the harness asserts what a bar copier would fail.
+  - The 3-year threshold figures had no recorded source: the harness now runs L1 and L2 and records them, with the
+    cache files' SHA-256.
+  - The printed-accuracy check searched only the kept output lines; it now searches every line, and every summary key
+    is listed in the evidence.
+  - Clarified: the positional comparison counts, the weights (all 1.0), X3 vs X4 (calendar, not prices), the sleep
+    wording, the re-run after Phase 2 (no predicted pass), and that the SHA-256 values are of the clone's CRLF checkout.
+- **Round 2** (two checkers on the revision): 20 findings, all fixed:
+  - the three-year "matching in every timeframe" assertion was satisfied by the shared 1-hour pass 0 alone (now passes
+    1-2 per timeframe), and nothing proved each timeframe trained on its own bars (now: per-timeframe bar counts against
+    the cache, and the first pass-2 memory of each timeframe recomputed from its own bars; a mutation sending the 2-hour
+    timeframe to 1-hour bars fails the check);
+  - 162/161 matched steps became 162/160 learned matches (a pass's last step never learns), with the arithmetic shown;
+  - "fitted" kept only for the written 1-hour and 2-hour thresholds; 1-hour pass 1 matches every step by construction;
+    BTC and ETH both ending pass 0 on 2,993 matches is a coincidence; the pass-0 threshold adapts in every timeframe but
+    each pass restarts at 1.0;
+  - the static check now asserts the sleep sits in the `except PermissionError` handler; the thinker-parse check
+    asserts `pt_thinker.py` still contains the copied expressions; the reported-metrics result is written only after
+    its assertions; the summary-key list is complete; the harness docstring gives the full command; the fetch prefixes
+    are recorded above.
+- **Suite:** not re-run for these commits. They change documentation and add `app/tests/audit_port_evidence.py`, which
+  `run_suite.py` does not collect (it runs `app/test_*.py`, `app/tests/test_*.py` and `.github/scripts/test_*.py`); no
+  collected file changed since the Phase 1 gating run.
+- **Real-folder and credential checks:** see the table above.

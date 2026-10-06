@@ -11,6 +11,11 @@ inactive with a "training data issue", as in the thinker.
 
 ``validation_metrics`` scores a frozen model on bars it was not trained on (FDS-MDL
 Phase 2: the last 20% of the training window).
+
+``thinker_decision`` is the runner's signal rule at the end of a sweep (FDS-MDL Phase 3,
+STRAT-003): the bounds rebuilt from the predictions, the gap pass, the remap back to
+timeframe order and the LONG/SHORT comparison with the current price, statement for
+statement, quirks included.
 """
 
 import math
@@ -21,6 +26,16 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 
 TIMEFRAMES = ("1hour", "2hour", "4hour", "8hour", "12hour", "1day", "1week")
+# the candle timeframe each model timeframe is trained on and predicts from
+CANDLE_TF = {
+    "1hour": "1h",
+    "2hour": "2h",
+    "4hour": "4h",
+    "8hour": "8h",
+    "12hour": "12h",
+    "1day": "1d",
+    "1week": "1w",
+}
 FILE_KINDS = (
     "neural_perfect_threshold",
     "memories",
@@ -211,6 +226,139 @@ class PatternModel:
     @classmethod
     def from_folder(cls, folder: str) -> "PatternModel":
         return cls({tf: TimeframeModel.from_folder(folder, tf) for tf in TIMEFRAMES})
+
+
+# --- the runner's signal rule (pt_thinker.step_coin, end of a sweep; FDS-MDL Phase 3) -----
+
+DISTANCE_PCT = 0.5  # pt_thinker.distance
+LOW_PLACEHOLDER = 0.01  # the bound of an inactive timeframe
+HIGH_PLACEHOLDER = (
+    99999999999999999  # an int, as in the thinker (1e17 compares differently)
+)
+GAP_PASS_LIMIT = 100_000
+
+
+class GapPassStuck(RuntimeError):
+    """The gap pass would never end (the thinker loops for ever on a zero bound)."""
+
+
+def thinker_bounds(predictions: Sequence[Prediction]):
+    """The low and high bounds the runner keeps in its state after a sweep whose
+    predictions (one per timeframe, in timeframe order) are ``predictions``: each
+    timeframe's predicted low and high moved 0.5% outwards (placeholders where it is
+    inactive), spread by the gap pass, then mapped back to timeframe order with
+    ``list.index``. Where values repeat (two or more inactive timeframes) the remap drops
+    the repeats, so the lists come back shorter and later entries shift left."""
+    low_bound_prices: List = []
+    high_bound_prices: List = []
+    for p in predictions:
+        new_low_price = p.low_price - (p.low_price * (DISTANCE_PCT / 100))
+        new_high_price = p.high_price + (p.high_price * (DISTANCE_PCT / 100))
+        if p.active:
+            low_bound_prices.append(new_low_price)
+            high_bound_prices.append(new_high_price)
+        else:
+            low_bound_prices.append(LOW_PLACEHOLDER)
+            high_bound_prices.append(HIGH_PLACEHOLDER)
+
+    new_low = sorted(low_bound_prices)
+    new_low.reverse()
+    new_high = sorted(high_bound_prices)
+    og_low_index_list = [low_bound_prices.index(v) for v in new_low]
+    og_high_index_list = [high_bound_prices.index(v) for v in new_high]
+
+    og_index = 0
+    gap_modifier = 0.0
+    steps = 0
+    while True:
+        steps += 1
+        if steps > GAP_PASS_LIMIT:
+            raise GapPassStuck("the gap pass does not end on these bounds")
+        if (
+            new_low[og_index] == LOW_PLACEHOLDER
+            or new_low[og_index + 1] == LOW_PLACEHOLDER
+            or new_high[og_index] == HIGH_PLACEHOLDER
+            or new_high[og_index + 1] == HIGH_PLACEHOLDER
+        ):
+            pass
+        else:
+            try:
+                low_perc_diff = (
+                    abs(new_low[og_index] - new_low[og_index + 1])
+                    / ((new_low[og_index] + new_low[og_index + 1]) / 2)
+                ) * 100
+            except Exception:
+                low_perc_diff = 0.0
+            try:
+                high_perc_diff = (
+                    abs(new_high[og_index] - new_high[og_index + 1])
+                    / ((new_high[og_index] + new_high[og_index + 1]) / 2)
+                ) * 100
+            except Exception:
+                high_perc_diff = 0.0
+            if (
+                low_perc_diff < 0.25 + gap_modifier
+                or new_low[og_index + 1] > new_low[og_index]
+            ):
+                new_low[og_index + 1] = new_low[og_index + 1] - (
+                    new_low[og_index + 1] * 0.0005
+                )
+                continue
+            if (
+                high_perc_diff < 0.25 + gap_modifier
+                or new_high[og_index + 1] < new_high[og_index]
+            ):
+                new_high[og_index + 1] = new_high[og_index + 1] + (
+                    new_high[og_index + 1] * 0.0005
+                )
+                continue
+        og_index += 1
+        gap_modifier += 0.25
+        if og_index >= len(new_low) - 1:
+            break
+
+    lows: List = []
+    highs: List = []
+    for og_index in range(len(new_low)):
+        if og_index in og_low_index_list:
+            lows.append(new_low[og_low_index_list.index(og_index)])
+        if og_index in og_high_index_list:
+            highs.append(new_high[og_high_index_list.index(og_index)])
+    return lows, highs
+
+
+def _pad(values, n, fill):
+    """The runner's ``_pad_to_len``: missing entries filled at the end, extras cut."""
+    out = list(values[:n])
+    out.extend([fill] * (n - len(out)))
+    return out
+
+
+def thinker_sides(predictions: Sequence[Prediction], low_bounds, high_bounds, current):
+    """Each timeframe's side for price ``current`` against bounds kept from a sweep
+    (padded as the runner pads them): "short" above the high bound, "long" below the low
+    bound (SHORT is checked first), "none" otherwise or when the timeframe's predicted
+    high equals its low (an inactive timeframe)."""
+    n = len(predictions)
+    lows = _pad(low_bounds, n, LOW_PLACEHOLDER)
+    highs = _pad(high_bounds, n, HIGH_PLACEHOLDER)
+    sides = []
+    for i, p in enumerate(predictions):
+        if current > highs[i] and p.high_price != p.low_price:
+            sides.append("short")
+        elif current < lows[i] and p.high_price != p.low_price:
+            sides.append("long")
+        else:
+            sides.append("none")
+    return sides, lows, highs
+
+
+def thinker_decision(predictions: Sequence[Prediction], current):
+    """The runner's sides in steady state, as after two sweeps on the same closed bars:
+    the bounds come from the same predictions the sides are checked with. Returns
+    (sides, low bounds, high bounds) in timeframe order, bounds padded."""
+    lows, highs = thinker_bounds(predictions)
+    return thinker_sides(predictions, lows, highs, current)
 
 
 # --- validation (FDS-MDL Phase 2) ---------------------------------------------------------

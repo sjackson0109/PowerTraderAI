@@ -109,6 +109,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 1 follow-up, before its commits, 2026-10-06 19:54 | absent | absent | 0 |
 | Phase 2, after the evidence runs, mutation checks, real-data training and the gating suite run, 2026-10-06 22:53 | absent | absent | 0 |
 | Phase 2, after the final gating suite run, before its commit, 2026-10-06 23:25 | absent | absent | 0 |
+| Phase 3, after the mutation checks, the reviews and the gating suite run, before its commit, 2026-10-07 00:53 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -686,3 +687,111 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   1. Decide a retention rule for `strategy_models` (every hub training adds a folder; nothing is deleted).
   2. Retrain each coin once after this lands: models trained before it have no manifest and are held.
   3. Note the 11.8 finding: the held-out direction calls are no better than the base rate.
+
+## Phase 3 — STRAT-003, the trained model as a catalogue strategy
+
+- **Session:** 2026-10-06/07, Claude Opus 5.5 (FDS-MDL suggests Sonnet 5.5 for Phases 2-4). One commit for the phase.
+- **Owner decisions** used here (recorded in the Phase 2 section, 2026-10-06): cadence "just before the close" (each
+  timeframe's last bar closed strictly before *t*; the current price is the close of bar *t*; steady state), and keep the
+  short veto (ENTER needs `min_tf_agree` LONG and no SHORT; EXIT on SHORT on the primary timeframe).
+- **What Phase 3 adds:**
+  - `app/pattern_model.py`: the runner's end-of-sweep rule, statement for statement (`thinker_bounds`,
+    `thinker_sides`, `thinker_decision`): the 0.5% rebuild with placeholders, the sort, `list.index`, the gap pass
+    (skip, `continue`, `gap_modifier`, the 0.0005 nudges), the remap that drops repeated values, the padding and the
+    SHORT-first comparison.
+  - `app/strategies/model_strategy.py`: `TrainedModelStrategy`, registered as STRAT-003. It loads the model once at
+    construction (`model_store.load`: refused without a matching manifest, ERROR logged); `on_bar` does no I/O. Bars come
+    from `use_bars` (the backtest CLI loads them from the run's own source) or, otherwise, from the default candle cache,
+    read once when the run's timeframe is set. It decides on 1h to 1d bars (not 1w).
+  - The catalogue: STRAT-003 (`family` `model`, `class_type` `main`; `model_id` "", `min_tf_agree` 3, all seven
+    timeframes), a closed family enum (`trend`, `risk_overlay`, `model`) checked at load, and two bound types
+    (`model_id`, `model_timeframes`).
+  - `Strategy.set_timeframe` / `bar_seconds`, which `StrategyRunner.set_timeframe` now also calls.
+  - The backtester: `LOOKAHEAD_MODEL` (`check_lookahead`) on every run, when the model's `train_end` is after the first
+    scored bar's open (a NaT or unreadable `train_end` is refused; a naive one is UTC). In a time split a refused
+    in-sample window is reported as refused, and a refused out-of-sample window fails the run. A model trained on another
+    pair is refused. Decisions held for missing bars are counted (`bars_missing`) and reported.
+  - The backtest CLI: loads the strategy's seven timeframes from the run's own source and injects them; refuses, before
+    loading data, a timeframe the strategy cannot decide on and a model of another pair; with `--candles-file`, refuses
+    a cache whose bars are not the file's; records a SHA-256 per bar file; reports the model (id, window).
+  - Strategy settings: a `model` strategy whose default names no model is a settings problem (the signal engine runs
+    strategies with their default parameters), so the hub strip shows `SIGNALS: BLOCKED`. The signal engine fails closed
+    on a model it cannot load (ModelStoreError: no signals, an ERROR every few minutes per configuration, the reason in
+    `block_reason`); other build errors propagate as before. The trader's status shows a blocked engine.
+  - `docs/technical/ARCHITECTURE.md`: the families, STRAT-003, and the lookahead rule.
+- **Design choices** (not dictated by the spec):
+  1. **A missing bar holds** (`BARS_MISSING:<timeframe>`) instead of using an older bar, as the runner would. A deliberate
+     difference (no silent fallback); the backtester counts and reports these decisions.
+  2. **A gap pass that never ends holds** (`BOUNDS_NOT_CONVERGED`). The runner loops for ever there (two equal zero bounds
+     in a pair with no placeholder); STRAT-003 stops after 100,000 steps.
+  3. **The exit comes first:** a SHORT on the primary timeframe exits, so it never enters, even when that timeframe is
+     not counted (documented in the catalogue entry).
+  4. **`min_tf_agree` above the number of counted timeframes is refused** (it could never enter).
+  5. **The 14-day freshness gate is not applied** (a backtest scores a fixed model on later bars by design).
+  6. The decision's bars and sides are exposed as indicators (`bar_<tf>`, `side_<tf>`, `longs`, `shorts`, the primary
+     timeframe's bounds), so every decision can be checked against the runner.
+- **What the reproduction shows about the legacy runner** (reproduced on purpose; not in the issue drafts, and no issue
+  can be filed under the no-authenticated-calls rule):
+  - With two or more inactive timeframes, the remap drops the repeated placeholders, so later timeframes are compared
+    with the next timeframe's bounds and 1week with a padded placeholder: in the recorded fixture with two inactive
+    timeframes, 1week never signals.
+  - Two equal zero bounds hang the gap pass (in the runner, for ever).
+  - These are candidates for the owner to file as issues.
+- **Acceptance:** 5 (`LOOKAHEAD_MODEL`: refused when `train_end` is after the first scored bar, accepted at equality, any
+  strategy with a model, unknown ends refused, naive = UTC at the exact boundary); 6 (a decision at *t* uses each
+  timeframe's bar that closed one bar before *t*, and bars closing at or after *t* changed by 50% change nothing); 7
+  (bar for bar against the real runner: the recorded fixture, two scenarios × 241 hourly decisions, sides, kept bounds,
+  counts, served bars and the strategy's reported bounds; and live against `pt_thinker.step_coin` on a model the trainer
+  published, 48 decisions); 4 now also covers the backtester (the CLI refuses) and the signal engine (fails closed).
+- **Tests:** new `app/tests/test_model_strategy.py` (53 tests from 39 functions), `app/tests/helpers_strat003.py`, the
+  recorder `app/tests/record_strat003_fixture.py` (not collected; run under the guard to re-record) and the fixture
+  `app/tests/fixtures/strat003_thinker_record.json` (314 KB; recorded from `pt_thinker.py` blob `97aee15`); one test in
+  `app/tests/test_signal_engine.py` (the trader's status).
+- **Mutation checks** (scratch clones, the STRAT-003 and signal-engine tests with the guard on; the clones unchanged
+  afterwards): 36 mutations of the rule, the strategy, the backtester, the CLI, the settings, the signal engine and the
+  catalogue. 34 were caught at once. The two survivors were near-equivalent: the gap pass's skip condition without its
+  high-list half (it differs only when a zero low sorts below the placeholders) and LONG checked before SHORT (it
+  differs only for an upside-down band). A unit test for each now catches them. The round-3 hash fix was checked the same
+  way.
+- **Adversarial review** (three workflow rounds; read-only reviewers, each followed by a skeptical verifier):
+  - Round 1, four reviewers: runner fidelity, the backtester and its integration, spec and catalogue, tests. **The
+    runner-fidelity reviewer found nothing.** The others: 15 findings, 10 confirmed, 3 plausible, 2 refuted. Fixed: the
+    strategy read its bars only from the default cache, so a normal out-of-sample run (the trainer caches bars only up to
+    `train_end`) would have held `BARS_MISSING` on every bar and still looked like a valid result; the signal engine's new
+    fail-closed path logged once and swallowed other build errors; `check_lookahead` failed open on an empty `train_end`
+    and crashed on a naive one; the `bars` keyword bypassed the parameter check; a TypeError in the timeframes bound; the
+    exit's precedence undocumented; three test gaps (a check that could not fail, the reported bounds unchecked, no
+    all-active scenario).
+  - Round 2, two reviewers: 6 findings (4 confirmed, 2 plausible), all fixed: `--candles-file` could mix the file's
+    prices with another series' bars (now refused unless they match); the hub strip still showed STRAT-003 as active (now
+    a settings problem); a wrong timeframe or pair was refused only after downloading; three test gaps.
+  - Round 3, one reviewer: 2 findings (1 confirmed, 1 plausible), fixed: online, the run's own cache file could be
+    extended after its hash was recorded; the docs promised an ERROR where the trader logs a warning.
+- **Suite** (`run_suite.py` on a fresh clone, `clone-phase3`, holding every final code and test file; 00:42-00:52):
+
+  | Suite | Passed | Failed | Skipped |
+  |---|---|---|---|
+  | `app/` | 1186 | 11 | 6 |
+  | `.github/scripts` | 23 | 19 | 1 |
+
+  - Against Phase 2's final run (`suite-phase2b.json`): NEW `app/tests/test_model_strategy.py` (53 passed),
+    `app/tests/test_signal_engine.py` one test more (38 passed), Phase 2's two environmental flips passing again, and one
+    new flip in a file Phase 3 does not touch:
+    `app/test_trading_mode.py::UiHelperTests::test_pack_at_top_ignores_the_unpacked_menu_bar` skipped with "no display
+    available" (the test skips when `tk.Tk()` raises: the known Tk start-up flake). Re-run on the same clone with the
+    guard on: 50 passed.
+  - Against the session baseline (`suite-cbf7e21-baseline.json`): as at Phase 2, plus the new file, the signal-engine
+    test and that flip. `.github/scripts` equal to the baseline (23/19/1). The newly failing app test is still
+    `app/test_integration.py::TestPowerTraderHubIntegration::test_graceful_degradation`, the known Tk start-up flip.
+  - `run_suite.py`'s real-state check unchanged before and after; nothing written into the clone (`git status` the same
+    before and after, also after the re-run). The 18 files of the commit are byte-identical to the clone's. Results:
+    `<scratch>\suite-phase3.json`, SHA-256 `e21969db7067471097416c3a537ec3ad02c1cfc62a302e9b1cb0145f7263457f`; copy at
+    `..\PowerTraderAI-specs\suite-phase3-final.json`. The run log was finished after the clone was made; nothing else
+    changed.
+- **Black** 26.5.1: the 15 Python files of the commit unchanged.
+- **Real-folder and credential checks:** see the table above (Phase 3 rows).
+- **Commit** (explicit paths; not pushed, no PR): `FDS-MDL Phase 3: STRAT-003, the trained model as a strategy`.
+- **Owner actions:**
+  1. Consider filing the two legacy-runner findings above as issues (not filed: no authenticated calls).
+  2. STRAT-003 stays inactive (`strategy.active_id` is STRAT-001) and, with no default `model_id`, shows as a settings
+     problem in the hub strip if selected; a live default would need a published model id.

@@ -154,7 +154,9 @@ class StrategyRunner:
         )
 
     def set_timeframe(self, tf_seconds: int) -> None:
-        """Tell overlays how long a bar is (cooldowns count bars)."""
+        """Tell the strategy and the overlays how long a bar is (cooldowns count bars;
+        STRAT-003 decides on the model's timeframe of that length)."""
+        self.strategy.set_timeframe(tf_seconds)
         for overlay in self.overlays:
             overlay.bar_seconds = int(tf_seconds)
 

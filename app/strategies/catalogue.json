@@ -65,6 +65,24 @@
     "version": "1.0.0"
   },
   {
+    "strategy_id": "STRAT-003",
+    "strategy_name": "Trained pattern model (legacy neural runner rule)",
+    "family": "model",
+    "class_type": "main",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1h",
+    "entry_logic_summary": "The legacy neural runner's rule (pt_thinker.step_coin, in steady state, evaluated just before the bar closes, on the published model model_id): ENTER_LONG when at least min_tf_agree of the counted timeframes signal LONG and none signals SHORT. That is the legacy trader's entry gate (trade_start_level, default 3, and no short), counted over the seven timeframes 1hour to 1week by default.",
+    "exit_logic_summary": "EXIT_LONG when that rule signals SHORT on the primary timeframe (the run's own timeframe), whether or not it is counted; this comes first, so a SHORT there never enters. HOLD otherwise, and HOLD when a timeframe's last closed bar is missing.",
+    "dependencies_indicators": ["pattern model (pt_pattern_trainer.py, model_store.py)"],
+    "default_params": {"model_id": "", "min_tf_agree": 3, "timeframes": ["1hour", "2hour", "4hour", "8hour", "12hour", "1day", "1week"]},
+    "param_bounds": {
+      "model_id": {"type": "model_id"},
+      "min_tf_agree": {"min": 1, "max": 7},
+      "timeframes": {"type": "model_timeframes"}
+    },
+    "version": "1.0.0"
+  },
+  {
     "strategy_id": "OVL-RATCHET",
     "strategy_name": "Ratchet Stop",
     "family": "risk_overlay",

@@ -160,9 +160,24 @@ loudly when they disagree, and `StrategyRunner`, the single place where a strate
 The backtester (`python -m app.backtest`) and the trader use the same runner and the same lookback window, so a
 backtest and a paper run cannot disagree.
 
+**Catalogue families.** Every catalogue entry's `family` is one of `trend`, `risk_overlay` and `model` (checked when
+the catalogue loads). `model` was added by FDS-MDL Phase 3 for **STRAT-003**, the trained pattern model: it loads a
+model published by `pt_pattern_trainer.py` (`model_id`, refused without a matching manifest), reproduces the legacy
+neural runner's LONG/SHORT rule on the model's seven timeframes using only bars closed before the decision, exits on
+SHORT on the run's own timeframe (so a SHORT there never enters), and otherwise enters on at least `min_tf_agree`
+(default 3) LONG timeframes and no SHORT one among the counted ones (see the entry in `strategies/catalogue.json` and
+`strategies/model_strategy.py`). The backtest CLI loads the seven timeframes from the run's own candle source
+(with `--candles-file`, it refuses a cache whose bars are not the file's), and reports decisions held for missing bars.
+It is not the default strategy. The signal engine builds strategies with their default parameters, which name no
+model, so `strategy.active_id = STRAT-003` is a settings problem, handled like an unknown id: no orders, the problem
+logged, and `SIGNALS: BLOCKED` on the hub strip. (A model the engine could not load would also fail closed: no
+signals, and an ERROR.)
+
 **Backtest honesty rules.** Signal on bar *t* close fills at bar *t+1* open; 10 bps fee + 5 bps slippage per fill;
 fixed-fraction sizing; nothing opened during warm-up; first 70% of bars in-sample and last 30% out-of-sample,
-reported separately; buy-and-hold over the same window and fee model as the benchmark. The random-price example in
+reported separately; buy-and-hold over the same window and fee model as the benchmark. A strategy that carries a
+trained model is refused (`LOOKAHEAD_MODEL`) on any window whose first bar opens before the end of the model's
+training window; in a time split a refused in-sample window is reported as refused. The random-price example in
 `backtesting_engine.py` is labelled `DEMO ONLY - SYNTHETIC DATA`.
 **Risk overlays (FDS-129).** `OVL-RATCHET`, `OVL-ATR`, `OVL-PLOCK` and `OVL-COOLDOWN` attach to any strategy via
 `strategy.overlays: [{"id": "OVL-ATR", "params": {...}}]` (or `--overlays` in the backtester). `StrategyRunner`

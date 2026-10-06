@@ -88,6 +88,8 @@ def sha256_file(path: str) -> str:
 
 def validate_model_id(model_id) -> str:
     """A plain folder name: letters, digits, '.', '_' and '-'; not '.' or '..'."""
+    if model_id == "":
+        raise _refuse("no model_id given: select a published model by its id")
     if not isinstance(model_id, str) or not MODEL_ID_RE.fullmatch(model_id):
         raise _refuse(f"invalid model_id {model_id!r}")
     if model_id in (".", "..") or set(model_id) == {"."}:

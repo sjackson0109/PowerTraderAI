@@ -1,25 +1,24 @@
 # Issue drafts and release notes: FDS-MDL Phase 1
 
-These are drafts for the owner to file. None has been created. Each body uses the headings of `.github/ISSUE_TEMPLATE/bug_report.yml`. Notes on scope and fixes sit inside those headings, because the bug form has no field for them.
+These drafts were filed on 2026-10-06 as #141 to #151 on `sjackson0109/PowerTraderAI` (the table gives each number; B1a and B1b were merged into B1 first, by owner decision). Each issue's body is its draft below, with references between drafts replaced by issue numbers (D1's mention of D2 is worded by description), and a footer saying where the drafts and audit live. Each body uses the headings of `.github/ISSUE_TEMPLATE/bug_report.yml`. Notes on scope and fixes sit inside those headings, because the bug form has no field for them.
 
 - **Base:** `main` at `7a84250`. Line numbers are at that commit unless a draft says otherwise. Files added by FDS-MDL Phase 1 (`app/pt_pattern_trainer.py`, `app/trainer_guard.py`) are cited by symbol.
 - **Evidence:** every claim was checked against the code with `git show 7a84250:<path>`, `git grep` and `git log -S`. Anything traced through the code but not run is marked INFERRED. The Phase 0 evidence is `docs/dev/TRAINER-AUDIT.md` and `docs/dev/trainer-audit-evidence.json`.
-- **Labels:** the bug form applies `bug` and `needs-triage`. `documentation` exists. The `component-*` labels are documented in `.github/PROJECT_SETUP.md` but may not exist in the repo, so treat them as optional. Priority and phase labels are left to triage.
+- **Labels:** existing labels only (checked with `gh label list` before filing): `bug` or `documentation`, `needs-triage`, and `component-trading` where the draft suggested it. Priority and phase labels are left to triage.
 
-| Draft | Title (short) | Fixed by FDS-MDL? |
-|---|---|---|
-| [A1](#a1) | DataProvider returns one synthetic candle as a string | No (owner decision: the legacy handoff is not repaired) |
-| [A2](#a2) | `signals_dca_*` written, `long/short_dca_signal` read | No (same) |
-| [A3](#a3) | Thinker cannot parse the mock trainers' files | Mostly: the default trainer is now the port; the mocks are refused unless allowed |
-| [B1a](#b1a) | Market-data path reads every exchange's credentials | No |
-| [B1b](#b1b) | Unreadable `trading_config.json` silently replaced | No |
-| [B2](#b2) | `trainer_status.json` writer is dead code with the wrong BTC path | Partly: the port writes the file; trimmed to what is left |
-| [B3](#b3) | Auto-retrain timers survive Stop All; a removed coin retrains in BTC's folder | No |
-| [B4](#b4) | `ARCHITECTURE.md` trainer, signal-file and default claims don't match the code | No |
-| [B5](#b5) | Hub writes `app/__pycache__` at runtime | No |
-| [D1](#d1) | Pattern trainer never saves its weight updates | No (kept on purpose: faithful port) |
-| [D2](#d2) | Pattern trainer's close-weight test multiplies a percentage by 100 | No (same) |
-| [D3](#d3) | Pattern trainer matches only flushed memories and re-reads them every step | No (same) |
+| Draft | Issue | Title (short) | Fixed by FDS-MDL? |
+|---|---|---|---|
+| [A1](#a1) | #141 | DataProvider returns one synthetic candle as a string | No (owner decision: the legacy handoff is not repaired) |
+| [A2](#a2) | #142 | `signals_dca_*` written, `long/short_dca_signal` read | No (same) |
+| [A3](#a3) | #143 | Thinker cannot parse the mock trainers' files | Mostly: the default trainer is now the port; the mocks are refused unless allowed |
+| [B1](#b1) | #144 | Market-data path reads every exchange's credentials; unreadable `trading_config.json` silently replaced | No |
+| [B2](#b2) | #145 | `trainer_status.json` writer is dead code with the wrong BTC path | Partly: the port writes the file; trimmed to what is left |
+| [B3](#b3) | #146 | Auto-retrain timers survive Stop All; a removed coin retrains in BTC's folder | No |
+| [B4](#b4) | #147 | `ARCHITECTURE.md` trainer, signal-file and default claims don't match the code | No |
+| [B5](#b5) | #148 | Hub writes `app/__pycache__` at runtime | No |
+| [D1](#d1) | #149 | Pattern trainer never saves its weight updates | No (kept on purpose: faithful port) |
+| [D2](#d2) | #150 | Pattern trainer's close-weight test multiplies a percentage by 100 | No (same) |
+| [D3](#d3) | #151 | Pattern trainer matches only flushed memories and re-reads them every step | No (same) |
 
 Section [C](#c-release-notes) is the release-notes paragraph.
 
@@ -31,7 +30,7 @@ Section [C](#c-release-notes) is the release-notes paragraph.
    - The stub trainer arrived in `10e190e` (2026-02-25).
    - The fork's commits from 2026-02-19 to 2026-02-22 ran upstream's KuCoin pipeline and were not audited. So the release note says "since February 2026" and "since 25 February 2026", not "never".
 3. **"Only paper mode has ever run"** (audit, Verdict) has no evidence cited, so the release note leaves it out.
-4. **B1 is split into B1a and B1b** because the two bugs need independent fixes.
+4. **B1 holds two `pt_multi_exchange` bugs** (credentials for every exchange; an unreadable config silently replaced). They need separate fixes, but are filed as one issue (owner decision, 2026-10-06).
 5. **B2 was re-checked after the port** and trimmed: the port writes `trainer_status.json` itself.
 6. **Found while checking, not in the audit:** B3's last part (every auto-retrain stops the neural runner and nothing restarts it), and B4's `STRAT-000` row.
 7. **D1–D3 are upstream behaviour kept on purpose** (owner decision: faithful port). They are drafted so the decision to change the model's output is a separate, visible one. D2 only matters once D1 is fixed.
@@ -41,6 +40,8 @@ Section [C](#c-release-notes) is the release-notes paragraph.
 ---
 
 ## A1
+
+**Filed as:** #141 (https://github.com/sjackson0109/PowerTraderAI/issues/141), labels `bug`, `needs-triage`, `component-trading`
 
 **Title:** `[Bug]: DataProvider returns one synthetic candle (as a string) for any kline/history request, so the neural runner stalls on the first trained coin`
 
@@ -140,6 +141,8 @@ Windows (not OS-specific)
 
 ## A2
 
+**Filed as:** #142 (https://github.com/sjackson0109/PowerTraderAI/issues/142), labels `bug`, `needs-triage`, `component-trading`
+
 **Title:** `[Bug]: Neural runner writes signals_dca_spread/single.txt but the trader and hub read long_dca_signal.txt/short_dca_signal.txt`
 
 **Suggested labels:** `bug`, `needs-triage` (optional: `component-trading`)
@@ -218,6 +221,8 @@ None: found by reading the code.
 ---
 
 ## A3
+
+**Filed as:** #143 (https://github.com/sjackson0109/PowerTraderAI/issues/143), labels `bug`, `needs-triage`
 
 **Title:** `[Bug]: Neural runner cannot parse the mock trainers' model files; every timeframe becomes "INACTIVE (training data issue)"`
 
@@ -311,15 +316,19 @@ ValueError: could not convert string to float: '-0.273418-0.0144390.182522-0.161
 
 ---
 
-## B1a
+## B1
 
-**Title:** `[Bug]: Market-data path reads exchange credentials for every exchange in trading_config.json, enabled or not`
+**Filed as:** #144 (https://github.com/sjackson0109/PowerTraderAI/issues/144), labels `bug`, `needs-triage`
+
+**Title:** `[Bug]: pt_multi_exchange reads every exchange's credentials for public market data, and silently replaces an unreadable trading_config.json`
 
 **Suggested labels:** `bug`, `needs-triage`
 
 ### What happened?
 
-Loading the trading config fills in credentials for every listed exchange, enabled or not:
+Two problems in the configuration path that the market-data code goes through (`DataProvider`, `app/pt_data_provider.py:44-51`, which only needs public prices). They need separate fixes; they are filed together by owner decision.
+
+**1. Credentials are read for every exchange in `trading_config.json`, enabled or not.**
 
 ```python
 # app/pt_multi_exchange.py:122-125 (load_config)
@@ -334,67 +343,13 @@ _fill_credentials(ex)
 
 - `_fill_credentials` (`:56-64`) calls `pt_secrets.get_credentials`, which reads both the environment and the OS keyring (`app/pt_secrets.py:579-582`).
 - `initialize` reads them again for each enabled exchange (`app/pt_multi_exchange.py:332`, `_get_exchange_credentials` at `:492-500`) and passes them to `add_exchange` (`:342`).
-- `DataProvider` (`app/pt_data_provider.py:44-51`) only needs public prices but goes through this path. It is created at import by the neural runner (`app/pt_thinker.py:33`) and by the mock trainer (`app/pt_trainer.py:117`).
+- `DataProvider` is created at import by the neural runner (`app/pt_thinker.py:33`) and by the mock trainer (`app/pt_trainer.py:117`).
 
 So with the shipped template, where only Binance is enabled (`app/trading_config.example.json`), a process that only reads public prices still loads any stored Robinhood, Coinbase, Kraken or KuCoin credentials into memory. Nothing is logged or written; this is a least-privilege problem, not a leak.
 
-**Also:** importing the module creates the config folder. The module-level `multi_exchange_manager = MultiExchangeManager()` (`:504`) leads to `pt_paths.config_dir()` (`:96`), which creates the folder by default (`app/pt_paths.py:178-179`). A script or test that imports it without `POWERTRADER_HOME` creates the real user config folder.
+Also: importing the module creates the config folder. The module-level `multi_exchange_manager = MultiExchangeManager()` (`:504`) leads to `pt_paths.config_dir()` (`:96`), which creates the folder by default (`app/pt_paths.py:178-179`). A script or test that imports it without `POWERTRADER_HOME` creates the real user config folder.
 
-**Scope.** Not fixed by FDS-MDL. FDS-MDL needs no credentials, and its trainer does not import `DataProvider` or `pt_multi_exchange` (an AST test checks this: `test_the_trainer_reads_candles_only_through_the_candle_layer`). See `docs/dev/TRAINER-AUDIT.md` section 2.2 and section 7 item 4.
-
-### What did you expect to happen?
-
-Market-data code reads no credentials, since it uses public endpoints. Code that needs credentials reads them only for the exchange it is about to use. Importing the module has no file-system side effects.
-
-### Steps to reproduce
-
-PowerShell, scratch folder, keyring disabled, dummy values. Not run for this report.
-
-```powershell
-$env:POWERTRADER_HOME = "$env:TEMP\pt-scratch"
-$env:PYTHON_KEYRING_BACKEND = "keyring.backends.fail.Keyring"
-$env:POWERTRADER_COINBASE_API_KEY = "dummy"; $env:POWERTRADER_COINBASE_API_SECRET = "dummy"
-cd app
-python -c "import pt_multi_exchange as m; c = m.ExchangeConfigManager().load_config(); print([(e.exchange_type, e.enabled, e.credential_source) for e in c.exchanges])"
-```
-
-Expected from the code: `('coinbase', False, 'environment')`, meaning credentials were loaded for a disabled exchange.
-
-### Trading mode
-Paper (mode-independent)
-
-### Exchange
-Not applicable (every configured exchange)
-
-### Area
-Exchange connection
-
-### PowerTraderAI version or commit
-7a84250
-
-### Operating system
-Windows (not OS-specific)
-
-### Python version
-n/a (found by reading the code)
-
-### Logs
-```shell
-None: found by reading the code.
-```
-
-### Before you submit
-- [x] I have removed any API keys, secrets and personal account details.
-
----
-
-## B1b
-
-**Title:** `[Bug]: An unreadable trading_config.json is silently replaced with defaults when the data provider starts`
-
-**Suggested labels:** `bug`, `needs-triage`
-
-### What happened?
+**2. An unreadable `trading_config.json` is silently replaced with defaults.**
 
 `load_config`'s docstring promises not to replace an unreadable file:
 
@@ -420,15 +375,30 @@ if not config and user_region:
 - The user's exchange choices are lost, and the only trace is `Error loading config: ...` in the log.
 - Credentials are not affected: they live in the keyring or environment, and the default config carries none, so `save_config` writes no keyring entry (`:181-191`).
 
-**Scope.** Not fixed by FDS-MDL. See `docs/dev/TRAINER-AUDIT.md` section 7 item 4.
+**Scope.** Not fixed by FDS-MDL. FDS-MDL needs no credentials, and its trainer does not import `DataProvider` or `pt_multi_exchange` (an AST test checks this: `test_the_trainer_reads_candles_only_through_the_candle_layer`). See `docs/dev/TRAINER-AUDIT.md` section 2.2 and section 7 item 4.
 
 ### What did you expect to happen?
 
-The file is left untouched, and initialisation fails with a clear error naming the file, as the docstring says. If defaults are ever written, the original is kept as a backup.
+1. Market-data code reads no credentials, since it uses public endpoints. Code that needs credentials reads them only for the exchange it is about to use. Importing the module has no file-system side effects.
+2. An unreadable `trading_config.json` is left untouched, and initialisation fails with a clear error naming the file, as the docstring says. If defaults are ever written, the original is kept as a backup.
 
 ### Steps to reproduce
 
-PowerShell, scratch folder. Not run for this report.
+PowerShell, scratch folder, keyring disabled, dummy values. Not run for this report.
+
+Part 1:
+
+```powershell
+$env:POWERTRADER_HOME = "$env:TEMP\pt-scratch"
+$env:PYTHON_KEYRING_BACKEND = "keyring.backends.fail.Keyring"
+$env:POWERTRADER_COINBASE_API_KEY = "dummy"; $env:POWERTRADER_COINBASE_API_SECRET = "dummy"
+cd app
+python -c "import pt_multi_exchange as m; c = m.ExchangeConfigManager().load_config(); print([(e.exchange_type, e.enabled, e.credential_source) for e in c.exchanges])"
+```
+
+Expected from the code: `('coinbase', False, 'environment')`, meaning credentials were loaded for a disabled exchange.
+
+Part 2:
 
 ```powershell
 $env:POWERTRADER_HOME = "$env:TEMP\pt-scratch"
@@ -446,7 +416,7 @@ The file now holds the `GLOBAL` default config. The overwrite (`:245`) happens b
 Paper (mode-independent)
 
 ### Exchange
-Not applicable
+Not applicable (every configured exchange)
 
 ### Area
 Exchange connection
@@ -462,7 +432,7 @@ n/a (found by reading the code)
 
 ### Logs
 ```shell
-Error loading config: <JSON error>   (printed at pt_multi_exchange.py:136; not captured)
+Part 2 prints: Error loading config: <JSON error>   (pt_multi_exchange.py:136; not captured)
 ```
 
 ### Before you submit
@@ -471,6 +441,8 @@ Error loading config: <JSON error>   (printed at pt_multi_exchange.py:136; not c
 ---
 
 ## B2
+
+**Filed as:** #145 (https://github.com/sjackson0109/PowerTraderAI/issues/145), labels `bug`, `needs-triage`
 
 **Title:** `[Bug]: Hub's _write_training_status is dead code with the wrong BTC path, and a killed trainer leaves trainer_status.json at TRAINING`
 
@@ -538,6 +510,8 @@ None: found by reading the code.
 ---
 
 ## B3
+
+**Filed as:** #146 (https://github.com/sjackson0109/PowerTraderAI/issues/146), labels `bug`, `needs-triage`
 
 **Title:** `[Bug]: Auto-retrain timers survive "Stop All", and a removed coin's timer retrains in BTC's folder`
 
@@ -624,6 +598,8 @@ None: found by reading the code.
 
 ## B4
 
+**Filed as:** #147 (https://github.com/sjackson0109/PowerTraderAI/issues/147), labels `documentation`, `needs-triage`
+
 **Title:** `[Bug]: docs/technical/ARCHITECTURE.md describes trainers, signal files and defaults that don't match the code`
 
 **Suggested labels:** `documentation`, `needs-triage`. This could also go on the task form (Type: Documentation, label `task`).
@@ -683,6 +659,8 @@ None.
 
 ## B5
 
+**Filed as:** #148 (https://github.com/sjackson0109/PowerTraderAI/issues/148), labels `bug`, `needs-triage`
+
 **Title:** `[Bug]: Hub writes app/__pycache__ at runtime, contrary to the "read-only program folder" rule`
 
 **Suggested labels:** `bug`, `needs-triage` (low priority)
@@ -741,6 +719,8 @@ None.
 
 ## D1
 
+**Filed as:** #149 (https://github.com/sjackson0109/PowerTraderAI/issues/149), labels `bug`, `needs-triage`, `component-trading`
+
 **Title:** `[Bug]: Pattern trainer never saves its weight updates, so every saved memory weight is 1.0`
 
 **Suggested labels:** `bug`, `needs-triage` (optional: `component-trading`)
@@ -796,6 +776,8 @@ None.
 ---
 
 ## D2
+
+**Filed as:** #150 (https://github.com/sjackson0109/PowerTraderAI/issues/150), labels `bug`, `needs-triage`
 
 **Title:** `[Bug]: Pattern trainer's close-weight test compares a percentage with 100 times a percentage`
 
@@ -856,6 +838,8 @@ None: found by reading the code.
 ---
 
 ## D3
+
+**Filed as:** #151 (https://github.com/sjackson0109/PowerTraderAI/issues/151), labels `bug`, `needs-triage`
 
 **Title:** `[Bug]: Pattern trainer matches each candle only against memories flushed to disk, and re-reads them on every step`
 
@@ -918,10 +902,10 @@ Two more upstream behaviours are kept and documented in the trainer's header and
 
 > **Legacy neural pipeline: correction.** The legacy train → think → trade pipeline (the hub's Train buttons, the neural runner and the trader's `legacy_neural` signal mode) has not worked end to end since February 2026. From 25 February 2026 the trainer the hub launched was a placeholder that did not learn from market data: the accuracy shown during training since 25 February 2026 was a formula, not a measurement, and the saved "final accuracy" was always 95.0. Even a real trainer's output would not have reached a trade. Reading the code shows three breaks: the neural runner receives a single price candle and stops making progress at the first trained coin; it cannot read the placeholder's model files; and since March 2026 the trader has looked for signal files under names the runner no longer writes.
 >
-> This release makes the hub's default trainer `pt_pattern_trainer.py`, a port of the original PowerTrader_AI pattern-matching trainer (upstream commit `ba62130`). It trains on cached Binance candles over a stated window (by default the three years up to the last full hour) and records the window, the seed and every bar count it used. Tests check that, on the same candles and in a test mode that keeps the upstream trainer's save schedule, it writes byte for byte the same model files as the upstream trainer (in normal use it also saves the memories and the final threshold that the upstream trainer lost at the end of each timeframe); that it gives the same output for the same data and different output for different data; and that it never reads a candle that closes after the end of the window. The placeholder trainers remain, labelled as mocks, and the hub refuses to launch them unless `allow_mock_trainer` is set to `true` in `pt_config.json`. If you saved Settings before this release, your `gui_settings.json` may still name `pt_trainer.py`: the hub will then refuse to train and tell you to set the trainer path to `pt_pattern_trainer.py`. STRAT-001 stays the default strategy. The legacy runner-to-trader handoff is not repaired in this release; it is tracked in #A1, #A2 and #A3.
+> This release makes the hub's default trainer `pt_pattern_trainer.py`, a port of the original PowerTrader_AI pattern-matching trainer (upstream commit `ba62130`). It trains on cached Binance candles over a stated window (by default the three years up to the last full hour) and records the window, the seed and every bar count it used. Tests check that, on the same candles and in a test mode that keeps the upstream trainer's save schedule, it writes byte for byte the same model files as the upstream trainer (in normal use it also saves the memories and the final threshold that the upstream trainer lost at the end of each timeframe); that it gives the same output for the same data and different output for different data; and that it never reads a candle that closes after the end of the window. The placeholder trainers remain, labelled as mocks, and the hub refuses to launch them unless `allow_mock_trainer` is set to `true` in `pt_config.json`. If you saved Settings before this release, your `gui_settings.json` may still name `pt_trainer.py`: the hub will then refuse to train and tell you to set the trainer path to `pt_pattern_trainer.py`. STRAT-001 stays the default strategy. The legacy runner-to-trader handoff is not repaired in this release; it is tracked in #141, #142 and #143.
 
 Before publishing:
-- **Replace #A1, #A2 and #A3** with the issue numbers once filed.
+- **Issue numbers:** #141, #142 and #143 (filed 2026-10-06).
 - **"Since February 2026" and "since 25 February 2026" are deliberate qualifiers** (owner decision). The evidence covers every commit since 2026-02-22 (thinker), 2026-02-25 (stub trainer) and 2026-03-06 (file names). The fork's commits from 2026-02-19 to 2026-02-22 ran upstream's pipeline and were not audited.
 - **What the code shows versus what was run.** The runner stall is a static trace. The parse failure, the accuracy formula and the 95.0 were observed in executed runs (`docs/dev/trainer-audit-evidence.json`).
 - **STRAT-003.** If the strategy and its backtest (FDS-MDL Phases 3 and 4) land in the same release, add one sentence: the trained model is evaluated as strategy STRAT-003 in the catalogue backtester, on data it was not trained on, against buy-and-hold and random entries.

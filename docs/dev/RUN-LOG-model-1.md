@@ -488,3 +488,14 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   `run_suite.py` does not collect (it runs `app/test_*.py`, `app/tests/test_*.py` and `.github/scripts/test_*.py`); no
   collected file changed since the Phase 1 gating run.
 - **Real-folder and credential checks:** see the table above.
+- **Issues** (the one-time exception; the only authenticated calls in this follow-up):
+  1. `gh label list --repo sjackson0109/PowerTraderAI --limit 200` (2026-10-06 16:07 UTC): `bug`, `documentation`,
+     `needs-triage` and `component-trading` exist.
+  2. 11 × `gh issue create --repo sjackson0109/PowerTraderAI --title ... --body-file ... --label ...` (16:08-16:09 UTC):
+     #141 (A1) to #151 (D3); B1 is #144. Each body is its draft with references between drafts replaced by the issue
+     numbers already created (A3 → #141/#142, B4 → #142, D2 and D3 → #149); D1's one forward reference (to D2) is worded
+     by description; a footer says the drafts and the audit live on `feat/model-strategy-1`. The bodies sent are kept in
+     `<scratch>\issues\`. The issues were not viewed back (that would be another authenticated call).
+  - `ISSUE-DRAFTS-model-1.md` now records each issue number, and the release notes cite #141, #142 and #143.
+- **Commits** (explicit paths; not pushed, no PR): the port verdict (`TRAINER-AUDIT.md`, the harness, the evidence, this
+  log), then the issue numbers (`ISSUE-DRAFTS-model-1.md`, this log).

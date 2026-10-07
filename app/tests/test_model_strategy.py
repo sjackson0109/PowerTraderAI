@@ -347,6 +347,18 @@ def test_strat003_reproduces_the_recorded_runner_bar_for_bar(
         assert (lows, highs) == (d["low_bound_prices"], d["high_bound_prices"]), d[
             "time"
         ]
+        # the activity the Phase 4 E1 count reads: each timeframe's own prediction; with
+        # two or more inactive before 1week the runner's kept lists come back short
+        for tf, p in zip(TFS, predictions):
+            assert s.indicators[f"active_{tf}"] == (1.0 if p.active else 0.0), (
+                d["time"],
+                tf,
+            )
+        inactive = sum(1 for p in predictions[:-1] if not p.active)
+        if inactive >= 2:
+            assert len(d["low_bound_prices"]) < 7, d["time"]
+        if not any(not p.active for p in predictions):
+            assert len(d["low_bound_prices"]) == 7, d["time"]
         # and the primary timeframe's bounds STRAT-003 reports: the padded ones it used
         padded_low = (d["low_bound_prices"] + [pattern_model.LOW_PLACEHOLDER] * 7)[0]
         padded_high = (d["high_bound_prices"] + [pattern_model.HIGH_PLACEHOLDER] * 7)[0]

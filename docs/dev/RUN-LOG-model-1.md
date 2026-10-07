@@ -114,6 +114,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 4, after the amendment's review agents and gating suite run, before its commit (no backtest), 2026-10-07 08:45 | absent | absent | 0 |
 | After filing #152 and #153, before the issue-number commit, 2026-10-07 09:26 | absent | absent | 0 |
 | Phase 4, after the seed-range review and gating suite run, before its commit (no backtest), 2026-10-07 09:38 | absent | absent | 0 |
+| Phase 4, after the freeze code's reviews, mutation checks and gating suite run, before its commit (nothing fetched, trained or run), 2026-10-07 14:28 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -996,3 +997,74 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 - **Real-folder and credential checks:** see the table above (Phase 4 seed-range row).
 - **Commit** (explicit paths; not pushed, no PR): `FDS-MDL Phase 4: a seed range per combination; record every candle
   file's hash`.
+
+## Phase 4 — the freeze commit (the code Test A will run) — **no backtest, fetch or training run**
+
+- **Owner (2026-10-07):** "After that commit, go on to the freeze commit. Show me the freeze commit's summary before
+  running Test A." The header's Code section: a freeze commit, after the header's commits and before Test A, adds the
+  Phase 4 code; everything that produces results is then committed.
+- **What it holds** (the frozen code is every tracked file under `app/` plus `docs/dev/run_backtest_model1.py`):
+  - `app/backtest/random_baseline.py` (new): matching (*N*, *H* rounded half up), `fit_hold`, the placement
+    (`random.Random(seed).sample`, entry at window bar 1 + *c*<sub>k</sub> + *k*·*H*), the random-entry strategy (not a
+    catalogue strategy), one seed's run with a fresh runner, the percentile with half ties, and the two pinned
+    placements with `check_pins`.
+  - `app/backtest/model_eval.py` (new): the decision recorder, hold and E1/E2 counts, the median, the verdict rule
+    (criterion 2 read literally), an independent recheck with the thresholds written out, the verdict line (11.8's
+    numbers, Test A's manifest values, n/a reasons, the held-out dates checked, the two notes in order).
+  - `docs/dev/run_backtest_model1.py` (rewritten): the declared plan (window, batch-1 hashes, bars and split, the 20
+    trainings, seed ranges per combination, overlay sets, costs) and `fetch`, `train`, `run`, `report`. Nothing about
+    the plan can be changed from the command line; the only option is `--supersede NOTE` (train and run).
+  - `app/strategies/model_strategy.py`: `active_<tf>` indicators (for E1), set after the seven predictions and before
+    the rule, so they change no decision.
+  - Tests: `app/tests/test_model_backtest.py` (new, 87 tests from 78 functions); one strengthened assertion in the
+    Phase 3 bar-for-bar test (each `active_<tf>` is its timeframe's own prediction; two or more inactive before 1week
+    shortens the runner's kept lists); `app/tests/helpers_strat003.py` (`publish_files` takes manifest overrides).
+  - `docs/technical/ARCHITECTURE.md`: one sentence naming the two new modules.
+  - Not in it: `docs/dev/BACKTEST-REPORT-model-1.md` (header commits may change no frozen file, and the freeze commit
+    changes no header).
+- **The code rule as built:** every command refuses frozen files that differ from the commit (untracked included) and
+  records the commit in every JSON it writes. `train` and `run` never replace earlier outputs without
+  `--supersede "<what changed and why>"` (a run that stopped before scoring is moved aside with an automatic note);
+  `train --supersede` also moves the run outputs that came from the earlier models. `run` refuses models that are not
+  the declared trainings (window, seed, parameters, model code, a clean trainer at a commit whose trainer files are the
+  train commit's, the candle files and bar-loading code `train` read). `report` refuses unless the frozen code is the
+  results' code and the header is the one committed when they, and every earlier run that scored, were produced; it
+  keeps the verdict as given (`verdict.json`) and lists superseded runs with their verdict and numbers. A run is marked
+  "running" first, so an interrupted one leaves a record; a stop records what was already scored.
+- **Reviews** (read-only agents; every finding checked by a skeptic before it counted):
+  - Design (before code), two reviewers: header fidelity 1 high, 6 medium, 4 low; feasibility 3 medium, 6 low. The
+    high one: the code-change rule was not implemented (no history, no binding of models to the final code). All
+    taken into the code.
+  - Round 1 on the code, four reviewers (header fidelity, correctness, tests, safety) and 42 verifiers: 37 confirmed
+    (6 medium, 31 low), 5 refuted. The medium ones: `report` was not bound to the frozen code (it computes the verdict),
+    superseded verdicts were recomputed instead of kept, the rank input was untested, and `train --supersede` left the
+    earlier run's results in place. All fixed.
+  - Round 2, three reviewers and 25 verifiers: 31 of the 37 confirmed fixed; 24 new or partial (2 medium, 22 low), 1
+    refuted. Medium: the trainer-commit binding refused a correct re-train (the store keeps an earlier manifest for the
+    same content); an interrupted run escaped the header check. All fixed.
+  - Round 3: 11 of the 14 round-2 fixes confirmed; 3 gaps (a `~` home not expanded in the new overlap check; one test
+    without the fail-loudly patches; one untested guard), checked by hand (the verifiers stopped at a session limit)
+    and fixed.
+  - Final fresh round, two reviewers: the real-run walk-through found nothing that would stop, crash, mis-score or
+    print something false (it ran the report's git helpers read-only on the real repository and compared the Phase
+    1-2 cache with batch 1's files byte for byte); estimates: fetch 1-3 min, train 33-40 min, run 20-25 min, report
+    under a minute; `results.json` about 5-20 MB. The rule-and-safety reviewer: 2 low (`verdict.json` lacked the code
+    state; the rendered E1/E2 and per-combination medians were untested), fixed.
+- **Mutation checks** (scratch clones, the Phase 4 tests with the guard on; clones unchanged afterwards): 38 on the
+  first code (36 caught; the two survivors got tests and were then caught); 58 on the round-1 code (58 caught); 33 on
+  the final code, every check changed in rounds 2 and 3 and the new ones (33 caught).
+- **A miniature end-to-end run** (in the tests: synthetic bars for both pairs, crafted models): `fetch` (faked
+  fetcher), `run` and `report` work end to end; every Test A in-sample window is refused with `LOOKAHEAD_MODEL`;
+  decisions are L − 1 per window; E1 is every decision on a model with two always-inactive timeframes and none on an
+  all-active one; the header is kept byte for byte.
+- **Suite** (`run_suite.py` on a fresh clone, `clone-phase4f`, holding every file of this commit; 14:16-14:27):
+  `app/` 1274 passed, 11 failed, 5 skipped; `.github/scripts` 23/19/1. Against the previous run
+  (`suite-phase4s.json`): only the new `app/tests/test_model_backtest.py` (87 passed). Against the session baseline:
+  the known Tk start-up flip, as before. Real-state check unchanged; nothing written into the clone; the nine files
+  of the commit byte-identical to the clone's. Results: `<scratch>/suite-phase4f.json`, SHA-256
+  `5eb0208adadb7911fe378f116595f2d15e0f71c4fd951001ffc5a3035ff92b07`; copy at
+  `../PowerTraderAI-specs/suite-phase4-freeze.json`. Black 26.5.1: the seven Python files unchanged. The suite line
+  and the table row were added after the clone was made.
+- **Real-folder and credential checks:** see the table above (Phase 4 freeze row).
+- **Commit** (explicit paths; not pushed, no PR): `FDS-MDL Phase 4: the freeze commit (random baseline, evaluation,
+  run script)`.

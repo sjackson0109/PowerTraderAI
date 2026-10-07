@@ -65,8 +65,11 @@ def write_files(folder, model=CRAFTED):
                 f.write(text)
 
 
-def publish_files(folder, model_id, coin="BTC", train_end="2024-01-01T00:00:00Z"):
-    """Publish the model files in ``folder`` as ``model_id`` (a minimal manifest)."""
+def publish_files(
+    folder, model_id, coin="BTC", train_end="2024-01-01T00:00:00Z", **overrides
+):
+    """Publish the model files in ``folder`` as ``model_id`` (a minimal manifest, with
+    any ``overrides`` of its fields, e.g. validation or params)."""
     manifest = {
         "manifest_version": model_store.MANIFEST_VERSION,
         "model_id": model_id,
@@ -85,6 +88,7 @@ def publish_files(folder, model_id, coin="BTC", train_end="2024-01-01T00:00:00Z"
         "validation_metrics": {},
         "files": model_store.folder_file_hashes(folder),
     }
+    manifest.update(overrides)
     model_store.publish(folder, manifest, trainer_root=None)
     return manifest
 

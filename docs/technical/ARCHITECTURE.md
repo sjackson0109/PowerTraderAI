@@ -178,7 +178,10 @@ fixed-fraction sizing; nothing opened during warm-up; first 70% of bars in-sampl
 reported separately; buy-and-hold over the same window and fee model as the benchmark. A strategy that carries a
 trained model is refused (`LOOKAHEAD_MODEL`) on any window whose first bar opens before the end of the model's
 training window; in a time split a refused in-sample window is reported as refused. The random-price example in
-`backtesting_engine.py` is labelled `DEMO ONLY - SYNTHETIC DATA`.
+`backtesting_engine.py` is labelled `DEMO ONLY - SYNTHETIC DATA`. STRAT-003's evaluation (FDS-MDL Phase 4,
+`docs/dev/run_backtest_model1.py`, rules in `docs/dev/BACKTEST-REPORT-model-1.md`) adds a random-entry control
+matched to a strategy's trade count and holding period (`backtest/random_baseline.py`) and the pre-declared verdict
+rule (`backtest/model_eval.py`).
 **Risk overlays (FDS-129).** `OVL-RATCHET`, `OVL-ATR`, `OVL-PLOCK` and `OVL-COOLDOWN` attach to any strategy via
 `strategy.overlays: [{"id": "OVL-ATR", "params": {...}}]` (or `--overlays` in the backtester). `StrategyRunner`
 composes them identically in backtest and paper: the effective stop is the **max** of all overlay stops, a stop only

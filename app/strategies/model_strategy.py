@@ -204,6 +204,10 @@ class TrainedModelStrategy(Strategy):
                 return Signal.hold(f"BARS_MISSING:{tf}", indicators)
             indicators[f"bar_{tf}"] = float(b.open_s[i])
             predictions.append(self._prediction(tf, i))
+        # which timeframes matched a memory (an inactive one carries the placeholder
+        # bounds): reported with every decision that made all seven predictions
+        for tf, prediction in zip(TIMEFRAMES, predictions):
+            indicators[f"active_{tf}"] = 1.0 if prediction.active else 0.0
         try:
             sides, lows, highs = thinker_decision(predictions, price)
         except GapPassStuck:

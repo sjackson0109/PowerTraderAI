@@ -110,6 +110,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 2, after the evidence runs, mutation checks, real-data training and the gating suite run, 2026-10-06 22:53 | absent | absent | 0 |
 | Phase 2, after the final gating suite run, before its commit, 2026-10-06 23:25 | absent | absent | 0 |
 | Phase 3, after the mutation checks, the reviews and the gating suite run, before its commit, 2026-10-07 00:53 | absent | absent | 0 |
+| Phase 4, before the header's commit (nothing run), 2026-10-07 01:20 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -795,3 +796,56 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   1. Consider filing the two legacy-runner findings above as issues (not filed: no authenticated calls).
   2. STRAT-003 stays inactive (`strategy.active_id` is STRAT-001) and, with no default `model_id`, shows as a settings
      problem in the hub strip if selected; a live default would need a published model id.
+
+## Phase 4 — evaluation: the pre-declared header — **committed; no backtest run**
+
+- **Session:** 2026-10-07, Claude Opus 5.5. The owner's direction: "Stop after committing the Phase 4 pre-declared
+  verdict rule, and before running any backtest. Report the rule to me first." And, on 11.8: the finding feeds the
+  Phase 4 verdict rule, "so the rule must still be committed before any backtest runs, and I want to read it first."
+- **What this commit holds:** `docs/dev/BACKTEST-REPORT-model-1.md`, the header only (FDS-MDL section 7 "Declared
+  before any result is seen" and section 10: the declared settings and the verdict rule in their own commit, before
+  Test A), and this run-log section. Nothing else changed.
+- **Not run:** no `fetch`, `train`, `run` or `report`; no STRAT-003 backtest of any kind; no model trained for Phase 4.
+  `run_backtest_model1.py` has not changed since Phase 2. The Phase 4 code (the report generator, the random baseline
+  and its acceptance-8 test) comes after the owner has read the rule.
+- **Checked while writing it** (data and earlier records only, no result):
+  - batch 1's four SHA-256 values and its out-of-sample starts (2025-08-16 07:00 for 1h, 04:00 for 4h) from
+    `docs/dev/backtest-batch-1/*.json` and `BACKTEST-REPORT-batch-1.md`; the "vs B&H (pp)" measure from
+    `run_backtest_batch1.py`.
+  - The gaps in the scratch candle cache from Phases 1-2 (2023-01-01 to 2025-12-31, all seven timeframes, both
+    symbols): only the 1h bar of 2023-03-24 13:00, on both symbols, which is batch 1's one missing hourly bar (32,855
+    of 32,856), before every scored window.
+  - The manifest keys the verdict line reads (`validation_metrics`, 1-hour `direction_hit_rate`,
+    `up_share_of_considered`, `direction_considered`), in a Phase 2 manifest in the scratch store.
+- **Choices for the owner:** the header's own list, "Interpretations of FDS-MDL's wording (for the owner to confirm
+  before Test A)": in-sample reported as refused; one Test A model per symbol trained to 04:00; criterion 3 as the
+  pooled median of the 36 windows without overlays; "beats" strictly, criterion 2 read literally; missing-bar holds
+  fail their criterion; the random baseline's matching, placement, mid-rank and acceptance-8 handling; 11.8 in the
+  verdict line, not as a fourth criterion. Any change is made before Test A, in a commit of its own.
+- **Checked by two read-only agents** (no file written, nothing run but arithmetic):
+  - First pass: 2 high, 5 medium, 13 low findings, all taken. High: criterion 2 had been read as "3 of 4 pass both",
+    looser than FDS-MDL's "in those same combinations" (now literal: every combination that beats buy-and-hold must
+    rank at least 95); and nothing froze the code (now a Code section). Medium: criterion 3's pooling and the in-sample
+    refusal labelled as interpretations; the verdict line named the wrong models for 11.8's numbers and called the
+    Test A manifests' metrics "their own held-out bars" (they come from a separate 80% fit); the random baseline's
+    placement, N, H, RNG and overlay handling made exact; `BOUNDS_NOT_CONVERGED` holds covered. The rest: wording,
+    the fetch into an empty cache, KPI conventions, failed trainings, Test B's half-open windows.
+  - Second pass, on the revision: 1 high and 9 low, all taken. High: the code rule did not say which results decide
+    the verdict after a fix (now only the final code's, with every affected step re-run, the earlier results and
+    verdict reported beside them; the frozen code is every tracked file under `app/` plus the run script). The
+    placement maths was proved and brute-forced against a copy of the engine loop (L <= 15, N <= 5, H <= 5): no
+    overlap, every exit by the last bar, `bars_held` exactly H, uniform over placements.
+- **Suite** (`run_suite.py` on a fresh clone, `clone-phase4h`, holding the header and this section; 01:20-01:28): `app/`
+  1186 passed, 10 failed, 7 skipped; `.github/scripts` 23/19/1. Against the session baseline: as at Phase 3, with the
+  Tk flip of `app/test_integration.py::TestPowerTraderHubIntegration::test_graceful_degradation` back to skipped as in
+  the baseline. Against Phase 3's run: that test and
+  `app/test_trading_mode.py::UiHelperTests::test_pack_at_top_ignores_the_unpacked_menu_bar` back to their baseline
+  states, and `app/tests/test_mock_trainer_refusal.py::test_a_string_true_still_refuses` skipped ("Tk not available
+  (attempt 2): invalid command name "tcl_findLibrary"", the known Tk start-up flake). Re-run on the same clone with the
+  guard on: the file once more (17 passed, that test skipped for Tk again), then that test three times (passed each
+  time). This commit changes two Markdown files only. Real-state check unchanged; nothing written into the clone.
+  Results: `<scratch>\suite-phase4h.json`, SHA-256 `fc7d8f6eab77268a35203d03ac019ac898df51326f398dd3c661009068efa36d`;
+  copy at `..\PowerTraderAI-specs\suite-phase4-header.json`. The suite line and the table row were added after the
+  clone was made.
+- **Real-folder and credential checks:** see the table above (Phase 4 header row).
+- **Commit** (explicit paths; not pushed, no PR): `FDS-MDL Phase 4: pre-declared header and verdict rule`.

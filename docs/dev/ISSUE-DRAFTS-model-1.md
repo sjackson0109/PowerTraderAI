@@ -2,7 +2,7 @@
 
 These drafts were filed on 2026-10-06 as #141 to #151 on `sjackson0109/PowerTraderAI` (the table gives each number; B1a and B1b were merged into B1 first, by owner decision). Each issue's body is its draft below, with references between drafts replaced by issue numbers (D1's mention of D2 is worded by description), and a footer saying where the drafts and audit live. Each body uses the headings of `.github/ISSUE_TEMPLATE/bug_report.yml`. Notes on scope and fixes sit inside those headings, because the bug form has no field for them.
 
-E1 and E2 were added on 2026-10-07: two behaviours of the legacy neural runner found in FDS-MDL Phase 3, whose STRAT-003 reproduces the runner's rule. They follow the same base, evidence and label rules. Their numbers are in the table once filed.
+E1 and E2 were added on 2026-10-07: two behaviours of the legacy neural runner found in FDS-MDL Phase 3, whose STRAT-003 reproduces the runner's rule. They follow the same base, evidence and label rules, and were filed on 2026-10-07 as #152 and #153.
 
 - **Base:** `main` at `7a84250`. Line numbers are at that commit unless a draft says otherwise. Files added by FDS-MDL Phase 1 (`app/pt_pattern_trainer.py`, `app/trainer_guard.py`) are cited by symbol.
 - **Evidence:** every claim was checked against the code with `git show 7a84250:<path>`, `git grep` and `git log -S`. Anything traced through the code but not run is marked INFERRED. The Phase 0 evidence is `docs/dev/TRAINER-AUDIT.md` and `docs/dev/trainer-audit-evidence.json`.
@@ -21,8 +21,8 @@ E1 and E2 were added on 2026-10-07: two behaviours of the legacy neural runner f
 | [D1](#d1) | #149 | Pattern trainer never saves its weight updates | No (kept on purpose: faithful port) |
 | [D2](#d2) | #150 | Pattern trainer's close-weight test multiplies a percentage by 100 | No (same) |
 | [D3](#d3) | #151 | Pattern trainer matches only flushed memories and re-reads them every step | No (same) |
-| [E1](#e1) | not yet filed | Runner's bound remap drops repeats; with two inactive timeframes later ones use a neighbour's bounds | No (STRAT-003 reproduces it on purpose; the Phase 4 backtest counts the decisions where it applies) |
-| [E2](#e2) | not yet filed | Runner's gap pass loops for ever on two zero bounds | No (STRAT-003 holds `BOUNDS_NOT_CONVERGED` instead; the Phase 4 backtest counts these) |
+| [E1](#e1) | #152 | Runner's bound remap drops repeats; with two inactive timeframes later ones use a neighbour's bounds | No (STRAT-003 reproduces it on purpose; the Phase 4 backtest counts the decisions where it applies) |
+| [E2](#e2) | #153 | Runner's gap pass loops for ever on two zero bounds | No (STRAT-003 holds `BOUNDS_NOT_CONVERGED` instead; the Phase 4 backtest counts these) |
 
 Section [C](#c-release-notes) is the release-notes paragraph.
 
@@ -905,7 +905,7 @@ Two more upstream behaviours are kept and documented in the trainer's header and
 
 ## E1
 
-**Filed as:** not yet filed
+**Filed as:** #152 (https://github.com/sjackson0109/PowerTraderAI/issues/152), labels `bug`, `needs-triage`
 
 **Title:** `[Bug]: Neural runner's bound remap drops repeats: with two inactive timeframes, later timeframes use a neighbour's bounds`
 
@@ -1029,7 +1029,7 @@ Windows (not OS-specific)
 
 ## E2
 
-**Filed as:** not yet filed
+**Filed as:** #153 (https://github.com/sjackson0109/PowerTraderAI/issues/153), labels `bug`, `needs-triage`
 
 **Title:** `[Bug]: Neural runner's gap pass loops for ever on two zero bounds, so the runner stops processing coins`
 

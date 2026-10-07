@@ -112,6 +112,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 3, after the mutation checks, the reviews and the gating suite run, before its commit, 2026-10-07 00:53 | absent | absent | 0 |
 | Phase 4, before the header's commit (nothing run), 2026-10-07 01:20 | absent | absent | 0 |
 | Phase 4, after the amendment's review agents and gating suite run, before its commit (no backtest), 2026-10-07 08:45 | absent | absent | 0 |
+| After filing #152 and #153, before the issue-number commit, 2026-10-07 09:26 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -942,3 +943,22 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   drafts and these two sections, so the header's reference to the drafts resolves in that commit:
   `FDS-MDL Phase 4: amend the rule after the owner's review; draft E1 and E2`.
 - **Filing:** not done in this commit; it is recorded in a later section once done.
+
+## Phase 3 follow-up — E1 and E2 filed as #152 and #153
+
+- **Owner confirmation (2026-10-07):** "E1 and E2: yes, file them now. Exactly two gh issue create --repo
+  sjackson0109/PowerTraderAI calls, labels bug and needs-triage, each logged. No other authenticated call. Record the
+  numbers in a small commit."
+- **The two calls** (the only authenticated calls; the labels were listed on 2026-10-06 and not listed again):
+  1. 2026-10-07 08:25:33-08:25:35 UTC, exit 0: `gh issue create --repo sjackson0109/PowerTraderAI --title <E1's title>
+     --body-file E1.md --label bug --label needs-triage` gave #152
+     (https://github.com/sjackson0109/PowerTraderAI/issues/152).
+  2. 2026-10-07 08:25:41-08:25:42 UTC, exit 0: the same for E2 gave #153
+     (https://github.com/sjackson0109/PowerTraderAI/issues/153).
+- **Bodies:** each is its draft from "What happened?" on, checked byte for byte against `d36cdf1` before filing, with
+  the same footer as the 11 (the drafts and the files not on main live on `feat/model-strategy-1`). Kept in
+  `<scratch>\issues\` with the call log. The issues were not viewed back (that would be another authenticated call).
+- `ISSUE-DRAFTS-model-1.md` now records both numbers. Suite: not re-run for this Markdown-only commit; the two test
+  files that read the docs (`test_no_hard_coded_user_paths.py`, `test_docs_and_visibility.py`) pass under the guard
+  (7 passed).
+- **Commit** (explicit paths; not pushed, no PR): `FDS-MDL: issue numbers for E1 and E2 (#152, #153)`.

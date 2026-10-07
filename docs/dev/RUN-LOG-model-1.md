@@ -113,6 +113,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 4, before the header's commit (nothing run), 2026-10-07 01:20 | absent | absent | 0 |
 | Phase 4, after the amendment's review agents and gating suite run, before its commit (no backtest), 2026-10-07 08:45 | absent | absent | 0 |
 | After filing #152 and #153, before the issue-number commit, 2026-10-07 09:26 | absent | absent | 0 |
+| Phase 4, after the seed-range review and gating suite run, before its commit (no backtest), 2026-10-07 09:38 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -962,3 +963,36 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   files that read the docs (`test_no_hard_coded_user_paths.py`, `test_docs_and_visibility.py`) pass under the guard
   (7 passed).
 - **Commit** (explicit paths; not pushed, no PR): `FDS-MDL: issue numbers for E1 and E2 (#152, #153)`.
+
+## Phase 4 — the owner's approval of `d36cdf1`, with one change — **no backtest run**
+
+- **Owner (2026-10-07):** "Diff d36cdf1: approved, with one change, in its own commit before Test A: Give each of the
+  four combinations its own seed range instead of 0 to 99 for all: BTC 1h 0-99, BTC 4h 100-199, ETH 1h 200-299, ETH 4h
+  300-399. A combination's two overlay sets keep sharing that combination's range. State in the header that this
+  departs from FDS-MDL section 7's literal "seeds 0 to 99" and why [...]. Update the pinned acceptance-8 test to match."
+  And: "For the 2h to 1w candle files, which have no batch-1 hash: record each fetched file's SHA-256 in the results,
+  so the run can be repeated on the same data."
+- **The header change** (`docs/dev/BACKTEST-REPORT-model-1.md`): a second "Amended" note; the seeds paragraph now gives
+  each combination its range and says why this departs from FDS-MDL section 7 (the owner's reason, worded as the
+  3-of-4 count of criteria 1 and 2, since the control enters through criterion 2); the pinned acceptance-8 cases now
+  use seed 0 (BTCUSDT 1h's first) for the set path and seed 100 (BTCUSDT 4h's first) for the pool path, both checked
+  against CPython 3.13.15 (valid placements on the intended paths); `fetch` records every fetched file's SHA-256, all
+  seven timeframes, and `run` checks them; the E1/E2 subsection cites #152 and #153. The criteria and the seven
+  interpretations are unchanged.
+- **Checked by one read-only reviewer:** 1 medium and 3 low findings plus a nit, all taken. Medium: `run`'s check
+  of the recorded hashes had no stated failure case (now: nothing is scored, as for batch 1's). The others: the
+  reason's wording (now "the 3-of-4 count (criterion 1, whose combinations must each also pass criterion 2, where the
+  control enters)"; the owner wrote "criterion 1"); shared seeds also give near-identical draws when *N* and *H* are
+  merely close (about 99% of the drawn values shared for *N* or *H* one apart at *L* = 9,857), now stated; the freeze
+  list now names `fetch` recording every hash; the second amendment note points to the departure. It confirmed the
+  ranges, the pinned paths, and that the criteria and interpretations are unchanged.
+- **Suite** (`clone-phase4s`, 09:28-09:37, made before the reviewer's text fixes): `app/` 1187/11/5,
+  `.github/scripts` 23/19/1, identical to the previous run (`suite-phase4a.json`); against the session baseline only
+  the known Tk start-up flip. Real-state check unchanged; nothing written into the clone. The final header and this
+  log were then copied into that clone and the two test files that read the docs re-run there under the guard
+  (7 passed). Results: `<scratch>\suite-phase4s.json`, SHA-256
+  `ea2a4a17f3d4714b8cc3b818b6f0058ab410c02ef1fb6a78578b2de783650ab5`; copy at
+  `..\PowerTraderAI-specs\suite-phase4-seeds.json`.
+- **Real-folder and credential checks:** see the table above (Phase 4 seed-range row).
+- **Commit** (explicit paths; not pushed, no PR): `FDS-MDL Phase 4: a seed range per combination; record every candle
+  file's hash`.

@@ -2,7 +2,7 @@
 
 **Status: pre-declared header only.** Everything below was written and committed before any backtest of STRAT-003 was
 run (FDS-MDL section 10: the declared settings and the verdict rule in their own commit before Test A; here `51e499e`
-and the owner's amendment on top of it, both before Test A and neither changing code). No result has been seen.
+and the owner's amendments after it, all before Test A and none changing code). No result has been seen.
 `docs/dev/run_backtest_model1.py report` will append the results under this header, and must not change it.
 
 **Amended 2026-10-07 in its own commit on top of `51e499e`, still before any backtest,** after the owner's review of
@@ -10,6 +10,11 @@ that commit: the owner confirmed the interpretations below as written; each comb
 beside the pooled one, for information only; the last Test B window's 1h and 4h coverage is confirmed; the random
 baseline's seeds are fixed and recorded; and two counts for the legacy-runner quirks E1 and E2 are added to the
 output, with E2 flagged in the verdict line if it is not zero.
+
+**Amended again 2026-10-07, in its own commit, still before any backtest,** after the owner approved `d36cdf1` with
+one change: each combination draws its random baseline from its own range of seeds (a departure from FDS-MDL section
+7's literal "seeds 0 to 99"; see the Control section). Also: every fetched candle file's SHA-256 is recorded in the
+results, so the run can be repeated on the same data; E1 and E2 are filed as #152 and #153.
 
 Specs: `docs/dev/specs/FDS-MDL-trained-model-strategy.md` section 7, as amended by
 `docs/dev/specs/FDS-MDL-A-addendum-after-108a.md` (the addendum wins on conflict). Strategy: STRAT-003
@@ -37,8 +42,10 @@ A **combination** is a symbol and a primary timeframe (four of them); a **run** 
   | ETHUSDT | 4h | `11c6946a168f25bb96d2f6b6415db9990c3a53b70c1585864cd3ab8f5dce8722` |
 
   If any differs, nothing is scored: the run stops and the report records the mismatch. No other data is substituted.
-- **The model's other timeframes** (2h, 8h, 12h, 1d, 1w) are not in batch 1. Their SHA-256 values are recorded in the
-  report (there is nothing in batch 1 to compare them with).
+- **The model's other timeframes** (2h, 8h, 12h, 1d, 1w) are not in batch 1, so there is no hash to check them
+  against. `fetch` records every fetched file's SHA-256 (all seven timeframes, both symbols) and `run` checks that each
+  file still has it; if any differs, nothing is scored: the run stops and the report records the mismatch, as for
+  batch 1's hashes. The results JSON and the report record them all, so the run can be repeated on the same data.
 - **No silent gaps.** STRAT-003 holds, with a reason, when it cannot apply its rule: `BARS_MISSING:<tf>` (the bar it
   needs is missing), `TIMEFRAME_UNKNOWN` (the strategy was never given its timeframe; it cannot occur in
   `run_backtest`, which always sets it) and `BOUNDS_NOT_CONVERGED` (the gap pass has not ended after 100,000 steps; on
@@ -87,8 +94,8 @@ None, and `OVL-ATR` + `OVL-COOLDOWN` at their defaults.
 
 - **The frozen code** is every tracked file under `app/` plus `docs/dev/run_backtest_model1.py`. Before Test A runs, a
   freeze commit (after this header's commits) adds the Phase 4 code: the random baseline with its acceptance-8 test,
-  `run` and `report`, STRAT-003's per-timeframe activity indicator (for E1, below), and `fetch` and `train` set to
-  this window and these 20 trainings (today the script has `fetch`
+  `run` and `report`, STRAT-003's per-timeframe activity indicator (for E1, below), `fetch` recording every fetched
+  file's SHA-256, and `fetch` and `train` set to this window and these 20 trainings (today the script has `fetch`
   and `train` only, with defaults 2023-01-01 to 2026-01-01 and one window per symbol).
 - Every result JSON records the commit it was produced from and whether any frozen file differed from it. Every
   manifest records the trainer's commit and state (`trainer_git_commit`, `trainer_git_dirty`) and its code hashes
@@ -137,17 +144,23 @@ None, and `OVL-ATR` + `OVL-COOLDOWN` at their defaults.
 
 - For each run: 100 random-entry strategies on Test A's out-of-sample bars, with the same costs, sizing and overlays.
   Each seed has a fresh runner (overlay state reset) and starts flat.
-- **Seeds, fixed:** the integers 0, 1, 2, …, 99 (FDS-MDL section 7's "seeds 0 to 99"), the same 100 for every run
-  (each combination with each overlay set). In each run, seed *s* gets a fresh `random.Random(s)`, which nothing else
-  draws from. A placement depends only on the seed, *L*, *N* and *H*, so runs with the same *L*, *N* and *H* draw the
-  same 100 placements: BTC and ETH have the same *L* at each timeframe (9,857 1h bars and 2,465 4h bars, batch 1's
-  out-of-sample windows), and so do a combination's two overlay sets. Each run is still scored on its own prices.
+- **Seeds, fixed per combination:** BTCUSDT 1h 0 to 99, BTCUSDT 4h 100 to 199, ETHUSDT 1h 200 to 299, ETHUSDT 4h 300
+  to 399; a combination's two overlay sets share its range. In each run, seed *s* gets a fresh `random.Random(s)`,
+  which nothing else draws from.
+- **This departs from FDS-MDL section 7's literal "seeds 0 to 99"** (owner decision, 2026-10-07). A placement depends
+  only on the seed, *L*, *N* and *H*, and BTC and ETH have the same *L* at each timeframe (9,857 1h bars and 2,465 4h
+  bars, batch 1's out-of-sample windows). With the same seeds, two combinations whose *N* and *H* also matched would
+  draw identical placements, and near-identical ones when they were merely close. BTC and ETH prices are correlated,
+  so their controls would be near-copies, and the 3-of-4 count (criterion 1, whose combinations must each also pass
+  criterion 2, where the control enters) would partly count one control result twice. Separate ranges make the four
+  controls independent draws. A combination's two overlay sets score the same bars, so they keep sharing its range.
 - **Reproducible:** the results record the CPython version and, for every seed, its drawn entry bars (with overlays,
   also which of them were skipped), trade count and total return, in `docs/dev/backtest-model-1/`. Python guarantees
   `random()`'s sequence for a seed across versions, not `sample()`'s, which has two code paths. So the acceptance-8
-  test pins seed 0's placement on each path, (*L*, *N*, *H*) = (2,465, 500, 3) for the pool path and (9,857, 100, 20)
-  for the set path, and `report` re-derives every run's recorded entry bars from its seeds and asserts they match. If a
-  later Python draws differently, those checks fail, and the recorded entry bars, not new draws, are the control.
+  test pins one placement on each path: seed 0 (BTCUSDT 1h's first) with (*L*, *N*, *H*) = (9,857, 100, 20) for the
+  set path, and seed 100 (BTCUSDT 4h's first) with (2,465, 500, 3) for the pool path. `report` re-derives every run's
+  recorded entry bars from its seeds and asserts they match. If a later Python draws differently, those checks fail,
+  and the recorded entry bars, not new draws, are the control.
 - **Matching:** *N* is STRAT-003's trade count in that run (the KPI `trade_count`, which includes a position closed on
   the last bar) and *H* the mean of its trades' `bars_held` (all of them, that one included), rounded to the nearest
   bar, halves up, at least 1. With *L* the window's bars, numbered from 0: if *N*(*H* + 1) > *L* − 1, *H* is reduced one
@@ -232,10 +245,10 @@ one after it).
 ### Two legacy-runner quirks, counted (E1, E2)
 
 STRAT-003 reproduces the legacy runner on purpose, including two quirks found in Phase 3 (`docs/dev/RUN-LOG-model-1.md`,
-Phase 3 section) and drafted as issues E1 and E2 in `docs/dev/ISSUE-DRAFTS-model-1.md`, in the same commit as this
-amendment. Neither changes the rule. Both are counted per combination, for Test A's
-out-of-sample window and for Test B (its 9 windows together, and each window in the window table), from the runs
-without overlays (STRAT-003's own signals do not depend on the overlay set):
+Phase 3 section) and filed as #152 (E1) and #153 (E2), drafted in `docs/dev/ISSUE-DRAFTS-model-1.md`. Neither changes
+the rule. Both are counted per combination, for Test A's out-of-sample window and for Test B (its 9 windows together,
+and each window in the window table), from the runs without overlays (STRAT-003's own signals do not depend on the
+overlay set):
 
 - **E1, the remap shift:** the decisions in which two or more of the timeframes before 1week (1hour, 2hour, 4hour,
   8hour, 12hour, 1day) were inactive at once, that is, their predictions were not active and they carried the

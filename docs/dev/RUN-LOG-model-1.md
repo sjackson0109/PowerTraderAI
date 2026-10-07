@@ -111,6 +111,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 2, after the final gating suite run, before its commit, 2026-10-06 23:25 | absent | absent | 0 |
 | Phase 3, after the mutation checks, the reviews and the gating suite run, before its commit, 2026-10-07 00:53 | absent | absent | 0 |
 | Phase 4, before the header's commit (nothing run), 2026-10-07 01:20 | absent | absent | 0 |
+| Phase 4, after the amendment's review agents and gating suite run, before its commit (no backtest), 2026-10-07 08:45 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -849,3 +850,95 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   clone was made.
 - **Real-folder and credential checks:** see the table above (Phase 4 header row).
 - **Commit** (explicit paths; not pushed, no PR): `FDS-MDL Phase 4: pre-declared header and verdict rule`.
+
+## Phase 4 — the owner's review of the header, and its amendment — **no backtest run**
+
+- **Session:** 2026-10-07, Claude Opus 5.5. The owner's review of `51e499e`: "Interpretations 1 to 7: all confirmed as
+  written." Then, before Test A and in one commit on top of `51e499e`:
+  1. show each pair's Test B median beside the pooled one, as information only (criterion 3 stays pooled);
+  2. confirm that batch 1's 1h and 4h files cover the last Test B window, without fetching new candles (the SHA-256
+     rule stands);
+  3. fix and record the random baseline's seeds;
+  4. in a second message: for E1 and E2, no change to the rule, but two counts in the output per pair, for Test A and
+     Test B (E1: decisions with two or more timeframes before 1week inactive, as a count and a share of scored bars;
+     E2: times the 100,000-step limit triggered, expected zero, flagged in the verdict line if not), in the same commit.
+
+  Then show the owner the diff before Test A runs.
+- **The amendment** (`docs/dev/BACKTEST-REPORT-model-1.md`):
+  - an "Amended 2026-10-07" note under the status line;
+  - the four per-combination medians beside the pooled one, marked information only;
+  - a coverage paragraph for the last window (1h and 4h; the 2h to 1w bars stay under "No silent gaps");
+  - the seeds (0 to 99 in every run, a fresh `random.Random(s)` per seed per run, the same placements where *L*, *N*
+    and *H* coincide) and their reproducibility (CPython version, every seed's drawn entry bars, one pinned case on
+    each of `sample()`'s two code paths, and `report` re-deriving the recorded entry bars);
+  - a subsection counting E1 and E2, with the E2 note in the verdict line and STRAT-003's activity indicator in the
+    freeze commit;
+  - the interpretations heading recording the owner's confirmation, and the rule for later header changes kept.
+
+  The seven interpretations and the three criteria are unchanged.
+- **The coverage check** (data only, nothing fetched, no result):
+  - batch 1's records (`docs/dev/backtest-batch-1/*.json`, `data` block): 1h 2023-01-01 00:00 to 2026-09-30 23:00,
+    32,855 bars, one gap (2023-03-24 13:00); 4h to 2026-09-30 20:00, 8,214 bars, no gap; the same for both symbols.
+  - The files batch 1 read, in the main checkout's `app/hub_data/candles/` (read only; nothing copied): ETHUSDT 1h,
+    BTCUSDT 4h and ETHUSDT 4h still hash to batch 1's values. **BTCUSDT 1h does not:** it has 37 more bars (2026-10-01
+    00:00 to 2026-10-02 12:00; the file is dated 2026-10-02 14:27, the other three 04:19). Its header and rows before
+    2026-10-01 00:00, hashed as stored, give batch 1's value `7171bc66…`. In July to September 2026 each file has the
+    full count: 2,208 1h bars and 552 4h bars per symbol, none missing.
+  - The cache `fetch` wrote in Phases 1-2 uses the same CRLF layout as batch 1's files, and its 26,303 rows match batch
+    1's row for row, so the declared fetch-then-hash procedure can reproduce batch 1's bytes (on Windows, where pandas
+    writes CRLF).
+  - The two pinned `sample()` cases were checked against CPython 3.13.15's own threshold: (2,465, 500, 3) takes the pool
+    path (n = 964 <= 4,117), (9,857, 100, 20) the set path (n = 7,856 > 1,045); seed 0's placements are valid (no overlap,
+    every exit by the last bar).
+- **Checked by read-only agents** (no file written in the repo; nothing run but arithmetic, read-only file checks and
+  the named tests under the guard):
+  - On the first draft of the amendment, two reviewers (the owner's instructions and the facts; ambiguity): 11
+    findings (4 medium, 7 low), all taken. Medium: the coverage sentence claimed more than the 1h/4h check showed (now
+    limited, with the 2h to 1w bars under "No silent gaps"); "the draws still differ between runs" was false (BTC and
+    ETH share *L*, so equal *N* and *H* give the same placements, as FDS-MDL's seeds imply); one pinned case cannot
+    cover both of `sample()`'s code paths (now two, plus `report` re-deriving the recorded entry bars); the rule for
+    later header changes had been dropped (restored). Every fact was confirmed: batch 1's records, the bar counts, the
+    hashes, and Python's reproducibility guarantee.
+  - On the final text, with the E1 and E2 counts, one reviewer: 7 findings (1 medium, 6 low), all taken. Medium: the
+    E1 share's denominator could be read as *L* or *L* − 1 (now the window's decisions, *L* − 1, the engine deciding
+    nothing on a window's last bar). The rest: whether a `BOUNDS_NOT_CONVERGED` hold counts as E1 (it does when the
+    condition holds), the order of the two verdict-line notes, the amendment note's coverage claim, the plural
+    attributed to FDS-MDL section 10, and the description of `BOUNDS_NOT_CONVERGED`. It confirmed that the seven
+    interpretations are unchanged word for word and that each of the owner's instructions is done.
+- **Suite** (`run_suite.py` on a fresh clone, `clone-phase4a`, holding the amendment, the drafts and these sections;
+  08:35-08:44): `app/` 1187 passed, 11 failed, 5 skipped; `.github/scripts` 23/19/1. Against the session baseline: as
+  at Phase 3, with the known Tk start-up flip of
+  `app/test_integration.py::TestPowerTraderHubIntegration::test_graceful_degradation` failing again. Against the header
+  run (`suite-phase4h.json`): that flip, and `app/tests/test_mock_trainer_refusal.py::test_a_string_true_still_refuses`
+  passing again. This commit changes three Markdown files only. Real-state check unchanged; nothing written into the
+  clone; the three files byte-identical to the clone's. Results: `<scratch>\suite-phase4a.json`, SHA-256
+  `1b93cdcbf619b91c0159d6f9e5635fa20a9c6ecc0ab5830907820c0adcc788a8`; copy at
+  `..\PowerTraderAI-specs\suite-phase4-amendment.json`. The suite line and the table row were added after the clone was
+  made.
+- **Real-folder and credential checks:** see the table above (Phase 4 amendment row).
+- **Commit:** the same commit as the drafts below (see there).
+
+## Phase 3 follow-up — issue drafts E1 and E2 (legacy runner)
+
+- **Owner direction (2026-10-07):** add the two legacy-runner findings of Phase 3 to `docs/dev/ISSUE-DRAFTS-model-1.md`,
+  then file them under the same one-time exception as the 11 (`gh issue create --repo` only, each call logged), with no
+  other authenticated calls.
+- **Drafts:** E1 (the bound remap drops repeated values, so with two inactive timeframes before 1week later timeframes
+  use a neighbour's bounds; for coins at $0.01 or more an active 1week never signals, below $0.01 it is LONG on every
+  sweep) and E2 (the gap pass loops for ever on two zero bounds; the runner stops processing coins). Base `7a84250`, in
+  the file's format, with a header note, two table rows and owner note 10.
+- **Drafted and checked by read-only agents:** one drafter per issue; then two verifiers per draft (code fidelity
+  against `7a84250`; claims, reproduction and format), re-run after the first attempt stopped at a session limit: 38
+  findings (11 medium, 27 low). Every line citation and every recomputed number held. The fixes: for a coin below
+  $0.01 the padded 1week is LONG on every sweep, not silent (E1); a repeat in one list does not make the shifted
+  timeframes lose LONG (E1); #143 belongs in E1's scope (on main every timeframe is inactive); E2's low-list rule is
+  "at least two more zero lows than inactive timeframes"; one zero-close timeframe is not enough (E2); the trader does
+  not read the runner's signal files today (#142), but a hang before ready stops Start All from starting the trader
+  even in the catalogue engine; Stop All ends the poll; step 3 on 7a84250 has no publish step; both drafts were about
+  twice A1's length and in the first person (rewritten). A final check found 1 medium and 4 low in E1 (the DCA
+  sentence lacked the $0.01 qualifier) and 1 medium and 3 low in E2 (the negative-bound STRAT-003 sentence was too
+  general; ready comes after the second sweep), all taken except cutting E2's quoted code, kept as the evidence.
+- **Commit** (explicit paths; not pushed, no PR): one commit, the direct child of `51e499e`, holding the amendment, the
+  drafts and these two sections, so the header's reference to the drafts resolves in that commit:
+  `FDS-MDL Phase 4: amend the rule after the owner's review; draft E1 and E2`.
+- **Filing:** not done in this commit; it is recorded in a later section once done.

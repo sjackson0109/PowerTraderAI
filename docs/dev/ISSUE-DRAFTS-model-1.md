@@ -2,6 +2,8 @@
 
 These drafts were filed on 2026-10-06 as #141 to #151 on `sjackson0109/PowerTraderAI` (the table gives each number; B1a and B1b were merged into B1 first, by owner decision). Each issue's body is its draft below, with references between drafts replaced by issue numbers (D1's mention of D2 is worded by description), and a footer saying where the drafts and audit live. Each body uses the headings of `.github/ISSUE_TEMPLATE/bug_report.yml`. Notes on scope and fixes sit inside those headings, because the bug form has no field for them.
 
+E1 and E2 were added on 2026-10-07: two behaviours of the legacy neural runner found in FDS-MDL Phase 3, whose STRAT-003 reproduces the runner's rule. They follow the same base, evidence and label rules. Their numbers are in the table once filed.
+
 - **Base:** `main` at `7a84250`. Line numbers are at that commit unless a draft says otherwise. Files added by FDS-MDL Phase 1 (`app/pt_pattern_trainer.py`, `app/trainer_guard.py`) are cited by symbol.
 - **Evidence:** every claim was checked against the code with `git show 7a84250:<path>`, `git grep` and `git log -S`. Anything traced through the code but not run is marked INFERRED. The Phase 0 evidence is `docs/dev/TRAINER-AUDIT.md` and `docs/dev/trainer-audit-evidence.json`.
 - **Labels:** existing labels only (checked with `gh label list` before filing): `bug` or `documentation`, `needs-triage`, and `component-trading` where the draft suggested it. Priority and phase labels are left to triage.
@@ -19,6 +21,8 @@ These drafts were filed on 2026-10-06 as #141 to #151 on `sjackson0109/PowerTrad
 | [D1](#d1) | #149 | Pattern trainer never saves its weight updates | No (kept on purpose: faithful port) |
 | [D2](#d2) | #150 | Pattern trainer's close-weight test multiplies a percentage by 100 | No (same) |
 | [D3](#d3) | #151 | Pattern trainer matches only flushed memories and re-reads them every step | No (same) |
+| [E1](#e1) | not yet filed | Runner's bound remap drops repeats; with two inactive timeframes later ones use a neighbour's bounds | No (STRAT-003 reproduces it on purpose; the Phase 4 backtest counts the decisions where it applies) |
+| [E2](#e2) | not yet filed | Runner's gap pass loops for ever on two zero bounds | No (STRAT-003 holds `BOUNDS_NOT_CONVERGED` instead; the Phase 4 backtest counts these) |
 
 Section [C](#c-release-notes) is the release-notes paragraph.
 
@@ -36,6 +40,7 @@ Section [C](#c-release-notes) is the release-notes paragraph.
 7. **D1–D3 are upstream behaviour kept on purpose** (owner decision: faithful port). They are drafted so the decision to change the model's output is a separate, visible one. D2 only matters once D1 is fixed.
 8. **The thinker's threshold rewrite** (audit section 7 item 10) is not drafted. It cannot be reached today, it is upstream's behaviour, and the port writes `str(float)`, which the thinker writes back unchanged (checked by `test_the_output_is_what_the_thinker_reads`). It is in A3's checklist instead.
 9. **The desktop installer script is stale.** `.github/scripts/create_desktop_installer.py` lists a handful of modules and misses `pt_paths`, `market_data/` and most of `app/`. Phase 1 only added the new trainer files and changed its default trainer name. Not drafted; worth a task if the installer is still used.
+10. **E1 and E2 come from reproducing the legacy runner** for STRAT-003 (FDS-MDL Phase 3). Both are latent on main (#141, #143). STRAT-003 keeps E1 on purpose and stops E2 after 100,000 steps; the Phase 4 backtest header counts both per symbol and timeframe (owner decision, 2026-10-07). Both drafts cite `feat/model-strategy-1`, which is not yet published, for STRAT-003's tests and the recorded fixture.
 
 ---
 
@@ -895,6 +900,240 @@ None.
 Two more upstream behaviours are kept and documented in the trainer's header and the run log rather than drafted, because they are design choices rather than defects:
 - pass 0 of every timeframe trains on 1-hour bars (`tf_list = ['1hour', tf_choice, tf_choice]`, `ba62130:pt_trainer.py:365`);
 - intraday timeframes, and pass 0 of every timeframe, use only the older half of the window (the owner decided to keep this; the trainer prints and records the counts).
+
+---
+
+## E1
+
+**Filed as:** not yet filed
+
+**Title:** `[Bug]: Neural runner's bound remap drops repeats: with two inactive timeframes, later timeframes use a neighbour's bounds`
+
+**Suggested labels:** `bug`, `needs-triage`
+
+### What happened?
+
+At the end of each sweep, `step_coin` rebuilds each timeframe's low and high bound: its predicted low and high moved 0.5% outwards, or the placeholders `0.01` and `99999999999999999` when the timeframe is inactive (`7a84250:app/pt_thinker.py:1184-1203`). It sorts both lists for the gap pass (`:1205-1207`) and then maps the sorted values back to timeframe order. The mapping records where each sorted value came from with `list.index`, which returns the first match, and the remap skips any index it cannot find:
+
+```python
+# 7a84250:app/pt_thinker.py:1212-1218
+while True:
+    og_low_index_list.append(
+        low_bound_prices.index(new_low_bound_prices[og_index])
+    )
+    og_high_index_list.append(
+        high_bound_prices.index(new_high_bound_prices[og_index])
+    )
+```
+
+```python
+# 7a84250:app/pt_thinker.py:1299-1311
+while True:
+    try:
+        low_bound_prices.append(
+            new_low_bound_prices[og_low_index_list.index(og_index)]
+        )
+    except:
+        pass
+    try:
+        high_bound_prices.append(
+            new_high_bound_prices[og_high_index_list.index(og_index)]
+        )
+    except:
+        pass
+```
+
+When two timeframes share a value, `list.index` maps both to the first one, so the second one's index never appears. The remap's bare `except: pass` skips it, and every later bound is appended one place early. The lists come back one entry short per repeat and are saved that way (`:1443-1444`). At the next end of sweep, `_pad_to_len` (`:992-999`, applied at `:1004-1005`) fills the tail with the placeholders, and the SHORT and LONG tests (`:1053-1056`, `:1090-1093`) read the bounds by position.
+
+The usual repeat is two or more inactive timeframes, whose placeholders are identical. When the second inactive timeframe comes before 1week:
+- each active timeframe after it is judged on a later timeframe's band (one place on per repeat), so it can signal where its own band would not, or the reverse;
+- the last timeframes get the padded placeholders. For a coin priced at $0.01 or more (all the default coins), `current > 99999999999999999` and `current < 0.01` are never true, so an active 1week never signals (with three inactive timeframes, 1day neither). For a coin priced below $0.01, `current < 0.01` is always true, so the padded slot is LONG on every sweep instead;
+- 1hour always keeps its own bounds, and inactive timeframes stay silent anyway (their predicted high equals their low: `:957-961`, `:1055`, `:1092`).
+
+Two active timeframes with exactly equal predicted lows (or highs) trigger it too, in that list only. That needs equal predicted prices as floats, which is unlikely from a trained model (INFERRED).
+
+**Measured on a recording of the real runner.** `app/tests/fixtures/strat003_thinker_record.json` records `step_coin` (blob `97aee15`: main's bound code, unchanged) over 241 hourly decisions on synthetic bars, with a model whose 4hour and 12hour never match and whose 1day matches on some bars (97 decisions have two inactive timeframes, 144 have three). Long / short / none per timeframe, as recorded and with each timeframe on its own bounds (the kept bounds put back on their own timeframes and compared again; the shifted mapping reproduces all 241 recorded rows):
+
+| Timeframe | As recorded | On its own bounds |
+|---|---|---|
+| 1day | 5 / 52 / 184 | 19 / 22 / 200 |
+| 1week | **0 / 0 / 241** | 5 / 183 / 53 |
+
+1hour, 2hour and 8hour are the same in both columns; 4hour and 12hour are inactive. These counts are what the runner writes to `signals_dca_spread.txt` and `signals_dca_single.txt` (`:1382-1383`, `:1396-1397`). For a coin at $0.01 or more with two inactive timeframes before 1week, at most 4 timeframes can be LONG instead of 5, so once #142 is fixed a `legacy_neural` trader could reach only the first neural DCA level (`7a84250:app/pt_trader.py:2212-2218`) (INFERRED).
+
+How often: on three-year BTC and ETH models from the FDS-MDL pattern trainer, 1hour to 1day were each active on 98–100% of the validation fit's held-out bars (`docs/dev/trainer-port-evidence-phase2.json`, runs L1 and L2, on `feat/model-strategy-1`), so two of them inactive at once looks rare (INFERRED, from per-timeframe shares).
+
+**Scope.**
+- **Latent on main.** The runner stalls before this code (#141, a static trace). The trainers the hub launches on main write files the runner cannot parse, so every timeframe is inactive and nothing signals either way (#143); only models from the FDS-MDL pattern trainer, or upstream's trainer, reach this code with active timeframes. The runner's counts do not reach the trader (#142).
+- **Upstream behaviour:** the same lines are at `ba62130:pt_thinker.py:880-957` (padding at `:747-761`), in the fork since its first upload (`b4522b0`).
+- **STRAT-003** (FDS-MDL Phase 3, on `feat/model-strategy-1`, not yet published) reproduces the runner's rule, this quirk included, so its backtest decisions include it; the Phase 4 backtest will count the decisions with two or more inactive timeframes before 1week. Fix the runner and `pattern_model.thinker_bounds` together and re-record the fixture, or keep a legacy-compatible mode for the bar-for-bar test, as #149 suggests for the trainer.
+
+### What did you expect to happen?
+
+Each timeframe keeps its own bounds after the gap pass, and both lists keep all seven entries. Inactive timeframes keep their placeholders and stay silent, which the high ≠ low test already ensures.
+
+A possible fix: build both index orders first (lows descending, highs ascending), run the existing gap pass once on both sorted lists as now, then write each sorted value back to the index it came from. Every index is written once, so ties do not matter, and nothing changes when no value repeats.
+
+### Steps to reproduce
+
+1. Offline, in plain Python, with the runner's own expressions (a coin priced above $0.01):
+   ```python
+   # 4hour and 12hour inactive (placeholder 0.01); the other bounds are far apart, so the gap pass moves nothing
+   low_bound_prices = [98.5, 97.5, 0.01, 93.5, 0.01, 89.5, 79.5]
+   new_low_bound_prices = sorted(low_bound_prices)
+   new_low_bound_prices.reverse()
+   og_low_index_list = [low_bound_prices.index(v) for v in new_low_bound_prices]
+   print(og_low_index_list)  # [0, 1, 3, 5, 6, 2, 2]: 4 (12hour) is missing
+   kept = []
+   for og_index in range(len(new_low_bound_prices)):
+       try:
+           kept.append(new_low_bound_prices[og_low_index_list.index(og_index)])
+       except ValueError:  # the runner has a bare `except: pass`
+           pass
+   print(kept)  # 6 entries: 12hour's slot holds 1day's bound, 1day's holds 1week's
+   print(kept + [0.01] * (7 - len(kept)))  # padded as at :1004; 1week gets 0.01
+   ```
+   Running the runner's lines `1205-1314` verbatim on these lows, with highs `[101.5, 102.5, 99999999999999999, 106.5, 99999999999999999, 110.5, 120.5]`, gives the same kept lows, and the highs shift the same way.
+2. On `feat/model-strategy-1` (not yet on main): `python -m pytest app/tests/test_model_strategy.py -p no:cacheprovider -k "remap_drops_repeated or reproduces_the_recorded_runner"`. The first test asserts the shifted lists; the second checks STRAT-003 against the recording.
+3. In the hub (not run; blocked today by #141 and #143): run the neural runner on a coin trained with the pattern trainer (`app/pt_pattern_trainer.py` on `feat/model-strategy-1`), whose model has two timeframes before 1week that match nothing on the current bars. On the next sweep, 1week's line reads `WITHIN on 1week timeframe. Low Boundary: 0.01 High Boundary: 99999999999999999` even though 1week is active (INFERRED).
+
+### Trading mode
+Paper (mode-independent)
+
+### Exchange
+Not applicable
+
+### Area
+Trainer/thinker
+
+### PowerTraderAI version or commit
+7a84250 (legacy runner); STRAT-003 on feat/model-strategy-1 (FDS-MDL Phase 3, not yet published); upstream ba62130
+
+### Operating system
+Windows (not OS-specific)
+
+### Python version
+3.13
+
+### Logs
+```shell
+[0, 1, 3, 5, 6, 2, 2]
+[98.5, 97.5, 0.01, 93.5, 89.5, 79.5]
+[98.5, 97.5, 0.01, 93.5, 89.5, 79.5, 0.01]
+```
+
+### Before you submit
+- [x] I have removed any API keys, secrets and personal account details.
+
+---
+
+## E2
+
+**Filed as:** not yet filed
+
+**Title:** `[Bug]: Neural runner's gap pass loops for ever on two zero bounds, so the runner stops processing coins`
+
+**Suggested labels:** `bug`, `needs-triage`
+
+### What happened?
+
+At the end of each sweep the neural runner sorts the timeframes' low and high bounds and runs a "gap pass", which nudges neighbouring bounds apart until each pair is at least 0.25% + 0.25% × position apart (`7a84250:app/pt_thinker.py:1183-1294`). A pair is skipped when either list holds a placeholder (`0.01` or `99999999999999999`, an inactive timeframe) at that position (`:1226-1232`). The pass never ends when a pair it checks holds two zero bounds:
+
+```python
+# 7a84250:app/pt_thinker.py:1234-1249, 1267-1277, 1291-1294 (each statement joined onto one line; the file wraps them)
+try:
+    low_perc_diff = (abs(new_low_bound_prices[og_index] - new_low_bound_prices[og_index + 1]) / ((new_low_bound_prices[og_index] + new_low_bound_prices[og_index + 1]) / 2)) * 100
+except:
+    low_perc_diff = 0.0
+...
+if low_perc_diff < 0.25 + gap_modifier or new_low_bound_prices[og_index + 1] > new_low_bound_prices[og_index]:
+    new_price = new_low_bound_prices[og_index + 1] - (new_low_bound_prices[og_index + 1] * 0.0005)
+    del new_low_bound_prices[og_index + 1]
+    new_low_bound_prices.insert(og_index + 1, new_price)
+    continue
+...
+og_index += 1
+gap_modifier += 0.25
+if og_index >= len(new_low_bound_prices) - 1:
+    break
+```
+
+1. `0 / 0` raises `ZeroDivisionError`, and the bare `except` sets the difference to 0.0 (`:1248-1249`).
+2. 0.0 is below the threshold, so the second bound is nudged: `0 - 0 * 0.0005` is 0 (`:1272-1276`).
+3. `continue` (`:1277`) goes back to the top of the loop (`:1225`) without moving `og_index` or `gap_modifier` on (`:1291-1292`), so the next pass sees exactly the same state, for ever. The high list does the same at `:1250-1265` and `:1279-1289`.
+
+Whether the zero pair is checked depends on where it sorts (each case run on a verbatim copy of `:1183-1314` with a pass counter):
+- **Low list** (descending): zero lows sort last, below the `0.01` placeholders, and the high list ends with one placeholder per inactive timeframe. So zero lows hang the pass when there are at least two more of them than inactive timeframes. Two zero lows (1hour and 2hour) hang it at position 5 only when all seven timeframes are active; with 1week inactive the pass ends.
+- **High list** (ascending): zero highs sort first, so two of them hang the pass at position 0 whenever the two largest low bounds are not placeholders, for example two timeframes whose last candle closed at 0 and at least two other active ones.
+
+A single zero bound ends. On positive bounds in the normal float range the pass always ends; the longest found is 587 passes (seven equal bounds). Two bounds at or below zero also never end when their pair is checked; a bound below zero needs a predicted price below zero.
+
+**How a bound becomes zero.** `distance` is 0.5 (`:476`), so a bound is 0 only when the predicted price, `start_price + start_price * diff` (`:949-951`), is 0: the last candle closed at 0, or the mean of weight × move over the matched memories (`:890-894`, `:911-913`) is exactly −100%. With every saved weight at 1.0 (#149), the second needs every matched memory to have seen a next bar whose low (or high) was 0. Neither was shown on real data (INFERRED). Binance candles should not have zero prices, but nothing checks for them (`app/market_data/candles.py`, the pattern trainer's source, checks only timestamps; the runner's candles come from DataProvider, #141). Hand-made or corrupted model files reach it directly.
+
+**What the runner does while stuck** (INFERRED: traced through the code, not run):
+- `step_coin` never returns, so the main loop (`:1522-1525`) stops at this coin: later coins are never processed, the last log line is `Processing <coin>...`, and the gap pass, which has no sleep, keeps one CPU core busy. Nothing after the gap pass runs for this coin (bound files, `runner_ready.json`, `signals_dca_*`, state save: `:1317-1465`), and nothing raises, so the process stays alive. Restarting on the same model and candle hangs again.
+- A hang in either of the first two sweeps comes before the runner reports ready (ready needs one earlier rebuild of the bounds, `:1344-1351`). Start All polls until the runner reports ready, exits, or Stop All is pressed (`7a84250:app/pt_hub.py:5200-5223`), so it never starts the trader, even in the default catalogue engine, which does not need the runner. A hang from the third sweep on leaves the runner "ready" while its files stop updating; today the trader reads none of its signal files (#142).
+
+**Scope.**
+- **Latent on main.** The runner stalls before this code (#141, a static trace). With the mock trainers' files every timeframe is inactive, so every pair is skipped and the pass cannot hang (#143); the FDS-MDL pattern trainer's files can make it hang.
+- **Upstream behaviour:** the same loop is at `b4522b0:pt_thinker.py:911-941`.
+- **STRAT-003** (FDS-MDL Phase 3, on `feat/model-strategy-1`, not yet published) reproduces the rule but counts passes. After 100,000 (`GAP_PASS_LIMIT` in `app/pattern_model.py`) it raises `GapPassStuck`, and the strategy holds with reason `BOUNDS_NOT_CONVERGED`; the Phase 4 backtest will report how often that happens (expected never). A single bound far below its neighbours can take more than 100,000 passes to end (a predicted low of −1e30 among lows near 100: about 129,000), so there STRAT-003 holds where the runner would finish; only hand-made files give such a bound. A fix to the runner should change STRAT-003 the same way, or record the difference.
+
+### What did you expect to happen?
+
+The gap pass always ends, and a bad bound does not freeze the runner. For example:
+- treat a predicted price of 0 or below (or one that is not finite) as an inactive timeframe before the bounds are built, or skip a pair where either bound is 0 or below, as a placeholder pair is skipped;
+- also bound the loop (587 passes is the longest found on positive bounds). If the limit is reached, log the coin, write no new signals for it and go on to the next coin.
+
+### Steps to reproduce
+
+1. Offline, in plain Python, run the gap pass's own statements on one low-list pair at position 0:
+   ```python
+   def gap_pair(b, og_index=0, gap_modifier=0.0, passes=10):
+       for n in range(passes):
+           try:
+               low_perc_diff = (abs(b[og_index] - b[og_index + 1]) / ((b[og_index] + b[og_index + 1]) / 2)) * 100
+           except:
+               low_perc_diff = 0.0
+           if low_perc_diff < 0.25 + gap_modifier or b[og_index + 1] > b[og_index]:
+               b[og_index + 1] = b[og_index + 1] - (b[og_index + 1] * 0.0005)
+               continue  # back to the top; og_index and gap_modifier unchanged
+           return f"ends after {n} nudges: {b}"
+       return f"still looping after {passes} passes: {b}"
+
+   print(gap_pair([99.5, 99.5]))  # ends after 5 nudges
+   print(gap_pair([0.0, 0.0]))    # still looping: [0.0, 0.0] never changes
+   ```
+2. On `feat/model-strategy-1` (not yet on main): `python -m pytest app/tests/test_model_strategy.py -p no:cacheprovider -k gap_pass`. `test_a_gap_pass_that_never_ends_holds` writes model files in which every timeframe is active and 1hour and 2hour predict a −100% low; the rule raises `GapPassStuck`, and the strategy holds with `BOUNDS_NOT_CONVERGED`.
+3. The real runner: not run (blocked by #141). Once it can run, on 7a84250, model files in the coin's folder whose 1hour and 2hour memories all record a low move of `-100.0`, with every other timeframe matching and a fresh `trainer_last_training_time.txt` (on `feat/model-strategy-1`, published instead), should stop the log at `Processing <coin>...` at the end of the first sweep (INFERRED).
+
+### Trading mode
+Paper (mode-independent)
+
+### Exchange
+Not applicable
+
+### Area
+Trainer/thinker
+
+### PowerTraderAI version or commit
+7a84250 (runner; the same loop is in upstream b4522b0); STRAT-003 on feat/model-strategy-1 (FDS-MDL Phase 3, not yet published)
+
+### Operating system
+Windows (not OS-specific)
+
+### Python version
+3.13 (the offline runs and the tests)
+
+### Logs
+```shell
+# output of step 1; the runner itself was not run
+ends after 5 nudges: [99.5, 99.2514986256561]
+still looping after 10 passes: [0.0, 0.0]
+```
+
+### Before you submit
+- [x] I have removed any API keys, secrets and personal account details.
 
 ---
 

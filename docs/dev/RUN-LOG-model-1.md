@@ -120,6 +120,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 4 Test A, after the home copy, the note and the drafts, before the results commit, 2026-10-08 01:24 | absent | absent | 0 |
 | Phase 4 Test A, before the note's formatting fix commit, 2026-10-08 01:29 | absent | absent | 0 |
 | Before the F3 and run-log-fix commit (before any push), 2026-10-08 02:17 | absent | absent | 0 |
+| After the push and `gh pr create` (#154), before the call-log commit, 2026-10-08 08:46 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -1245,4 +1246,23 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
     commit.
 - **Real-folder check:** see the table (02:17 row).
 - **Commit** (explicit paths: `docs/dev/ISSUE-DRAFTS-model-1.md`, `docs/dev/RUN-LOG-model-1.md`): `FDS-MDL: draft F3
-  (find_published link gap); fix run-log nits`.
+  (find_published link gap); fix run-log nits` (`6ecb093`).
+- **The owner's direct confirmation** (2026-10-08, in answer to a question, not pasted text):
+  - "Yes, run both" (the push and the one `gh pr create`, no merge).
+  - For this log: "Commit locally, don't push".
+- **Authenticated call 1 of 2:** `git push origin feat/model-strategy-1` (with `GIT_TERMINAL_PROMPT=0`), 2026-10-08
+  08:46:27-08:46:31 +01:00 (07:46:27-07:46:31 UTC). Exit 0.
+  - Output: `* [new branch] feat/model-strategy-1 -> feat/model-strategy-1` to `https://github.com/sjackson0109/PowerTraderAI.git`.
+  - It pushed 17 commits; the branch head on origin is `6ecb093`.
+- **Authenticated call 2 of 2:** `gh pr create --repo sjackson0109/PowerTraderAI --base main --head
+  feat/model-strategy-1 --title "<the description's first heading>" --body-file docs/dev/PR-model-strategy-1.md`
+  (with `GH_PROMPT_DISABLED=1`), 08:46:38-08:46:41 +01:00 (07:46:38-07:46:41 UTC). Exit 0.
+  - Title: "FDS-MDL: replace the stub trainer, add model provenance and STRAT-003, and evaluate it (verdict: no
+    evidence of an edge)".
+  - The body file's SHA-256 at the call: `4de49a875bcb1f6c95f477a14c09f219c9487e5b90ac46d697d6f55baf38251f`.
+  - Output: `https://github.com/sjackson0109/PowerTraderAI/pull/154`, so the PR is **#154**.
+- **No other authenticated call:** the PR was not viewed back, nothing was merged, and no labels or reviewers were
+  set.
+- **Real-folder check:** see the table (the after-push row).
+- **This log entry** is committed locally by explicit path and **not pushed** (owner decision). It reaches origin with
+  the next authorised push. PR #154's head stays at `6ecb093`.

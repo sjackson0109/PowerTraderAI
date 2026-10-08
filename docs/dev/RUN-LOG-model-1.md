@@ -119,6 +119,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 4 Test A, after `fetch`, `train`, `run` and `report`, during the read-only audit, 2026-10-07 18:27 | absent | absent | 0 |
 | Phase 4 Test A, after the home copy, the note and the drafts, before the results commit, 2026-10-08 01:24 | absent | absent | 0 |
 | Phase 4 Test A, before the note's formatting fix commit, 2026-10-08 01:29 | absent | absent | 0 |
+| Before the F3 and run-log-fix commit (before any push), 2026-10-08 02:17 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -315,7 +316,8 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   output, and checks plain floats and a byte-stable threshold.
 - **Equivalence with upstream (evidence for "faithful"):** `test_the_port_writes_the_same_model_files_as_upstream` runs
   the vendored `ba62130` trainer in a child process (fake `kucoin.client.Market` serving the same bars plus one forming
-  bar, frozen clock, network blocked) and the port in `--upstream-flush-only` mode on four data sets (10 and 20 weeks of a
+  bar, frozen clock, network blocked) and the port in `--upstream-flush-only` mode on five data sets (corrected
+  2026-10-08 from "four"; 10 and 20 weeks of a
   random walk; coarse ticks, where the threshold falls to its floor; near-identical bodies, where it settles below 0.1;
   zero closes, where upstream skips learning on a step).
   All 35 files are byte-identical in every case. One more test shows the only remaining difference, upstream's
@@ -329,7 +331,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   | Threshold step −0.01 → −0.02 | upstream equivalence (coarse ticks, near-identical bodies) |
   | Fine step −0.001 → −0.002 | upstream equivalence (near-identical bodies) |
   | Threshold clamp at 0 removed | upstream equivalence (coarse ticks) |
-  | Weight updates saved (fixing D1) | upstream equivalence (all four) |
+  | Weight updates saved (fixing D1) | upstream equivalence (all five; corrected 2026-10-08 from "all four") |
   | Older-half count off by one | upstream equivalence; the summary test |
   | Status `FINISHED` written after the stamp | the stamp-last test |
   | No final flush | the default-mode test |
@@ -740,7 +742,8 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   6. The decision's bars and sides are exposed as indicators (`bar_<tf>`, `side_<tf>`, `longs`, `shorts`, the primary
      timeframe's bounds), so every decision can be checked against the runner.
 - **What the reproduction shows about the legacy runner** (reproduced on purpose; not in the issue drafts, and no issue
-  can be filed under the no-authenticated-calls rule):
+  can be filed under the no-authenticated-calls rule) (**superseded:** drafted as E1 and E2 and filed as #152 and #153
+  on 2026-10-07 under an owner-approved exception; see "Phase 3 follow-up" below):
   - With two or more inactive timeframes, the remap drops the repeated placeholders, so later timeframes are compared
     with the next timeframe's bounds and 1week with a padded placeholder: in the recorded fixture with two inactive
     timeframes, 1week never signals.
@@ -801,7 +804,8 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 - **Real-folder and credential checks:** see the table above (Phase 3 rows).
 - **Commit** (explicit paths; not pushed, no PR): `FDS-MDL Phase 3: STRAT-003, the trained model as a strategy`.
 - **Owner actions:**
-  1. Consider filing the two legacy-runner findings above as issues (not filed: no authenticated calls).
+  1. Consider filing the two legacy-runner findings above as issues (not filed: no authenticated calls). **Superseded:**
+     filed as #152 and #153 on 2026-10-07.
   2. STRAT-003 stays inactive (`strategy.active_id` is STRAT-001) and, with no default `model_id`, shows as a settings
      problem in the hub strip if selected; a live default would need a published model id.
 
@@ -1203,9 +1207,42 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
     interpreters' paths.
   - This breaks addendum section 10 as written (no reading in the real `%LOCALAPPDATA%`), as the Phase 0 grep did.
   - The Store-installed Python 3.12 under `%LOCALAPPDATA%` was not run, because it could write there. The 3.11
-    grammar check was done with 3.13 instead: all 51 changed Python files parse under `feature_version=(3, 11)`, with
-    no 3.12-only f-string or library use found.
+    grammar check was done with 3.13 instead: all 52 added or changed Python files parse under `feature_version=(3,
+    11)`, with no 3.12-only f-string or library use found. (Corrected 2026-10-08 from "51": the first check covered the
+    51 under `app/` and `docs/dev/`; `.github/scripts/create_desktop_installer.py`, checked afterwards, also parses.)
   - The Black check for the PR (26.5.1: `app/` unchanged on main, 178 files, and on this branch, 197 files) used
     `BLACK_CACHE_DIR` in scratch.
   - Nothing records that earlier Black runs in this work set it. Black's default cache is under
     `%LOCALAPPDATA%\black`, so those runs may have written there. This was not checked.
+
+## The PR — owner decisions, draft F3, run-log fixes
+
+- **Owner (2026-10-08), on the PR description:**
+  - "Keep 9ddc066."
+  - The AppData deviation is accepted as recorded, with no action on Black's cache.
+  - Local paths are accepted: "Do not rewrite any output."
+  - The `find_published` link gap: no code change on this branch; draft F3, low severity, fixed in a follow-up PR; one
+    line in the PR description.
+  - Fix the run-log nits in the same commit.
+  - Add to the PR description's follow-ups: "CI runs none of app/tests; a follow-up PR adds them to ci-cd.yml."
+  - Then, as a one-time exception with each call logged and no others: `git push` the branch to origin, and one
+    `gh pr create --repo sjackson0109/PowerTraderAI --base main --head feat/model-strategy-1 --body-file
+    docs/dev/PR-model-strategy-1.md`, with the title from the description's first heading. "Do not merge."
+  - The request arrived as pasted text, so the push and the PR wait for the owner's direct confirmation.
+- **Draft F3** in `docs/dev/ISSUE-DRAFTS-model-1.md`, with a table row and owner note 12. Not filed.
+  - `find_published` and `_matching` (`app/model_store.py:347-410`) never resolve a real path. `verify_folder`
+    compares the manifest's `model_id` with the folder's own name (`basename`).
+  - So the legacy runner's gate would accept a model folder linked in from outside the store, where `load()` refuses
+    it (`model_dir`, `:100-108`; tested at `app/tests/test_model_provenance.py:739-760`).
+  - It was traced through the code, not run. Test A is unaffected: the backtest loads models with `load`.
+- **Run-log fixes, each marked in place:**
+  - Phase 1's upstream-equivalence test: "four data sets" corrected to five, and "all four" to all five.
+  - Phase 3's two "not filed" lines are marked as superseded by #152 and #153.
+  - The 2026-10-08 grammar-check line: 51 corrected to 52 files, with the reason.
+- **PR description** (`docs/dev/PR-model-strategy-1.md`): the F3 line and the CI follow-up line added, the local-paths
+  item marked as accepted, and the fixed run-log nits removed.
+  - It is not committed. It is the PR's body, and it names the head commit, which it cannot do from inside that
+    commit.
+- **Real-folder check:** see the table (02:17 row).
+- **Commit** (explicit paths: `docs/dev/ISSUE-DRAFTS-model-1.md`, `docs/dev/RUN-LOG-model-1.md`): `FDS-MDL: draft F3
+  (find_published link gap); fix run-log nits`.

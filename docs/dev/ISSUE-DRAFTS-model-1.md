@@ -6,6 +6,8 @@ E1 and E2 were added on 2026-10-07: two behaviours of the legacy neural runner f
 
 F1 and F2 were added on 2026-10-08. They are two presentation defects in the FDS-MDL Phase 4 run script, found by the read-only audit of the Test A results. They are drafts only, **not filed** (owner decision, 2026-10-08). Their base is `feat/model-strategy-1` at the freeze commit `68d4ed7`, not `main`: the script exists only on that branch.
 
+F3 was added on 2026-10-08. It is a low-severity gap in the FDS-MDL Phase 2 model store, found by the fact-check of the PR description. It is a draft only, **not filed**, and is to be fixed in a follow-up PR, with no code change on `feat/model-strategy-1` (owner decision, 2026-10-08). It has the same base as F1 and F2.
+
 - **Base:** `main` at `7a84250`. Line numbers are at that commit unless a draft says otherwise. Files added by FDS-MDL Phase 1 (`app/pt_pattern_trainer.py`, `app/trainer_guard.py`) are cited by symbol.
 - **Evidence:** every claim was checked against the code with `git show 7a84250:<path>`, `git grep` and `git log -S`. Anything traced through the code but not run is marked INFERRED. The Phase 0 evidence is `docs/dev/TRAINER-AUDIT.md` and `docs/dev/trainer-audit-evidence.json`.
 - **Labels:** existing labels only (checked with `gh label list` before filing): `bug` or `documentation`, `needs-triage`, and `component-trading` where the draft suggested it. Priority and phase labels are left to triage.
@@ -27,6 +29,7 @@ F1 and F2 were added on 2026-10-08. They are two presentation defects in the FDS
 | [E2](#e2) | #153 | Runner's gap pass loops for ever on two zero bounds | No (STRAT-003 holds `BOUNDS_NOT_CONVERGED` instead; the Phase 4 backtest counts these) |
 | [F1](#f1) | not filed | Model-1 report's Test B "Missing bars" column adds two hold classes together | No (owner decision: left as is, no superseded re-run) |
 | [F2](#f2) | not filed | Model-1 backtest's manifest copies are not byte-identical to the store's `manifest.json` | No (same) |
+| [F3](#f3) | not filed | Model store: the runner's gate (`find_published`) accepts a model folder linked in from outside the store | No (owner decision: low severity, fixed in a follow-up PR) |
 
 Section [C](#c-release-notes) is the release-notes paragraph.
 
@@ -46,6 +49,7 @@ Section [C](#c-release-notes) is the release-notes paragraph.
 9. **The desktop installer script is stale.** `.github/scripts/create_desktop_installer.py` lists a handful of modules and misses `pt_paths`, `market_data/` and most of `app/`. Phase 1 only added the new trainer files and changed its default trainer name. Not drafted; worth a task if the installer is still used.
 10. **E1 and E2 come from reproducing the legacy runner** for STRAT-003 (FDS-MDL Phase 3). Both are latent on main (#141, #143). STRAT-003 keeps E1 on purpose and stops E2 after 100,000 steps; the Phase 4 backtest header counts both per symbol and timeframe (owner decision, 2026-10-07). Both drafts cite `feat/model-strategy-1`, which is not yet published, for STRAT-003's tests and the recorded fixture.
 11. **F1 and F2 are presentation defects only.** Neither changes a number in the Test A results or the verdict, and both are also listed in the report's "Known presentation defects" note. Fixing either means changing frozen code, and `report` refuses frozen code that differs from the results' commit, so a fix would need a superseded re-run of Test A. The owner chose to leave both (2026-10-08). They are drafted so that a later spec's run script can fix them.
+12. **F3 is a code gap, not a presentation defect.** It changes no number in the Test A results: the backtest and STRAT-003 load models through `model_store.load`, which refuses linked folders. Only the legacy runner's gate is affected. The owner chose a follow-up PR over a change on this branch (2026-10-08).
 
 ---
 
@@ -1287,6 +1291,79 @@ Windows (the CRLF part is Windows-specific; the trailing newline is not)
 False
 True
 True
+```
+
+### Before you submit
+- [x] I have removed any API keys, secrets and personal account details.
+
+---
+
+## F3
+
+**Not filed** (owner decision, 2026-10-08: low severity, fix in a follow-up PR).
+
+**Title:** `[Bug]: Model store: the neural runner's gate (find_published) accepts a model folder linked in from outside the store`
+
+**Suggested labels:** `bug`, `needs-triage`
+
+### What happened?
+
+`model_store.load(model_id)` refuses a model folder that resolves outside the store. `model_dir` compares real paths and refuses anything that resolves outside (`68d4ed7:app/model_store.py:100-108`), and `test_a_model_folder_linked_from_outside_the_store_is_refused` checks this with a directory junction on Windows, or a symlink elsewhere (`app/tests/test_model_provenance.py:739-760`). STRAT-003 and the backtester load models this way.
+
+The legacy neural runner does not use `load`. Its gate, `pt_thinker._model_verified`, calls `model_store.find_published(coin_folder, ...)` (`app/pt_thinker.py:468-499`), which resolves no real path:
+
+```python
+# 68d4ed7:app/model_store.py:363-364, 392-395 (find_published, then _matching)
+store = pt_paths.strategy_models_dir(create=False)
+names = os.listdir(store) if os.path.isdir(store) else []
+...
+candidate = os.path.join(store, name)
+if not os.path.isdir(candidate):  # follows a junction or symlink
+    return None
+manifest = _peek_manifest(candidate)
+```
+
+`_matching` then calls `verify_folder(candidate)` (`:408`). That checks the manifest's `model_id` against the folder's own name (the link's name) and the 35 files against the manifest's hashes, but not where the folder really is. So suppose a valid model folder kept elsewhere is linked into the store under its own id. `load` refuses it, but the runner's gate accepts it, provided the manifest is for that coin and its 35 files match the coin folder's byte for byte.
+
+**Severity: low.**
+- Every other check still applies: the manifest must be valid and for this coin, and its file hashes must equal both the linked folder's files and the coin folder's.
+- Making such a link needs write access to the user's own data folder, which already allows publishing a model into the store directly.
+- What is lost is the guarantee that a model the runner uses lives inside the store, the property `load` enforces.
+
+This was traced through the code, not run (INFERRED). No test covers `find_published` with a linked folder.
+
+**Scope.** On `feat/model-strategy-1` only (`app/model_store.py` arrived in FDS-MDL Phase 2, `099213a`); `main` has no model store. Owner decision (2026-10-08): no code change on that branch; fix in a follow-up PR. It changes no number in the Test A results, because the backtest loads models with `load`.
+
+### What did you expect to happen?
+
+`find_published` applies the same containment check as `load`. It should skip, and log, a candidate whose real path is not directly inside the store's real path, for example by resolving each name with `model_dir(name)`. A test should mirror `test_a_model_folder_linked_from_outside_the_store_is_refused` for `find_published`, and so for the runner's gate.
+
+### Steps to reproduce
+
+1. On `feat/model-strategy-1`, read `app/model_store.py:347-410` (`find_published`, `_matching`) beside `:100-108` (`model_dir`). Only `model_dir` resolves real paths.
+2. Not run: a test like `test_a_model_folder_linked_from_outside_the_store_is_refused`, but calling `model_store.find_published(coin_folder, coin=...)` on a coin folder that holds the linked model's 35 files. Expected today: it returns the linked model's manifest. After a fix: it returns None and logs an ERROR.
+
+### Trading mode
+Paper (mode-independent)
+
+### Exchange
+Not applicable
+
+### Area
+Trainer/thinker
+
+### PowerTraderAI version or commit
+feat/model-strategy-1 at 68d4ed7 (`app/model_store.py` unchanged there since ec29a91); not on main
+
+### Operating system
+Windows (directory junctions); symlinks elsewhere
+
+### Python version
+3.13
+
+### Logs
+```shell
+# none: traced through the code, not run
 ```
 
 ### Before you submit

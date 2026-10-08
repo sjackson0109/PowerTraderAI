@@ -1,0 +1,47 @@
+{
+  "verdict": "no evidence of an edge",
+  "criteria": [
+    false,
+    true,
+    false
+  ],
+  "criterion_1_combinations": [
+    "BTCUSDT 1h"
+  ],
+  "criterion_2_failing": [],
+  "pooled_median": -11.936558523914604,
+  "pooled_worst": -67.69807712713073,
+  "combination_medians": {
+    "BTCUSDT 1h": -11.66693991801656,
+    "BTCUSDT 4h": -12.1999924657054,
+    "ETHUSDT 1h": -11.673124582123808,
+    "ETHUSDT 4h": -16.951972881938595
+  },
+  "test_a": {
+    "BTCUSDT 1h": {
+      "vs_bh": 13.946792999958536,
+      "rank": 95.0
+    },
+    "BTCUSDT 4h": {
+      "vs_bh": -5.9043496943882126,
+      "rank": 26.0
+    },
+    "ETHUSDT 1h": {
+      "vs_bh": -20.338743837481566,
+      "rank": 24.0
+    },
+    "ETHUSDT 4h": {
+      "vs_bh": -19.263627701997294,
+      "rank": 10.0
+    }
+  },
+  "not_assessable": [],
+  "gap": [],
+  "reported_at_commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+  "code": {
+    "commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+    "frozen_files_changed": [],
+    "python": "3.13.15 (tags/v3.13.15:4061bc4, Aug  5 2026, 13:05:39) [MSC v.1944 64 bit (AMD64)]",
+    "powertrader_home": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home"
+  }
+}

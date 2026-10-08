@@ -80,6 +80,13 @@ def read_strategy_settings(settings: Any = None) -> StrategySettings:
         entry = CATALOGUE.get(active_id) if isinstance(active_id, str) else None
         if entry is None or entry["class_type"] != "main":
             problems.append(f"unknown strategy.active_id {active_id!r}")
+        elif entry["family"] == "model" and not entry["default_params"].get("model_id"):
+            # the engine runs strategies with their default parameters, which name no
+            # model here: it could never trade (FDS-MDL Phase 3)
+            problems.append(
+                f"strategy.active_id {active_id!r} needs a trained model, and the "
+                "signal engine runs it with its default parameters, which name none"
+            )
 
     raw_symbols = lookup_setting(src, "strategy.symbols", list(DEFAULT_SYMBOLS))
     if (

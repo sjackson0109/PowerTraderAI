@@ -1,0 +1,83 @@
+{
+  "pair": "BTCUSDT",
+  "timeframe": "4h",
+  "overlays": "none",
+  "model_id": "BTC-20250816T0400Z-5d85edd38e43",
+  "code": {
+    "commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+    "frozen_files_changed": [],
+    "python": "3.13.15 (tags/v3.13.15:4061bc4, Aug  5 2026, 13:05:39) [MSC v.1944 64 bit (AMD64)]",
+    "powertrader_home": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home"
+  },
+  "in_sample": {
+    "window": [
+      0,
+      5749
+    ],
+    "from": "2023-01-01T00:00:00+00:00",
+    "to": "2025-08-16T00:00:00+00:00",
+    "bars": 5749,
+    "refused": "LOOKAHEAD_MODEL: model BTC-20250816T0400Z-5d85edd38e43 was trained on bars up to 2025-08-16 04:00:00+00:00, after the first scored bar (2023-01-01 00:00:00+00:00); score only bars that open at or after the end of the model's training window",
+    "buy_and_hold": {
+      "total_return_pct": 607.770400928198,
+      "cagr_pct": 110.85126079939963,
+      "max_drawdown_pct": -30.641267733064147,
+      "sharpe": 1.8242225441853028,
+      "sortino": 2.682402714863934,
+      "trade_count": 1,
+      "win_rate_pct": 100.0,
+      "avg_trade_pct": 607.770400928198,
+      "exposure_pct": 100.0,
+      "fees_paid": 80.8478879808006,
+      "vs_buy_hold_pct": null
+    }
+  },
+  "out_of_sample": {
+    "window": [
+      5749,
+      8214
+    ],
+    "from": "2025-08-16T04:00:00+00:00",
+    "to": "2026-09-30T20:00:00+00:00",
+    "bars": 2465,
+    "strategy": {
+      "total_return_pct": -34.90606613125262,
+      "cagr_pct": -31.730169921501616,
+      "max_drawdown_pct": -39.751236966337565,
+      "sharpe": -1.4169008005986,
+      "sortino": -1.8639711521700397,
+      "trade_count": 77,
+      "win_rate_pct": 55.84415584415584,
+      "avg_trade_pct": -0.5034244772845534,
+      "exposure_pct": 30.831643002028397,
+      "fees_paid": 1260.3148231372052,
+      "vs_buy_hold_pct": -5.9043496943882126
+    },
+    "buy_and_hold": {
+      "total_return_pct": -29.00171643686441,
+      "cagr_pct": -26.251634668807966,
+      "max_drawdown_pct": -53.44740218167796,
+      "sharpe": -0.5271693847706201,
+      "sortino": -0.7347931574265764,
+      "trade_count": 1,
+      "win_rate_pct": 0.0,
+      "avg_trade_pct": -29.001716436864406,
+      "exposure_pct": 100.0,
+      "fees_paid": 17.106935291605165,
+      "vs_buy_hold_pct": null
+    },
+    "holds": {
+      "BARS_MISSING": 0,
+      "TIMEFRAME_UNKNOWN": 0,
+      "BOUNDS_NOT_CONVERGED": 0,
+      "by_reason": {}
+    },
+    "quirks": {
+      "decisions": 2464,
+      "e1": 3,
+      "e1_share": 0.0012175324675324675,
+      "e2": 0
+    }
+  },
+  "baseline": "baselines/test-a_BTCUSDT_4h_none.json"
+}

@@ -10,6 +10,8 @@ Fail closed:
 
 * unknown ``strategy.engine`` / ``strategy.active_id`` / bad settings  -> ``block_reason``
   is set and ``decide`` returns None (the trader then places no orders);
+* a strategy whose model cannot be used (STRAT-003 without a published model whose
+  manifest matches it) -> the same, with an ERROR logged;
 * last closed bar older than 2x the timeframe -> ``HOLD`` with reason
   ``STALE_CANDLES`` (and a WARNING);
 * no candles at all -> ``HOLD`` with reason ``CANDLES_UNAVAILABLE``.
@@ -30,6 +32,7 @@ import pandas as pd
 from market_data.candles import BinanceKlines, CandleDataError, get_candles
 from market_data.timeframes import timeframe_seconds
 from pt_logging import get_logger
+from model_store import ModelStoreError
 from strategies.base import Action
 from strategies.factory import build_runner
 from strategies.runner import Decision, PositionState, StrategyRunner
@@ -76,6 +79,8 @@ class SignalEngine:
         self._clock = clock
         self._runner: Optional[StrategyRunner] = None
         self._runner_signature: Optional[tuple] = None
+        # why the configured strategy could not be built (cleared when settings change)
+        self._build_error: Optional[Tuple[tuple, str]] = None
         self._positions: Dict[str, PositionState] = {}
         # per pair: (expected last-closed open_time, candles) and fetch bookkeeping
         self._candles: Dict[str, Tuple[pd.Timestamp, pd.DataFrame]] = {}
@@ -96,12 +101,35 @@ class SignalEngine:
 
     def block_reason(self) -> Optional[str]:
         """Why orders must not be placed, or None. (Legacy engine: never blocked here.)"""
-        return self.settings.problem
+        s = self.settings
+        if s.problem:
+            return s.problem
+        if self._build_error is not None and self._build_error[0] == s.signature:
+            return self._build_error[1]
+        return None
 
-    def _runner_for(self, s: StrategySettings) -> StrategyRunner:
+    def _runner_for(self, s: StrategySettings) -> Optional[StrategyRunner]:
+        """The runner for settings ``s``, or None when the strategy's model cannot be
+        used (no published model whose manifest matches it): no signals, the reason
+        logged as an ERROR (every few minutes) and returned by ``block_reason``. Other
+        build errors (bad parameters) propagate as before."""
         if self._runner is None or self._runner_signature != s.signature:
-            self._runner = build_runner(s.active_id, {}, list(s.overlays))
-            self._runner.set_timeframe(timeframe_seconds(s.timeframe))
+            if self._build_error is not None and self._build_error[0] == s.signature:
+                self._warn_once(
+                    f"build:{s.signature}", f"No signals: {self._build_error[1]}", True
+                )
+                return None
+            try:
+                runner = build_runner(s.active_id, {}, list(s.overlays))
+                runner.set_timeframe(timeframe_seconds(s.timeframe))
+            except ModelStoreError as exc:
+                self._runner, self._runner_signature = None, None
+                reason = f"{s.active_id} cannot be used: {exc}"
+                self._build_error = (s.signature, reason)
+                self._warn_once(f"build:{s.signature}", f"No signals: {reason}", True)
+                return None
+            self._build_error = None
+            self._runner = runner
             self._runner.import_state(self._restored_overlays)
             self._runner_signature = s.signature
             self._candles.clear()
@@ -127,7 +155,11 @@ class SignalEngine:
             runner = self._runner_for(s)
             candles = self._candles.get(pair_for(base), (None, pd.DataFrame()))[1]
             when = bar_time if bar_time is not None else pd.Timestamp.now(tz="UTC")
-            pos = runner.open_position(base, entry_price, when, candles)
+            if runner is None:
+                # no strategy to manage it (decide() returns None): keep the record only
+                pos = PositionState(base, float(entry_price), when, float(entry_price))
+            else:
+                pos = runner.open_position(base, entry_price, when, candles)
             self._positions[base] = pos
             self._persist()
         return pos
@@ -234,6 +266,8 @@ class SignalEngine:
             return None
 
         runner = self._runner_for(s)
+        if runner is None:
+            return None  # cannot be built: no signals (ERROR logged in _runner_for)
         now = pd.Timestamp(self._clock(), unit="s", tz="UTC")
         tf_s = timeframe_seconds(s.timeframe)
         step = pd.Timedelta(seconds=tf_s)

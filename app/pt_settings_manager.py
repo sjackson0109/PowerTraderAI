@@ -54,7 +54,10 @@ DEFAULT_SETTINGS = {
     "hub_data_dir": "",  # blank: pt_paths.hub_dir()
     "script_neural_runner2": "pt_thinker.py",
     "script_trader": "pt_trader.py",
-    "script_neural_trainer": "pt_trainer.py",
+    # The real pattern trainer (FDS-MDL). The old pt_trainer.py is a mock; the hub
+    # refuses to launch a mock unless "allow_mock_trainer" is true (trainer_guard).
+    "script_neural_trainer": "pt_pattern_trainer.py",
+    "allow_mock_trainer": False,
     "auto_start_scripts": False,
     "api_server_enabled": False,
     "api_server_port": 8080,

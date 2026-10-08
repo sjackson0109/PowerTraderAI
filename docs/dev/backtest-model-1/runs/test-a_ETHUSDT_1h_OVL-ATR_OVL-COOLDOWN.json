@@ -1,0 +1,83 @@
+{
+  "pair": "ETHUSDT",
+  "timeframe": "1h",
+  "overlays": "OVL-ATR+OVL-COOLDOWN",
+  "model_id": "ETH-20250816T0400Z-6ce59ce7a360",
+  "code": {
+    "commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+    "frozen_files_changed": [],
+    "python": "3.13.15 (tags/v3.13.15:4061bc4, Aug  5 2026, 13:05:39) [MSC v.1944 64 bit (AMD64)]",
+    "powertrader_home": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home"
+  },
+  "in_sample": {
+    "window": [
+      0,
+      22998
+    ],
+    "from": "2023-01-01T00:00:00+00:00",
+    "to": "2025-08-16T06:00:00+00:00",
+    "bars": 22998,
+    "refused": "LOOKAHEAD_MODEL: model ETH-20250816T0400Z-6ce59ce7a360 was trained on bars up to 2025-08-16 04:00:00+00:00, after the first scored bar (2023-01-01 00:00:00+00:00); score only bars that open at or after the end of the model's training window",
+    "buy_and_hold": {
+      "total_return_pct": 268.34691940565665,
+      "cagr_pct": 64.37530097600512,
+      "max_drawdown_pct": -65.2821619611125,
+      "sharpe": 1.118575833018062,
+      "sortino": 1.5680452887338852,
+      "trade_count": 1,
+      "win_rate_pct": 100.0,
+      "avg_trade_pct": 268.34691940565665,
+      "exposure_pct": 100.0,
+      "fees_paid": 46.87156350406974,
+      "vs_buy_hold_pct": null
+    }
+  },
+  "out_of_sample": {
+    "window": [
+      22998,
+      32855
+    ],
+    "from": "2025-08-16T07:00:00+00:00",
+    "to": "2026-09-30T23:00:00+00:00",
+    "bars": 9857,
+    "strategy": {
+      "total_return_pct": -59.321661082462306,
+      "cagr_pct": -55.0634248203162,
+      "max_drawdown_pct": -64.22734938265981,
+      "sharpe": -2.8010873625560255,
+      "sortino": -3.6255696498632273,
+      "trade_count": 168,
+      "win_rate_pct": 44.04761904761905,
+      "avg_trade_pct": -0.5119071164293536,
+      "exposure_pct": 19.63071928578675,
+      "fees_paid": 2015.8998687029036,
+      "vs_buy_hold_pct": -19.92081306666055
+    },
+    "buy_and_hold": {
+      "total_return_pct": -39.400848015801756,
+      "cagr_pct": -35.94636945087905,
+      "max_drawdown_pct": -69.14772036474164,
+      "sharpe": -0.4362998505376159,
+      "sortino": -0.6163807579895767,
+      "trade_count": 1,
+      "win_rate_pct": 0.0,
+      "avg_trade_pct": -39.400848015801756,
+      "exposure_pct": 100.0,
+      "fees_paid": 16.065981179599426,
+      "vs_buy_hold_pct": null
+    },
+    "holds": {
+      "BARS_MISSING": 0,
+      "TIMEFRAME_UNKNOWN": 0,
+      "BOUNDS_NOT_CONVERGED": 0,
+      "by_reason": {}
+    },
+    "quirks": {
+      "decisions": 9856,
+      "e1": 28,
+      "e1_share": 0.002840909090909091,
+      "e2": 0
+    }
+  },
+  "baseline": "baselines/test-a_ETHUSDT_1h_OVL-ATR_OVL-COOLDOWN.json"
+}

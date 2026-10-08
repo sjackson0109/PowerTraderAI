@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import tempfile
 from typing import Dict, Optional
 
@@ -56,6 +57,7 @@ MIGRATION_REPORT_FILE = "migration-report.md"
 # Directory under data_dir() shared by the hub, trainer, thinker and trader.
 HUB_DIR_NAME = "hub_data"
 MODELS_DIR_NAME = "models"
+STRATEGY_MODELS_DIR_NAME = "strategy_models"
 
 _POSIX = os.name == "posix"
 _DIR_MODE = 0o700
@@ -198,24 +200,36 @@ def hub_dir(create: bool = True) -> str:
 
 
 def models_dir(create: bool = True) -> str:
-    """``<data>/hub_data/models``; one ``<model_id>/`` folder per model."""
+    """``<data>/hub_data/models``: the default trainer working root (``neural_dir``).
+    BTC trains in it directly and other coins in ``<root>/<SYMBOL>``; the hub deletes
+    the model files there before each training run. Not a store for model artifacts."""
     path = os.path.join(hub_dir(create), MODELS_DIR_NAME)
     return make_private_dir(path) if create else path
 
 
+def strategy_models_dir(create: bool = True) -> str:
+    """``<data>/hub_data/strategy_models``: published model artifacts, one
+    ``<model_id>/`` folder per model with its ``manifest.json`` (FDS-MDL; see
+    model_store). A sibling of ``models_dir()``, never inside a trainer working folder;
+    created only when a model is first published."""
+    path = os.path.join(hub_dir(create), STRATEGY_MODELS_DIR_NAME)
+    return make_private_dir(path) if create else path
+
+
 def user_dir_setting(
-    configured: Optional[str], default: str, what: str = "folder"
+    configured: Optional[str], default: str, what: str = "folder", create: bool = True
 ) -> str:
     """Resolve a folder the user may override in settings (``hub_data_dir``,
     ``main_neural_dir``). Blank -> ``default``. A relative value is resolved
     against ``data_dir()``. A value inside the read-only program/install folder
-    is refused (a warning is logged) and ``default`` is used."""
+    is refused (a warning is logged) and ``default`` is used. With ``create=False``
+    nothing is created."""
     value = str(configured or "").strip()
     if not value:
         return default
     path = os.path.expanduser(value)
     if not os.path.isabs(path):
-        path = os.path.join(data_dir(), path)
+        path = os.path.join(data_dir(create), path)
     path = os.path.abspath(path)
     if is_inside_program_dir(path):
         import logging
@@ -235,6 +249,13 @@ def neural_dir(configured: Optional[str] = None) -> str:
     directly, other coins use ``<root>/<SYMBOL>``. Default ``models_dir()``."""
     return make_private_dir(
         user_dir_setting(configured, models_dir(), "main_neural_dir")
+    )
+
+
+def trainer_root(configured: Optional[str] = None) -> str:
+    """Where ``neural_dir(configured)`` points, without creating anything."""
+    return user_dir_setting(
+        configured, models_dir(create=False), "main_neural_dir", create=False
     )
 
 
@@ -362,6 +383,20 @@ def is_inside_program_dir(path: str) -> bool:
     if home and _contains(os.path.normcase(home), target):
         return False
     return _contains(os.path.normcase(install_dir()), target)
+
+
+def paths_overlap(a: str, b: str) -> bool:
+    """True when ``a`` and ``b`` are the same folder or one contains the other. Letter
+    case is ignored on Windows and macOS, whose volumes are usually case-insensitive
+    (a false overlap only refuses; a missed one could put models in a trainer folder).
+    """
+    a, b = _comparable(a), _comparable(b)
+    return _contains(a, b) or _contains(b, a)
+
+
+def _comparable(path: str) -> str:
+    path = os.path.normcase(os.path.realpath(os.path.abspath(path)))
+    return path.casefold() if sys.platform == "darwin" else path
 
 
 def _contains(folder: str, path: str) -> bool:

@@ -496,6 +496,20 @@ class TraderIntegrationTests(PaperTraderCase):
         self.assertIsNone(signals["blocked"])
         self.assertIn("BTC", signals["last_decisions"])
 
+    def test_status_shows_a_strategy_that_cannot_trade(self):
+        """STRAT-003 with no model (FDS-MDL Phase 3): no orders, and the status says
+        why instead of showing the signals as active."""
+        settings = copy.deepcopy(PAPER)
+        settings["strategy"]["active_id"] = "STRAT-003"
+        trader = self.catalogue_trader(settings)
+        self.feed.set_after_bar(200)
+        trader.manage_trades()
+        with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
+            signals = json.load(f)["signals"]
+        self.assertIn("needs a trained model", signals["blocked"])
+        self.assertEqual(signals["note"], "SIGNALS: BLOCKED")
+        self.assertEqual(self.orders(), [])
+
     def test_the_strategy_config_is_rechecked_on_every_order(self):
         settings = copy.deepcopy(PAPER)
         trader = self.catalogue_trader(settings)

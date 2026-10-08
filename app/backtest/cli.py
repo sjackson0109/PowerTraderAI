@@ -31,6 +31,7 @@ from market_data.candles import (
     get_candles,
     load_candles_csv,
 )
+from market_data.timeframes import candle_timeframe_seconds, timeframe_seconds
 from strategies.catalogue import CatalogueError, ParamError
 from strategies.factory import build_runner, parse_overlay_ids
 
@@ -44,6 +45,8 @@ def _trades_rows(result_by_sample: Dict[str, Any]) -> List[dict]:
     rows = []
     for sample, parts in result_by_sample.items():
         for kind in ("strategy", "buy_and_hold"):
+            if kind not in parts:  # a window refused with LOOKAHEAD_MODEL
+                continue
             for t in parts[kind].trades:
                 row = asdict(t)
                 row.update(sample=sample, series=kind)
@@ -52,6 +55,16 @@ def _trades_rows(result_by_sample: Dict[str, Any]) -> List[dict]:
 
 
 def _section(parts: Dict[str, Any]) -> Dict[str, Any]:
+    if "refused" in parts:
+        bench = parts["buy_and_hold"]
+        return {
+            "bars": bench.bars,
+            "from": bench.first_bar.isoformat(),
+            "to": bench.last_bar.isoformat(),
+            "refused": parts["refused"],
+            "strategy": None,
+            "buy_and_hold": bench.kpis,
+        }
     strat, bench = parts["strategy"], parts["buy_and_hold"]
     return {
         "bars": strat.bars,
@@ -63,7 +76,29 @@ def _section(parts: Dict[str, Any]) -> Dict[str, Any]:
             "strategy": strat.slippage_cost,
             "buy_and_hold": bench.slippage_cost,
         },
+        "bars_missing": dict(strat.bars_missing),
     }
+
+
+def _check_same_bars(candles: pd.DataFrame, cached, args) -> None:
+    """With --candles-file the run trades the file's bars while a multi-timeframe
+    strategy reads the cache: refuse unless the cache's bars of the run's timeframe are
+    the file's bars wherever both exist (another symbol, venue or edit would mix two
+    series without a word)."""
+    if cached is None or cached.empty:
+        return  # nothing to compare: those decisions are reported as missing bars
+    cols = ["open", "high", "low", "close"]
+    both = candles.merge(cached, on="open_time", suffixes=("", "_cache"))
+    differ = sum(
+        (both[c] != both[f"{c}_cache"]).sum() for c in cols  # exact: same source
+    )
+    if both.empty or differ:
+        raise ValueError(
+            f"the cache's {args.symbol} {args.tf} bars "
+            f"({cache_path(args.symbol, args.tf, args.cache_dir)}) are not the bars of "
+            f"{args.candles_file} (overlap {len(both)} bars, {differ} values differ): "
+            "the strategy's other timeframes would come from a different series"
+        )
 
 
 def run(args: argparse.Namespace) -> Dict[str, Any]:
@@ -73,10 +108,29 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     for spec in overlay_specs:
         spec["params"] = overlay_params.get(spec["id"], {})
 
-    def factory():
-        return build_runner(args.strategy, params, overlay_specs)
+    strategy_bars: Dict[str, pd.DataFrame] = {}
 
-    factory()  # fail fast on unknown ids / bad params before touching data
+    def factory():
+        runner = build_runner(args.strategy, params, overlay_specs)
+        if strategy_bars:  # a strategy that reads other timeframes gets the run's own
+            runner.strategy.use_bars(strategy_bars)
+        return runner
+
+    probe = factory()  # fail fast on unknown ids / bad params before touching data
+    supported = getattr(probe.strategy, "supported_bar_seconds", None)
+    if supported is not None and timeframe_seconds(args.tf) not in supported:
+        raise ValueError(
+            f"{args.strategy} cannot decide on {args.tf} bars "
+            f"(it supports {sorted(supported)} s)"
+        )
+    model_symbol = getattr(probe.strategy, "model_symbol", None)
+    if model_symbol is not None and model_symbol.upper() != args.symbol.upper():
+        raise ValueError(
+            f"the strategy's model was trained on {model_symbol}; this run is "
+            f"{args.symbol} (use --symbol)"
+        )
+    # a strategy timeframe (the candle layer also accepts the candle-only "1w")
+    timeframe_seconds(args.tf)
 
     source: Dict[str, Any]
     if args.candles_file:
@@ -119,12 +173,56 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     if len(candles) < 50:
         raise SystemExit(f"only {len(candles)} candles available; need at least 50")
     report = candles.attrs.get("report")
+    extra_tfs = getattr(probe.strategy, "candle_timeframes", ())
+    if extra_tfs:
+        # the other timeframes come from the same place as the run's candles (the cache
+        # or --cache-dir; offline with --candles-file), from far enough back that the
+        # first bar has a closed bar in every timeframe
+        first, last = candles["open_time"].iloc[0], candles["open_time"].iloc[-1]
+        back = pd.Timedelta(
+            seconds=2 * max(candle_timeframe_seconds(t) for t in extra_tfs)
+        )
+        end = last + pd.Timedelta(seconds=timeframe_seconds(args.tf))
+        offline = bool(args.offline or args.candles_file)
+        for tf in extra_tfs:
+            if offline:  # what the cache holds; a shortfall is reported as missing bars
+                frame = load_candles_csv(
+                    cache_path(args.symbol, tf, args.cache_dir), tf
+                )
+                keep = (frame["open_time"] >= first - back) & (frame["open_time"] < end)
+                frame = frame[keep].reset_index(drop=True)
+            else:
+                frame = get_candles(
+                    args.symbol,
+                    tf,
+                    first - back,
+                    end,
+                    cache_dir=args.cache_dir,
+                    fetcher=BinanceKlines(),
+                )
+            strategy_bars[tf] = frame
+        if args.candles_file:
+            _check_same_bars(candles, strategy_bars.get(args.tf), args)
+        source["strategy_bars"] = {}
+        for tf, frame in strategy_bars.items():
+            path = cache_path(args.symbol, tf, args.cache_dir)
+            source["strategy_bars"][tf] = {
+                "bars": len(frame),
+                "path": path,
+                "sha256": file_sha256(path) if os.path.isfile(path) else None,
+            }
+        if source["kind"] == "binance_klines_cache":
+            # online, loading the history before the window can extend the run's own
+            # cache file: its hash is the one of the file as the run leaves it
+            path = source["path"]
+            source["sha256"] = file_sha256(path) if os.path.isfile(path) else None
 
     cost = CostModel(args.fee_bps, args.slippage_bps, args.size_fraction)
     split = evaluate_split(candles, factory, args.symbol, args.tf, cost, args.split)
+    strategy = factory().strategy
     results = {
         "strategy_id": args.strategy,
-        "params": factory().strategy.params,
+        "params": strategy.params,
         "overlays": overlay_specs,
         "symbol": args.symbol,
         "timeframe": args.tf,
@@ -150,6 +248,13 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         "out_of_sample": _section(split["out_of_sample"]),
         "note": DISCLAIMER,
     }
+    if getattr(strategy, "model_id", None):  # a trained model (STRAT-003)
+        results["model"] = {
+            "model_id": strategy.model_id,
+            "symbol": strategy.model_symbol,
+            "train_start": strategy.model_window[0],
+            "train_end": strategy.model_window[1],
+        }
     results["_trades"] = _trades_rows(split)
     return results
 
@@ -167,8 +272,17 @@ def print_summary(results: Dict[str, Any], out=print) -> None:
     for name in ("in_sample", "out_of_sample"):
         sec = results[name]
         out(f"  {name}: {sec['from'][:10]} -> {sec['to'][:10]} ({sec['bars']} bars)")
+        if sec.get("refused"):
+            out(f"    REFUSED: {sec['refused']}")
+        if sec.get("bars_missing"):
+            out(
+                f"    WARNING: decisions held for missing bars: {sec['bars_missing']} "
+                "(not a signal; the data does not cover the window)"
+            )
         for label in ("strategy", "buy_and_hold"):
             k = sec[label]
+            if k is None:
+                continue
             out(
                 f"    {label:13s} ret {_fmt(k['total_return_pct'])}%  maxDD {_fmt(k['max_drawdown_pct'])}%  "
                 f"sharpe {_fmt(k['sharpe'])}  trades {k['trade_count']}  fees ${_fmt(k['fees_paid'])}"

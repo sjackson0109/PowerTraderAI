@@ -1,135 +1,77 @@
-"""FDS-108a review item 2: the hub runs the program folder's trainer for every
-coin, with the coin's neural folder under the user data folder as its working
-directory, and a trainer script saved in Settings is used by the next launch
-without a restart. ``subprocess.Popen`` is patched: no process is started."""
+"""FDS-108a review item 2 and #136: the hub runs the program folder's trainer for
+every coin, with the coin's neural folder under the user data folder as its
+working directory; a trainer script saved in Settings is used by the next launch
+without a restart; and a launch runs to completion. Since FDS-MDL Phase 1 the
+default trainer is the pattern trainer (pt_pattern_trainer.py); the tests seed its
+candle cache with synthetic bars and run it offline (helpers_candles).
 
-import ast
-import io
+Every test builds the hub with its real ``__init__`` and starts real processes
+through ``start_trainer_for_selected_coin`` (helpers_trainer). The children load
+a guard that blocks the network and records what each child saw: its command
+line, working folder and environment."""
+
+import json
 import os
 import sys
-import tkinter as tk
+import time
 from tkinter import ttk
-from unittest import mock
 
 import pytest
 
-APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if APP_DIR not in sys.path:
-    sys.path.insert(0, APP_DIR)
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.path.dirname(TESTS_DIR)
+for _path in (APP_DIR, TESTS_DIR):
+    if _path not in sys.path:
+        sys.path.insert(0, _path)
 
+import helpers_candles as hc  # noqa: E402
+import helpers_trainer as ht  # noqa: E402
 import pt_hub  # noqa: E402
 import pt_paths  # noqa: E402
 
-TRAINER = os.path.join(pt_paths.program_dir(), "pt_trainer.py")
+TRAINER = os.path.join(
+    pt_paths.program_dir(), pt_hub.DEFAULT_SETTINGS["script_neural_trainer"]
+)
 # Another trainer script shipped in the program folder (what a user could type
-# into Settings); only its path is checked, it is never run.
+# into Settings). It is a mock, so it runs only with allow_mock_trainer.
 STANDALONE = os.path.join(pt_paths.program_dir(), "pt_trainer_standalone.py")
 
 
-class Var:
-    """Stands in for the Trainers tab's coin selector (a tk.StringVar)."""
-
-    def __init__(self, value=""):
-        self.value = value
-
-    def get(self):
-        return self.value
-
-    def set(self, value):
-        self.value = value
-
-
-class FakeTrainerProcess:
-    """What the patched Popen returns: still running when the hub checks right
-    after the launch, finished when the log reader asks next."""
-
-    def __init__(self, args, **kwargs):
-        self.args = args
-        self.kwargs = kwargs
-        self.pid = 4242
-        self.returncode = None
-        self.stdout = io.StringIO("")
-        self._polls = 0
-
-    def poll(self):
-        self._polls += 1
-        if self._polls > 1:
-            self.returncode = 0
-        return self.returncode
-
-
-class Launches(list):
-    """The fake processes, in launch order; ``errors``: error boxes shown."""
-
-    def __init__(self):
-        super().__init__()
-        self.errors = []
+@pytest.fixture
+def records(monkeypatch, tmp_path, isolated_user_dirs):
+    """Folder the guarded trainer processes write their records to. The CWD is
+    a temp folder, so a script name resolved against the CWD (instead of the
+    program folder) would not be found."""
+    monkeypatch.chdir(tmp_path)
+    return ht.guard_trainer_children(monkeypatch, tmp_path)
 
 
 @pytest.fixture
-def launches(monkeypatch, tmp_path):
-    """Trainer launches through a patched Popen. The CWD is a temp folder, so
-    a script name resolved against the CWD (instead of the program folder)
-    would not be found."""
-    monkeypatch.chdir(tmp_path)
-    started = Launches()
+def real_hub(monkeypatch, records):
+    hub = ht.build_real_hub(monkeypatch)
+    yield hub
+    ht.close_hub(hub)
+    assert hub.test_callback_errors == []
 
-    def popen(args, **kwargs):
-        proc = FakeTrainerProcess(args, **kwargs)
-        started.append(proc)
-        return proc
 
-    monkeypatch.setattr(pt_hub.subprocess, "Popen", popen)
-    monkeypatch.setattr(
-        pt_hub.messagebox,
-        "showerror",
-        lambda *args, **kwargs: started.errors.append(args),
+def launched(hub, coin, records, timeout=120):
+    """Start training ``coin`` through the hub and wait for the process to end.
+    Returns the record the process wrote about itself."""
+    count = len(ht.child_records(records))
+    lp = ht.launch(hub, coin)
+    if lp is not None:
+        ht.wait(lp, timeout=timeout)
+    deadline = time.time() + timeout
+    while time.time() < deadline and not ht.child_errors(records):
+        done = [r for r in ht.child_records(records)[count:] if r.get("final")]
+        if done:
+            assert len(done) == 1, done
+            return done[0]
+        time.sleep(0.1)
+    pytest.fail(
+        f"no record from a guarded trainer process for {coin}: "
+        f"{ht.child_errors(records)}"
     )
-    return started
-
-
-def make_hub(coins=("BTC", "ETH"), root=False):
-    """A PowerTraderHub without its main window: the path set-up of __init__
-    (the same calls) plus what start_trainer_for_selected_coin uses. With
-    ``root`` it is also a real, hidden Tk root, so the real Settings window can
-    be opened on it."""
-    hub = pt_hub.PowerTraderHub.__new__(pt_hub.PowerTraderHub)
-    if root:
-        tk.Tk.__init__(hub)
-        hub.withdraw()
-    else:
-        hub.tk = None  # a missing attribute raises AttributeError (no Tk recursion)
-        hub.after = lambda *args, **kwargs: None
-    hub.settings = hub._load_settings()
-    hub.settings["coins"] = list(coins)
-    hub.project_dir = pt_paths.program_dir()
-    hub.settings["main_neural_dir"] = pt_paths.neural_dir(
-        hub.settings.get("main_neural_dir")
-    )
-    hub.hub_dir = pt_paths.hub_dir_for(hub.settings.get("hub_data_dir"))
-    hub.coins = list(coins)
-    hub._ensure_alt_coin_folders_and_trainer_on_startup()
-    hub.coin_folders = pt_hub.build_coin_folders(
-        hub.settings["main_neural_dir"], hub.coins
-    )
-    hub.proc_neural = pt_hub.ProcInfo(name="Neural Runner", path="")
-    hub._refresh_trainer_path()
-    hub.trainers = {}
-    hub.trainer_coin_var = Var()
-    hub.status = mock.Mock()
-    hub._multi_exchange = None  # read by refresh_exchange_settings on Settings save
-    return hub
-
-
-def launch(hub, coin, launches):
-    """Start training ``coin`` through the hub's own method; return the launch."""
-    count = len(launches)
-    hub.trainer_coin_var.set(coin)
-    hub.start_trainer_for_selected_coin()
-    assert launches.errors == []
-    assert len(launches) == count + 1, f"no trainer was started for {coin}"
-    hub.trainers[coin].thread.join(timeout=5)  # the log reader saw the exit
-    return launches[-1]
 
 
 def assert_in_user_data(path, home):
@@ -141,88 +83,93 @@ def assert_in_user_data(path, home):
     assert not pt_paths.is_inside_program_dir(path), path
 
 
-@pytest.mark.parametrize("coin, sub", [("BTC", ()), ("ETH", ("ETH",))])
+def assert_finished(folder):
+    """The pattern trainer completed in ``folder``: every model file, the status
+    FINISHED and the stamp."""
+    assert sorted(ht.model_files(folder)) == ht.expected_model_file_names()
+    with open(os.path.join(folder, "trainer_status.json"), encoding="utf-8") as f:
+        assert json.load(f)["state"] == "FINISHED"
+    assert os.path.isfile(os.path.join(folder, "trainer_last_training_time.txt"))
+
+
+def assert_launch(record, script, coin, folder, home):
+    """The process saw exactly the hub's command line, folder and environment."""
+    assert os.path.normcase(record["orig_argv"][0]) == os.path.normcase(sys.executable)
+    assert record["orig_argv"][1:] == ["-u", "-W", "ignore", script, coin]
+    assert os.path.normcase(record["cwd_at_start"]) == os.path.normcase(folder)
+    assert_in_user_data(record["cwd_at_start"], home)
+    assert record["env"]["POWERTRADER_HOME"] == home
+    assert record["env"]["POWERTRADER_HUB_DIR"] == pt_paths.hub_dir()
+    assert record["env"]["PYTHON_KEYRING_BACKEND"] == ht.FAIL_KEYRING
+    assert record["credential_env"] == []
+
+
 def test_every_coin_runs_the_program_folder_trainer_in_its_user_data_folder(
-    coin, sub, launches, isolated_user_dirs
+    real_hub, records, isolated_user_dirs, monkeypatch
 ):
-    hub = make_hub()
-    folder = os.path.join(pt_paths.models_dir(), *sub)
-    stale = os.path.join(folder, "memories_1hour.txt")
-    with open(stale, "w", encoding="utf-8") as f:
-        f.write("old")
-
-    call = launch(hub, coin, launches)
-
-    assert call.args == [sys.executable, "-u", "-W", "ignore", TRAINER, coin]
+    hub = real_hub
+    home = isolated_user_dirs["home"]
+    assert pt_hub.DEFAULT_SETTINGS["script_neural_trainer"] == "pt_pattern_trainer.py"
+    assert hub.proc_trainer_path == TRAINER  # set by __init__ (_refresh_trainer_path)
     assert os.path.isfile(TRAINER)
-    assert hub.proc_trainer_path == TRAINER
-    assert call.kwargs["cwd"] == folder
-    assert_in_user_data(call.kwargs["cwd"], isolated_user_dirs["home"])
-    assert call.kwargs["env"]["POWERTRADER_HUB_DIR"] == pt_paths.hub_dir()
-    # old training files are cleared from the coin folder; no trainer is copied in
-    assert not os.path.exists(stale)
-    assert [n for n in os.listdir(folder) if n.endswith(".py")] == []
+    hc.seed_trainer_window(monkeypatch, ["BTC", "ETH"])
+
+    for coin, sub in (("BTC", ()), ("ETH", ("ETH",))):
+        folder = os.path.join(pt_paths.models_dir(), *sub)
+        stale = os.path.join(folder, "memories_1hour.txt")
+        with open(stale, "w", encoding="utf-8") as f:
+            f.write("old")
+
+        record = launched(hub, coin, records)
+
+        assert_launch(record, TRAINER, coin, folder, home)
+        # old training files are cleared before the launch (the pattern trainer
+        # refuses a folder that still holds model files); no trainer is copied in
+        assert_finished(folder)
+        with open(stale, encoding="utf-8") as f:
+            assert f.read() != "old"
+        assert [n for n in os.listdir(folder) if n.endswith(".py")] == []
+    assert hub.test_dialogs == []
 
 
-def trainer_results_expression():
-    """The expression ``NeuralTrainer.train`` assigns to ``results_file`` and
-    opens for writing, read from app/pt_trainer.py (training is not run)."""
-    with open(TRAINER, encoding="utf-8") as f:
-        tree = ast.parse(f.read(), filename=TRAINER)
-    trainer = next(
-        n
-        for n in tree.body
-        if isinstance(n, ast.ClassDef) and n.name == "NeuralTrainer"
+def test_a_launch_runs_to_completion_on_cached_candles(
+    real_hub, records, isolated_user_dirs, monkeypatch
+):
+    """The pattern trainer runs to completion as the hub starts it, with the
+    network blocked, on synthetic candles in the cache. Its model files land in
+    the coin's neural folder and its summary in the user data folder; no file in
+    the program folder, and no trainer output anywhere in the install folder,
+    changes (bytecode writing is disabled in the child)."""
+    hub = real_hub
+    start, end = hc.seed_trainer_window(monkeypatch, ["ETH"])
+    before = ht.program_folder_state()
+
+    lp = ht.launch(hub, "ETH")
+    assert lp is not None, (
+        ht.child_errors(records) or "the hub did not keep the process"
     )
-    train = next(
-        n for n in trainer.body if isinstance(n, ast.FunctionDef) and n.name == "train"
+    code, lines = ht.wait(lp)
+
+    assert code == 0, lines[-20:]
+    folder = os.path.join(pt_paths.models_dir(), "ETH")
+    assert_finished(folder)
+    results = os.path.join(
+        pt_paths.data_dir(), "training_results", "eth_training_results.json"
     )
-    assigned = [
-        n.value
-        for n in ast.walk(train)
-        if isinstance(n, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "results_file" for t in n.targets)
-    ]
-    opened = [
-        n
-        for n in ast.walk(train)
-        if isinstance(n, ast.Call)
-        and isinstance(n.func, ast.Name)
-        and n.func.id == "open"
-        and n.args
-        and isinstance(n.args[0], ast.Name)
-        and n.args[0].id == "results_file"
-    ]
-    assert len(assigned) == 1, "results_file should be assigned once"
-    assert [ast.literal_eval(n.args[1]) for n in opened] == ["w"]
-    return assigned[0]
-
-
-def test_the_trainer_writes_its_results_to_the_user_data_folder(isolated_user_dirs):
-    expression = trainer_results_expression()
-    assert ast.unparse(expression.func) == "pt_paths.data_file"
-    code = compile(ast.Expression(expression), TRAINER, "eval")
-    for coin in ("BTC", "ETH"):
-        # the trainer's own expression, evaluated for this coin
-        written = eval(code, {"pt_paths": pt_paths}, {"coin": coin})
-        expected = pt_paths.data_file(
-            "training_results", f"{coin.lower()}_training_results.json"
-        )
-        assert written == expected
-        assert_in_user_data(written, isolated_user_dirs["home"])
+    with open(results, encoding="utf-8") as f:
+        summary = json.load(f)
+    assert summary["train_end"] == end.strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert summary["sources"]["train_end"] == "POWERTRADER_TRAIN_END"
+    assert summary["offline"] is True
+    (record,) = [r for r in ht.child_records(records) if r.get("final")]
+    assert_launch(record, TRAINER, "ETH", folder, isolated_user_dirs["home"])
+    assert record["env"]["POWERTRADER_CANDLES_OFFLINE"] == "1"
+    assert record["blocked"] == []  # no network was attempted
+    assert ht.program_folder_state() == before
+    assert hub.test_dialogs == []
 
 
 # --- Settings save -> next launch, without a restart ------------------------------------------
-
-
-@pytest.fixture
-def root_hub():
-    try:
-        hub = make_hub(root=True)
-    except tk.TclError as exc:
-        pytest.skip(f"Tk not available: {exc}")
-    yield hub
-    hub.destroy()
 
 
 def widgets(parent):
@@ -266,22 +213,23 @@ def press(win, text):
 
 
 def test_a_trainer_script_saved_in_settings_is_used_by_the_next_launch(
-    root_hub, launches, isolated_user_dirs, monkeypatch
+    real_hub, records, isolated_user_dirs, monkeypatch
 ):
-    hub = root_hub
-    monkeypatch.setattr(pt_hub, "API_SERVER_AVAILABLE", False)
-    saved = mock.Mock()
-    monkeypatch.setattr(pt_hub.messagebox, "showinfo", saved)
+    hub = real_hub
+    home = isolated_user_dirs["home"]
+    hc.seed_trainer_window(monkeypatch, ["BTC"])
 
-    assert launch(hub, "BTC", launches).args[4] == TRAINER
+    assert launched(hub, "BTC", records)["orig_argv"][4] == TRAINER
+    # the standalone script is a mock (test_mock_trainer_refusal.py)
+    ht.configure_trainer(allow_mock=True)
 
     win = open_settings(hub)
     type_into(win, "pt_trainer.py path:", "pt_trainer_standalone.py")
     type_into(win, "Coins (comma):", "BTC,ETH,SOL")
     press(win, "Save")
 
-    assert launches.errors == []
-    assert saved.call_args[0][0] == "Saved"
+    assert [d for d in hub.test_dialogs if d[0] != "showinfo"] == []
+    assert [d[1][0] for d in hub.test_dialogs if d[0] == "showinfo"] == ["Saved"]
     assert hub._load_settings()["script_neural_trainer"] == "pt_trainer_standalone.py"
     assert hub.proc_trainer_path == STANDALONE
     assert os.path.isfile(STANDALONE)
@@ -294,7 +242,4 @@ def test_a_trainer_script_saved_in_settings_is_used_by_the_next_launch(
             os.path.join(pt_paths.models_dir(), "SOL"),
         ),  # coin added in the same save
     ):
-        call = launch(hub, coin, launches)
-        assert call.args == [sys.executable, "-u", "-W", "ignore", STANDALONE, coin]
-        assert call.kwargs["cwd"] == folder
-        assert_in_user_data(call.kwargs["cwd"], isolated_user_dirs["home"])
+        assert_launch(launched(hub, coin, records), STANDALONE, coin, folder, home)

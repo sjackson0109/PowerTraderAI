@@ -44,6 +44,7 @@ from pt_paper_mode import (
     install_classic_widget_defaults,
     run_sample_scenario,
 )
+import trainer_guard
 from strategies.settings import read_strategy_settings
 from trading_mode import TradingSettings, read_trading_settings
 from trading_mode_ui import TradingModeDialog, TradingModeIndicator, pack_at_top
@@ -597,7 +598,9 @@ DEFAULT_SETTINGS = {
     "ui_refresh_seconds": 1.0,
     "chart_refresh_seconds": 10.0,
     "hub_data_dir": "",  # if blank, defaults to <this_dir>/hub_data
-    "script_neural_trainer": "pt_trainer.py",
+    # FDS-MDL: the pattern-matching trainer (a port of upstream's); the old stub
+    # pt_trainer.py is marked MOCK and refused unless allow_mock_trainer is set.
+    "script_neural_trainer": "pt_pattern_trainer.py",
     "script_neural_runner2": "pt_thinker.py",
     "script_trader": "pt_trader.py",
     "auto_start_scripts": False,  # Disabled to prevent auto-triggering
@@ -5511,6 +5514,8 @@ Platform: {sys.platform}
     def train_all_coins(self) -> None:
         # Start trainers for every coin (in parallel)
         print(f"DEBUG: Starting training for coins: {self.coins}")
+        if not self._trainer_launch_allowed("all coins"):
+            return  # one refusal message, not one per coin
         for c in self.coins:
             print(f"DEBUG: Training coin: {c}")
             self.trainer_coin_var.set(c)
@@ -5612,12 +5617,38 @@ Platform: {sys.platform}
             except Exception:
                 pass
 
+    def _mock_trainer_refused(self) -> bool:
+        """True if the configured trainer script is marked MOCK and pt_config.json
+        does not set ``allow_mock_trainer`` to true (read again on every call)."""
+        return (
+            trainer_guard.is_mock_trainer(self.proc_trainer_path)
+            and not trainer_guard.read_allow_mock_trainer()
+        )
+
+    def _trainer_launch_allowed(self, coin: str) -> bool:
+        """False (after telling the user) if the configured trainer is a refused mock."""
+        if not self._mock_trainer_refused():
+            return True
+        messagebox.showerror(
+            "Mock trainer refused",
+            trainer_guard.refusal_message(self.proc_trainer_path),
+        )
+        try:
+            self.status.config(text=f"Training refused for {coin}: mock trainer")
+        except Exception:
+            pass
+        return False
+
     def start_trainer_for_selected_coin(self) -> None:
         print(f"DEBUG: start_trainer_for_selected_coin() called")
         coin = (self.trainer_coin_var.get() or "").strip().upper()
         print(f"DEBUG: trainer_coin_var contains: '{coin}'")
         if not coin:
             print(f"DEBUG: No coin in trainer_coin_var, returning")
+            return
+
+        # A mock trainer is refused before anything is stopped or deleted (FDS-MDL).
+        if not self._trainer_launch_allowed(coin):
             return
 
         print(f"DEBUG: About to stop neural runner before training {coin}")
@@ -5817,8 +5848,26 @@ Platform: {sys.platform}
         def auto_retrain():
             try:
                 print(f"DEBUG: Auto-retraining {coin} after {interval_hours} hours")
+                if self._mock_trainer_refused():
+                    # Unattended: no dialog (the next manual launch shows it).
+                    print(
+                        f"DEBUG: Auto-retrain for {coin} skipped: mock trainer refused"
+                    )
+                    try:
+                        self.status.config(
+                            text=f"Auto-retrain skipped for {coin}: mock trainer refused"
+                        )
+                    except Exception:
+                        pass
+                    return
+                previous = self.trainers.get(coin)
                 self.trainer_coin_var.set(coin)
                 self.start_trainer_for_selected_coin()
+                lp = self.trainers.get(coin)
+                if lp is None or lp is previous:
+                    # nothing new was started (missing script, a process that died at
+                    # once, or a trainer already running): keep the status it left
+                    return
                 # Update status to show it's an automatic retrain
                 try:
                     self.status.config(text=f"Auto-retraining {coin} (stale data)")
@@ -7495,7 +7544,9 @@ Platform: {sys.platform}
 
         neural_script_var = tk.StringVar(value=self.settings["script_neural_runner2"])
         trainer_script_var = tk.StringVar(
-            value=self.settings.get("script_neural_trainer", "pt_trainer.py")
+            value=self.settings.get(
+                "script_neural_trainer", DEFAULT_SETTINGS["script_neural_trainer"]
+            )
         )
         trader_script_var = tk.StringVar(value=self.settings["script_trader"])
 

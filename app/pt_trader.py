@@ -1568,13 +1568,17 @@ class CryptoAPITrading:
 
     def _signals_status(self) -> dict:
         s = read_strategy_settings(self._settings_source)
+        # settings problems, or a strategy whose model the engine cannot use
+        blocked = s.problem or (
+            self.signal_engine.block_reason() if s.is_catalogue else None
+        )
         return {
             "engine": s.engine,
             "strategy_id": s.active_id if s.is_catalogue else None,
             "timeframe": s.timeframe if s.is_catalogue else None,
             "overlays": [o["id"] for o in s.overlays] if s.is_catalogue else [],
-            "blocked": s.problem,
-            "note": s.note,
+            "blocked": blocked,
+            "note": "SIGNALS: BLOCKED" if blocked else s.note,
             "last_decisions": {
                 base: {
                     "action": d.action.value,

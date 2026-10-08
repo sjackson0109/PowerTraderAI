@@ -3,9 +3,9 @@ Candle data layer (FDS-121 section 8): real Binance klines + an on-disk cache.
 
 * Public endpoint only (``GET /api/v3/klines``): no keys, no authentication.
 * Pagination (1000 rows per request) with backoff on rate limits / transient errors.
-* Cache: ``<hub_data>/candles/<SYMBOL>_<TF>.csv`` (CSV: parquet needs pyarrow, which
-  is not a project dependency). Only missing ranges are fetched, and a forming
-  (not yet closed) bar is never written to the cache.
+* Cache: ``<cache>/candles/<SYMBOL>_<TF>.csv`` (``cache_dir_default``; CSV: parquet
+  needs pyarrow, which is not a project dependency). Only missing ranges are
+  fetched, and a forming (not yet closed) bar is never written to the cache.
 * Validation: timestamps must be strictly increasing with no duplicates (raises);
   gaps are *reported* in ``df.attrs["report"]``, never filled silently.
 
@@ -27,7 +27,7 @@ from typing import Callable, List, Optional, Tuple
 
 import pandas as pd
 
-from market_data.timeframes import timeframe_seconds
+from market_data.timeframes import candle_timeframe_seconds
 
 KLINES_URL = "https://api.binance.com/api/v3/klines"
 PAGE_LIMIT = 1000
@@ -97,7 +97,7 @@ class CandleReport:
 
 def validate_candles(df: pd.DataFrame, tf: str) -> CandleReport:
     """Raise on duplicate / non-monotonic timestamps; report (don't fill) gaps."""
-    step = pd.Timedelta(seconds=timeframe_seconds(tf))
+    step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
     if df.empty:
         return CandleReport(rows=0, first=None, last=None)
     times = df["open_time"]
@@ -204,7 +204,7 @@ class BinanceKlines:
         self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int] = None
     ) -> List[list]:
         """All klines with open_time in [start_ms, end_ms] (inclusive), paginated."""
-        step_ms = timeframe_seconds(tf) * 1000
+        step_ms = candle_timeframe_seconds(tf) * 1000
         out: List[list] = []
         cursor = start_ms
         while True:
@@ -253,7 +253,7 @@ def _write_cache(path: str, df: pd.DataFrame) -> None:
 
 
 def _closed_only(df: pd.DataFrame, tf: str, now: pd.Timestamp) -> pd.DataFrame:
-    close_time = df["open_time"] + pd.Timedelta(seconds=timeframe_seconds(tf))
+    close_time = df["open_time"] + pd.Timedelta(seconds=candle_timeframe_seconds(tf))
     return df[close_time <= now].reset_index(drop=True)
 
 
@@ -275,8 +275,13 @@ def get_candles(
     the cache is used and a request it cannot satisfy raises ``CandleDataError``.
     ``closed_only`` (default) never returns the still-forming bar. The result's
     ``attrs["report"]`` is a ``CandleReport`` (gaps are reported, not filled).
+
+    ``now`` (default: the wall clock) also decides which fetched bars are closed enough
+    to be written to the cache. A past ``now`` with ``offline=False`` drops the fetched
+    bars that close after it, which can leave a hole the cache never refills; pass a
+    past ``now`` only with ``offline=True``.
     """
-    step = pd.Timedelta(seconds=timeframe_seconds(tf))
+    step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
     start_ts, end_ts = to_utc(start), to_utc(end)
     now_ts = to_utc(now) if now is not None else pd.Timestamp.now(tz="UTC")
     path = cache_path(symbol, tf, cache_dir)

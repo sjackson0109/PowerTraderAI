@@ -31,6 +31,8 @@ REQUIRED_FIELDS = (
     "version",
 )
 CLASS_TYPES = ("main", "risk_overlay")
+# "model" (a trained model, STRAT-003) was added by FDS-MDL Phase 3
+FAMILIES = ("trend", "risk_overlay", "model")
 CATALOGUE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "catalogue.json"
 )
@@ -93,6 +95,29 @@ def check_value(
     if kind == "bool":
         if not isinstance(value, bool):
             raise ParamError(f"{where} must be true/false, got {value!r}")
+        return
+    if kind == "model_id":
+        # a published model's id (model_store), or "" for none: loading then refuses
+        from model_store import MODEL_ID_RE
+
+        if not isinstance(value, str) or (value and not MODEL_ID_RE.fullmatch(value)):
+            raise ParamError(
+                f"{where} must be a model id (a plain name), got {value!r}"
+            )
+        return
+    if kind == "model_timeframes":
+        from pattern_model import TIMEFRAMES
+
+        if (
+            not isinstance(value, (list, tuple))
+            or not value
+            or any(not isinstance(v, str) or v not in TIMEFRAMES for v in value)
+            or len(set(value)) != len(value)
+        ):
+            raise ParamError(
+                f"{where} must be distinct timeframes from {list(TIMEFRAMES)}, "
+                f"got {value!r}"
+            )
         return
     if "values" in spec:
         if value not in spec["values"]:
@@ -161,6 +186,8 @@ def build_catalogue(
             raise CatalogueError(f"{sid}: duplicate strategy_id")
         if entry["class_type"] not in CLASS_TYPES:
             raise CatalogueError(f"{sid}: class_type must be one of {CLASS_TYPES}")
+        if entry["family"] not in FAMILIES:
+            raise CatalogueError(f"{sid}: family must be one of {FAMILIES}")
         if entry["long_short_mode"] != "long_only":
             raise CatalogueError(f"{sid}: only long_only is supported in this batch")
         from market_data.timeframes import TIMEFRAME_SECONDS
@@ -204,6 +231,7 @@ from strategies import builtin as _builtin  # noqa: E402,F401
 from strategies import trend_crossover as _trend_crossover  # noqa: E402,F401
 from strategies import supertrend as _supertrend  # noqa: E402,F401
 from strategies import overlays as _overlays  # noqa: E402,F401
+from strategies import model_strategy as _model_strategy  # noqa: E402,F401
 
 CATALOGUE: Dict[str, dict] = build_catalogue(load_entries(), _REGISTRY)
 

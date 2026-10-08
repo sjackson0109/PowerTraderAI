@@ -1,0 +1,83 @@
+{
+  "pair": "ETHUSDT",
+  "timeframe": "4h",
+  "overlays": "none",
+  "model_id": "ETH-20250816T0400Z-6ce59ce7a360",
+  "code": {
+    "commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+    "frozen_files_changed": [],
+    "python": "3.13.15 (tags/v3.13.15:4061bc4, Aug  5 2026, 13:05:39) [MSC v.1944 64 bit (AMD64)]",
+    "powertrader_home": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home"
+  },
+  "in_sample": {
+    "window": [
+      0,
+      5749
+    ],
+    "from": "2023-01-01T00:00:00+00:00",
+    "to": "2025-08-16T00:00:00+00:00",
+    "bars": 5749,
+    "refused": "LOOKAHEAD_MODEL: model ETH-20250816T0400Z-6ce59ce7a360 was trained on bars up to 2025-08-16 04:00:00+00:00, after the first scored bar (2023-01-01 00:00:00+00:00); score only bars that open at or after the end of the model's training window",
+    "buy_and_hold": {
+      "total_return_pct": 269.4380027983951,
+      "cagr_pct": 64.5678478651138,
+      "max_drawdown_pct": -65.11965227823642,
+      "sharpe": 1.1240614059269458,
+      "sortino": 1.607579861587606,
+      "trade_count": 1,
+      "win_rate_pct": 100.0,
+      "avg_trade_pct": 269.4380027983951,
+      "exposure_pct": 100.0,
+      "fees_paid": 46.98078106090041,
+      "vs_buy_hold_pct": null
+    }
+  },
+  "out_of_sample": {
+    "window": [
+      5749,
+      8214
+    ],
+    "from": "2025-08-16T04:00:00+00:00",
+    "to": "2026-09-30T20:00:00+00:00",
+    "bars": 2465,
+    "strategy": {
+      "total_return_pct": -58.84371986750017,
+      "cagr_pct": -54.583285030635366,
+      "max_drawdown_pct": -70.74642704565443,
+      "sharpe": -1.9569236535270953,
+      "sortino": -2.487932089521989,
+      "trade_count": 112,
+      "win_rate_pct": 50.0,
+      "avg_trade_pct": -0.7160322740969589,
+      "exposure_pct": 33.87423935091278,
+      "fees_paid": 1410.789137516724,
+      "vs_buy_hold_pct": -19.263627701997294
+    },
+    "buy_and_hold": {
+      "total_return_pct": -39.580092165502876,
+      "cagr_pct": -36.10617861808905,
+      "max_drawdown_pct": -68.02938133664391,
+      "sharpe": -0.45371125129067524,
+      "sortino": -0.6306260937088974,
+      "trade_count": 1,
+      "win_rate_pct": 0.0,
+      "avg_trade_pct": -39.58009216550288,
+      "exposure_pct": 100.0,
+      "fees_paid": 16.048038822271984,
+      "vs_buy_hold_pct": null
+    },
+    "holds": {
+      "BARS_MISSING": 0,
+      "TIMEFRAME_UNKNOWN": 0,
+      "BOUNDS_NOT_CONVERGED": 0,
+      "by_reason": {}
+    },
+    "quirks": {
+      "decisions": 2464,
+      "e1": 7,
+      "e1_share": 0.002840909090909091,
+      "e2": 0
+    }
+  },
+  "baseline": "baselines/test-a_ETHUSDT_4h_none.json"
+}

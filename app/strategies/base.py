@@ -21,7 +21,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Mapping, Optional
 
 import pandas as pd
 
@@ -60,6 +60,9 @@ class Strategy(ABC):
     """Base class. Subclasses set ``strategy_id`` and implement ``compute``."""
 
     strategy_id: str = ""
+    # Seconds per bar of the run; set by StrategyRunner.set_timeframe (most strategies
+    # do not need it).
+    bar_seconds: Optional[int] = None
 
     def __init__(self, **params: Any) -> None:
         # Imported here: the catalogue imports strategy modules to register them.
@@ -79,6 +82,11 @@ class Strategy(ABC):
         """Bars the runner feeds ``on_bar``: enough for recursive indicators
         (EMA, Wilder) to converge, and identical in backtest and live."""
         return max(5 * self.warmup_bars, self.warmup_bars + 200)
+
+    def set_timeframe(self, tf_seconds: int) -> None:
+        """The run's bar length. A strategy that cannot decide on it raises
+        StrategyError."""
+        self.bar_seconds = int(tf_seconds)
 
     # -- the interface -------------------------------------------------------------
 

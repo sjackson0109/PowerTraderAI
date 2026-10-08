@@ -1,0 +1,58 @@
+{
+  "pair": "ETHUSDT",
+  "timeframe": "1h",
+  "overlays": "OVL-ATR+OVL-COOLDOWN",
+  "model_id": "ETH-20251001T0000Z-9b4e1e5eb974",
+  "train_end": "2025-10-01T00:00:00Z",
+  "code": {
+    "commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+    "frozen_files_changed": [],
+    "python": "3.13.15 (tags/v3.13.15:4061bc4, Aug  5 2026, 13:05:39) [MSC v.1944 64 bit (AMD64)]",
+    "powertrader_home": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home"
+  },
+  "window": [
+    24095,
+    26303
+  ],
+  "from": "2025-10-01T00:00:00+00:00",
+  "to": "2025-12-31T23:00:00+00:00",
+  "bars": 2208,
+  "strategy": {
+    "total_return_pct": -21.980917706869974,
+    "cagr_pct": -62.67278331167076,
+    "max_drawdown_pct": -27.15947604397657,
+    "sharpe": -2.5259820280082526,
+    "sortino": -3.3319496233759267,
+    "trade_count": 49,
+    "win_rate_pct": 42.857142857142854,
+    "avg_trade_pct": -0.4813909762635454,
+    "exposure_pct": 25.4981884057971,
+    "fees_paid": 858.2247811719243,
+    "vs_buy_hold_pct": 6.54433532240154
+  },
+  "buy_and_hold": {
+    "total_return_pct": -28.525253029271514,
+    "cagr_pct": -73.63850266764153,
+    "max_drawdown_pct": -43.51885007983216,
+    "sharpe": -1.5691629632793929,
+    "sortino": -2.129366289858644,
+    "trade_count": 1,
+    "win_rate_pct": 0.0,
+    "avg_trade_pct": -28.525253029271518,
+    "exposure_pct": 100.0,
+    "fees_paid": 17.15462932639925,
+    "vs_buy_hold_pct": null
+  },
+  "holds": {
+    "BARS_MISSING": 0,
+    "TIMEFRAME_UNKNOWN": 0,
+    "BOUNDS_NOT_CONVERGED": 0,
+    "by_reason": {}
+  },
+  "quirks": {
+    "decisions": 2207,
+    "e1": 0,
+    "e1_share": 0.0,
+    "e2": 0
+  }
+}

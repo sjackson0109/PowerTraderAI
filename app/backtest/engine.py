@@ -14,6 +14,11 @@ Honesty rules (each has a test):
    are used only as indicator history (they are never traded).
 6. Benchmark: buy-and-hold over the same window with the same costs (one buy at
    the first tradable open, one sell at the final close).
+7. No lookahead from a trained model (FDS-MDL 6.5): a strategy that carries a model
+   (``model_train_end``) is refused, ``LOOKAHEAD_MODEL``, when the model's training
+   window ends after the first bar being scored. This applies to every run: in a time
+   split, an in-sample window it refuses is reported as refused, and the run fails if
+   the out-of-sample window is refused.
 
 A position still open on the final bar is closed at that bar's close (with costs),
 so strategy and benchmark are measured on the same footing.
@@ -72,6 +77,43 @@ class RunResult:
     last_bar: pd.Timestamp
     bars: int
     kpis: Dict[str, Optional[float]] = field(default_factory=dict)
+    # decisions held because the strategy lacked a bar it needs, by reason
+    # ("BARS_MISSING:<timeframe>"): reported, never silently scored as "no signal"
+    bars_missing: Dict[str, int] = field(default_factory=dict)
+
+
+MISSING_BARS = "BARS_MISSING"  # the reason prefix of a HOLD for lack of data
+
+
+class LookaheadError(ValueError):
+    """LOOKAHEAD_MODEL: the strategy's model was trained on bars being scored."""
+
+
+def check_lookahead(runner: StrategyRunner, first_scored: pd.Timestamp) -> None:
+    """Refuse (``LOOKAHEAD_MODEL``) when the runner's strategy carries a model whose
+    training window ends after ``first_scored``, the open of the first scored bar.
+    (The trainer reads only bars closed by ``train_end``, so a bar that opens at
+    ``train_end`` was not trained on.)"""
+    train_end = getattr(runner.strategy, "model_train_end", None)
+    if train_end is None:
+        return
+    try:
+        train_end = pd.Timestamp(train_end)
+    except (TypeError, ValueError):
+        train_end = pd.NaT
+    if pd.isna(train_end):  # unknown: nothing can be shown to be after it
+        raise LookaheadError(
+            "LOOKAHEAD_MODEL: the strategy's model has no readable end of training"
+        )
+    if train_end.tzinfo is None:  # naive times are UTC, as in the trainer
+        train_end = train_end.tz_localize("UTC")
+    if train_end > pd.Timestamp(first_scored):
+        model = getattr(runner.strategy, "model_id", "?")
+        raise LookaheadError(
+            f"LOOKAHEAD_MODEL: model {model} was trained on bars up to {train_end}, "
+            f"after the first scored bar ({pd.Timestamp(first_scored)}); score only bars "
+            "that open at or after the end of the model's training window"
+        )
 
 
 def _fill_buy(price: float, slip_bps: float) -> float:
@@ -99,6 +141,12 @@ def run_backtest(
     n = len(candles) if end_index is None else end_index
     if not 0 <= start_index < n <= len(candles):
         raise ValueError("invalid trading window")
+    check_lookahead(runner, candles["open_time"].iloc[start_index])
+    model_symbol = getattr(runner.strategy, "model_symbol", None)
+    if model_symbol is not None and str(model_symbol).upper() != str(symbol).upper():
+        raise ValueError(
+            f"the strategy's model was trained on {model_symbol}; this run is {symbol}"
+        )
     tf_seconds = timeframe_seconds(tf)
     runner.set_timeframe(
         tf_seconds
@@ -122,6 +170,7 @@ def run_backtest(
     fees_paid = 0.0
     slippage_cost = 0.0
     bars_in_position = 0
+    bars_missing: Dict[str, int] = {}
 
     def sell(i: int, price_raw: float, rule: str, forced: bool) -> None:
         nonlocal cash, qty, spent, fees_paid, slippage_cost, pos
@@ -180,6 +229,8 @@ def run_backtest(
         if i == last:
             break
         decision = runner.evaluate(runner.window(candles, i), pos, symbol)
+        if decision.action is Action.HOLD and decision.reason.startswith(MISSING_BARS):
+            bars_missing[decision.reason] = bars_missing.get(decision.reason, 0) + 1
         if decision.action is Action.ENTER_LONG and pos is None:
             pending = "ENTER"
         elif decision.action is Action.EXIT_LONG and pos is not None:
@@ -199,6 +250,7 @@ def run_backtest(
         first_bar=times.iloc[start_index],
         last_bar=times.iloc[last],
         bars=n - start_index,
+        bars_missing=bars_missing,
     )
     result.kpis = compute_kpis(
         equity,
@@ -296,7 +348,9 @@ def evaluate_split(
     """
     Run the strategy and the buy-and-hold benchmark on the in-sample and
     out-of-sample windows. ``runner_factory()`` must return a *fresh* runner
-    (overlays are stateful) for each window.
+    (overlays are stateful) for each window. An in-sample window refused with
+    ``LOOKAHEAD_MODEL`` comes back as ``{"refused": reason, "buy_and_hold": ...}``;
+    a refused out-of-sample window raises ``LookaheadError``.
     """
     n = len(candles)
     cut = split_index(n, in_sample_fraction)
@@ -305,10 +359,16 @@ def evaluate_split(
     for name, (a, b) in windows.items():
         if b - a < 2:
             raise ValueError(f"{name} window has fewer than 2 bars")
-        strat = run_backtest(
-            candles, runner_factory(), symbol, tf, a, b, cost, initial_equity
-        )
         bench = buy_and_hold(candles, tf, a, b, cost, initial_equity)
+        try:
+            strat = run_backtest(
+                candles, runner_factory(), symbol, tf, a, b, cost, initial_equity
+            )
+        except LookaheadError as exc:
+            if name == "out_of_sample":
+                raise
+            out[name] = {"refused": str(exc), "buy_and_hold": bench, "window": (a, b)}
+            continue
         sk, bk = strat.kpis, bench.kpis
         if sk["total_return_pct"] is not None and bk["total_return_pct"] is not None:
             sk["vs_buy_hold_pct"] = sk["total_return_pct"] - bk["total_return_pct"]

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# MOCK - DO NOT USE FOR DECISIONS (FDS-MDL): sleep-loop "training", formula accuracy, nothing learned from market data. See docs/dev/TRAINER-AUDIT.md.
 """
 Standalone Neural Network Trainer for PowerTrader AI+
 

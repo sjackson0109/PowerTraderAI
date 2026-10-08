@@ -1,0 +1,752 @@
+{
+  "candle_file_sha256": {
+    "12h": "7abbac01a5ddb055ecaa97f74f4bd2d58f020031234ba4e4ea362314c135772e",
+    "1d": "df58f50b21162595c01ecf4d5c43347ff9879fc64f54c4076e7f3be0a452d7bb",
+    "1h": "f90e2e13a8681b678c03b40a1cdf32d5b20cdeca34db8cd35e2f712aa7af8cb4",
+    "1w": "a7ba38a95fd00d55874e321e8a4090d3f3528b3067fef90aeafa8866c73132ec",
+    "2h": "7244066a43c71dcc2aec67ffee5c83b804adf3376628d525dcd90758c413307f",
+    "4h": "4b891016542463f70adea110a684eb0c12216572d866f4a37ff0cae700731951",
+    "8h": "b3c7f00e2d424b64114f38c1146cb5c9875eabb272e5c66dc61b25268f65c476"
+  },
+  "candle_timeframes": {
+    "12hour": "12h",
+    "1day": "1d",
+    "1hour": "1h",
+    "1week": "1w",
+    "2hour": "2h",
+    "4hour": "4h",
+    "8hour": "8h"
+  },
+  "candles": {
+    "12h": {
+      "bars": 1462,
+      "first_open": "2023-01-01T00:00:00Z",
+      "gaps": [],
+      "last_open": "2024-12-31T12:00:00Z",
+      "missing_at_end": 0,
+      "missing_at_start": 0,
+      "sha256": "7abbac01a5ddb055ecaa97f74f4bd2d58f020031234ba4e4ea362314c135772e",
+      "window_first_open": "2023-01-01T00:00:00Z",
+      "window_last_open": "2024-12-31T12:00:00Z"
+    },
+    "1d": {
+      "bars": 731,
+      "first_open": "2023-01-01T00:00:00Z",
+      "gaps": [],
+      "last_open": "2024-12-31T00:00:00Z",
+      "missing_at_end": 0,
+      "missing_at_start": 0,
+      "sha256": "df58f50b21162595c01ecf4d5c43347ff9879fc64f54c4076e7f3be0a452d7bb",
+      "window_first_open": "2023-01-01T00:00:00Z",
+      "window_last_open": "2024-12-31T00:00:00Z"
+    },
+    "1h": {
+      "bars": 17543,
+      "first_open": "2023-01-01T00:00:00Z",
+      "gaps": [
+        [
+          "2023-03-24 13:00:00+00:00",
+          "2023-03-24 13:00:00+00:00",
+          "1"
+        ]
+      ],
+      "last_open": "2024-12-31T23:00:00Z",
+      "missing_at_end": 0,
+      "missing_at_start": 0,
+      "sha256": "f90e2e13a8681b678c03b40a1cdf32d5b20cdeca34db8cd35e2f712aa7af8cb4",
+      "window_first_open": "2023-01-01T00:00:00Z",
+      "window_last_open": "2024-12-31T23:00:00Z"
+    },
+    "1w": {
+      "bars": 104,
+      "first_open": "2023-01-02T00:00:00Z",
+      "gaps": [],
+      "last_open": "2024-12-23T00:00:00Z",
+      "missing_at_end": 0,
+      "missing_at_start": 0,
+      "sha256": "a7ba38a95fd00d55874e321e8a4090d3f3528b3067fef90aeafa8866c73132ec",
+      "window_first_open": "2023-01-02T00:00:00Z",
+      "window_last_open": "2024-12-23T00:00:00Z"
+    },
+    "2h": {
+      "bars": 8772,
+      "first_open": "2023-01-01T00:00:00Z",
+      "gaps": [],
+      "last_open": "2024-12-31T22:00:00Z",
+      "missing_at_end": 0,
+      "missing_at_start": 0,
+      "sha256": "7244066a43c71dcc2aec67ffee5c83b804adf3376628d525dcd90758c413307f",
+      "window_first_open": "2023-01-01T00:00:00Z",
+      "window_last_open": "2024-12-31T22:00:00Z"
+    },
+    "4h": {
+      "bars": 4386,
+      "first_open": "2023-01-01T00:00:00Z",
+      "gaps": [],
+      "last_open": "2024-12-31T20:00:00Z",
+      "missing_at_end": 0,
+      "missing_at_start": 0,
+      "sha256": "4b891016542463f70adea110a684eb0c12216572d866f4a37ff0cae700731951",
+      "window_first_open": "2023-01-01T00:00:00Z",
+      "window_last_open": "2024-12-31T20:00:00Z"
+    },
+    "8h": {
+      "bars": 2193,
+      "first_open": "2023-01-01T00:00:00Z",
+      "gaps": [],
+      "last_open": "2024-12-31T16:00:00Z",
+      "missing_at_end": 0,
+      "missing_at_start": 0,
+      "sha256": "b3c7f00e2d424b64114f38c1146cb5c9875eabb272e5c66dc61b25268f65c476",
+      "window_first_open": "2023-01-01T00:00:00Z",
+      "window_last_open": "2024-12-31T16:00:00Z"
+    }
+  },
+  "code_sha256": {
+    "model_store.py": "b2ddcc475cd8b0df9993ad4d8c39a5f74da6f7648e271b703d5c53c159016b07",
+    "pattern_model.py": "2c6cec860ffbc2dbd9aa25637808e5f710dc4899e8b1c570919b4d3af12dd01b",
+    "pt_pattern_trainer.py": "b5e3ef51aaea059206ca4e8bd192b86d936b62e9064bd9ab0fe165711b2f6971"
+  },
+  "coin": "ETH",
+  "created_at": "2026-10-07T16:50:12Z",
+  "files": {
+    "memories_12hour.txt": "7ff181cc13914ab174022f28b6342097224c598bda67e7c66892fc9a45179de1",
+    "memories_1day.txt": "1c52c07b3af41ef1130fd44c793e9cac3e2e5945b661ea8217c2b88af10b178c",
+    "memories_1hour.txt": "8672fda8e6379489d31ef50e413b94cb09f4fbf8e91e13846ef7b2896a6d5e8b",
+    "memories_1week.txt": "9db2e53f77e0dee2401bdc645b7acad39041e188164eff0caa7abf88ab495b26",
+    "memories_2hour.txt": "193e6dbcd2b7e209ee8307f373e681f50270425ab697827e61e972b0dfdacb93",
+    "memories_4hour.txt": "02e985e1b2dc1071be7095e7e502c55d87cb7b0d8e4ec91bb6246c35e497a9c4",
+    "memories_8hour.txt": "3f850060a8fccaec10afdb9aeb193d5ab992793ed0b3b38362587fb3cafd3f8d",
+    "memory_weights_12hour.txt": "894101a402a8c6ecc5bb69751c0331401ba6271a267f8532c5ddd53e6220d667",
+    "memory_weights_1day.txt": "e1b2c4c572815761aa1dfae41487040d2217eb51ec7237d0662883c396c2a93c",
+    "memory_weights_1hour.txt": "f0b6aa95ee3f1ebb4046069e49f60e87d627abc8c541a0bf67e2bb722a4c7dc0",
+    "memory_weights_1week.txt": "cf9e90b7a9e4709f48b6ace3dba2ee856fed057f4aac13cabb320e45eb89e07f",
+    "memory_weights_2hour.txt": "75f45cdccb55c7d1f1c9b75b22d09bb0f09c864e2660f8dd23de2fe8c1083289",
+    "memory_weights_4hour.txt": "f2c07cabd6bff73144215eb2400ce54504ff4627405c30d3c4b5019b385e0b7f",
+    "memory_weights_8hour.txt": "5e3337820ebc004863abe0b77dc622f2224ad97c5690756f9e2bf886e22d5d31",
+    "memory_weights_high_12hour.txt": "894101a402a8c6ecc5bb69751c0331401ba6271a267f8532c5ddd53e6220d667",
+    "memory_weights_high_1day.txt": "e1b2c4c572815761aa1dfae41487040d2217eb51ec7237d0662883c396c2a93c",
+    "memory_weights_high_1hour.txt": "f0b6aa95ee3f1ebb4046069e49f60e87d627abc8c541a0bf67e2bb722a4c7dc0",
+    "memory_weights_high_1week.txt": "cf9e90b7a9e4709f48b6ace3dba2ee856fed057f4aac13cabb320e45eb89e07f",
+    "memory_weights_high_2hour.txt": "75f45cdccb55c7d1f1c9b75b22d09bb0f09c864e2660f8dd23de2fe8c1083289",
+    "memory_weights_high_4hour.txt": "f2c07cabd6bff73144215eb2400ce54504ff4627405c30d3c4b5019b385e0b7f",
+    "memory_weights_high_8hour.txt": "5e3337820ebc004863abe0b77dc622f2224ad97c5690756f9e2bf886e22d5d31",
+    "memory_weights_low_12hour.txt": "894101a402a8c6ecc5bb69751c0331401ba6271a267f8532c5ddd53e6220d667",
+    "memory_weights_low_1day.txt": "e1b2c4c572815761aa1dfae41487040d2217eb51ec7237d0662883c396c2a93c",
+    "memory_weights_low_1hour.txt": "f0b6aa95ee3f1ebb4046069e49f60e87d627abc8c541a0bf67e2bb722a4c7dc0",
+    "memory_weights_low_1week.txt": "cf9e90b7a9e4709f48b6ace3dba2ee856fed057f4aac13cabb320e45eb89e07f",
+    "memory_weights_low_2hour.txt": "75f45cdccb55c7d1f1c9b75b22d09bb0f09c864e2660f8dd23de2fe8c1083289",
+    "memory_weights_low_4hour.txt": "f2c07cabd6bff73144215eb2400ce54504ff4627405c30d3c4b5019b385e0b7f",
+    "memory_weights_low_8hour.txt": "5e3337820ebc004863abe0b77dc622f2224ad97c5690756f9e2bf886e22d5d31",
+    "neural_perfect_threshold_12hour.txt": "bc5d60db808033945d2356833f1021d46af3ee6c93bddb97b37f0e1a479ed6c4",
+    "neural_perfect_threshold_1day.txt": "bc5d60db808033945d2356833f1021d46af3ee6c93bddb97b37f0e1a479ed6c4",
+    "neural_perfect_threshold_1hour.txt": "3f1f3732c7684e5c38ca0c92fa9351c8cd6739d421cda99d9e793e5307e84c63",
+    "neural_perfect_threshold_1week.txt": "f33559ef528ab5dfe88d3e891efc78bc090558ab731c94bfed32e11347479d56",
+    "neural_perfect_threshold_2hour.txt": "6596c9000d483eac5eb47a0d47ce806bd60c48a2f1efdbde0caf7056d916e092",
+    "neural_perfect_threshold_4hour.txt": "94dadf31df329aeb4e05d9c6641fed0f6ec91197c45379268af6ee4713a4423d",
+    "neural_perfect_threshold_8hour.txt": "f49daa2ed97d09197e98ae6070e397faaa9c2abfc37c85446d6d25a101399e6c"
+  },
+  "kind": "pattern memories (pt_pattern_trainer.py)",
+  "manifest_version": 1,
+  "metric_definitions": {
+    "active_pairs": "pairs where bar j matched at least one memory",
+    "active_share": "active_pairs / scored_pairs",
+    "close_move_mae_pct": "mean |predicted - actual| close move from bar j's close, %",
+    "direction_considered": "active pairs with a non-zero predicted and actual close move",
+    "direction_hit_rate": "share of those where the predicted close move has the right sign",
+    "high_move_mae_pct": "mean |predicted - actual| high move from bar j's close, %",
+    "low_move_mae_pct": "mean |predicted - actual| low move from bar j's close, %",
+    "next_close_within_band_share": "share of active pairs whose next close lies in the predicted [low, high] band",
+    "predicted_up_share_of_considered": "share of those where the predicted close move is up (1.0: the model always predicts a rise, so its hit rate is the up share)",
+    "scored_pairs": "consecutive held-out bar pairs (j, j+1) of the timeframe",
+    "up_share_of_considered": "share of those where the close rose (the 'always up' rate)"
+  },
+  "model_id": "ETH-20250101T0000Z-8210ec3df6be",
+  "params": {
+    "flush_every_steps": 200,
+    "number_of_candles": 2,
+    "pass_0_data": "1hour",
+    "passes": 3,
+    "row_selection": "older half for intraday timeframes and every pass 0; all bars for 1day/1week passes 1-2",
+    "validation_fraction": 0.2
+  },
+  "seed": 0,
+  "symbol": "ETHUSDT",
+  "timeframes": [
+    "1hour",
+    "2hour",
+    "4hour",
+    "8hour",
+    "12hour",
+    "1day",
+    "1week"
+  ],
+  "train_end": "2025-01-01T00:00:00Z",
+  "train_start": "2023-01-01T00:00:00Z",
+  "trainer_git_commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+  "trainer_git_dirty": false,
+  "trainer_path": "app/pt_pattern_trainer.py",
+  "trainer_sha256": "b5e3ef51aaea059206ca4e8bd192b86d936b62e9064bd9ab0fe165711b2f6971",
+  "training": {
+    "12hour": {
+      "final_threshold": 4.669999999999944,
+      "memories": 469,
+      "passes": [
+        {
+          "bars_in_window": 17543,
+          "bars_used": 8772,
+          "data_tf": "1hour",
+          "matched_steps": 1900,
+          "new_memories": 284,
+          "pass": 0,
+          "steps": 2184,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 1462,
+          "bars_used": 732,
+          "data_tf": "12hour",
+          "matched_steps": 83,
+          "new_memories": 91,
+          "pass": 1,
+          "steps": 174,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 1462,
+          "bars_used": 732,
+          "data_tf": "12hour",
+          "matched_steps": 273,
+          "new_memories": 94,
+          "pass": 2,
+          "steps": 367,
+          "unlearned_steps": 0
+        }
+      ]
+    },
+    "1day": {
+      "final_threshold": 4.669999999999944,
+      "memories": 525,
+      "passes": [
+        {
+          "bars_in_window": 17543,
+          "bars_used": 8772,
+          "data_tf": "1hour",
+          "matched_steps": 1900,
+          "new_memories": 284,
+          "pass": 0,
+          "steps": 2184,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 731,
+          "bars_used": 731,
+          "data_tf": "1day",
+          "matched_steps": 64,
+          "new_memories": 109,
+          "pass": 1,
+          "steps": 173,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 731,
+          "bars_used": 731,
+          "data_tf": "1day",
+          "matched_steps": 235,
+          "new_memories": 132,
+          "pass": 2,
+          "steps": 367,
+          "unlearned_steps": 0
+        }
+      ]
+    },
+    "1hour": {
+      "final_threshold": 27.63000000000152,
+      "memories": 370,
+      "passes": [
+        {
+          "bars_in_window": 17543,
+          "bars_used": 8772,
+          "data_tf": "1hour",
+          "matched_steps": 1900,
+          "new_memories": 284,
+          "pass": 0,
+          "steps": 2184,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 17543,
+          "bars_used": 8772,
+          "data_tf": "1hour",
+          "matched_steps": 2184,
+          "new_memories": 0,
+          "pass": 1,
+          "steps": 2184,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 17543,
+          "bars_used": 8772,
+          "data_tf": "1hour",
+          "matched_steps": 4301,
+          "new_memories": 86,
+          "pass": 2,
+          "steps": 4387,
+          "unlearned_steps": 0
+        }
+      ]
+    },
+    "1week": {
+      "final_threshold": 1.5300000000000005,
+      "memories": 339,
+      "passes": [
+        {
+          "bars_in_window": 17543,
+          "bars_used": 8772,
+          "data_tf": "1hour",
+          "matched_steps": 1900,
+          "new_memories": 284,
+          "pass": 0,
+          "steps": 2184,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 104,
+          "bars_used": 104,
+          "data_tf": "1week",
+          "matched_steps": 5,
+          "new_memories": 11,
+          "pass": 1,
+          "steps": 17,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 104,
+          "bars_used": 104,
+          "data_tf": "1week",
+          "matched_steps": 8,
+          "new_memories": 44,
+          "pass": 2,
+          "steps": 53,
+          "unlearned_steps": 0
+        }
+      ]
+    },
+    "2hour": {
+      "final_threshold": 20.79000000000045,
+      "memories": 440,
+      "passes": [
+        {
+          "bars_in_window": 17543,
+          "bars_used": 8772,
+          "data_tf": "1hour",
+          "matched_steps": 1900,
+          "new_memories": 284,
+          "pass": 0,
+          "steps": 2184,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 8772,
+          "bars_used": 4387,
+          "data_tf": "2hour",
+          "matched_steps": 989,
+          "new_memories": 98,
+          "pass": 1,
+          "steps": 1087,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 8772,
+          "bars_used": 4387,
+          "data_tf": "2hour",
+          "matched_steps": 2137,
+          "new_memories": 58,
+          "pass": 2,
+          "steps": 2195,
+          "unlearned_steps": 0
+        }
+      ]
+    },
+    "4hour": {
+      "final_threshold": 11.979999999999789,
+      "memories": 414,
+      "passes": [
+        {
+          "bars_in_window": 17543,
+          "bars_used": 8772,
+          "data_tf": "1hour",
+          "matched_steps": 1900,
+          "new_memories": 284,
+          "pass": 0,
+          "steps": 2184,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 4386,
+          "bars_used": 2194,
+          "data_tf": "4hour",
+          "matched_steps": 451,
+          "new_memories": 88,
+          "pass": 1,
+          "steps": 539,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 4386,
+          "bars_used": 2194,
+          "data_tf": "4hour",
+          "matched_steps": 1056,
+          "new_memories": 42,
+          "pass": 2,
+          "steps": 1098,
+          "unlearned_steps": 0
+        }
+      ]
+    },
+    "8hour": {
+      "final_threshold": 6.499999999999905,
+      "memories": 432,
+      "passes": [
+        {
+          "bars_in_window": 17543,
+          "bars_used": 8772,
+          "data_tf": "1hour",
+          "matched_steps": 1900,
+          "new_memories": 284,
+          "pass": 0,
+          "steps": 2184,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 2193,
+          "bars_used": 1097,
+          "data_tf": "8hour",
+          "matched_steps": 168,
+          "new_memories": 97,
+          "pass": 1,
+          "steps": 265,
+          "unlearned_steps": 0
+        },
+        {
+          "bars_in_window": 2193,
+          "bars_used": 1097,
+          "data_tf": "8hour",
+          "matched_steps": 499,
+          "new_memories": 51,
+          "pass": 2,
+          "steps": 550,
+          "unlearned_steps": 0
+        }
+      ]
+    }
+  },
+  "upstream": {
+    "blob": "0369182e5685f599ec593600f82e2ecc74dc9384",
+    "repo": "github.com/garagesteve1155/PowerTrader_AI"
+  },
+  "upstream_commit": "ba62130",
+  "validation": {
+    "fit_candles": {
+      "12h": {
+        "bars": 1169,
+        "first_open": "2023-01-01T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-08-07T00:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "6de7287073164bf373fe94fdedd4db9d0e777d8e96523694cdea5d1c341e5935",
+        "window_first_open": "2023-01-01T00:00:00Z",
+        "window_last_open": "2024-08-07T00:00:00Z"
+      },
+      "1d": {
+        "bars": 584,
+        "first_open": "2023-01-01T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-08-06T00:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "bd7552d8009ccf5350a2a3b724e37075d0388c4d109fc51fd563b741831e8b9d",
+        "window_first_open": "2023-01-01T00:00:00Z",
+        "window_last_open": "2024-08-06T00:00:00Z"
+      },
+      "1h": {
+        "bars": 14034,
+        "first_open": "2023-01-01T00:00:00Z",
+        "gaps": [
+          [
+            "2023-03-24 13:00:00+00:00",
+            "2023-03-24 13:00:00+00:00",
+            "1"
+          ]
+        ],
+        "last_open": "2024-08-07T18:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "4715b23cb64726f034f40071d15f2f53130182766b8513b8a1889f7f05e01f18",
+        "window_first_open": "2023-01-01T00:00:00Z",
+        "window_last_open": "2024-08-07T18:00:00Z"
+      },
+      "1w": {
+        "bars": 83,
+        "first_open": "2023-01-02T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-07-29T00:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "edec1bcc1f50ef92bbf3db88fd66b621334843da58274ba0bd045ed6bce0e116",
+        "window_first_open": "2023-01-02T00:00:00Z",
+        "window_last_open": "2024-07-29T00:00:00Z"
+      },
+      "2h": {
+        "bars": 7017,
+        "first_open": "2023-01-01T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-08-07T16:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "b55aac0d7e224f4aaea0e6acff298d6a5a4dcc841ea2a50c6ac67720330447bd",
+        "window_first_open": "2023-01-01T00:00:00Z",
+        "window_last_open": "2024-08-07T16:00:00Z"
+      },
+      "4h": {
+        "bars": 3508,
+        "first_open": "2023-01-01T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-08-07T12:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "5a17c11cfb40cbd0a08bc40bedfc528a4a8e155202866b19687087a82e486411",
+        "window_first_open": "2023-01-01T00:00:00Z",
+        "window_last_open": "2024-08-07T12:00:00Z"
+      },
+      "8h": {
+        "bars": 1754,
+        "first_open": "2023-01-01T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-08-07T08:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "9aa3ecf605c3398485f3b24b92210515254a313ed974ce4add3e31aa01e68953",
+        "window_first_open": "2023-01-01T00:00:00Z",
+        "window_last_open": "2024-08-07T08:00:00Z"
+      }
+    },
+    "fit_end": "2024-08-07T19:00:00Z",
+    "fit_files_sha256": {
+      "memories_12hour.txt": "ee9fd31532951ab0f9bd3bb22b318966de612e4965cbe45fdd837ab5cf42a813",
+      "memories_1day.txt": "bbc5556b873e09268a79ec732c0b81e263c6794a52c2a9441aedf4cc51acc14f",
+      "memories_1hour.txt": "d548169ec1474fc78b23a1e4b963d4795c7be0d84a1a6006935435b2e9f1da50",
+      "memories_1week.txt": "1cbdb8d219a83fc0687331ef911254ddbf40080027c03c286b7c6c2db27081a8",
+      "memories_2hour.txt": "bfd85bb34699f6c18f24dabb22d35237c5eeafed6c48d69dd222670c5ea6c3c2",
+      "memories_4hour.txt": "b0bf81ceb789c40dbe78f3f8d4b8eecc1a1dfac75424d58e40a75db61bc231d3",
+      "memories_8hour.txt": "0642662c7522a9ed2688066b94f6046efd743fdb52935d140630bc0eaf785c3a",
+      "memory_weights_12hour.txt": "e39fcceabd56f0943cd70972a680bc41b57982583ab544b6e157728e2144ac9f",
+      "memory_weights_1day.txt": "b60a601e6708ae67ef0c010c691008101b63eec7317280375f3c414214b64aec",
+      "memory_weights_1hour.txt": "b416f7f88b80683646ef2d80bb53d8f9591c8336541916222ad6b63974b5aabf",
+      "memory_weights_1week.txt": "252011b3fee5aebe093b82543c517808beab57de5a407c0a3b556c51d1bad82d",
+      "memory_weights_2hour.txt": "83198f24290cebb8cce244dba7a959eafde77349bdc2c5831ce1279a5c802372",
+      "memory_weights_4hour.txt": "8fe01c461bbe9d0ada9067196c66453c4fb2845d2ccfe02d9f9a4d2f55b077ff",
+      "memory_weights_8hour.txt": "c4364245251747e887ddaf6ccdb6a7c5f1ea8d42d7dca996726b12583e9cdb46",
+      "memory_weights_high_12hour.txt": "e39fcceabd56f0943cd70972a680bc41b57982583ab544b6e157728e2144ac9f",
+      "memory_weights_high_1day.txt": "b60a601e6708ae67ef0c010c691008101b63eec7317280375f3c414214b64aec",
+      "memory_weights_high_1hour.txt": "b416f7f88b80683646ef2d80bb53d8f9591c8336541916222ad6b63974b5aabf",
+      "memory_weights_high_1week.txt": "252011b3fee5aebe093b82543c517808beab57de5a407c0a3b556c51d1bad82d",
+      "memory_weights_high_2hour.txt": "83198f24290cebb8cce244dba7a959eafde77349bdc2c5831ce1279a5c802372",
+      "memory_weights_high_4hour.txt": "8fe01c461bbe9d0ada9067196c66453c4fb2845d2ccfe02d9f9a4d2f55b077ff",
+      "memory_weights_high_8hour.txt": "c4364245251747e887ddaf6ccdb6a7c5f1ea8d42d7dca996726b12583e9cdb46",
+      "memory_weights_low_12hour.txt": "e39fcceabd56f0943cd70972a680bc41b57982583ab544b6e157728e2144ac9f",
+      "memory_weights_low_1day.txt": "b60a601e6708ae67ef0c010c691008101b63eec7317280375f3c414214b64aec",
+      "memory_weights_low_1hour.txt": "b416f7f88b80683646ef2d80bb53d8f9591c8336541916222ad6b63974b5aabf",
+      "memory_weights_low_1week.txt": "252011b3fee5aebe093b82543c517808beab57de5a407c0a3b556c51d1bad82d",
+      "memory_weights_low_2hour.txt": "83198f24290cebb8cce244dba7a959eafde77349bdc2c5831ce1279a5c802372",
+      "memory_weights_low_4hour.txt": "8fe01c461bbe9d0ada9067196c66453c4fb2845d2ccfe02d9f9a4d2f55b077ff",
+      "memory_weights_low_8hour.txt": "c4364245251747e887ddaf6ccdb6a7c5f1ea8d42d7dca996726b12583e9cdb46",
+      "neural_perfect_threshold_12hour.txt": "0216a0a9415984e586cefebd28eac361599cf93aa072de5dce273b170233264f",
+      "neural_perfect_threshold_1day.txt": "4402c77b33db1463c0229f27b6364bdf584aa4432201903530d60918b4541d4f",
+      "neural_perfect_threshold_1hour.txt": "9af022a24b060128457a3bf1f8518462ffbae396c8c9a0f95f6bbde363aa0d2d",
+      "neural_perfect_threshold_1week.txt": "d2fc9177306ff36c0d93eab7631b1ddf8a1fe8f9983c0b64e54c2baafc2d825c",
+      "neural_perfect_threshold_2hour.txt": "786699c9e3de8be7bb1f2e45f5d2f101d25849dd6b1f725b9ef5eb02fe960e79",
+      "neural_perfect_threshold_4hour.txt": "00fb4944a4e2646322c57788eb7a62ffd00ceac8efe42283f78f7ab24e7a5af9",
+      "neural_perfect_threshold_8hour.txt": "3048d770ad54a8920bc492b11f2b9589992259adf70342c68caf3ec0f9080d9f"
+    },
+    "fit_start": "2023-01-01T00:00:00Z",
+    "fraction": 0.2,
+    "holdout_candles": {
+      "12h": {
+        "bars": 292,
+        "first_open": "2024-08-08T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-12-31T12:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "f72119125372db7a82c6477845be3469df3e171ebe47b794c4048057dbed466a",
+        "window_first_open": "2024-08-08T00:00:00Z",
+        "window_last_open": "2024-12-31T12:00:00Z"
+      },
+      "1d": {
+        "bars": 146,
+        "first_open": "2024-08-08T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-12-31T00:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "7dc9cd1ba7317032884516cffb0697d5da85d42c92d3ad6ea9cfead18ca48146",
+        "window_first_open": "2024-08-08T00:00:00Z",
+        "window_last_open": "2024-12-31T00:00:00Z"
+      },
+      "1h": {
+        "bars": 3509,
+        "first_open": "2024-08-07T19:00:00Z",
+        "gaps": [],
+        "last_open": "2024-12-31T23:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "702ad9a2ed21083dd1937e6e1ea0343ceb679f6300a7c4874fdf963ea2587e1c",
+        "window_first_open": "2024-08-07T19:00:00Z",
+        "window_last_open": "2024-12-31T23:00:00Z"
+      },
+      "1w": {
+        "bars": 20,
+        "first_open": "2024-08-12T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-12-23T00:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "73acf902502c615849e09f8abe6fc775a7f331f0fcc0ae29939a71e1ec690d0b",
+        "window_first_open": "2024-08-12T00:00:00Z",
+        "window_last_open": "2024-12-23T00:00:00Z"
+      },
+      "2h": {
+        "bars": 1754,
+        "first_open": "2024-08-07T20:00:00Z",
+        "gaps": [],
+        "last_open": "2024-12-31T22:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "3ff54a5283186411e76b75ee8cbfe753c0cb7a4b0f0b92a1d48f895b778241f6",
+        "window_first_open": "2024-08-07T20:00:00Z",
+        "window_last_open": "2024-12-31T22:00:00Z"
+      },
+      "4h": {
+        "bars": 877,
+        "first_open": "2024-08-07T20:00:00Z",
+        "gaps": [],
+        "last_open": "2024-12-31T20:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "aad09d4b8b43b8a9e81d1dfce484e8b3d7d9c799b8229ba390f0e869291daa62",
+        "window_first_open": "2024-08-07T20:00:00Z",
+        "window_last_open": "2024-12-31T20:00:00Z"
+      },
+      "8h": {
+        "bars": 438,
+        "first_open": "2024-08-08T00:00:00Z",
+        "gaps": [],
+        "last_open": "2024-12-31T16:00:00Z",
+        "missing_at_end": 0,
+        "missing_at_start": 0,
+        "sha256": "ca4341de66b22a1117a9caee9d2a4c3251c86b4f0744212c766c9039bda6fdef",
+        "window_first_open": "2024-08-08T00:00:00Z",
+        "window_last_open": "2024-12-31T16:00:00Z"
+      }
+    },
+    "holdout_end": "2025-01-01T00:00:00Z",
+    "holdout_start": "2024-08-07T19:00:00Z",
+    "method": "a separate fit on the first 80% of the span the 1-hour bars cover (from train_start, or the first bar if later, to train_end, or the last bar's close if earlier), scored frozen on the last 20%; the published model is refit on the whole window",
+    "status": "ok"
+  },
+  "validation_metrics": {
+    "12hour": {
+      "active_pairs": 270,
+      "active_share": 0.9278350515463918,
+      "close_move_mae_pct": 1.7347312595786624,
+      "direction_considered": 270,
+      "direction_hit_rate": 0.4962962962962963,
+      "high_move_mae_pct": 1.2529681332051106,
+      "low_move_mae_pct": 1.3744578253081994,
+      "next_close_within_band_share": 0.34444444444444444,
+      "predicted_up_share_of_considered": 0.5074074074074074,
+      "scored_pairs": 291,
+      "up_share_of_considered": 0.5296296296296297
+    },
+    "1day": {
+      "active_pairs": 143,
+      "active_share": 0.9862068965517241,
+      "close_move_mae_pct": 2.640499749291387,
+      "direction_considered": 143,
+      "direction_hit_rate": 0.48951048951048953,
+      "high_move_mae_pct": 1.9972843267170088,
+      "low_move_mae_pct": 1.8563478501907815,
+      "next_close_within_band_share": 0.4195804195804196,
+      "predicted_up_share_of_considered": 0.6573426573426573,
+      "scored_pairs": 145,
+      "up_share_of_considered": 0.5244755244755245
+    },
+    "1hour": {
+      "active_pairs": 3503,
+      "active_share": 0.9985746864310148,
+      "close_move_mae_pct": 0.46915800924173134,
+      "direction_considered": 3500,
+      "direction_hit_rate": 0.5157142857142857,
+      "high_move_mae_pct": 0.32777936299888516,
+      "low_move_mae_pct": 0.3456506793980506,
+      "next_close_within_band_share": 0.45332572081073363,
+      "predicted_up_share_of_considered": 0.6797142857142857,
+      "scored_pairs": 3508,
+      "up_share_of_considered": 0.5045714285714286
+    },
+    "1week": {
+      "active_pairs": 10,
+      "active_share": 0.5263157894736842,
+      "close_move_mae_pct": 8.74920501734922,
+      "direction_considered": 10,
+      "direction_hit_rate": 0.5,
+      "high_move_mae_pct": 7.741385120151078,
+      "low_move_mae_pct": 6.060347365234962,
+      "next_close_within_band_share": 0.5,
+      "predicted_up_share_of_considered": 0.5,
+      "scored_pairs": 19,
+      "up_share_of_considered": 0.6
+    },
+    "2hour": {
+      "active_pairs": 1753,
+      "active_share": 1.0,
+      "close_move_mae_pct": 0.6458962684754155,
+      "direction_considered": 1752,
+      "direction_hit_rate": 0.5176940639269406,
+      "high_move_mae_pct": 0.46235128200598935,
+      "low_move_mae_pct": 0.5130590473245168,
+      "next_close_within_band_share": 0.4204221334854535,
+      "predicted_up_share_of_considered": 0.7659817351598174,
+      "scored_pairs": 1753,
+      "up_share_of_considered": 0.5234018264840182
+    },
+    "4hour": {
+      "active_pairs": 874,
+      "active_share": 0.997716894977169,
+      "close_move_mae_pct": 0.9920174697125114,
+      "direction_considered": 874,
+      "direction_hit_rate": 0.522883295194508,
+      "high_move_mae_pct": 0.7644532004267522,
+      "low_move_mae_pct": 0.7553511683559648,
+      "next_close_within_band_share": 0.408466819221968,
+      "predicted_up_share_of_considered": 0.6647597254004577,
+      "scored_pairs": 876,
+      "up_share_of_considered": 0.517162471395881
+    },
+    "8hour": {
+      "active_pairs": 423,
+      "active_share": 0.9679633867276888,
+      "close_move_mae_pct": 1.4276022902656407,
+      "direction_considered": 423,
+      "direction_hit_rate": 0.48699763593380613,
+      "high_move_mae_pct": 1.0825167607928579,
+      "low_move_mae_pct": 1.0988816787320126,
+      "next_close_within_band_share": 0.3829787234042553,
+      "predicted_up_share_of_considered": 0.5768321513002365,
+      "scored_pairs": 437,
+      "up_share_of_considered": 0.5224586288416075
+    }
+  }
+}

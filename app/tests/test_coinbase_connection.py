@@ -190,11 +190,32 @@ class TestBadCredentialsNeverLeaveTheMachine(unittest.TestCase):
         body = "".join(pem.splitlines()[1:-1])
         self.assertInvalid(KEY_NAME, body)
 
-    def test_ed25519_key_rejected_with_explanation(self):
-        from helpers_coinbase import make_ed25519_pem
+    def test_ed25519_keys_are_accepted_and_sign_with_eddsa(self):
+        import base64
+        import json
 
-        result = self.assertInvalid(KEY_NAME, make_ed25519_pem())
-        self.assertIn("Ed25519", result.message)
+        from helpers_coinbase import make_ed25519_pem, make_ed25519_secret
+
+        for form, secret in (
+            ("base64", make_ed25519_secret()),
+            ("pkcs8 pem", make_ed25519_pem()),
+        ):
+            with self.subTest(form=form):
+                with recorded_http() as http:
+                    http.respond_with(200, FULL_PERMS)
+                    result = CoinbaseExchange(
+                        api_key=KEY_NAME, api_secret=secret
+                    ).check_connection()
+                self.assertTrue(result.ok, result.message)
+                ((method, url, kwargs),) = http.calls
+                self.assertEqual((method, url), ("GET", PERMS_URL))
+                token = kwargs["headers"]["Authorization"].split(" ", 1)[1]
+                head = token.split(".")[0]
+                header = json.loads(
+                    base64.urlsafe_b64decode(head + "=" * (-len(head) % 4))
+                )
+                self.assertEqual(header["alg"], "EdDSA")
+                self.assertEqual(header["kid"], KEY_NAME)
 
     def test_garbage_between_markers(self):
         self.assertInvalid(

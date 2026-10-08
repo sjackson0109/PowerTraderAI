@@ -957,8 +957,9 @@ class CoinbaseExchange(AbstractExchange):
     """Coinbase connector.
 
     ``api_key`` is the CDP *key name* (``organizations/.../apiKeys/...``) and
-    ``api_secret`` is the EC *private key* (PEM). Authenticated requests go to the
-    Advanced Trade API at ``AUTH_BASE_URL`` with a per-request ES256 JWT (see
+    ``api_secret`` is the *private key*: an Ed25519 key (one line of base64) or an
+    ECDSA P-256 key (PEM). Authenticated requests go to the Advanced Trade API at
+    ``AUTH_BASE_URL`` with a per-request EdDSA or ES256 JWT (see
     ``coinbase_auth``). Today the only authenticated call implemented is the
     read-only ``check_connection``; order placement, balances and order status
     are not implemented. Price methods use Coinbase's unauthenticated public

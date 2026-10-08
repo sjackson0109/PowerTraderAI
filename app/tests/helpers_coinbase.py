@@ -3,6 +3,7 @@ generated on the fly and no test may reach the network."""
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 from typing import Callable, List, Optional, Tuple
@@ -27,6 +28,22 @@ def make_ec_pem(label: str = "EC") -> str:
     return key.private_bytes(
         serialization.Encoding.PEM, fmt, serialization.NoEncryption()
     ).decode()
+
+
+def make_ed25519_secret(seed_only: bool = False) -> str:
+    """A throw-away Ed25519 key as Coinbase issues it: one line of base64 of the
+    32-byte seed followed by the 32-byte public key (64 bytes); ``seed_only``
+    gives the bare 32-byte seed form."""
+    key = ed25519.Ed25519PrivateKey.generate()
+    seed = key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    public = key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    return base64.b64encode(seed if seed_only else seed + public).decode()
 
 
 def make_ed25519_pem() -> str:

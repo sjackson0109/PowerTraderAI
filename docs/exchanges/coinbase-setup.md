@@ -211,7 +211,10 @@ Major cryptocurrencies available:
 ```
 
 ### Symbol Formats
-Coinbase uses dash-separated symbols:
+Coinbase uses dash-separated symbols. For prices, PowerTraderAI+ also maps the
+compact and USDT forms used elsewhere in the app (`BTCUSDT`, `BTC-USDT`,
+`BTC/USDT`, `BTCUSD`) to Coinbase's USD market (`BTC-USD`). A coin Coinbase does
+not list (for example BNB) has no price there.
 ```python
 # Coinbase format
 "BTC-USD"   # Bitcoin vs US Dollar

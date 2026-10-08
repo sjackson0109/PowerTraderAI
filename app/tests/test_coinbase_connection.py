@@ -312,6 +312,61 @@ class TestManager(unittest.TestCase):
         self.assertNotIn("boom", result.message)
 
 
+class TestPublicPrices(unittest.TestCase):
+    """Price lookups use Coinbase's public ticker (no credentials) and map the
+    symbol forms the rest of the app passes (e.g. the data provider's BTCUSDT)."""
+
+    TICKER = {"ask": "101.5", "bid": "101.0", "price": "101.2", "volume": "42"}
+
+    def test_symbol_forms_map_to_coinbase_product_ids(self):
+        convert = _exchange()._convert_symbol
+        for given, expected in (
+            ("BTC-USD", "BTC-USD"),
+            ("BTCUSDT", "BTC-USD"),
+            ("DOGEUSDT", "DOGE-USD"),
+            ("btc-usdt", "BTC-USD"),
+            ("BTC/USDT", "BTC-USD"),
+            ("BTCUSD", "BTC-USD"),
+            ("ETH-USDC", "ETH-USD"),
+            ("ETH-BTC", "ETH-BTC"),
+            ("BTC-EUR", "BTC-EUR"),
+        ):
+            with self.subTest(given=given):
+                self.assertEqual(convert(given), expected)
+
+    def test_current_price_asks_the_mapped_product_without_credentials(self):
+        for symbol in ("DOGEUSDT", "BTC-USD"):
+            with self.subTest(symbol=symbol):
+                with recorded_http() as http:
+                    http.respond_with(200, self.TICKER)
+                    price = _exchange().get_current_price(symbol)
+                self.assertEqual(price, 101.5)
+                ((method, url, kwargs),) = http.calls
+                product = _exchange()._convert_symbol(symbol)
+                self.assertEqual(
+                    (method, url),
+                    (
+                        "GET",
+                        f"https://api.exchange.coinbase.com/products/{product}/ticker",
+                    ),
+                )
+                self.assertNotIn("Authorization", kwargs.get("headers") or {})
+
+    def test_market_data_uses_the_mapped_product(self):
+        with recorded_http() as http:
+            http.respond_with(200, self.TICKER)
+            data = _exchange().get_market_data("BTCUSDT")
+        self.assertEqual((data.price, data.bid, data.ask), (101.2, 101.0, 101.5))
+        self.assertTrue(http.urls[0].endswith("/products/BTC-USD/ticker"))
+
+    def test_an_unknown_market_is_named_in_the_error(self):
+        with recorded_http() as http:
+            http.respond_with(404, {"message": "NotFound"})
+            with self.assertRaises(RuntimeError) as cm:
+                _exchange().get_current_price("BNBUSDT")
+        self.assertIn("no market BNB-USD", str(cm.exception))
+
+
 class TestGuiFormatting(unittest.TestCase):
     def test_each_status_has_a_distinct_headline(self):
         from exchange_config_gui import STATUS_HEADLINES, format_test_result

@@ -283,23 +283,22 @@ A short side-by-side table with STRAT-001 and STRAT-002 from batch 1, taken from
 
 ## Results
 
-### Known presentation defects
-
-*Added by hand on 2026-10-08, after `report` ran, at the owner's request. The run script did not write this note, and
-nothing else below the marker was changed. Neither defect is fixed: either fix would need a change to frozen code and a
-superseded re-run (owner decision: leave both).*
-
-- The header's status line ("pre-declared header only … No result has been seen") describes the header as committed
-  before Test A; it cannot change. The results follow below.
-- **Test B table, "Missing bars" column:** for each window without overlays it shows the BARS_MISSING and
-  TIMEFRAME_UNKNOWN holds added together, under a heading that names only missing bars. `results.json` keeps the two
-  counts apart for every window, Test A reports them separately, and every count is 0. It affects no number and not the
-  verdict. Draft: [ISSUE-DRAFTS-model-1.md, F1](ISSUE-DRAFTS-model-1.md#f1).
-- **Manifest copies in `docs/dev/backtest-model-1/manifests/`:** each holds the same JSON as its model's
-  `manifest.json` in the model store, but the bytes differ. The copy has CRLF line endings and a trailing newline,
-  while the store file has LF line endings and no trailing newline. So a copy's SHA-256 does not equal the store
-  file's. `run` compares the parsed content, which is equal for all 20 models, and each model id is derived from
-  the identity the manifest records, not from its file bytes. It affects no number and not the verdict. Draft: [ISSUE-DRAFTS-model-1.md, F2](ISSUE-DRAFTS-model-1.md#f2).
+> **Known presentation defects.** *Added by hand on 2026-10-08, after `report` ran, at the owner's request. The run
+> script did not write this note, and nothing else below the marker was changed. Neither defect is fixed: either fix
+> would need a change to frozen code and a superseded re-run (owner decision: leave both).*
+>
+> - The header's status line ("pre-declared header only … No result has been seen") describes the header as committed
+>   before Test A; it cannot change. The results follow below.
+> - **Test B table, "Missing bars" column:** for each window without overlays it shows the BARS_MISSING and
+>   TIMEFRAME_UNKNOWN holds added together, under a heading that names only missing bars. `results.json` keeps the two
+>   counts apart for every window, Test A reports them separately, and every count is 0. It affects no number and not
+>   the verdict. Draft: [ISSUE-DRAFTS-model-1.md, F1](ISSUE-DRAFTS-model-1.md#f1).
+> - **Manifest copies in `docs/dev/backtest-model-1/manifests/`:** each holds the same JSON as its model's
+>   `manifest.json` in the model store, but the bytes differ. The copy has CRLF line endings and a trailing newline,
+>   while the store file has LF line endings and no trailing newline. So a copy's SHA-256 does not equal the store
+>   file's. `run` compares the parsed content, which is equal for all 20 models, and each model id is derived from the
+>   identity the manifest records, not from its file bytes. It affects no number and not the verdict. Draft:
+>   [ISSUE-DRAFTS-model-1.md, F2](ISSUE-DRAFTS-model-1.md#f2).
 
 - **Code:** commit `68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab`; frozen files changed from it: none. Python 3.13.15. `POWERTRADER_HOME`: `C:\Users\Simon\AppData\Local\Temp\claude\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\scratchpad\p4home`. Reported from commit `68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab`.
 - **Frozen-code commits after the header** (the freeze commit, and any fix after it): `68d4ed7 2026-10-07 FDS-MDL Phase 4: the freeze commit (random baseline, evaluation, run script)`.

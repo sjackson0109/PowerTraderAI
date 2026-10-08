@@ -118,6 +118,7 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | Phase 4 Test A, before `fetch` (clean tree at `68d4ed7`), 2026-10-07 17:27 | absent | absent | 0 |
 | Phase 4 Test A, after `fetch`, `train`, `run` and `report`, during the read-only audit, 2026-10-07 18:27 | absent | absent | 0 |
 | Phase 4 Test A, after the home copy, the note and the drafts, before the results commit, 2026-10-08 01:24 | absent | absent | 0 |
+| Phase 4 Test A, before the note's formatting fix commit, 2026-10-08 01:29 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -1192,3 +1193,19 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
   - No code changed and no test or CI job reads these files, so no suite run was needed (as for `c11ed6c`).
   - No pre-commit hooks are installed, and CI does not run pre-commit.
   - `results.json` is 2.5 MB (it records every seed of the random baselines).
+- **Follow-up commit: the note's formatting** (2026-10-08). The note is now a blockquote directly under "## Results".
+  As a `###` section in `a2710a0`, the report's own Code, Frozen-code commits and Header commits bullets rendered as
+  part of the note's list. The PR-description fact check found this. The note's wording is unchanged apart from line
+  wrapping. The header is still byte-identical to `68d4ed7`. Real-folder check: see the table (01:29 row).
+- **Deviation** (2026-10-08, while checking what CI runs, for the PR description). Looking for a Python 3.11 or 3.12
+  interpreter, a command also listed `%LOCALAPPDATA%\Programs\Python`.
+  - Its output was discarded, so nothing was printed and no file was opened. `py -0p` printed the registered
+    interpreters' paths.
+  - This breaks addendum section 10 as written (no reading in the real `%LOCALAPPDATA%`), as the Phase 0 grep did.
+  - The Store-installed Python 3.12 under `%LOCALAPPDATA%` was not run, because it could write there. The 3.11
+    grammar check was done with 3.13 instead: all 51 changed Python files parse under `feature_version=(3, 11)`, with
+    no 3.12-only f-string or library use found.
+  - The Black check for the PR (26.5.1: `app/` unchanged on main, 178 files, and on this branch, 197 files) used
+    `BLACK_CACHE_DIR` in scratch.
+  - Nothing records that earlier Black runs in this work set it. Black's default cache is under
+    `%LOCALAPPDATA%\black`, so those runs may have written there. This was not checked.

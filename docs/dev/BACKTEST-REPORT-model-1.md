@@ -280,3 +280,234 @@ A short side-by-side table with STRAT-001 and STRAT-002 from batch 1, taken from
 ---
 
 *Results go below this line.*
+
+## Results
+
+### Known presentation defects
+
+*Added by hand on 2026-10-08, after `report` ran, at the owner's request. The run script did not write this note, and
+nothing else below the marker was changed. Neither defect is fixed: either fix would need a change to frozen code and a
+superseded re-run (owner decision: leave both).*
+
+- The header's status line ("pre-declared header only … No result has been seen") describes the header as committed
+  before Test A; it cannot change. The results follow below.
+- **Test B table, "Missing bars" column:** for each window without overlays it shows the BARS_MISSING and
+  TIMEFRAME_UNKNOWN holds added together, under a heading that names only missing bars. `results.json` keeps the two
+  counts apart for every window, Test A reports them separately, and every count is 0. It affects no number and not the
+  verdict. Draft: [ISSUE-DRAFTS-model-1.md, F1](ISSUE-DRAFTS-model-1.md#f1).
+- **Manifest copies in `docs/dev/backtest-model-1/manifests/`:** each holds the same JSON as its model's
+  `manifest.json` in the model store, but the bytes differ. The copy has CRLF line endings and a trailing newline,
+  while the store file has LF line endings and no trailing newline. So a copy's SHA-256 does not equal the store
+  file's. `run` compares the parsed content, which is equal for all 20 models, and each model id is derived from
+  the identity the manifest records, not from its file bytes. It affects no number and not the verdict. Draft: [ISSUE-DRAFTS-model-1.md, F2](ISSUE-DRAFTS-model-1.md#f2).
+
+- **Code:** commit `68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab`; frozen files changed from it: none. Python 3.13.15. `POWERTRADER_HOME`: `C:\Users\Simon\AppData\Local\Temp\claude\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\scratchpad\p4home`. Reported from commit `68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab`.
+- **Frozen-code commits after the header** (the freeze commit, and any fix after it): `68d4ed7 2026-10-07 FDS-MDL Phase 4: the freeze commit (random baseline, evaluation, run script)`.
+- **Header commits:** `42b0622 2026-10-07 FDS-MDL Phase 4: a seed range per combination; record every candle file's hash`; `d36cdf1 2026-10-07 FDS-MDL Phase 4: amend the rule after the owner's review; draft E1 and E2`; `51e499e 2026-10-07 FDS-MDL Phase 4: pre-declared header and verdict rule`.
+
+### Verdict
+
+***No evidence of an edge*; in TRAINER-AUDIT 11.8 the trainer's held-out direction calls showed no skill above the up-rate base rate:** 1-hour hit rate vs share of closes that rose, BTC 50.3% vs 50.4% and ETH 51.3% vs 51.0% (n = 5,257 pairs each). Held-out metrics in Test A's manifests (a separate fit on the first 80% of each training window, scored on the last 20%, 2025-02-05 12:00 to 2025-08-16 04:00): BTC 50.7% vs 50.5% (n = 4,599), ETH 51.4% vs 51.6% (n = 4,588).
+
+- Criterion 1 (Test A, out of sample, no overlays, at least 3 of 4 beat buy-and-hold): not met; combinations: BTCUSDT 1h.
+- Criterion 2 (each of those ranks at least 95 in its random baseline): met.
+- Criterion 3 (Test B, no overlays, median of all 36 windows above 0): not met; pooled median -11.94 pp, worst window -67.70 pp.
+- For information only (not in the verdict), each combination's Test B median: BTCUSDT 1h -11.67 pp; BTCUSDT 4h -12.20 pp; ETHUSDT 1h -11.67 pp; ETHUSDT 4h -16.95 pp.
+
+### Data
+
+| File | Bars | First | Last | Missing bars | SHA-256 | Batch 1 |
+|---|---|---|---|---|---|---|
+| BTCUSDT 1h | 32,855 | 2023-01-01T00:00:00+00:00 | 2026-09-30T23:00:00+00:00 | 1 | `7171bc667f3db6032a721770c6128545b2bc3f089432e8861181034493171893` | same |
+| BTCUSDT 2h | 16,428 | 2023-01-01T00:00:00+00:00 | 2026-09-30T22:00:00+00:00 | 0 | `98d9ea257b4585b1390be71d797ddcb36017fee336ec8c742f7c66fed2a258d4` | — |
+| BTCUSDT 4h | 8,214 | 2023-01-01T00:00:00+00:00 | 2026-09-30T20:00:00+00:00 | 0 | `f58fee86fa7e7c6aa69096b75ddeb3156a592c9f55059383da7d95506266836f` | same |
+| BTCUSDT 8h | 4,107 | 2023-01-01T00:00:00+00:00 | 2026-09-30T16:00:00+00:00 | 0 | `7541ae03416a68487c780d860dfaefc50d3fd1e46ecf029bc58a6c1fb19aa901` | — |
+| BTCUSDT 12h | 2,738 | 2023-01-01T00:00:00+00:00 | 2026-09-30T12:00:00+00:00 | 0 | `2a81f99752d3dbe6b666e75113989eba5abc7b2a07b20052e15a949f287b595d` | — |
+| BTCUSDT 1d | 1,369 | 2023-01-01T00:00:00+00:00 | 2026-09-30T00:00:00+00:00 | 0 | `5059b561afcab3f423ac20690d787bc156a2742554e34894352912084f00c01f` | — |
+| BTCUSDT 1w | 195 | 2023-01-02T00:00:00+00:00 | 2026-09-21T00:00:00+00:00 | 0 | `4bc1b4ba5223b9025a5a33946fe8c3f4d9e4ee79f7766d51f1602a25668aebe8` | — |
+| ETHUSDT 1h | 32,855 | 2023-01-01T00:00:00+00:00 | 2026-09-30T23:00:00+00:00 | 1 | `2bd3369c64bc6ce400ba5d91519c68524ae0cc4a41d8f139ad46eb256e3d4eb8` | same |
+| ETHUSDT 2h | 16,428 | 2023-01-01T00:00:00+00:00 | 2026-09-30T22:00:00+00:00 | 0 | `fd83f0d04d41b47ba0511bf8391f591efeb422917772fbacfbd4274031cdb811` | — |
+| ETHUSDT 4h | 8,214 | 2023-01-01T00:00:00+00:00 | 2026-09-30T20:00:00+00:00 | 0 | `11c6946a168f25bb96d2f6b6415db9990c3a53b70c1585864cd3ab8f5dce8722` | same |
+| ETHUSDT 8h | 4,107 | 2023-01-01T00:00:00+00:00 | 2026-09-30T16:00:00+00:00 | 0 | `4fd49328d0353fcde511088205f843238948934cd5be9d90a0f9943670b695d7` | — |
+| ETHUSDT 12h | 2,738 | 2023-01-01T00:00:00+00:00 | 2026-09-30T12:00:00+00:00 | 0 | `806103bb90b84e29260871f29c9147ee985fb1d0903b56588e260a72b0e7dc61` | — |
+| ETHUSDT 1d | 1,369 | 2023-01-01T00:00:00+00:00 | 2026-09-30T00:00:00+00:00 | 0 | `2a84ae4e9bb50dd7543f28b78310781767e59ff60372b50efd323ed6fa5eb885` | — |
+| ETHUSDT 1w | 195 | 2023-01-02T00:00:00+00:00 | 2026-09-21T00:00:00+00:00 | 0 | `241b92e287143f7f65207b18b14b935bc647a94633757814a82061bf1d6393bc` | — |
+
+### Models
+
+| Test | Model | Window | Held-out 1h hit rate | Up share | n | Validation |
+|---|---|---|---|---|---|---|
+| A | `BTC-20250816T0400Z-5d85edd38e43` | 2023-01-01T00:00:00Z .. 2025-08-16T04:00:00Z | 50.7% | 50.5% | 4,599 | ok |
+| B | `BTC-20240701T0000Z-9766305cd89c` | 2023-01-01T00:00:00Z .. 2024-07-01T00:00:00Z | 49.7% | 50.6% | 2,619 | ok |
+| B | `BTC-20241001T0000Z-abf9b82c91dc` | 2023-01-01T00:00:00Z .. 2024-10-01T00:00:00Z | 50.9% | 50.0% | 3,062 | ok |
+| B | `BTC-20250101T0000Z-0f00a5b7e4cd` | 2023-01-01T00:00:00Z .. 2025-01-01T00:00:00Z | 50.7% | 51.4% | 3,503 | ok |
+| B | `BTC-20250401T0000Z-60ba79990e0c` | 2023-01-01T00:00:00Z .. 2025-04-01T00:00:00Z | 51.3% | 51.5% | 3,937 | ok |
+| B | `BTC-20250701T0000Z-d1d15c03212f` | 2023-01-01T00:00:00Z .. 2025-07-01T00:00:00Z | 51.3% | 50.3% | 4,376 | ok |
+| B | `BTC-20251001T0000Z-5a4c3794f1f0` | 2023-01-01T00:00:00Z .. 2025-10-01T00:00:00Z | 50.1% | 50.3% | 4,817 | ok |
+| B | `BTC-20260101T0000Z-bbaa39a08dfa` | 2023-01-01T00:00:00Z .. 2026-01-01T00:00:00Z | 50.3% | 50.4% | 5,257 | ok |
+| B | `BTC-20260401T0000Z-f4a4594d192b` | 2023-01-01T00:00:00Z .. 2026-04-01T00:00:00Z | 49.5% | 49.8% | 5,689 | ok |
+| B | `BTC-20260701T0000Z-f57e4910b34a` | 2023-01-01T00:00:00Z .. 2026-07-01T00:00:00Z | 50.7% | 49.6% | 6,127 | ok |
+| A | `ETH-20250816T0400Z-6ce59ce7a360` | 2023-01-01T00:00:00Z .. 2025-08-16T04:00:00Z | 51.4% | 51.6% | 4,588 | ok |
+| B | `ETH-20240701T0000Z-1d37993cacce` | 2023-01-01T00:00:00Z .. 2024-07-01T00:00:00Z | 51.8% | 50.2% | 2,621 | ok |
+| B | `ETH-20241001T0000Z-91d236f2f788` | 2023-01-01T00:00:00Z .. 2024-10-01T00:00:00Z | 52.0% | 49.6% | 3,059 | ok |
+| B | `ETH-20250101T0000Z-8210ec3df6be` | 2023-01-01T00:00:00Z .. 2025-01-01T00:00:00Z | 51.6% | 50.5% | 3,500 | ok |
+| B | `ETH-20250401T0000Z-e88dc9d7b9f3` | 2023-01-01T00:00:00Z .. 2025-04-01T00:00:00Z | 50.5% | 50.6% | 3,931 | ok |
+| B | `ETH-20250701T0000Z-5ec3069687c7` | 2023-01-01T00:00:00Z .. 2025-07-01T00:00:00Z | 50.9% | 51.1% | 4,362 | ok |
+| B | `ETH-20251001T0000Z-9b4e1e5eb974` | 2023-01-01T00:00:00Z .. 2025-10-01T00:00:00Z | 51.3% | 51.3% | 4,810 | ok |
+| B | `ETH-20260101T0000Z-20796d245c44` | 2023-01-01T00:00:00Z .. 2026-01-01T00:00:00Z | 51.3% | 51.0% | 5,257 | ok |
+| B | `ETH-20260401T0000Z-c535fb7f5059` | 2023-01-01T00:00:00Z .. 2026-04-01T00:00:00Z | 50.8% | 49.9% | 5,689 | ok |
+| B | `ETH-20260701T0000Z-9858650537ee` | 2023-01-01T00:00:00Z .. 2026-07-01T00:00:00Z | 50.4% | 49.6% | 6,125 | ok |
+
+### Test A: out of sample
+
+#### BTCUSDT 1h: 2025-08-16T07:00 to 2026-09-30T23:00 (9,857 bars)
+
+| Run | total ret | CAGR | max DD | Sharpe | Sortino | trades | win rate | avg trade | exposure | fees | vs B&H (pp) | Baseline rank |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| STRAT-003, no overlays | -15.03% | -13.49% | -47.06% | -0.36 | -0.51 | 101 | 54.46% | -0.12% | 45.4% | $1,526 | 13.95 | 95.0 |
+| STRAT-003, OVL-ATR + OVL-COOLDOWN | -22.49% | -20.27% | -37.51% | -1.08 | -1.50 | 115 | 41.74% | -0.20% | 21.9% | $1,752 | 6.49 | 78.0 |
+| **Buy-and-hold** | -28.98% | -26.24% | -53.74% | -0.50 | -0.70 | 1 | 0.00% | -28.98% | 100.0% | $17 | — | — |
+
+- Random baseline, none: N = 101, H = 44; seeds 0-99, trade counts 101-101, flagged (outside N ± 10%): none.
+- Random baseline, OVL-ATR+OVL-COOLDOWN: N = 115, H = 19; seeds 0-99, trade counts 103-114, flagged (outside N ± 10%): [74].
+- Without overlays: holds for missing bars 0, unknown timeframe 0, gap-pass limit 0; E1 12 of 9856 decisions (0.1%), E2 0.
+- In-sample 2023-01-01 to 2025-08-16 (22,998 bars): refused (LOOKAHEAD_MODEL: model BTC-20250816T0400Z-5d85edd38e43 was trained on bars up to 2025-08-16 04:00:00+00:00, after the first scored bar (2023-01-01 00:00:00+00:00); score only bars that open at or after the end of the model's training window); buy-and-hold 607.56%.
+
+#### BTCUSDT 4h: 2025-08-16T04:00 to 2026-09-30T20:00 (2,465 bars)
+
+| Run | total ret | CAGR | max DD | Sharpe | Sortino | trades | win rate | avg trade | exposure | fees | vs B&H (pp) | Baseline rank |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| STRAT-003, no overlays | -34.91% | -31.73% | -39.75% | -1.42 | -1.86 | 77 | 55.84% | -0.50% | 30.8% | $1,260 | -5.90 | 26.0 |
+| STRAT-003, OVL-ATR + OVL-COOLDOWN | -18.02% | -16.19% | -23.19% | -0.83 | -1.14 | 65 | 53.85% | -0.28% | 21.2% | $1,153 | 10.99 | 55.0 |
+| **Buy-and-hold** | -29.00% | -26.25% | -53.45% | -0.53 | -0.73 | 1 | 0.00% | -29.00% | 100.0% | $17 | — | — |
+
+- Random baseline, none: N = 77, H = 10; seeds 100-199, trade counts 77-77, flagged (outside N ± 10%): none.
+- Random baseline, OVL-ATR+OVL-COOLDOWN: N = 65, H = 8; seeds 100-199, trade counts 48-61, flagged (outside N ± 10%): [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 117, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199].
+- Without overlays: holds for missing bars 0, unknown timeframe 0, gap-pass limit 0; E1 3 of 2464 decisions (0.1%), E2 0.
+- In-sample 2023-01-01 to 2025-08-16 (5,749 bars): refused (LOOKAHEAD_MODEL: model BTC-20250816T0400Z-5d85edd38e43 was trained on bars up to 2025-08-16 04:00:00+00:00, after the first scored bar (2023-01-01 00:00:00+00:00); score only bars that open at or after the end of the model's training window); buy-and-hold 607.77%.
+
+#### ETHUSDT 1h: 2025-08-16T07:00 to 2026-09-30T23:00 (9,857 bars)
+
+| Run | total ret | CAGR | max DD | Sharpe | Sortino | trades | win rate | avg trade | exposure | fees | vs B&H (pp) | Baseline rank |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| STRAT-003, no overlays | -59.74% | -55.47% | -71.57% | -2.03 | -2.68 | 175 | 51.43% | -0.49% | 33.5% | $1,916 | -20.34 | 24.0 |
+| STRAT-003, OVL-ATR + OVL-COOLDOWN | -59.32% | -55.06% | -64.23% | -2.80 | -3.63 | 168 | 44.05% | -0.51% | 19.6% | $2,016 | -19.92 | 4.0 |
+| **Buy-and-hold** | -39.40% | -35.95% | -69.15% | -0.44 | -0.62 | 1 | 0.00% | -39.40% | 100.0% | $16 | — | — |
+
+- Random baseline, none: N = 175, H = 19; seeds 200-299, trade counts 175-175, flagged (outside N ± 10%): none.
+- Random baseline, OVL-ATR+OVL-COOLDOWN: N = 168, H = 12; seeds 200-299, trade counts 141-156, flagged (outside N ± 10%): [200, 201, 202, 203, 204, 205, 206, 207, 209, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 222, 223, 224, 225, 226, 228, 229, 230, 231, 234, 237, 238, 239, 240, 241, 243, 244, 245, 246, 247, 248, 250, 251, 252, 254, 255, 256, 257, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 274, 275, 276, 277, 278, 280, 281, 282, 283, 284, 287, 288, 289, 290, 291, 293, 294, 295, 296, 298, 299].
+- Without overlays: holds for missing bars 0, unknown timeframe 0, gap-pass limit 0; E1 28 of 9856 decisions (0.3%), E2 0.
+- In-sample 2023-01-01 to 2025-08-16 (22,998 bars): refused (LOOKAHEAD_MODEL: model ETH-20250816T0400Z-6ce59ce7a360 was trained on bars up to 2025-08-16 04:00:00+00:00, after the first scored bar (2023-01-01 00:00:00+00:00); score only bars that open at or after the end of the model's training window); buy-and-hold 268.35%.
+
+#### ETHUSDT 4h: 2025-08-16T04:00 to 2026-09-30T20:00 (2,465 bars)
+
+| Run | total ret | CAGR | max DD | Sharpe | Sortino | trades | win rate | avg trade | exposure | fees | vs B&H (pp) | Baseline rank |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| STRAT-003, no overlays | -58.84% | -54.58% | -70.75% | -1.96 | -2.49 | 112 | 50.00% | -0.72% | 33.9% | $1,411 | -19.26 | 10.0 |
+| STRAT-003, OVL-ATR + OVL-COOLDOWN | -54.87% | -50.71% | -59.49% | -2.37 | -2.95 | 88 | 47.73% | -0.85% | 23.3% | $1,247 | -15.29 | 8.0 |
+| **Buy-and-hold** | -39.58% | -36.11% | -68.03% | -0.45 | -0.63 | 1 | 0.00% | -39.58% | 100.0% | $16 | — | — |
+
+- Random baseline, none: N = 112, H = 7; seeds 300-399, trade counts 112-112, flagged (outside N ± 10%): none.
+- Random baseline, OVL-ATR+OVL-COOLDOWN: N = 88, H = 7; seeds 300-399, trade counts 61-76, flagged (outside N ± 10%): [300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399].
+- Without overlays: holds for missing bars 0, unknown timeframe 0, gap-pass limit 0; E1 7 of 2464 decisions (0.3%), E2 0.
+- In-sample 2023-01-01 to 2025-08-16 (5,749 bars): refused (LOOKAHEAD_MODEL: model ETH-20250816T0400Z-6ce59ce7a360 was trained on bars up to 2025-08-16 04:00:00+00:00, after the first scored bar (2023-01-01 00:00:00+00:00); score only bars that open at or after the end of the model's training window); buy-and-hold 269.44%.
+
+### Test B: walk-forward
+
+E1, E2 and missing bars are counted in the runs without overlays (STRAT-003's own signals do not depend on the overlay set).
+
+| Combination | Overlays | Model trained to | Window | vs B&H (pp) | STRAT-003 | Buy-and-hold | Trades | E1 | E2 | Missing bars |
+|---|---|---|---|---|---|---|---|---|---|---|
+| BTCUSDT 1h | none | 2024-07-01 | 2024-07-01..2024-09-30 | -14.24 | -13.66% | 0.58% | 38 | 24 of 2207 (1.1%) | 0 | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2024-07-01 | 2024-07-01..2024-09-30 | -12.12 | -11.54% | 0.58% | 35 | — | — | — |
+| BTCUSDT 4h | none | 2024-07-01 | 2024-07-01..2024-09-30 | -22.62 | -22.03% | 0.58% | 22 | 6 of 551 (1.1%) | 0 | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2024-07-01 | 2024-07-01..2024-09-30 | -15.32 | -14.74% | 0.58% | 17 | — | — | — |
+| BTCUSDT 1h | none | 2024-10-01 | 2024-10-01..2024-12-31 | -45.68 | 1.64% | 47.32% | 26 | 1 of 2207 (0.0%) | 0 | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2024-10-01 | 2024-10-01..2024-12-31 | -44.84 | 2.49% | 47.32% | 31 | — | — | — |
+| BTCUSDT 4h | none | 2024-10-01 | 2024-10-01..2024-12-31 | -57.05 | -9.73% | 47.32% | 18 | 1 of 551 (0.2%) | 0 | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2024-10-01 | 2024-10-01..2024-12-31 | -61.24 | -13.92% | 47.32% | 13 | — | — | — |
+| BTCUSDT 1h | none | 2025-01-01 | 2025-01-01..2025-03-31 | -4.91 | -16.95% | -12.05% | 35 | 0 of 2159 (0.0%) | 0 | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2025-01-01 | 2025-01-01..2025-03-31 | -2.67 | -14.71% | -12.05% | 39 | — | — | — |
+| BTCUSDT 4h | none | 2025-01-01 | 2025-01-01..2025-03-31 | -3.03 | -15.08% | -12.05% | 21 | 0 of 539 (0.0%) | 0 | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2025-01-01 | 2025-01-01..2025-03-31 | 3.08 | -8.97% | -12.05% | 19 | — | — | — |
+| BTCUSDT 1h | none | 2025-04-01 | 2025-04-01..2025-06-30 | -21.24 | 8.17% | 29.41% | 18 | 0 of 2183 (0.0%) | 0 | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2025-04-01 | 2025-04-01..2025-06-30 | -33.83 | -4.42% | 29.41% | 23 | — | — | — |
+| BTCUSDT 4h | none | 2025-04-01 | 2025-04-01..2025-06-30 | -19.06 | 10.35% | 29.41% | 15 | 0 of 545 (0.0%) | 0 | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2025-04-01 | 2025-04-01..2025-06-30 | -22.13 | 7.27% | 29.41% | 13 | — | — | — |
+| BTCUSDT 1h | none | 2025-07-01 | 2025-07-01..2025-09-30 | -11.67 | -5.54% | 6.12% | 7 | 0 of 2207 (0.0%) | 0 | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2025-07-01 | 2025-07-01..2025-09-30 | -16.71 | -10.59% | 6.12% | 13 | — | — | — |
+| BTCUSDT 4h | none | 2025-07-01 | 2025-07-01..2025-09-30 | -12.20 | -6.08% | 6.12% | 10 | 0 of 551 (0.0%) | 0 | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2025-07-01 | 2025-07-01..2025-09-30 | -17.10 | -10.97% | 6.12% | 7 | — | — | — |
+| BTCUSDT 1h | none | 2025-10-01 | 2025-10-01..2025-12-31 | 0.38 | -23.00% | -23.38% | 31 | 0 of 2207 (0.0%) | 0 | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2025-10-01 | 2025-10-01..2025-12-31 | 7.49 | -15.89% | -23.38% | 33 | — | — | — |
+| BTCUSDT 4h | none | 2025-10-01 | 2025-10-01..2025-12-31 | 11.23 | -12.14% | -23.38% | 23 | 0 of 551 (0.0%) | 0 | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2025-10-01 | 2025-10-01..2025-12-31 | 9.74 | -13.64% | -23.38% | 18 | — | — | — |
+| BTCUSDT 1h | none | 2026-01-01 | 2026-01-01..2026-03-31 | 12.60 | -9.73% | -22.33% | 30 | 12 of 2159 (0.6%) | 0 | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2026-01-01 | 2026-01-01..2026-03-31 | 15.83 | -6.50% | -22.33% | 32 | — | — | — |
+| BTCUSDT 4h | none | 2026-01-01 | 2026-01-01..2026-03-31 | -0.78 | -23.10% | -22.33% | 19 | 3 of 539 (0.6%) | 0 | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2026-01-01 | 2026-01-01..2026-03-31 | 11.88 | -10.45% | -22.33% | 16 | — | — | — |
+| BTCUSDT 1h | none | 2026-04-01 | 2026-04-01..2026-06-30 | 27.44 | 13.04% | -14.40% | 26 | 0 of 2183 (0.0%) | 0 | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2026-04-01 | 2026-04-01..2026-06-30 | 18.97 | 4.57% | -14.40% | 28 | — | — | — |
+| BTCUSDT 4h | none | 2026-04-01 | 2026-04-01..2026-06-30 | 1.07 | -13.34% | -14.40% | 15 | 0 of 545 (0.0%) | 0 | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2026-04-01 | 2026-04-01..2026-06-30 | 12.44 | -1.97% | -14.40% | 14 | — | — | — |
+| BTCUSDT 1h | none | 2026-07-01 | 2026-07-01..2026-09-30 | -23.57 | 18.64% | 42.21% | 10 | 0 of 2207 (0.0%) | 0 | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2026-07-01 | 2026-07-01..2026-09-30 | -29.90 | 12.31% | 42.21% | 15 | — | — | — |
+| BTCUSDT 4h | none | 2026-07-01 | 2026-07-01..2026-09-30 | -26.27 | 15.95% | 42.21% | 11 | 0 of 551 (0.0%) | 0 | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2026-07-01 | 2026-07-01..2026-09-30 | -34.71 | 7.50% | 42.21% | 11 | — | — | — |
+| ETHUSDT 1h | none | 2024-07-01 | 2024-07-01..2024-09-30 | -11.67 | -36.21% | -24.54% | 45 | 50 of 2207 (2.3%) | 0 | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2024-07-01 | 2024-07-01..2024-09-30 | 6.46 | -18.08% | -24.54% | 47 | — | — | — |
+| ETHUSDT 4h | none | 2024-07-01 | 2024-07-01..2024-09-30 | -9.27 | -33.81% | -24.54% | 27 | 13 of 551 (2.4%) | 0 | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2024-07-01 | 2024-07-01..2024-09-30 | -1.03 | -25.57% | -24.54% | 20 | — | — | — |
+| ETHUSDT 1h | none | 2024-10-01 | 2024-10-01..2024-12-31 | -23.92 | 3.97% | 27.88% | 47 | 28 of 2207 (1.3%) | 0 | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2024-10-01 | 2024-10-01..2024-12-31 | -32.75 | -4.87% | 27.88% | 48 | — | — | — |
+| ETHUSDT 4h | none | 2024-10-01 | 2024-10-01..2024-12-31 | -16.95 | 10.93% | 27.88% | 29 | 7 of 551 (1.3%) | 0 | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2024-10-01 | 2024-10-01..2024-12-31 | -17.53 | 10.35% | 27.88% | 22 | — | — | — |
+| ETHUSDT 1h | none | 2025-01-01 | 2025-01-01..2025-03-31 | 0.43 | -45.13% | -45.56% | 66 | 52 of 2159 (2.4%) | 0 | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2025-01-01 | 2025-01-01..2025-03-31 | 12.53 | -33.04% | -45.56% | 57 | — | — | — |
+| ETHUSDT 4h | none | 2025-01-01 | 2025-01-01..2025-03-31 | -1.74 | -47.30% | -45.56% | 38 | 14 of 539 (2.6%) | 0 | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2025-01-01 | 2025-01-01..2025-03-31 | 0.30 | -45.26% | -45.56% | 24 | — | — | — |
+| ETHUSDT 1h | none | 2025-04-01 | 2025-04-01..2025-06-30 | -37.70 | -1.73% | 35.97% | 54 | 46 of 2183 (2.1%) | 0 | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2025-04-01 | 2025-04-01..2025-06-30 | -55.24 | -19.26% | 35.97% | 44 | — | — | — |
+| ETHUSDT 4h | none | 2025-04-01 | 2025-04-01..2025-06-30 | -44.11 | -8.14% | 35.97% | 26 | 11 of 545 (2.0%) | 0 | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2025-04-01 | 2025-04-01..2025-06-30 | -35.68 | 0.29% | 35.97% | 19 | — | — | — |
+| ETHUSDT 1h | none | 2025-07-01 | 2025-07-01..2025-09-30 | -60.51 | 5.77% | 66.28% | 40 | 0 of 2207 (0.0%) | 0 | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2025-07-01 | 2025-07-01..2025-09-30 | -59.19 | 7.09% | 66.28% | 37 | — | — | — |
+| ETHUSDT 4h | none | 2025-07-01 | 2025-07-01..2025-09-30 | -67.70 | -1.42% | 66.28% | 29 | 0 of 551 (0.0%) | 0 | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2025-07-01 | 2025-07-01..2025-09-30 | -71.07 | -4.80% | 66.28% | 22 | — | — | — |
+| ETHUSDT 1h | none | 2025-10-01 | 2025-10-01..2025-12-31 | -3.59 | -32.12% | -28.53% | 58 | 0 of 2207 (0.0%) | 0 | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2025-10-01 | 2025-10-01..2025-12-31 | 6.54 | -21.98% | -28.53% | 49 | — | — | — |
+| ETHUSDT 4h | none | 2025-10-01 | 2025-10-01..2025-12-31 | 14.43 | -14.10% | -28.53% | 34 | 0 of 551 (0.0%) | 0 | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2025-10-01 | 2025-10-01..2025-12-31 | 30.49 | 1.96% | -28.53% | 27 | — | — | — |
+| ETHUSDT 1h | none | 2026-01-01 | 2026-01-01..2026-03-31 | -11.52 | -40.88% | -29.36% | 46 | 0 of 2159 (0.0%) | 0 | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2026-01-01 | 2026-01-01..2026-03-31 | -1.49 | -30.85% | -29.36% | 44 | — | — | — |
+| ETHUSDT 4h | none | 2026-01-01 | 2026-01-01..2026-03-31 | -23.03 | -52.39% | -29.36% | 22 | 0 of 539 (0.0%) | 0 | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2026-01-01 | 2026-01-01..2026-03-31 | -13.11 | -42.47% | -29.36% | 17 | — | — | — |
+| ETHUSDT 1h | none | 2026-04-01 | 2026-04-01..2026-06-30 | 17.48 | -8.08% | -25.56% | 36 | 0 of 2183 (0.0%) | 0 | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2026-04-01 | 2026-04-01..2026-06-30 | 8.35 | -17.21% | -25.56% | 37 | — | — | — |
+| ETHUSDT 4h | none | 2026-04-01 | 2026-04-01..2026-06-30 | 11.76 | -13.80% | -25.56% | 21 | 0 of 545 (0.0%) | 0 | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2026-04-01 | 2026-04-01..2026-06-30 | 4.21 | -21.35% | -25.56% | 17 | — | — | — |
+| ETHUSDT 1h | none | 2026-07-01 | 2026-07-01..2026-09-30 | -35.88 | 34.47% | 70.35% | 19 | 0 of 2207 (0.0%) | 0 | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | 2026-07-01 | 2026-07-01..2026-09-30 | -65.56 | 4.79% | 70.35% | 20 | — | — | — |
+| ETHUSDT 4h | none | 2026-07-01 | 2026-07-01..2026-09-30 | -40.62 | 29.74% | 70.35% | 14 | 0 of 551 (0.0%) | 0 | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | 2026-07-01 | 2026-07-01..2026-09-30 | -54.58 | 15.78% | 70.35% | 14 | — | — | — |
+
+| Combination | Overlays | Median vs B&H (pp) | Worst window (pp) | E1 (Test B) | E2 (Test B) |
+|---|---|---|---|---|---|
+| BTCUSDT 1h | none | -11.67 | -45.68 | 37 of 19719 (0.2%) | 0 |
+| BTCUSDT 1h | OVL-ATR+OVL-COOLDOWN | -12.12 | -44.84 | — | — |
+| BTCUSDT 4h | none | -12.20 | -57.05 | 10 of 4923 (0.2%) | 0 |
+| BTCUSDT 4h | OVL-ATR+OVL-COOLDOWN | -15.32 | -61.24 | — | — |
+| ETHUSDT 1h | none | -11.67 | -60.51 | 176 of 19719 (0.9%) | 0 |
+| ETHUSDT 1h | OVL-ATR+OVL-COOLDOWN | -1.49 | -65.56 | — | — |
+| ETHUSDT 4h | none | -16.95 | -67.70 | 45 of 4923 (0.9%) | 0 |
+| ETHUSDT 4h | OVL-ATR+OVL-COOLDOWN | -13.11 | -71.07 | — | — |
+
+### Batch 1 side by side (out of sample, no overlays; batch 1 not re-run)
+
+| Combination | STRAT-001 vs B&H (pp) | STRAT-002 vs B&H (pp) | STRAT-003 vs B&H (pp) |
+|---|---|---|---|
+| BTCUSDT 1h | -24.80 | -19.48 | 13.95 |
+| BTCUSDT 4h | 5.30 | 2.91 | -5.90 |
+| ETHUSDT 1h | -25.63 | -8.57 | -20.34 |
+| ETHUSDT 4h | 3.98 | 7.00 | -19.26 |
+

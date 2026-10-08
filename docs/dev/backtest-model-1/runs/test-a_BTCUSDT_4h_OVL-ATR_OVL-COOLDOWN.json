@@ -1,0 +1,83 @@
+{
+  "pair": "BTCUSDT",
+  "timeframe": "4h",
+  "overlays": "OVL-ATR+OVL-COOLDOWN",
+  "model_id": "BTC-20250816T0400Z-5d85edd38e43",
+  "code": {
+    "commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+    "frozen_files_changed": [],
+    "python": "3.13.15 (tags/v3.13.15:4061bc4, Aug  5 2026, 13:05:39) [MSC v.1944 64 bit (AMD64)]",
+    "powertrader_home": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home"
+  },
+  "in_sample": {
+    "window": [
+      0,
+      5749
+    ],
+    "from": "2023-01-01T00:00:00+00:00",
+    "to": "2025-08-16T00:00:00+00:00",
+    "bars": 5749,
+    "refused": "LOOKAHEAD_MODEL: model BTC-20250816T0400Z-5d85edd38e43 was trained on bars up to 2025-08-16 04:00:00+00:00, after the first scored bar (2023-01-01 00:00:00+00:00); score only bars that open at or after the end of the model's training window",
+    "buy_and_hold": {
+      "total_return_pct": 607.770400928198,
+      "cagr_pct": 110.85126079939963,
+      "max_drawdown_pct": -30.641267733064147,
+      "sharpe": 1.8242225441853028,
+      "sortino": 2.682402714863934,
+      "trade_count": 1,
+      "win_rate_pct": 100.0,
+      "avg_trade_pct": 607.770400928198,
+      "exposure_pct": 100.0,
+      "fees_paid": 80.8478879808006,
+      "vs_buy_hold_pct": null
+    }
+  },
+  "out_of_sample": {
+    "window": [
+      5749,
+      8214
+    ],
+    "from": "2025-08-16T04:00:00+00:00",
+    "to": "2026-09-30T20:00:00+00:00",
+    "bars": 2465,
+    "strategy": {
+      "total_return_pct": -18.015130363873354,
+      "cagr_pct": -16.1881853295349,
+      "max_drawdown_pct": -23.194559721040996,
+      "sharpe": -0.8295279239887666,
+      "sortino": -1.138260369849259,
+      "trade_count": 65,
+      "win_rate_pct": 53.84615384615385,
+      "avg_trade_pct": -0.2762734631816688,
+      "exposure_pct": 21.176470588235293,
+      "fees_paid": 1152.5583786767152,
+      "vs_buy_hold_pct": 10.986586072991056
+    },
+    "buy_and_hold": {
+      "total_return_pct": -29.00171643686441,
+      "cagr_pct": -26.251634668807966,
+      "max_drawdown_pct": -53.44740218167796,
+      "sharpe": -0.5271693847706201,
+      "sortino": -0.7347931574265764,
+      "trade_count": 1,
+      "win_rate_pct": 0.0,
+      "avg_trade_pct": -29.001716436864406,
+      "exposure_pct": 100.0,
+      "fees_paid": 17.106935291605165,
+      "vs_buy_hold_pct": null
+    },
+    "holds": {
+      "BARS_MISSING": 0,
+      "TIMEFRAME_UNKNOWN": 0,
+      "BOUNDS_NOT_CONVERGED": 0,
+      "by_reason": {}
+    },
+    "quirks": {
+      "decisions": 2464,
+      "e1": 3,
+      "e1_share": 0.0012175324675324675,
+      "e2": 0
+    }
+  },
+  "baseline": "baselines/test-a_BTCUSDT_4h_OVL-ATR_OVL-COOLDOWN.json"
+}

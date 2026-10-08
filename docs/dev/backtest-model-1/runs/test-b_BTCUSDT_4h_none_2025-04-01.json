@@ -1,0 +1,58 @@
+{
+  "pair": "BTCUSDT",
+  "timeframe": "4h",
+  "overlays": "none",
+  "model_id": "BTC-20250401T0000Z-60ba79990e0c",
+  "train_end": "2025-04-01T00:00:00Z",
+  "code": {
+    "commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+    "frozen_files_changed": [],
+    "python": "3.13.15 (tags/v3.13.15:4061bc4, Aug  5 2026, 13:05:39) [MSC v.1944 64 bit (AMD64)]",
+    "powertrader_home": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home"
+  },
+  "window": [
+    4926,
+    5472
+  ],
+  "from": "2025-04-01T00:00:00+00:00",
+  "to": "2025-06-30T20:00:00+00:00",
+  "bars": 546,
+  "strategy": {
+    "total_return_pct": 10.346557149838166,
+    "cagr_pct": 48.46445770419978,
+    "max_drawdown_pct": -8.432124531384167,
+    "sharpe": 1.917157912245645,
+    "sortino": 2.854574798747355,
+    "trade_count": 15,
+    "win_rate_pct": 73.33333333333333,
+    "avg_trade_pct": 0.6836303789430496,
+    "exposure_pct": 22.893772893772894,
+    "fees_paid": 318.39804388909266,
+    "vs_buy_hold_pct": -19.0603904840696
+  },
+  "buy_and_hold": {
+    "total_return_pct": 29.406947633907766,
+    "cagr_pct": 181.4286147024934,
+    "max_drawdown_pct": -13.609536568576175,
+    "sharpe": 2.6593449446254613,
+    "sortino": 3.9754562878719137,
+    "trade_count": 1,
+    "win_rate_pct": 100.0,
+    "avg_trade_pct": 29.406947633907766,
+    "exposure_pct": 100.0,
+    "fees_paid": 22.953648411802583,
+    "vs_buy_hold_pct": null
+  },
+  "holds": {
+    "BARS_MISSING": 0,
+    "TIMEFRAME_UNKNOWN": 0,
+    "BOUNDS_NOT_CONVERGED": 0,
+    "by_reason": {}
+  },
+  "quirks": {
+    "decisions": 545,
+    "e1": 0,
+    "e1_share": 0.0,
+    "e2": 0
+  }
+}

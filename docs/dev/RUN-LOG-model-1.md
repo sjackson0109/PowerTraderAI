@@ -115,6 +115,9 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 | After filing #152 and #153, before the issue-number commit, 2026-10-07 09:26 | absent | absent | 0 |
 | Phase 4, after the seed-range review and gating suite run, before its commit (no backtest), 2026-10-07 09:38 | absent | absent | 0 |
 | Phase 4, after the freeze code's reviews, mutation checks and gating suite run, before its commit (nothing fetched, trained or run), 2026-10-07 14:28 | absent | absent | 0 |
+| Phase 4 Test A, before `fetch` (clean tree at `68d4ed7`), 2026-10-07 17:27 | absent | absent | 0 |
+| Phase 4 Test A, after `fetch`, `train`, `run` and `report`, during the read-only audit, 2026-10-07 18:27 | absent | absent | 0 |
+| Phase 4 Test A, after the home copy, the note and the drafts, before the results commit, 2026-10-08 01:24 | absent | absent | 0 |
 
 ## Phase 0 — trainer audit — **done, gating verdict STUB; the Phase 1 route is the owner's decision**
 
@@ -1068,3 +1071,124 @@ ignoring CR (`diff --strip-trailing-cr`): identical.
 - **Real-folder and credential checks:** see the table above (Phase 4 freeze row).
 - **Commit** (explicit paths; not pushed, no PR): `FDS-MDL Phase 4: the freeze commit (random baseline, evaluation,
   run script)`.
+
+## Phase 4 — Test A (`fetch`, `train`, `run`, `report`) — **verdict: no evidence of an edge**
+
+- **Owner (2026-10-07):** "Approved. Run Test A from a clean tree at 68d4ed7: fetch, train, run, report, with a fresh
+  absolute POWERTRADER_HOME outside the repo. [...] Do not change the header, the rule or any frozen file because of a
+  result. A defect fix goes through the code rule only (fix, re-run everything it affects, report both). Keep the
+  scratch POWERTRADER_HOME until I've read the results. No authenticated calls."
+- **Start state:** HEAD `68d4ed7`, `git status --porcelain` empty, no `docs/dev/backtest-model-1/`. `POWERTRADER_HOME`
+  =
+  `C:\Users\Simon\AppData\Local\Temp\claude\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\scratchpad\p4home`
+  (absolute, outside the repository and the worktrees, did not exist before). Python: scratch `venv-test` (3.13.15,
+  pandas 3.0.6), `PYTHONDONTWRITEBYTECODE=1`. Each command ran once, from the worktree, with no options.
+- **`fetch`** (17:27:14-17:28:14, exit 0; the only network step): 14 files. The 1h and 4h hashes equal batch 1's
+  (`batch1_mismatches` empty). Each 1h file has 32,855 bars and one missing bar, 2023-03-24 13:00 (both pairs), before
+  every scored window. Every file's SHA-256 is in `data.json` and the report's Data table.
+- **`train`** (17:30:05-18:01:34, exit 0): 20 trainings, each exit 0, 48.8 to 147.2 s. Test A models
+  `BTC-20250816T0400Z-5d85edd38e43` and `ETH-20250816T0400Z-6ce59ce7a360`; the 18 Test B models are in `train.json`.
+  Trainer logs: `<home>\data\backtest-model-1\trainer`.
+- **`run`** (18:01:48-18:24:02, exit 0): 80 runs (8 Test A, 72 Test B) and 8 baselines of 100 seeds;
+  `results.json` status `ok`.
+- **`report`** (18:24:12-18:24:13, exit 0): the Results go below the marker. Lines 1-282 are byte-identical to
+  `68d4ed7` and to a copy taken just before `report` (LF kept). `verdict.json` written.
+- **Verdict line** (as `report` wrote it): "***No evidence of an edge*; in TRAINER-AUDIT 11.8 the trainer's held-out
+  direction calls showed no skill above the up-rate base rate:** 1-hour hit rate vs share of closes that rose, BTC
+  50.3% vs 50.4% and ETH 51.3% vs 51.0% (n = 5,257 pairs each). Held-out metrics in Test A's manifests (a separate fit
+  on the first 80% of each training window, scored on the last 20%, 2025-02-05 12:00 to 2025-08-16 04:00): BTC 50.7% vs
+  50.5% (n = 4,599), ETH 51.4% vs 51.6% (n = 4,588)."
+- **Criteria:**
+  - 1, not met (1 of 4; 3 needed). Out of sample, no overlays, vs buy-and-hold: BTC 1h +13.95 pp (pass), BTC 4h
+    −5.90, ETH 1h −20.34, ETH 4h −19.26.
+  - 2, met. BTC 1h ranks 95.0 (95 of 100 seeds below, no ties). The others are not tested under the rule; their ranks
+    are 26.0, 24.0 and 10.0.
+  - 3, not met. The pooled median of 36 windows is −11.94 pp (18th −12.20, 19th −11.67); the worst window is −67.70
+    (ETH 4h, 2025-07); 9 of 36 windows are above 0; no data holds.
+  - Each combination's median, for information: −11.67, −12.20, −11.67, −16.95.
+- **E1 and E2** (runs without overlays; denominator L − 1):
+
+  | Combination | Test A E1 | Test B E1 (9 windows) | E2 |
+  |---|---|---|---|
+  | BTC 1h | 12 of 9,856 (0.12%) | 37 of 19,719 (0.19%) | 0 |
+  | BTC 4h | 3 of 2,464 (0.12%) | 10 of 4,923 (0.20%) | 0 |
+  | ETH 1h | 28 of 9,856 (0.28%) | 176 of 19,719 (0.89%) | 0 |
+  | ETH 4h | 7 of 2,464 (0.28%) | 45 of 4,923 (0.91%) | 0 |
+
+  E2 is 0 everywhere, so the verdict line carries no E2 note.
+- **Superseded:** nothing. No `--supersede`, and there is no `superseded/` folder.
+- **Read-only audit after the report** (a workflow of 5 lenses and 14 skeptics, 19 agents). Nothing was imported from
+  `app/` and nothing was written to the worktree or the home; scratch is `<scratch>/verify-testA/`.
+  - Recomputed from the candle cache and trades files: all 80 windows, buy-and-hold and STRAT-003 KPIs (max
+    difference 2.8e-14 pp).
+  - All 800 baseline placements re-derived, and all 800 seeds re-simulated from raw candles (exact). Both pins
+    reproduce.
+  - Ranks, the three criteria, the medians, the verdict line, the manifest values and the 11.8 text recomputed and
+    matched.
+  - The 14 candle hashes and the 20 models' code, data and candle provenance (140 candle windows, 700 store files)
+    checked. 181 code records name `68d4ed7` with no frozen changes.
+  - 1,084 rendered cells compared, with 0 mismatches.
+  - **Findings** (each checked by two skeptics): none high or medium, and none touches a number or the verdict.
+  - Low, upheld:
+    - (a) the Test B table's "Missing bars" column adds BARS_MISSING and TIMEFRAME_UNKNOWN together. `results.json`
+      keeps them apart, all are 0, and Test A shows them separately.
+    - (b) the manifest copies are JSON-equal to the store's but not byte-identical (line endings, a trailing newline).
+  - Low, not a defect: the flagged-seed lists are printed without a count. Refuted: "every seed's count is reported"
+    (the per-seed counts are in `baselines/*.json`).
+  - Information only:
+    - BTC 1h's rank is exactly at the threshold.
+    - Buy-and-hold fills at a window's first open, while STRAT-003 can fill from the second bar on (the engine's
+      convention, as in batch 1).
+    - The overlay controls make fewer trades than N because the cooldown skips entries. They are flagged as declared,
+      and overlay runs are not in the verdict.
+    - The header's status line still reads "pre-declared header only", because it may not change.
+    - E1 shares under 0.05% print as 0.0%.
+    - The model files, trainer logs and candle cache exist only in the scratch home.
+  - (a) and (b) are not fixed: either would need a frozen-code change and a superseded re-run. The owner decides.
+- **Output hashes (SHA-256):**
+  - `results.json`: `b0203783933c0e9de69a0d12a706da9a1125cc31669459e66856fb9682bdbb56`
+  - `verdict.json`: `450afbd5292e1efa28df53b3997df071210264b03777b8264052d65eaf050095`
+  - `data.json`: `eaf36b4fe1f0bba2fff519d49b242f9eafc6a70cb4a357c15a0fe4a0a5364278`
+  - `train.json`: `6313f90ce0f0095ffa20a47c0e0e9be4f5a51eb81705b3a461105dcd21a4beef`
+  - The output folder is 5.7 MB: 112 JSON and 80 CSV files.
+  - These are the files as written: CRLF line endings, the same for all 192 outputs, as with batch 1's. Git
+    (`core.autocrlf=true`, no `.gitattributes`) commits them with LF endings. The committed blobs' SHA-256 (`git show
+    <commit>:<path> | sha256sum`) is:
+    - `results.json`: `83fcecce33f2ab98afae33af2769c17c6b46a0953b44dff58fddadc72b504f06`
+    - `verdict.json`: `4e12ce5799bff3aae0023ee3b3e67d2f8b374cea42ce1dd6424880dee931e6c8`
+    - `data.json`: `77bdb79813eae3fb5ecd7420e14e166934d59a934488d66747b22c96457f8793`
+    - `train.json`: `7e205431bbb2527985c3b659be8db11109abc58ded887046aa0a6b5b8f5224a0`
+  - Each of the 192 staged blobs equals its working file with CRLF changed to LF (checked before the commit).
+- **Command logs** (in `<scratch>`):
+  - `p4-fetch.log` `358544720d9dae3bdb89ecc7fac4f18504313ddc9453ad354b4e98aa154760c1`
+  - `p4-train.log` `26a43461f8919d90743e74aa53a0154295d826496301657d302fe7cc12455e5e`
+  - `p4-run.log` `a48d4e31b8faea43ac66abac4dfeddbe9b7c2f5e45002a51377a02161178c18e`
+  - `p4-report.log` `9900485aa88138c2526032b76479979942d955f52432806855fb612f693d81ee`
+- **Real-folder and credential checks:** see the table above (the three Test A rows).
+- **Owner (2026-10-08):** "Results accepted. Leave both minor problems as they are; do not supersede." The owner asked
+  for five things: a note in the Results, two issue drafts (not filed), a copy of the scratch home, this commit, and a
+  PR description (not opened). "No authenticated calls."
+  - **Note in the Results:** "Known presentation defects" at the top of the Results section of
+    `docs/dev/BACKTEST-REPORT-model-1.md`. It lists (a) and (b), each with "it affects no number and not the verdict",
+    and one line saying the header's status line describes the header and the results follow below. It is marked as
+    added by hand after `report`; nothing else below the marker changed. The header (lines 1-282) is still
+    byte-identical to `68d4ed7`, and the staged file starts with the committed one.
+  - **Drafts:** F1 (the merged column) and F2 (the manifest copies' bytes) in `docs/dev/ISSUE-DRAFTS-model-1.md`, with
+    table rows and owner note 11. Not filed. F2's reproduction was run: 30,139 vs 29,386 bytes, 752 vs 0 CRLFs, hashes
+    differ, JSON equal, and the copy with LF equals the store file plus one trailing newline (all 20 models the same).
+  - **Home copy:** the whole scratch home was copied (`cp -a`) to
+    `C:\Users\Simon\Documents\sjackson0109\PowerTraderAI-specs\model-1-p4home\` (outside the repository and outside
+    temp; `PowerTraderAI-specs` is not a git repository). Source and copy each hold 832 files, 14,653,047 bytes and 32
+    folders. All 832 files' SHA-256 are equal, with none missing on either side.
+    - The copy's hash list is `PowerTraderAI-specs\model-1-p4home.sha256` (832 lines, `<sha256>  <relative path>`),
+      itself SHA-256 `5e99b0e2a8dce40d400449dfb37f2d34342efef3f915e3187bb28a3618e73a31`.
+    - The layout is the same as the home's, so every `<home>` path above, and the absolute temp paths in
+      `train.json`'s `log` fields and the code records, map one to one onto the copy. It holds the 20 models (store
+      folders with manifests), the trainer logs, the candle cache and the validation caches.
+    - The scratch original is kept as well, for now.
+- **Commit** (explicit paths: `docs/dev/backtest-model-1`, `docs/dev/BACKTEST-REPORT-model-1.md`,
+  `docs/dev/RUN-LOG-model-1.md`, `docs/dev/ISSUE-DRAFTS-model-1.md`; not pushed, no PR): `FDS-MDL Phase 4: Test A
+  results (no evidence of an edge)`.
+  - No code changed and no test or CI job reads these files, so no suite run was needed (as for `c11ed6c`).
+  - No pre-commit hooks are installed, and CI does not run pre-commit.
+  - `results.json` is 2.5 MB (it records every seed of the random baselines).

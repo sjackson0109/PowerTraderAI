@@ -4,6 +4,8 @@ These drafts were filed on 2026-10-06 as #141 to #151 on `sjackson0109/PowerTrad
 
 E1 and E2 were added on 2026-10-07: two behaviours of the legacy neural runner found in FDS-MDL Phase 3, whose STRAT-003 reproduces the runner's rule. They follow the same base, evidence and label rules, and were filed on 2026-10-07 as #152 and #153.
 
+F1 and F2 were added on 2026-10-08. They are two presentation defects in the FDS-MDL Phase 4 run script, found by the read-only audit of the Test A results. They are drafts only, **not filed** (owner decision, 2026-10-08). Their base is `feat/model-strategy-1` at the freeze commit `68d4ed7`, not `main`: the script exists only on that branch.
+
 - **Base:** `main` at `7a84250`. Line numbers are at that commit unless a draft says otherwise. Files added by FDS-MDL Phase 1 (`app/pt_pattern_trainer.py`, `app/trainer_guard.py`) are cited by symbol.
 - **Evidence:** every claim was checked against the code with `git show 7a84250:<path>`, `git grep` and `git log -S`. Anything traced through the code but not run is marked INFERRED. The Phase 0 evidence is `docs/dev/TRAINER-AUDIT.md` and `docs/dev/trainer-audit-evidence.json`.
 - **Labels:** existing labels only (checked with `gh label list` before filing): `bug` or `documentation`, `needs-triage`, and `component-trading` where the draft suggested it. Priority and phase labels are left to triage.
@@ -23,6 +25,8 @@ E1 and E2 were added on 2026-10-07: two behaviours of the legacy neural runner f
 | [D3](#d3) | #151 | Pattern trainer matches only flushed memories and re-reads them every step | No (same) |
 | [E1](#e1) | #152 | Runner's bound remap drops repeats; with two inactive timeframes later ones use a neighbour's bounds | No (STRAT-003 reproduces it on purpose; the Phase 4 backtest counts the decisions where it applies) |
 | [E2](#e2) | #153 | Runner's gap pass loops for ever on two zero bounds | No (STRAT-003 holds `BOUNDS_NOT_CONVERGED` instead; the Phase 4 backtest counts these) |
+| [F1](#f1) | not filed | Model-1 report's Test B "Missing bars" column adds two hold classes together | No (owner decision: left as is, no superseded re-run) |
+| [F2](#f2) | not filed | Model-1 backtest's manifest copies are not byte-identical to the store's `manifest.json` | No (same) |
 
 Section [C](#c-release-notes) is the release-notes paragraph.
 
@@ -41,6 +45,7 @@ Section [C](#c-release-notes) is the release-notes paragraph.
 8. **The thinker's threshold rewrite** (audit section 7 item 10) is not drafted. It cannot be reached today, it is upstream's behaviour, and the port writes `str(float)`, which the thinker writes back unchanged (checked by `test_the_output_is_what_the_thinker_reads`). It is in A3's checklist instead.
 9. **The desktop installer script is stale.** `.github/scripts/create_desktop_installer.py` lists a handful of modules and misses `pt_paths`, `market_data/` and most of `app/`. Phase 1 only added the new trainer files and changed its default trainer name. Not drafted; worth a task if the installer is still used.
 10. **E1 and E2 come from reproducing the legacy runner** for STRAT-003 (FDS-MDL Phase 3). Both are latent on main (#141, #143). STRAT-003 keeps E1 on purpose and stops E2 after 100,000 steps; the Phase 4 backtest header counts both per symbol and timeframe (owner decision, 2026-10-07). Both drafts cite `feat/model-strategy-1`, which is not yet published, for STRAT-003's tests and the recorded fixture.
+11. **F1 and F2 are presentation defects only.** Neither changes a number in the Test A results or the verdict, and both are also listed in the report's "Known presentation defects" note. Fixing either means changing frozen code, and `report` refuses frozen code that differs from the results' commit, so a fix would need a superseded re-run of Test A. The owner chose to leave both (2026-10-08). They are drafted so that a later spec's run script can fix them.
 
 ---
 
@@ -1130,6 +1135,158 @@ Windows (not OS-specific)
 # output of step 1; the runner itself was not run
 ends after 5 nudges: [99.5, 99.2514986256561]
 still looping after 10 passes: [0.0, 0.0]
+```
+
+### Before you submit
+- [x] I have removed any API keys, secrets and personal account details.
+
+---
+
+## F1
+
+**Not filed** (owner decision, 2026-10-08).
+
+**Title:** `[Bug]: Model-1 backtest report: the Test B "Missing bars" column adds BARS_MISSING and TIMEFRAME_UNKNOWN together`
+
+**Suggested labels:** `bug`, `needs-triage`
+
+### What happened?
+
+`docs/dev/run_backtest_model1.py report` renders the Test B per-window table with a column headed "Missing bars". For each window without overlays, the cell is the sum of two hold classes:
+
+```python
+# 68d4ed7:docs/dev/run_backtest_model1.py:1476, 1483
+"| Combination | Overlays | Model trained to | Window | vs B&H (pp) | STRAT-003 | Buy-and-hold | Trades | E1 | E2 | Missing bars |"
+...
+f"{q['e2']} | {x['holds']['BARS_MISSING'] + x['holds']['TIMEFRAME_UNKNOWN']}"
+```
+
+The pre-declared header (`docs/dev/BACKTEST-REPORT-model-1.md`, "No silent gaps") names three hold classes, BARS_MISSING, TIMEFRAME_UNKNOWN and BOUNDS_NOT_CONVERGED, and says each is counted per window and reported. In the rendered Test B table:
+- TIMEFRAME_UNKNOWN never appears on its own;
+- the heading names only one of the two classes it adds;
+- BOUNDS_NOT_CONVERGED does appear per window, as the E2 column (by code, `quirks.e2` equals `holds.BOUNDS_NOT_CONVERGED`).
+
+Test A's lines report each class separately ("holds for missing bars 0, unknown timeframe 0, gap-pass limit 0"), and `docs/dev/backtest-model-1/results.json` keeps each class per window (`test_b[*].holds`).
+
+**Effect on Test A (run 2026-10-07): none.** Every hold count is 0 in all 72 Test B windows, and a count cannot be negative, so each merged 0 means both classes are 0. The sum is also the quantity that decides "not assessable" (`model_eval.DATA_HOLDS`), so the verdict rule's arithmetic is unaffected. No number and not the verdict changes. Found by the read-only audit after `report` (finding V-4/F3, upheld by two skeptics as low).
+
+**Scope.** The script exists only on `feat/model-strategy-1` and is frozen code for model 1's evaluation. Changing it now would need a superseded re-run of Test A (`report` refuses frozen code that differs from the results' commit), so it is left as is and listed in the report's "Known presentation defects" note.
+
+### What did you expect to happen?
+
+Each hold class in its own column ("Missing bars", "Unknown timeframe"), as Test A reports them. Alternatively, one column headed "Data holds (missing bars + unknown timeframe)". Fix it in the next evaluation's run script, before that evaluation's freeze commit.
+
+### Steps to reproduce
+
+1. `git show 68d4ed7:docs/dev/run_backtest_model1.py | sed -n '1474,1486p'` shows the heading and the sum.
+2. In the Test A results commit on `feat/model-strategy-1`, compare the "Missing bars" column of the Test B table in `docs/dev/BACKTEST-REPORT-model-1.md` with `test_b[*].holds` in `docs/dev/backtest-model-1/results.json`. The JSON has `BARS_MISSING` and `TIMEFRAME_UNKNOWN` as separate keys, all 0.
+
+### Trading mode
+Paper (mode-independent: an offline backtest report)
+
+### Exchange
+Not applicable
+
+### Area
+Backtester
+
+### PowerTraderAI version or commit
+feat/model-strategy-1 at 68d4ed7 (the FDS-MDL Phase 4 freeze commit); not on main
+
+### Operating system
+Windows (not OS-specific)
+
+### Python version
+3.13
+
+### Logs
+```shell
+| Combination | Overlays | Model trained to | Window | vs B&H (pp) | STRAT-003 | Buy-and-hold | Trades | E1 | E2 | Missing bars |
+| BTCUSDT 1h | none | 2024-07-01 | 2024-07-01..2024-09-30 | -14.24 | -13.66% | 0.58% | 38 | 24 of 2207 (1.1%) | 0 | 0 |
+```
+
+### Before you submit
+- [x] I have removed any API keys, secrets and personal account details.
+
+---
+
+## F2
+
+**Not filed** (owner decision, 2026-10-08).
+
+**Title:** `[Bug]: Model-1 backtest: manifest copies are not byte-identical to the store's manifest.json (CRLF and a trailing newline)`
+
+**Suggested labels:** `bug`, `needs-triage`
+
+### What happened?
+
+For each training, `docs/dev/run_backtest_model1.py train` writes the store's manifest to `docs/dev/backtest-model-1/manifests/<model_id>.json` (`68d4ed7:docs/dev/run_backtest_model1.py:684-687`). It does this by parsing the manifest and dumping it again with `_write_json`, which opens the file in text mode and adds a newline at the end:
+
+```python
+# 68d4ed7:docs/dev/run_backtest_model1.py:201-205
+def _write_json(path: str, obj: Any) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(obj, f, indent=2, default=str)
+        f.write("\n")
+```
+
+The model store writes `manifest.json` with `json.dumps(manifest, indent=2, sort_keys=True)` through `pt_paths.write_private_text` (`68d4ed7:app/model_store.py:303-306`; it opens the file with `newline="\n"`, `app/pt_paths.py:349`): LF line endings, no trailing newline. On Windows, the copy has CRLF line endings and ends in CRLF. Its parsed JSON equals the store file's (same keys, same order, same values), but its bytes do not, so the SHA-256 of a copy never equals the store file's. This holds for all 20 models. Git (`core.autocrlf=true`, no `.gitattributes`) commits the copy with LF line endings, so the committed blob is the store file's bytes plus one trailing newline: still not equal.
+
+**Effect on Test A (run 2026-10-07): none.**
+- `run` checks each copy against the store's manifest by parsed content (`68d4ed7:docs/dev/run_backtest_model1.py:750-757`), and all 20 are equal.
+- Each model id is derived from the identity the manifest records (`model_store.content_id`), not from the file's bytes.
+- The committed copies keep every field.
+
+No number and not the verdict changes. Found by the read-only audit after `report` (finding PROV-1, upheld by two skeptics as low or info).
+
+The same write path gives every JSON and CSV output of the run CRLF line endings in a Windows working tree: 192 files, as with batch 1's committed outputs. Only the manifest copies have a byte-level counterpart elsewhere (the store file), so only there does the difference matter.
+
+**Scope.** As F1: the script exists only on `feat/model-strategy-1`, is frozen for model 1, and is left as is (listed in the report's "Known presentation defects" note).
+
+### What did you expect to happen?
+
+Each copy is byte-identical to its store file, so a reader can check it by SHA-256 against the model store (the copy of model 1's home is at `PowerTraderAI-specs\model-1-p4home\`). For example, copy the file's bytes with `shutil.copyfile`, and write the run's own JSON outputs with `newline="\n"`. Fix it in the next evaluation's run script, before that evaluation's freeze commit. Until then, compare a copy with a store manifest by parsed JSON, not by hash.
+
+### Steps to reproduce
+
+1. On a Windows checkout of the Test A results commit, with the home copy at `C:\Users\Simon\Documents\sjackson0109\PowerTraderAI-specs\model-1-p4home\`:
+   ```python
+   import json, hashlib
+   a = r"docs\dev\backtest-model-1\manifests\BTC-20250816T0400Z-5d85edd38e43.json"
+   b = r"C:\Users\Simon\Documents\sjackson0109\PowerTraderAI-specs\model-1-p4home\data\hub_data\strategy_models\BTC-20250816T0400Z-5d85edd38e43\manifest.json"
+   ra, rb = open(a, "rb").read(), open(b, "rb").read()
+   print(len(ra), len(rb), ra.count(b"\r\n"), rb.count(b"\r\n"))
+   print(hashlib.sha256(ra).hexdigest() == hashlib.sha256(rb).hexdigest())  # False
+   print(json.loads(ra) == json.loads(rb))                                  # True
+   print(ra.replace(b"\r\n", b"\n") == rb + b"\n")                          # True
+   ```
+
+### Trading mode
+Paper (mode-independent: an offline backtest output)
+
+### Exchange
+Not applicable
+
+### Area
+Backtester
+
+### PowerTraderAI version or commit
+feat/model-strategy-1 at 68d4ed7 (the FDS-MDL Phase 4 freeze commit); not on main
+
+### Operating system
+Windows (the CRLF part is Windows-specific; the trailing newline is not)
+
+### Python version
+3.13
+
+### Logs
+```shell
+# output of step 1 (Test A model BTC-20250816T0400Z-5d85edd38e43)
+30139 29386 752 0
+False
+True
+True
 ```
 
 ### Before you submit

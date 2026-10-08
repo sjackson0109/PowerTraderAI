@@ -1,0 +1,230 @@
+{
+  "code": {
+    "commit": "68d4ed7426b0b42d06fe5d50256f1ec6db0cbcab",
+    "frozen_files_changed": [],
+    "python": "3.13.15 (tags/v3.13.15:4061bc4, Aug  5 2026, 13:05:39) [MSC v.1944 64 bit (AMD64)]",
+    "powertrader_home": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home"
+  },
+  "data_sha256": {
+    "BTCUSDT 1h": "7171bc667f3db6032a721770c6128545b2bc3f089432e8861181034493171893",
+    "BTCUSDT 2h": "98d9ea257b4585b1390be71d797ddcb36017fee336ec8c742f7c66fed2a258d4",
+    "BTCUSDT 4h": "f58fee86fa7e7c6aa69096b75ddeb3156a592c9f55059383da7d95506266836f",
+    "BTCUSDT 8h": "7541ae03416a68487c780d860dfaefc50d3fd1e46ecf029bc58a6c1fb19aa901",
+    "BTCUSDT 12h": "2a81f99752d3dbe6b666e75113989eba5abc7b2a07b20052e15a949f287b595d",
+    "BTCUSDT 1d": "5059b561afcab3f423ac20690d787bc156a2742554e34894352912084f00c01f",
+    "BTCUSDT 1w": "4bc1b4ba5223b9025a5a33946fe8c3f4d9e4ee79f7766d51f1602a25668aebe8",
+    "ETHUSDT 1h": "2bd3369c64bc6ce400ba5d91519c68524ae0cc4a41d8f139ad46eb256e3d4eb8",
+    "ETHUSDT 2h": "fd83f0d04d41b47ba0511bf8391f591efeb422917772fbacfbd4274031cdb811",
+    "ETHUSDT 4h": "11c6946a168f25bb96d2f6b6415db9990c3a53b70c1585864cd3ab8f5dce8722",
+    "ETHUSDT 8h": "4fd49328d0353fcde511088205f843238948934cd5be9d90a0f9943670b695d7",
+    "ETHUSDT 12h": "806103bb90b84e29260871f29c9147ee985fb1d0903b56588e260a72b0e7dc61",
+    "ETHUSDT 1d": "2a84ae4e9bb50dd7543f28b78310781767e59ff60372b50efd323ed6fa5eb885",
+    "ETHUSDT 1w": "241b92e287143f7f65207b18b14b935bc647a94633757814a82061bf1d6393bc"
+  },
+  "data_code_sha256": {
+    "market_data/candles.py": "74bff11e4730b05d684cfec06a65f32107f1f83d3a068b0a76305034d739a6a8",
+    "market_data/timeframes.py": "0fe73ebaa2de0ad4056897e8950d757dd283af2738f41d8b6c47670b1dfbf0f9"
+  },
+  "trainings": [
+    {
+      "test": "A",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-08-16T04:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 97.0,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2025-08-16-A-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20250816T0400Z-5d85edd38e43"
+    },
+    {
+      "test": "B",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2024-07-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 57.4,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2024-07-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20240701T0000Z-9766305cd89c"
+    },
+    {
+      "test": "B",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2024-10-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 61.7,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2024-10-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20241001T0000Z-abf9b82c91dc"
+    },
+    {
+      "test": "B",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-01-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 70.4,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2025-01-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20250101T0000Z-0f00a5b7e4cd"
+    },
+    {
+      "test": "B",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-04-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 79.1,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2025-04-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20250401T0000Z-60ba79990e0c"
+    },
+    {
+      "test": "B",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-07-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 90.1,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2025-07-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20250701T0000Z-d1d15c03212f"
+    },
+    {
+      "test": "B",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-10-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 106.6,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2025-10-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20251001T0000Z-5a4c3794f1f0"
+    },
+    {
+      "test": "B",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2026-01-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 112.6,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2026-01-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20260101T0000Z-bbaa39a08dfa"
+    },
+    {
+      "test": "B",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2026-04-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 127.3,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2026-04-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20260401T0000Z-f4a4594d192b"
+    },
+    {
+      "test": "B",
+      "coin": "BTC",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2026-07-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 136.1,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\BTC-2026-07-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "BTC-20260701T0000Z-f57e4910b34a"
+    },
+    {
+      "test": "A",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-08-16T04:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 93.8,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2025-08-16-A-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20250816T0400Z-6ce59ce7a360"
+    },
+    {
+      "test": "B",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2024-07-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 48.8,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2024-07-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20240701T0000Z-1d37993cacce"
+    },
+    {
+      "test": "B",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2024-10-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 58.5,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2024-10-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20241001T0000Z-91d236f2f788"
+    },
+    {
+      "test": "B",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-01-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 66.8,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2025-01-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20250101T0000Z-8210ec3df6be"
+    },
+    {
+      "test": "B",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-04-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 78.1,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2025-04-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20250401T0000Z-e88dc9d7b9f3"
+    },
+    {
+      "test": "B",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-07-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 86.8,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2025-07-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20250701T0000Z-5ec3069687c7"
+    },
+    {
+      "test": "B",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2025-10-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 113.6,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2025-10-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20251001T0000Z-9b4e1e5eb974"
+    },
+    {
+      "test": "B",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2026-01-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 121.9,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2026-01-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20260101T0000Z-20796d245c44"
+    },
+    {
+      "test": "B",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2026-04-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 133.4,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2026-04-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20260401T0000Z-c535fb7f5059"
+    },
+    {
+      "test": "B",
+      "coin": "ETH",
+      "train_start": "2023-01-01T00:00:00Z",
+      "train_end": "2026-07-01T00:00:00Z",
+      "exit_code": 0,
+      "wall_seconds": 147.2,
+      "log": "C:\\Users\\Simon\\AppData\\Local\\Temp\\claude\\c--Users-Simon-Documents-sjackson0109-PowerTraderAI\\57710dd7-ccf3-4fdb-8966-6da8cc28ea84\\scratchpad\\p4home\\data\\backtest-model-1\\trainer\\ETH-2026-07-01-B-68d4ed7-20261007T173006-118776600.log",
+      "model_id": "ETH-20260701T0000Z-9858650537ee"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 """Exchange-setup window behaviour for Coinbase: labels, multi-line private key,
 validation on Save, and the Test button end-to-end (HTTP mocked)."""
 
+import gc
 import os
 import sys
 import tempfile
@@ -14,7 +15,12 @@ if APP_DIR not in sys.path:
 sys.path.insert(0, os.path.dirname(__file__))
 
 import coinbase_auth  # noqa: E402
-from helpers_coinbase import KEY_NAME, make_ec_pem, recorded_http  # noqa: E402
+from helpers_coinbase import (  # noqa: E402
+    KEY_NAME,
+    make_ec_pem,
+    make_ed25519_secret,
+    recorded_http,
+)
 
 import tkinter as tk  # noqa: E402
 
@@ -37,6 +43,11 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
     def setUp(self):
         import exchange_config_gui
         from pt_multi_exchange import ExchangeConfigManager
+
+        # Collect leftover Tk variables here, on the main thread. Collected later
+        # in the Test button's worker thread, each one waits about a second for a
+        # main loop the tests never run, and the result arrives after wait_for.
+        gc.collect()
 
         self.gui_mod = exchange_config_gui
         self.tmp = tempfile.TemporaryDirectory()
@@ -62,6 +73,7 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
         self.addCleanup(p.stop)
 
         self.gui = exchange_config_gui.ExchangeConfigGUI(self.root)
+        self.addCleanup(gc.collect)  # runs after destroy (cleanups are LIFO)
         self.addCleanup(self.gui.window.destroy)
         self.gui.window.withdraw()
 
@@ -96,7 +108,7 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
     def test_coinbase_shows_key_name_and_multiline_private_key(self):
         self.select("coinbase")
         self.assertEqual(self.gui.api_key_label.cget("text"), "Key name:")
-        self.assertEqual(self.gui.api_secret_label.cget("text"), "Private key (PEM):")
+        self.assertEqual(self.gui.api_secret_label.cget("text"), "Private key:")
         self.assertEqual(self.gui.api_secret_text.winfo_manager(), "grid")
         self.assertEqual(self.gui.api_secret_entry.winfo_manager(), "")
 
@@ -112,6 +124,7 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
         self.select("coinbase")
         text = self.gui.instructions_text.get("1.0", tk.END)
         for needle in (
+            "Ed25519",
             "ECDSA",
             "Key name",
             "BEGIN EC PRIVATE KEY",
@@ -155,6 +168,17 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
         self.assertEqual(self.gui.api_secret_text.get("1.0", tk.END).strip(), "")
         self.assertIn("already saved", self.gui.secret_hint_var.get())
 
+    def test_save_stores_an_ed25519_key_as_one_base64_line(self):
+        self.select("coinbase")
+        secret = make_ed25519_secret()
+        self.type_credentials(KEY_NAME, f"  {secret}\n")
+        self.gui.save_exchange_config()
+        self.dialogs.showerror.assert_not_called()
+        stored = self.saved()
+        self.assertEqual(stored.api_key, KEY_NAME)
+        self.assertEqual(stored.api_secret, secret)
+        self.assertTrue(stored.enabled)
+
     def test_reselecting_never_echoes_the_saved_private_key(self):
         self.select("coinbase")
         self.type_credentials(KEY_NAME, make_ec_pem())
@@ -192,7 +216,7 @@ class TestCoinbaseSetupWindow(unittest.TestCase):
                 with recorded_http() as http:
                     http.respond_with(code, {})
                     self.gui.test_exchange_connection()
-                    self.assertTrue(self.wait_for(headline))
+                    self.assertTrue(self.wait_for(headline), self.results())
                 self.assertEqual(len(http.calls), 1)
 
     def test_malformed_credentials_are_reported_without_any_request(self):

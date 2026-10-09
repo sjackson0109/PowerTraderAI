@@ -151,9 +151,9 @@ Environment variables take precedence over the keyring. Names: `POWERTRADER_<EXC
 ```bash
 export POWERTRADER_KRAKEN_API_KEY="your_key"
 export POWERTRADER_KRAKEN_API_SECRET="your_secret"
-# Coinbase CDP key: key name + EC private key (PEM); no passphrase
+# Coinbase CDP key: key name + private key (Ed25519: one base64 line; ECDSA: PEM); no passphrase
 export POWERTRADER_COINBASE_API_KEY="organizations/<org-id>/apiKeys/<key-id>"
-export POWERTRADER_COINBASE_API_SECRET="$(cat coinbase_private_key.pem)"
+export POWERTRADER_COINBASE_API_SECRET="<Ed25519 base64 line>"   # ECDSA: "$(cat coinbase_private_key.pem)"
 ```
 
 ## Key Features

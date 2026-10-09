@@ -29,10 +29,10 @@ DEFAULT_FIELDS = {
     "multiline": False,
 }
 EXCHANGE_FIELDS = {
-    # CDP API key: key *name* + EC *private key* (PEM, several lines).
+    # CDP API key: key *name* + private key (Ed25519: one base64 line; ECDSA: PEM).
     "coinbase": {
         "key_label": "Key name:",
-        "secret_label": "Private key (PEM):",
+        "secret_label": "Private key:",
         "multiline": True,
     },
 }
@@ -906,14 +906,17 @@ Note: All three fields are required for KuCoin
 Coinbase (Advanced Trade) API setup:
 1. Sign in to the Coinbase Developer Platform: https://portal.cdp.coinbase.com
    -> API Keys -> Secret API Keys -> Create API key
-2. Under Advanced Settings choose signature algorithm ECDSA
-   (Ed25519 keys are not supported)
+2. Signature algorithm: Ed25519 (Coinbase's default, recommended) or ECDSA
+   (legacy). Both work.
 3. Permissions: View is enough to test and for paper mode. Add Trade only if
    you will trade live. Leave Transfer OFF. An IP allowlist is recommended.
 4. Paste the two values Coinbase gives you:
    - Key name:    organizations/<org-id>/apiKeys/<key-id>
-   - Private key: the whole block, including the -----BEGIN EC PRIVATE KEY-----
-     and -----END EC PRIVATE KEY----- lines (several lines)
+                  (or the key ID, a UUID, if that is what Coinbase shows)
+   - Private key: Ed25519 - the single line of base64 Coinbase shows.
+                  ECDSA - the whole block, including the
+                  -----BEGIN EC PRIVATE KEY----- and
+                  -----END EC PRIVATE KEY----- lines (several lines).
 5. Press Test Connection (read-only, never places an order), then Save.
 Old Coinbase Pro keys and key + secret + passphrase keys no longer work.
             """,

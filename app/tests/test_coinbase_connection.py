@@ -190,11 +190,32 @@ class TestBadCredentialsNeverLeaveTheMachine(unittest.TestCase):
         body = "".join(pem.splitlines()[1:-1])
         self.assertInvalid(KEY_NAME, body)
 
-    def test_ed25519_key_rejected_with_explanation(self):
-        from helpers_coinbase import make_ed25519_pem
+    def test_ed25519_keys_are_accepted_and_sign_with_eddsa(self):
+        import base64
+        import json
 
-        result = self.assertInvalid(KEY_NAME, make_ed25519_pem())
-        self.assertIn("Ed25519", result.message)
+        from helpers_coinbase import make_ed25519_pem, make_ed25519_secret
+
+        for form, secret in (
+            ("base64", make_ed25519_secret()),
+            ("pkcs8 pem", make_ed25519_pem()),
+        ):
+            with self.subTest(form=form):
+                with recorded_http() as http:
+                    http.respond_with(200, FULL_PERMS)
+                    result = CoinbaseExchange(
+                        api_key=KEY_NAME, api_secret=secret
+                    ).check_connection()
+                self.assertTrue(result.ok, result.message)
+                ((method, url, kwargs),) = http.calls
+                self.assertEqual((method, url), ("GET", PERMS_URL))
+                token = kwargs["headers"]["Authorization"].split(" ", 1)[1]
+                head = token.split(".")[0]
+                header = json.loads(
+                    base64.urlsafe_b64decode(head + "=" * (-len(head) % 4))
+                )
+                self.assertEqual(header["alg"], "EdDSA")
+                self.assertEqual(header["kid"], KEY_NAME)
 
     def test_garbage_between_markers(self):
         self.assertInvalid(
@@ -289,6 +310,61 @@ class TestManager(unittest.TestCase):
             result = self.manager.test_exchange_connection("coinbase", KEY_NAME, "x")
         self.assertIs(result.status, ConnectionStatus.ENDPOINT_ERROR)
         self.assertNotIn("boom", result.message)
+
+
+class TestPublicPrices(unittest.TestCase):
+    """Price lookups use Coinbase's public ticker (no credentials) and map the
+    symbol forms the rest of the app passes (e.g. the data provider's BTCUSDT)."""
+
+    TICKER = {"ask": "101.5", "bid": "101.0", "price": "101.2", "volume": "42"}
+
+    def test_symbol_forms_map_to_coinbase_product_ids(self):
+        convert = _exchange()._convert_symbol
+        for given, expected in (
+            ("BTC-USD", "BTC-USD"),
+            ("BTCUSDT", "BTC-USD"),
+            ("DOGEUSDT", "DOGE-USD"),
+            ("btc-usdt", "BTC-USD"),
+            ("BTC/USDT", "BTC-USD"),
+            ("BTCUSD", "BTC-USD"),
+            ("ETH-USDC", "ETH-USD"),
+            ("ETH-BTC", "ETH-BTC"),
+            ("BTC-EUR", "BTC-EUR"),
+        ):
+            with self.subTest(given=given):
+                self.assertEqual(convert(given), expected)
+
+    def test_current_price_asks_the_mapped_product_without_credentials(self):
+        for symbol in ("DOGEUSDT", "BTC-USD"):
+            with self.subTest(symbol=symbol):
+                with recorded_http() as http:
+                    http.respond_with(200, self.TICKER)
+                    price = _exchange().get_current_price(symbol)
+                self.assertEqual(price, 101.5)
+                ((method, url, kwargs),) = http.calls
+                product = _exchange()._convert_symbol(symbol)
+                self.assertEqual(
+                    (method, url),
+                    (
+                        "GET",
+                        f"https://api.exchange.coinbase.com/products/{product}/ticker",
+                    ),
+                )
+                self.assertNotIn("Authorization", kwargs.get("headers") or {})
+
+    def test_market_data_uses_the_mapped_product(self):
+        with recorded_http() as http:
+            http.respond_with(200, self.TICKER)
+            data = _exchange().get_market_data("BTCUSDT")
+        self.assertEqual((data.price, data.bid, data.ask), (101.2, 101.0, 101.5))
+        self.assertTrue(http.urls[0].endswith("/products/BTC-USD/ticker"))
+
+    def test_an_unknown_market_is_named_in_the_error(self):
+        with recorded_http() as http:
+            http.respond_with(404, {"message": "NotFound"})
+            with self.assertRaises(RuntimeError) as cm:
+                _exchange().get_current_price("BNBUSDT")
+        self.assertIn("no market BNB-USD", str(cm.exception))
 
 
 class TestGuiFormatting(unittest.TestCase):

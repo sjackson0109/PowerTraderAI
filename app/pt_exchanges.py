@@ -957,8 +957,9 @@ class CoinbaseExchange(AbstractExchange):
     """Coinbase connector.
 
     ``api_key`` is the CDP *key name* (``organizations/.../apiKeys/...``) and
-    ``api_secret`` is the EC *private key* (PEM). Authenticated requests go to the
-    Advanced Trade API at ``AUTH_BASE_URL`` with a per-request ES256 JWT (see
+    ``api_secret`` is the *private key*: an Ed25519 key (one line of base64) or an
+    ECDSA P-256 key (PEM). Authenticated requests go to the Advanced Trade API at
+    ``AUTH_BASE_URL`` with a per-request EdDSA or ES256 JWT (see
     ``coinbase_auth``). Today the only authenticated call implemented is the
     read-only ``check_connection``; order placement, balances and order status
     are not implemented. Price methods use Coinbase's unauthenticated public
@@ -1095,22 +1096,28 @@ class CoinbaseExchange(AbstractExchange):
             )
         return result(ConnectionStatus.OK, message, **details)
 
-    def get_current_price(self, symbol: str) -> float:
-        coinbase_symbol = self._convert_symbol(symbol)
-
-        response = requests.get(f"{self.base_url}/products/{coinbase_symbol}/ticker")
+    def _public_ticker(self, coinbase_symbol: str) -> Dict:
+        """Coinbase's unauthenticated ticker for one product, or a clear error."""
+        response = requests.get(
+            f"{self.base_url}/products/{coinbase_symbol}/ticker", timeout=10
+        )
         data = response.json()
-
         if "message" in data:
-            raise RuntimeError(f"Coinbase API error: {data['message']}")
+            if str(data["message"]).lower() == "notfound":
+                raise RuntimeError(
+                    f"Coinbase has no market {coinbase_symbol} (NotFound)"
+                )
+            raise RuntimeError(
+                f"Coinbase API error for {coinbase_symbol}: {data['message']}"
+            )
+        return data
 
+    def get_current_price(self, symbol: str) -> float:
+        data = self._public_ticker(self._convert_symbol(symbol))
         return float(data["ask"])
 
     def get_market_data(self, symbol: str) -> MarketData:
-        coinbase_symbol = self._convert_symbol(symbol)
-
-        response = requests.get(f"{self.base_url}/products/{coinbase_symbol}/ticker")
-        data = response.json()
+        data = self._public_ticker(self._convert_symbol(symbol))
 
         return MarketData(
             symbol=symbol,
@@ -1139,10 +1146,32 @@ class CoinbaseExchange(AbstractExchange):
     def is_available_in_region(self, region: str) -> bool:
         return region.upper() in ["US", "USA", "EU", "UK", "EUROPE"]
 
+    # Quotes priced from Coinbase's USD market: Coinbase quotes most coins in USD
+    # (USDC books are unified with USD), and has no USDT market for many of them.
+    _USD_QUOTES = ("USDT", "USDC", "USD")
+
     def _convert_symbol(self, symbol: str) -> str:
-        """Convert standard symbol to Coinbase format"""
-        # BTC-USD -> BTC-USD (same format)
-        return symbol
+        """Coinbase product id for a symbol: ``BASE-QUOTE``.
+
+        ``BTC-USD`` stays as it is. The compact and USDT forms the rest of the app
+        uses (``BTCUSDT``, ``BTC-USDT``, ``BTC/USDT``, ``BTCUSD``, ``BTC-USDC``)
+        become ``BTC-USD``: prices only (Coinbase orders are not implemented), and
+        USDT/USDC are taken at par with USD. Other quotes (``ETH-BTC``,
+        ``BTC-EUR``) are kept.
+        """
+        text = symbol.strip().upper().replace("/", "-").replace("_", "-")
+        if "-" in text:
+            base, quote = text.split("-", 1)
+        else:
+            for candidate in self._USD_QUOTES:
+                if text.endswith(candidate) and len(text) > len(candidate):
+                    base, quote = text[: -len(candidate)], candidate
+                    break
+            else:
+                return text
+        if quote in self._USD_QUOTES:
+            quote = "USD"
+        return f"{base}-{quote}"
 
 
 class KuCoinExchange(AbstractExchange):

@@ -57,7 +57,8 @@ HMAC key/secret scheme is not accepted by the current API, so they cannot be use
 1. **Sign in** at the [Coinbase Developer Platform](https://portal.cdp.coinbase.com)
    (2FA required) and open **API Keys → Secret API Keys → Create API key**.
 2. Give it a nickname, then expand **API restrictions** and **Advanced Settings**.
-3. **Set the signature algorithm to ECDSA.** Ed25519 keys are *not* supported.
+3. **Signature algorithm:** leave it on **Ed25519** (Coinbase's default and
+   recommendation). **ECDSA**, shown as legacy, also works.
 4. Set permissions:
    - ✅ **View**: required (this is what *Test Connection* needs)
    - ✅ **Trade**: only if you intend live trading; not needed for paper mode
@@ -68,16 +69,21 @@ HMAC key/secret scheme is not accepted by the current API, so they cannot be use
    retrieve the private key again.
 
 ### What you get
-- **Key name**: `organizations/<org-id>/apiKeys/<key-id>`
-- **Private key**: an EC key in PEM form, several lines:
-  ```
-  -----BEGIN EC PRIVATE KEY-----
-  ...
-  -----END EC PRIVATE KEY-----
-  ```
+- **Key name**: `organizations/<org-id>/apiKeys/<key-id>`. Some Ed25519 keys show
+  just the key ID, a UUID such as `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`; that works
+  too.
+- **Private key**, depending on the signature algorithm:
+  - **Ed25519**: one line of base64, about 88 characters, ending in `==`.
+  - **ECDSA**: an EC key in PEM form, several lines:
+    ```
+    -----BEGIN EC PRIVATE KEY-----
+    ...
+    -----END EC PRIVATE KEY-----
+    ```
 
-Every request is signed with a short-lived (2 minute) ES256 JWT built from these
-two values. Source: [CDP API key authentication](https://docs.cdp.coinbase.com/coinbase-app/authentication-authorization/api-key-authentication).
+Every request is signed with a short-lived (2 minute) JWT built from these two
+values: EdDSA for an Ed25519 key, ES256 for an ECDSA key. Source:
+[CDP API key authentication](https://docs.cdp.coinbase.com/get-started/authentication/overview).
 
 ## 🔐 Step 3: Configure PowerTraderAI+
 
@@ -87,8 +93,9 @@ two values. Source: [CDP API key authentication](https://docs.cdp.coinbase.com/c
    **Primary Exchange** to "coinbase".
 3. Click **Configure exchange APIs**, open the **Setup Exchange** tab and pick
    **coinbase**.
-4. Paste the **Key name** and the whole **Private key** (including the BEGIN/END
-   lines; pasting it on one line or with `\n` escapes also works).
+4. Paste the **Key name** and the **Private key**: for Ed25519 the single line of
+   base64; for ECDSA the whole block, including the BEGIN/END lines (pasting it on
+   one line or with `\n` escapes also works).
 5. Press **Test Connection**, then **Save Configuration**.
 
 Saved credentials go to your operating system's credential store (Windows Credential
@@ -100,7 +107,7 @@ config folder only records that Coinbase is enabled. See
 ### Environment variables (alternative)
 ```bash
 export POWERTRADER_COINBASE_API_KEY="organizations/<org-id>/apiKeys/<key-id>"
-export POWERTRADER_COINBASE_API_SECRET="$(cat coinbase_private_key.pem)"
+export POWERTRADER_COINBASE_API_SECRET="<the Ed25519 base64 line>"   # or: "$(cat coinbase_private_key.pem)" for ECDSA
 ```
 
 ## 🔧 Step 4: Testing Connection
@@ -188,7 +195,7 @@ Major cryptocurrencies available:
 ```json
 {
   "api_key": "organizations/<org-id>/apiKeys/<key-id>",
-  "api_secret": "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----\n",
+  "api_secret": "<Ed25519 base64 line, or -----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----\n>",
   "trading_config": {
     "default_order_type": "limit",
     "time_in_force": "GTC",
@@ -204,7 +211,10 @@ Major cryptocurrencies available:
 ```
 
 ### Symbol Formats
-Coinbase uses dash-separated symbols:
+Coinbase uses dash-separated symbols. For prices, PowerTraderAI+ also maps the
+compact and USDT forms used elsewhere in the app (`BTCUSDT`, `BTC-USDT`,
+`BTC/USDT`, `BTCUSD`) to Coinbase's USD market (`BTC-USD`). A coin Coinbase does
+not list (for example BNB) has no price there.
 ```python
 # Coinbase format
 "BTC-USD"   # Bitcoin vs US Dollar
@@ -235,10 +245,10 @@ symbols = ["BTC-USD", "ETH-USD", "ADA-USD"]
 - A retired Coinbase Pro key or a key + secret + passphrase set was used
 
 **Solutions**:
-1. Re-copy both values from the CDP portal (include the BEGIN/END lines)
+1. Re-copy both values from the CDP portal (for ECDSA, include the BEGIN/END lines)
 2. Check the system clock is synchronised
 3. Check the IP allowlist, or create a new key
-4. Create the key with the ECDSA signature algorithm
+4. If an Ed25519 key keeps failing, create one with the ECDSA signature algorithm
 
 #### ❌ "permission denied"
 **Causes**:

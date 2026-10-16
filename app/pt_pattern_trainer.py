@@ -74,6 +74,10 @@ Deviations from upstream, each with its reason:
    (upstream could hang or leave ``TRAINING``); bad arguments exit 2.
 9. ``--seed`` (default 0) is recorded and applied to Python's ``random``; upstream uses no
    randomness, so it changes nothing.
+10. The close weight's accuracy test (#150) compares a percentage with a percentage:
+    ``moves`` already holds the predicted close move in percent, so it is not scaled by
+    100 again (upstream's ``var3 = moves[indy] * 100``, unlike its high and low tests,
+    which divide by 100 when read).
 
 Inputs (command line, else environment, else default):
 
@@ -563,6 +567,20 @@ class ModelFiles:
 # --- training -------------------------------------------------------------------------
 
 
+def _close_weight_update(predicted_move, realised_move, weight):
+    """The close memory's new weight (#150). ``predicted_move`` and
+    ``realised_move`` are both close moves in percent: ``moves`` holds them as
+    percentages (unlike ``high_moves`` and ``low_moves``, which were divided by
+    100 when read). Upstream's rule, kept: +0.25 when the realised move is above
+    the predicted move's 10% band, -0.25 below it, capped at 2.0 and, alone of
+    the three tests, allowed to fall to -2.0."""
+    if realised_move > predicted_move + (predicted_move * 0.1):
+        return min(weight + 0.25, 2.0)
+    if realised_move < predicted_move - (predicted_move * 0.1):
+        return max(weight - 0.25, 0.0 - 2.0)
+    return weight
+
+
 def run_pass(files, tf_choice, restarted_yet, bars, log):
     """One pass of one timeframe: upstream ``ba62130:pt_trainer.py:503-1625``.
 
@@ -733,7 +751,6 @@ def run_pass(files, tf_choice, restarted_yet, bars, log):
             # the lists it re-read from disk this step, which are then discarded, so
             # they never reach the files (kept on purpose).
             for indy in range(len(unweighted)):
-                var3 = moves[indy] * 100
                 high_var3 = high_moves[indy] * 100
                 low_var3 = low_moves[indy] * 100
                 if high_perc_diff_now_actual > high_var3 + (high_var3 * 0.1):
@@ -748,12 +765,9 @@ def run_pass(files, tf_choice, restarted_yet, bars, log):
                     low_new_weight = max(low_move_weights[indy] - 0.25, 0.0)
                 else:
                     low_new_weight = low_move_weights[indy]
-                if perc_diff_now_actual > var3 + (var3 * 0.1):
-                    new_weight = min(move_weights[indy] + 0.25, 2.0)
-                elif perc_diff_now_actual < var3 - (var3 * 0.1):
-                    new_weight = max(move_weights[indy] - 0.25, 0.0 - 2.0)
-                else:
-                    new_weight = move_weights[indy]
+                new_weight = _close_weight_update(
+                    moves[indy], perc_diff_now_actual, move_weights[indy]
+                )
                 del weight_list[perfect_dexs[indy]]
                 weight_list.insert(perfect_dexs[indy], new_weight)
                 del high_weight_list[perfect_dexs[indy]]

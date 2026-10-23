@@ -429,3 +429,32 @@ def test_a_held_coin_forgets_its_predictions(runner):
     st = runner.states["SOL"]
     assert st["low_bound_prices"] == [0.01] * 7 and st["bounds_version"] == 0
     assert st["tf_times"] == ["x"] * 7
+
+
+def test_the_runner_takes_current_prices_from_the_shared_exchange_manager(
+    runner, monkeypatch, capsys
+):
+    """#144 removed pt_multi_exchange.multi_exchange_manager (built at import), and
+    the runner's import of it failed on every price: "Multi-exchange system not
+    available, using legacy Robinhood". It now uses shared_manager(), which connects
+    for public prices without credentials."""
+    import pt_multi_exchange
+
+    class Manager:
+        initialized = False
+
+        def initialize(self, user_region=None, with_credentials=False):
+            self.initialized, self.with_credentials = True, with_credentials
+            return True
+
+        def get_current_price(self, symbol):
+            return 123.45
+
+    monkeypatch.setattr(pt_multi_exchange, "_shared", None)
+    monkeypatch.setattr(pt_multi_exchange, "MultiExchangeManager", Manager)
+    assert runner.robinhood_current_ask("BTC-USD") == 123.45
+    manager = pt_multi_exchange.shared_manager()
+    assert manager is pt_multi_exchange.shared_manager()  # one per process
+    assert manager.with_credentials is False  # market data reads no credentials
+    out = capsys.readouterr().out
+    assert "not available" not in out and "legacy Robinhood" not in out

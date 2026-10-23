@@ -164,7 +164,9 @@ def robinhood_current_ask(symbol: str) -> float:
 
     # Try new multi-exchange system first
     try:
-        from pt_multi_exchange import multi_exchange_manager
+        from pt_multi_exchange import shared_manager
+
+        multi_exchange_manager = shared_manager()
 
         # Initialize if needed (will use config or environment)
         if not multi_exchange_manager.initialized:
@@ -213,7 +215,9 @@ def get_multi_exchange_prices(symbol: str) -> dict:
     Returns dict of {exchange_name: price}
     """
     try:
-        from pt_multi_exchange import multi_exchange_manager
+        from pt_multi_exchange import shared_manager
+
+        multi_exchange_manager = shared_manager()
 
         if not multi_exchange_manager.initialized:
             user_region = os.environ.get("POWERTRADER_USER_REGION", "GLOBAL")
@@ -242,7 +246,9 @@ def get_best_price(symbol: str, side: str = "buy") -> tuple:
     Returns (price, exchange_name)
     """
     try:
-        from pt_multi_exchange import multi_exchange_manager
+        from pt_multi_exchange import shared_manager
+
+        multi_exchange_manager = shared_manager()
 
         if not multi_exchange_manager.initialized:
             user_region = os.environ.get("POWERTRADER_USER_REGION", "GLOBAL")

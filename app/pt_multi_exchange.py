@@ -538,3 +538,17 @@ class MultiExchangeManager:
             return pt_secrets.get_credentials(exchange_config.exchange_type)
         except pt_secrets.SecretsError:
             return None
+
+
+_shared: Optional[MultiExchangeManager] = None
+
+
+def shared_manager() -> MultiExchangeManager:
+    """The process's one MultiExchangeManager (the neural runner's current prices),
+    built on first use. It used to be built at import, as ``multi_exchange_manager``,
+    which created the user config folder in every process that imported this module
+    (#144)."""
+    global _shared
+    if _shared is None:
+        _shared = MultiExchangeManager()
+    return _shared

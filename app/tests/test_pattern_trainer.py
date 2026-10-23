@@ -566,6 +566,68 @@ def test_default_mode_keeps_upstreams_output_and_adds_the_unflushed_tail(tmp_pat
         assert float(threshold) == summary["timeframes"][tf]["final_threshold"]
 
 
+# --- the close-weight test compares percent with percent (#150) ---------------------------
+
+
+def test_the_close_weight_update_keeps_the_units_of_its_inputs(monkeypatch, tmp_path):
+    """#150: ``moves`` holds the memories' close moves in percent (times their
+    weights; ``high_moves`` and ``low_moves`` were divided by 100 when read), so
+    the close test must not scale it by 100. A +2% prediction met exactly by a
+    +2% move is inside the 10% band and keeps its weight; compared against
+    ``moves[indy] * 100`` it looked like a miss far below the band and the
+    weight fell."""
+    calls = []
+    real = ppt._close_weight_update
+
+    def spy(predicted, realised, weight):
+        calls.append((predicted, realised, weight))
+        return real(predicted, realised, weight)
+
+    monkeypatch.setattr(ppt, "_close_weight_update", spy)
+    folder = tmp_path / "coin"
+    folder.mkdir()
+    (folder / "memories_1hour.txt").write_text("[2.0 2.0]{}2.5{}1.5", encoding="utf-8")
+    for kind in ("memory_weights", "memory_weights_high", "memory_weights_low"):
+        (folder / f"{kind}_1hour.txt").write_text("1.0", encoding="utf-8")
+    # pass 0 learns once: its first window is 10 bars, and the pass returns when
+    # that window reaches int(n * 0.25) = 11 of 44 bars
+    opens = [100.0] * 44
+    closes = [100.0] * 44
+    closes[9] = 102.0  # body +2.0%: the pattern the memory matches, and the start price
+    closes[10] = 104.04  # +2.0% above it: the predicted move is met exactly
+    highs = [max(o, c) for o, c in zip(opens, closes)]
+    lows = [min(o, c) for o, c in zip(opens, closes)]
+
+    stats, _ = ppt.run_pass(
+        ppt.ModelFiles(str(folder)),
+        "1hour",
+        0,
+        (opens, closes, highs, lows),
+        lambda *a: None,
+    )
+
+    assert stats["matched_steps"] == 1 and stats["steps"] == 2
+    assert len(calls) == 1, calls
+    predicted, realised, weight = calls[0]
+    assert predicted == pytest.approx(2.0)  # a percentage, not 200
+    assert realised == pytest.approx(2.0)
+    assert weight == 1.0
+    assert ppt._close_weight_update(predicted, realised, weight) == 1.0
+
+
+def test_the_close_weight_update_is_upstreams_band_and_its_own_floor():
+    """Upstream's rules, kept: +0.25 above the 10% band, -0.25 below it, capped
+    at 2.0; the close weight alone may fall to -2.0."""
+    assert ppt._close_weight_update(2.0, 2.0, 1.0) == 1.0  # inside the band
+    assert ppt._close_weight_update(2.0, 2.3, 1.0) == 1.25  # move beat it: up
+    assert ppt._close_weight_update(2.0, 1.7, 1.0) == 0.75  # fell short: down
+    assert ppt._close_weight_update(2.0, 50.0, 2.0) == 2.0  # capped at 2.0
+    assert (
+        ppt._close_weight_update(2.0, -50.0, 0.0) == -0.25
+    )  # alone, may fall below zero
+    assert ppt._close_weight_update(2.0, -50.0, -1.9) == -2.0  # the close floor
+
+
 # --- the thinker's file contract and the run's files --------------------------------------
 
 

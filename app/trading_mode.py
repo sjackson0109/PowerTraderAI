@@ -340,8 +340,44 @@ def classify_quote(quote: Optional[Quote], max_age_s: float, now: float) -> str:
 # --- Public quote feed (paper pricing only; never an order call) -------------
 
 _QUOTE_URL = "https://api.binance.com/api/v3/ticker/bookTicker?symbol={symbol}"
+_MIN_NOTIONAL_URL = "https://api.binance.com/api/v3/exchangeInfo?symbol={symbol}"
+_min_notional_cache: Dict[str, Optional[float]] = {}
 _QUOTE_TTL_SECONDS = 2.0
 _quote_cache: Dict[str, Quote] = {}
+
+
+def fetch_public_min_notional(base: str, timeout: float = 3.0) -> Optional[float]:
+    """Binance spot's minimum order value for ``base``/USDT (its NOTIONAL or
+    MIN_NOTIONAL filter), or None if it cannot be read. The paper exchange fills at
+    Binance's public prices, so it uses Binance's minimum order too. A value read is
+    kept for the process; a failure is tried again next time."""
+    if base in _min_notional_cache:
+        return _min_notional_cache[base]
+    try:
+        url = _MIN_NOTIONAL_URL.format(symbol=f"{base}USDT")
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        filters = payload["symbols"][0]["filters"]
+    except (
+        urllib.error.URLError,
+        ValueError,
+        KeyError,
+        IndexError,
+        TypeError,
+        OSError,
+    ):
+        return None
+    minimum = None
+    for f in filters:
+        if isinstance(f, dict) and f.get("filterType") in ("NOTIONAL", "MIN_NOTIONAL"):
+            try:
+                value = float(f.get("minNotional", f.get("notional", 0)) or 0)
+            except (TypeError, ValueError):
+                value = 0.0
+            minimum = value if value > 0 else None
+            break
+    _min_notional_cache[base] = minimum
+    return minimum
 
 
 def fetch_public_quote(base: str, timeout: float = 3.0) -> Optional[Quote]:
@@ -430,6 +466,7 @@ class PaperExchange(AbstractExchange):
         state_path: Optional[str] = None,
         settings_source: Any = None,
         clock: Callable[[], float] = time.time,
+        minimum_feed: Optional[Callable[[str], Optional[float]]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__("", "", **kwargs)
@@ -437,6 +474,7 @@ class PaperExchange(AbstractExchange):
         self._simulator = _AnchoredSimulator()
         self.account.market_simulator = self._simulator
         self._price_feed = price_feed
+        self._minimum_feed = minimum_feed  # base -> minimum order value, or None
         self._state_path = state_path
         self.settings_source = settings_source
         self._clock = clock
@@ -514,6 +552,16 @@ class PaperExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         return self.get_quote(symbol).ask
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """The minimum order of the market whose prices this book fills at (Binance's,
+        with the public price feed), or None without one."""
+        if self._minimum_feed is None:
+            return None
+        try:
+            return self._minimum_feed(_base_asset(symbol))
+        except Exception:
+            return None
 
     def get_market_data(self, symbol: str) -> MarketData:
         priced = self.get_quote(symbol)
@@ -980,6 +1028,7 @@ def configure_paper_exchange(
             price_feed=price_feed,
             state_path=state_path,
             settings_source=settings_source,
+            minimum_feed=_minimum_feed_for(price_feed),
         )
         if state_path:
             if os.path.exists(state_path) and not _paper_exchange.state_loaded:
@@ -1002,8 +1051,17 @@ def get_paper_exchange() -> PaperExchange:
     global _paper_exchange
     with _paper_lock:
         if _paper_exchange is None:
-            _paper_exchange = PaperExchange(price_feed=fetch_public_quote)
+            _paper_exchange = PaperExchange(
+                price_feed=fetch_public_quote,
+                minimum_feed=_minimum_feed_for(fetch_public_quote),
+            )
         return _paper_exchange
+
+
+def _minimum_feed_for(price_feed):
+    """Binance's minimum order values when the paper exchange fills at Binance's public
+    prices; none for any other feed (a test's, or the account's own simulator)."""
+    return fetch_public_min_notional if price_feed is fetch_public_quote else None
 
 
 def reset_paper_exchange() -> None:

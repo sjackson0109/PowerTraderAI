@@ -93,17 +93,24 @@ class _FakeResponse:
         return False
 
 
-class FakeBinance:
-    """Stands in for Binance's public bookTicker endpoint.
+PUBLIC_BINANCE_URLS = (
+    "https://api.binance.com/api/v3/ticker/bookTicker?symbol=",
+    "https://api.binance.com/api/v3/exchangeInfo?symbol=",
+)
 
-    Records every requested URL so tests can assert that only the public ticker
-    was ever called.
+
+class FakeBinance:
+    """Stands in for Binance's public bookTicker and exchangeInfo endpoints.
+
+    Records every requested URL so tests can assert that only public market data
+    (PUBLIC_BINANCE_URLS) was ever asked for.
     """
 
     def __init__(self) -> None:
         self.urls: List[str] = []
         self.bid = 99.0
         self.ask = 101.0
+        self.min_notional = 5.0  # exchangeInfo's NOTIONAL filter
         self.reachable = True
         self.age_s = 0.0  # server Date header = now - age_s
         self.send_date = True
@@ -115,6 +122,9 @@ class FakeBinance:
         headers = {}
         if self.send_date:
             headers["Date"] = formatdate(time.time() - self.age_s, usegmt=True)
+        if url.startswith(PUBLIC_BINANCE_URLS[1]):
+            notional = {"filterType": "NOTIONAL", "minNotional": str(self.min_notional)}
+            return _FakeResponse({"symbols": [{"filters": [notional]}]}, headers)
         return _FakeResponse(
             {"symbol": "BTCUSDT", "bidPrice": str(self.bid), "askPrice": str(self.ask)},
             headers,
@@ -134,8 +144,10 @@ class PaperTraderCase(unittest.TestCase):
     def setUp(self):
         tm.reset_paper_exchange()
         tm._quote_cache.clear()
+        tm._min_notional_cache.clear()
         self.addCleanup(tm.reset_paper_exchange)
         self.addCleanup(tm._quote_cache.clear)
+        self.addCleanup(tm._min_notional_cache.clear)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 

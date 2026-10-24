@@ -306,7 +306,8 @@ class InputValidator:
         # Validate numeric settings
         numeric_fields = {
             "trade_start_level": (1, 10),
-            "start_allocation_pct": (0.0001, 1.0),
+            "start_allocation_pct": (0.0001, 100.0),
+            "max_coin_allocation_pct": (0.1, 100.0),
             "dca_multiplier": (0.1, 10.0),
             "max_dca_buys_per_24h": (0, 100),
             "pm_start_pct_no_dca": (0.1, 100.0),

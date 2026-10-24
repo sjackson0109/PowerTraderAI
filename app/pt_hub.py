@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import bisect
+import functools
 import glob
 import json
 import logging
@@ -38,6 +39,7 @@ if __name__ == "__main__":
     sys.dont_write_bytecode = True
 
 import chart_settings
+import position_sizing
 import pt_paths
 import ui_theme
 import ui_tokens
@@ -485,7 +487,11 @@ DEFAULT_SETTINGS = {
     "main_neural_dir": "",
     "coins": ["BTC", "ETH", "XRP", "BNB", "DOGE"],
     "trade_start_level": 3,  # trade starts when long signal >= this level (1..7)
-    "start_allocation_pct": 0.005,  # % of total account value for initial entry (min $0.50 per coin)
+    # A new trade: this % of the account value, at least the exchange's minimum order
+    "start_allocation_pct": position_sizing.DEFAULT_START_ALLOCATION_PCT,
+    # The most one coin may hold, at cost, as % of the account: DCA buys stop there
+    "max_coin_allocation_pct": position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT,
+    position_sizing.DEFAULTS_VERSION_KEY: position_sizing.DEFAULTS_VERSION,
     "dca_multiplier": 2.0,  # DCA buy size = current value * this (2.0 => total scales ~3x per DCA)
     "dca_levels": [
         -2.5,
@@ -2471,6 +2477,14 @@ class PowerTraderHub(tk.Tk):
         data = (
             pt_secrets.strip_secret_fields(data, SETTINGS_FILE) if pt_secrets else data
         )
+
+        # A file saved before the new sizing defaults: its 0.005% entry is upstream's
+        # default, replaced once (position_sizing.migrate_settings)
+        if data and position_sizing.migrate_settings(data):
+            try:
+                pt_paths.write_private_text(settings_path, json.dumps(data, indent=2))
+            except OSError:
+                pass
 
         merged = dict(DEFAULT_SETTINGS)
         merged.update(data)
@@ -6505,10 +6519,8 @@ Platform: {sys.platform}
             self.lbl_acct_percent_in_trade.config(text=pit_txt)
 
             # -------------------------
-            # DCA affordability
-            # - Entry allocation mirrors pt_trader.py:
-            #     total_val * ((start_allocation_pct/100) / N) with min $0.50
-            # - Each DCA buy mirrors pt_trader.py: dca_amount = value * dca multiplier  (=> total scales ~(1+multiplier)x per DCA)
+            # DCA affordability: how many DCA buys fit in a coin's budget and the
+            # account, for one coin and for every coin at once (position_sizing)
             # -------------------------
             coins = getattr(self, "coins", None) or []
             n = len(coins)
@@ -6516,38 +6528,18 @@ Platform: {sys.platform}
             single_levels = 0
 
             if total_val > 0.0:
-                alloc_pct = float(
-                    self.settings.get("start_allocation_pct", 0.005) or 0.005
+                levels = functools.partial(
+                    position_sizing.dca_levels_affordable,
+                    total_val,
+                    float(self.settings.get("start_allocation_pct") or 0.0),
+                    float(
+                        self.settings.get("max_coin_allocation_pct")
+                        or position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT
+                    ),
+                    float(self.settings.get("dca_multiplier", 2.0) or 0.0),
                 )
-                if alloc_pct < 0.0:
-                    alloc_pct = 0.0
-                alloc_frac = alloc_pct / 100.0
-
-                dca_mult = float(self.settings.get("dca_multiplier", 2.0) or 2.0)
-                if dca_mult < 0.0:
-                    dca_mult = 0.0
-                dca_factor = 1.0 + dca_mult
-
-                # Spread across all coins
-
-                alloc_spread = total_val * alloc_frac
-                if alloc_spread < 0.5:
-                    alloc_spread = 0.5
-
-                required = alloc_spread * n  # initial buys for all coins
-                while required > 0.0 and (required * dca_factor) <= (total_val + 1e-9):
-                    required *= dca_factor
-                    spread_levels += 1
-
-                # All DCA into a single coin
-                alloc_single = total_val * alloc_frac
-                if alloc_single < 0.5:
-                    alloc_single = 0.5
-
-                required = alloc_single  # initial buy for one coin
-                while required > 0.0 and (required * dca_factor) <= (total_val + 1e-9):
-                    required *= dca_factor
-                    single_levels += 1
+                single_levels = levels(coins=1)
+                spread_levels = levels(coins=max(1, n))
 
             # Show labels + number (one line each)
             self.lbl_acct_dca_spread.config(text=str(spread_levels))
@@ -7622,7 +7614,19 @@ Platform: {sys.platform}
             value=str(self.settings.get("trade_start_level", 3))
         )
         start_alloc_pct_var = tk.StringVar(
-            value=str(self.settings.get("start_allocation_pct", 0.005))
+            value=str(
+                self.settings.get(
+                    "start_allocation_pct", position_sizing.DEFAULT_START_ALLOCATION_PCT
+                )
+            )
+        )
+        max_coin_pct_var = tk.StringVar(
+            value=str(
+                self.settings.get(
+                    "max_coin_allocation_pct",
+                    position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT,
+                )
+            )
         )
         dca_mult_var = tk.StringVar(value=str(self.settings.get("dca_multiplier", 2.0)))
         _dca_levels = self.settings.get(
@@ -7692,7 +7696,8 @@ Platform: {sys.platform}
         add_row(r, "Trade start level (1-7):", trade_start_level_var)
         r += 1
 
-        # Start allocation % (shows approx $/coin using the last known account value; always displays the $0.50 minimum)
+        # Start allocation % and Max per coin %, each with its amount in dollars at the
+        # last account value the trader reported
         ttk.Label(frm, text="Start allocation %:").grid(
             row=r, column=0, sticky="w", padx=(0, 10), pady=6
         )
@@ -7705,48 +7710,58 @@ Platform: {sys.platform}
             row=r, column=2, sticky="w", padx=(10, 0), pady=6
         )
 
+        def _pct(var):
+            """A percentage typed as "1" or "1%" (None if it is not a number)."""
+            try:
+                return max(0.0, float((var.get() or "").strip().replace("%", "")))
+            except ValueError:
+                return None
+
+        def _account_value() -> float:
+            # the last account value in trader_status.json (no extra API calls)
+            try:
+                return float(getattr(self, "_last_total_account_value", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
+
         def _update_start_alloc_hint(*_):
-            # Parse % (allow "0.01" or "0.01%")
-            try:
-                pct_txt = (start_alloc_pct_var.get() or "").strip().replace("%", "")
-                pct = float(pct_txt) if pct_txt else 0.0
-            except Exception:
-                pct = float(self.settings.get("start_allocation_pct", 0.005) or 0.005)
-
-            if pct < 0.0:
-                pct = 0.0
-
-            # Use the last account value we saw in trader_status.json (no extra API calls).
-            try:
-                total_val = float(
-                    getattr(self, "_last_total_account_value", 0.0) or 0.0
-                )
-            except Exception:
-                total_val = 0.0
-
-            coins_list = [
-                c.strip().upper()
-                for c in (coins_var.get() or "").split(",")
-                if c.strip()
-            ]
-            n_coins = len(coins_list) if coins_list else 1
-
-            per_coin = 0.0
-            if total_val > 0.0:
-                per_coin = total_val * (pct / 100.0)
-            if per_coin < 0.5:
-                per_coin = 0.5
-
-            if total_val > 0.0:
-                start_alloc_hint_var.set(
-                    f"≈ {_fmt_money(per_coin)} per coin (min $0.50)"
-                )
-            else:
-                start_alloc_hint_var.set("≈ $0.50 min per coin (needs account value)")
+            pct, total_val = _pct(start_alloc_pct_var), _account_value()
+            if pct is None or total_val <= 0.0:
+                start_alloc_hint_var.set("")
+                return
+            entry = position_sizing.entry_usd(total_val, pct)
+            start_alloc_hint_var.set(
+                f"≈ {_fmt_money(entry)} per entry, at least the exchange minimum"
+            )
 
         _update_start_alloc_hint()
         start_alloc_pct_var.trace_add("write", _update_start_alloc_hint)
-        coins_var.trace_add("write", _update_start_alloc_hint)
+
+        r += 1
+
+        ttk.Label(frm, text="Max per coin %:").grid(
+            row=r, column=0, sticky="w", padx=(0, 10), pady=6
+        )
+        ttk.Entry(frm, textvariable=max_coin_pct_var).grid(
+            row=r, column=1, sticky="ew", pady=6
+        )
+        max_coin_hint_var = tk.StringVar(value="")
+        ttk.Label(frm, textvariable=max_coin_hint_var).grid(
+            row=r, column=2, sticky="w", padx=(10, 0), pady=6
+        )
+
+        def _update_max_coin_hint(*_):
+            pct, total_val = _pct(max_coin_pct_var), _account_value()
+            if pct is None or total_val <= 0.0:
+                max_coin_hint_var.set("")
+                return
+            budget = position_sizing.coin_budget_usd(total_val, pct)
+            max_coin_hint_var.set(
+                f"≈ {_fmt_money(budget)} per coin with DCA; no DCA buy past it"
+            )
+
+        _update_max_coin_hint()
+        max_coin_pct_var.trace_add("write", _update_max_coin_hint)
 
         r += 1
 
@@ -8052,7 +8067,13 @@ Platform: {sys.platform}
                 )
 
                 sap = (start_alloc_pct_var.get() or "").strip().replace("%", "")
-                self.settings["start_allocation_pct"] = max(0.0, float(sap or 0.0))
+                self.settings["start_allocation_pct"] = min(
+                    100.0, max(0.0001, float(sap or 0.0))
+                )
+                mcp = (max_coin_pct_var.get() or "").strip().replace("%", "")
+                self.settings["max_coin_allocation_pct"] = min(
+                    100.0, max(0.1, float(mcp or 0.0))
+                )
 
                 dm = (dca_mult_var.get() or "").strip()
                 try:

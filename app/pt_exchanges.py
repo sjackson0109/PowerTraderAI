@@ -480,6 +480,17 @@ class BinanceExchange(AbstractExchange):
     # Symbol filter handling (LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL)
     # ------------------------------------------------------------------
 
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """Binance's minimum order value for ``symbol`` (its NOTIONAL / MIN_NOTIONAL
+        filter), or None if it cannot be read. Orders below it are refused."""
+        try:
+            minimum = self._get_symbol_filters(self._convert_symbol(symbol))[
+                "minNotional"
+            ]
+        except Exception:
+            return None
+        return float(minimum) if minimum > 0 else None
+
     def _get_symbol_filters(self, binance_symbol: str) -> Dict[str, Decimal]:
         """
         Fetch and cache the trading filters for a symbol from

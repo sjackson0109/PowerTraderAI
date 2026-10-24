@@ -240,6 +240,11 @@ class AbstractExchange(abc.ABC):
         self.api_secret = api_secret
         self.exchange_name = self.get_exchange_name()
 
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """The exchange's minimum order value for ``symbol``, in USD, or None when this
+        connector does not know it (the trader then sizes the order without one)."""
+        return None
+
     @abc.abstractmethod
     def get_exchange_name(self) -> str:
         """Return the exchange name"""

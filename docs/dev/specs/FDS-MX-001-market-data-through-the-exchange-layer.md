@@ -5,7 +5,7 @@
 **Branch:** this spec is on `docs/fds-mx-001-exchange-market-data`, cut from `main` at `4ab466c`. Each phase is built on its own `feat/mx-<letter>-…` branch, cut from `main` after the previous phase is merged.
 **Recommended model:** Claude Opus 5.5, effort high, for phase A (the interface and the four connectors) and phase F (the trainer). Sonnet 5.5, effort high, for the wiring phases.
 **Run log:** `docs/dev/RUN-LOG-mx-1.md`.
-**Status:** draft for owner review, 2026-10-25. The owner's decisions go in §8.
+**Status:** approved for build, 2026-10-25. The owner accepted every recommendation in §8 (D1–D10) and will revisit the decisions later; a changed decision is recorded in §8 with its date.
 **Related:** PR #177, which reads minimum order sizes this way already (`AbstractExchange.min_order_usd`, primary first). FDS-CHART-001 §4 and the FDS-MDL data section name Binance as the candle source, and change with this spec (phase H).
 
 ---
@@ -240,7 +240,7 @@ Phase A comes first; the rest depend on it. B and C follow straight away, as the
 
 ## 8. Decisions for the owner
 
-Each has a recommendation. Phases that depend on a decision wait for it.
+**Decided 2026-10-25: every recommendation below is accepted** (owner: "apply all recommendations, then we can circle back to the decisions").
 
 | # | Question | Recommendation | Alternative |
 |---|---|---|---|

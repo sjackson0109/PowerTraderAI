@@ -249,6 +249,7 @@ class OrderResult:
     price_source: str = ""
     quote_ts: Optional[float] = None  # exchange timestamp of the quote (epoch s, UTC)
     age_s: Optional[float] = None  # fetched_ts - quote_ts
+    price_exchange: str = ""  # the exchange whose quote priced the fill (paper)
 
 
 class ConnectionStatus(str, Enum):

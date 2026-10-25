@@ -266,15 +266,11 @@ logger.info("PowerTrader Crypto Trader initialized")
 
 
 def _market_exchanges():
-    """The exchanges in Settings, primary first (the shared multi-exchange manager),
-    for public market information; connected on first use, as the neural runner
-    does. No credentials are read."""
-    from pt_multi_exchange import shared_manager
+    """The exchanges in Settings, primary first, for public market information
+    (``pt_multi_exchange.market_exchanges``: no credentials, nothing written)."""
+    from pt_multi_exchange import market_exchanges
 
-    manager = shared_manager()
-    if not manager.initialized:
-        manager.initialize(os.environ.get("POWERTRADER_USER_REGION", "GLOBAL"))
-    return manager
+    return market_exchanges()
 
 
 class _TraderRiskAdapter:
@@ -710,6 +706,7 @@ class CryptoAPITrading:
         price_source: Optional[str] = None,
         quote_ts: Optional[float] = None,
         age_s: Optional[float] = None,
+        price_exchange: Optional[str] = None,
     ) -> None:
         """
         Minimal local ledger for GUI:
@@ -859,6 +856,7 @@ class CryptoAPITrading:
             entry["price_source"] = price_source
             entry["quote_ts"] = quote_ts
             entry["age_s"] = age_s
+            entry["price_exchange"] = price_exchange or ""
             self._note_price_event(price_source, ts)
         self._append_jsonl(self.trade_history_path, entry)
 
@@ -1597,6 +1595,8 @@ class CryptoAPITrading:
             "price_source": order.price_source or "unknown",
             "quote_ts": order.quote_ts,
             "age_s": order.age_s,
+            # the exchange whose quote priced the fill (FDS-MX-001 phase B)
+            "price_exchange": getattr(order, "price_exchange", "") or "",
         }
 
     def _catalogue_exit_quantity(self, symbol: str, holding_qty: float) -> float:

@@ -1,4 +1,5 @@
-"""FDS-087: the paper-trading demo goes through the real gate; Binance is mocked."""
+"""FDS-087: the paper-trading demo goes through the real gate; the exchange layer's
+quotes (the exchanges in Settings, primary first) are faked."""
 
 from __future__ import annotations
 
@@ -9,7 +10,7 @@ import unittest
 from unittest import mock
 
 import requests
-from helpers import FakeBinance
+from helpers import FakeQuotes
 
 import demo_paper_trading as demo
 import trading_mode as tm
@@ -23,9 +24,9 @@ class DemoTests(unittest.TestCase):
         tm._quote_cache.clear()
         self.addCleanup(tm.reset_paper_exchange)
         self.addCleanup(tm._quote_cache.clear)
-        self.binance = FakeBinance()
+        self.quotes = FakeQuotes()
         self.lines = []
-        patcher = mock.patch.object(tm.urllib.request, "urlopen", self.binance)
+        patcher = mock.patch.object(tm, "_layer_quote", self.quotes.layer_quote)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -38,7 +39,7 @@ class DemoTests(unittest.TestCase):
         code, output = self.run_demo()
         self.assertEqual(code, 0, output)
         self.assertIn("Paper trading system: OPERATIONAL", output)
-        self.assertIn("source=live", output)
+        self.assertIn("(from coinbase BTC-USD, source=live)", output)
         self.assertIn("Order target     : PAPER (via trading-mode gate)", output)
         self.assertIn("Starting balance : $10,000.00", output)
         self.assertIn("BUY  0.01 BTC @ $101.00  -> filled", output)
@@ -62,7 +63,7 @@ class DemoTests(unittest.TestCase):
 
     # 2. network failure: degraded, never simulated
     def test_network_failure_exits_two_and_is_degraded_without_simulating(self):
-        self.binance.reachable = False
+        self.quotes.reachable = False
         code, output = self.run_demo()
         self.assertEqual(code, 2)
         self.assertIn("DEGRADED", output)
@@ -71,14 +72,14 @@ class DemoTests(unittest.TestCase):
         self.assertNotIn("BUY", output)
 
     def test_stale_price_is_degraded_too(self):
-        self.binance.age_s = 300.0
+        self.quotes.age_s = 300.0
         code, output = self.run_demo()
         self.assertEqual(code, 2)
         self.assertIn("DEGRADED", output)
 
     def test_degraded_even_if_settings_would_allow_simulation(self):
         # the demo's own policy is pause; it must not be loosened by accident
-        self.binance.reachable = False
+        self.quotes.reachable = False
         code, output = self.run_demo(
             settings={
                 "trading": {"mode": "paper"},
@@ -155,8 +156,8 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(len(made), 1)
         self.assertFalse(os.path.exists(made[0]))
 
-    # 4. only the public ticker is ever called
-    def test_only_the_public_ticker_endpoint_is_called(self):
+    # 4. prices come only from the exchange layer: no request of the demo's own
+    def test_prices_come_only_from_the_exchanges_in_settings(self):
         with mock.patch.object(
             requests.Session, "request", side_effect=AssertionError("requests used")
         ) as session, mock.patch.object(
@@ -167,14 +168,8 @@ class DemoTests(unittest.TestCase):
             code, output = self.run_demo()
         self.assertEqual(code, 0, output)
         self.assertEqual(session.call_count + get.call_count + post.call_count, 0)
-        self.assertTrue(self.binance.urls)
-        for url in self.binance.urls:
-            self.assertTrue(
-                url.startswith(
-                    "https://api.binance.com/api/v3/ticker/bookTicker?symbol=BTCUSDT"
-                ),
-                url,
-            )
+        self.assertTrue(self.quotes.asked)
+        self.assertEqual(set(self.quotes.asked), {"BTC"})
 
     def test_main_returns_one_on_unexpected_errors(self):
         with mock.patch.object(demo, "run_demo", side_effect=RuntimeError("boom")):

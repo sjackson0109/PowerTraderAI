@@ -15,9 +15,12 @@ import unittest
 from decimal import Decimal
 from unittest import mock
 
+import pt_paper_mode
+import trading_mode as tm
 import ui_tokens
 from pt_paper_mode import (
-    fetch_binance_btc_price,
+    LivePrice,
+    fetch_live_price,
     is_paper_mode,
     read_paper_mode_from_disk,
     run_sample_scenario,
@@ -85,26 +88,24 @@ class TestSettingsPersistence(unittest.TestCase):
         )
 
 
-class TestBinanceTickerFetch(unittest.TestCase):
-    def test_fetch_returns_decimal_on_success(self):
-        def fake_opener(url, timeout):
-            return json.dumps({"symbol": "BTCUSDT", "price": "76460.58"})
+class TestLivePriceFetch(unittest.TestCase):
+    """The sample's live price comes from the exchanges in Settings, primary first
+    (trading_mode.fetch_public_quote), never from one exchange of its own."""
 
-        price = fetch_binance_btc_price(opener=fake_opener)
-        self.assertIsNotNone(price)
-        self.assertEqual(price, Decimal("76460.58"))
+    def quote(self, bid, ask, exchange="coinbase"):
+        return tm.Quote(bid, ask, 1.0, 1.0, exchange=exchange, pair="BTC-USD")
 
-    def test_fetch_returns_none_on_missing_price_key(self):
-        def fake_opener(url, timeout):
-            return json.dumps({"symbol": "BTCUSDT"})
+    def test_the_mid_price_and_the_exchange_that_gave_it(self):
+        with mock.patch.object(
+            pt_paper_mode, "fetch_public_quote", return_value=self.quote(99, 101)
+        ) as fetch:
+            price = fetch_live_price()
+        fetch.assert_called_once_with("BTC")
+        self.assertEqual(price, LivePrice(Decimal("100.0"), "coinbase"))
 
-        self.assertIsNone(fetch_binance_btc_price(opener=fake_opener))
-
-    def test_fetch_returns_none_on_url_error(self):
-        def fake_opener(url, timeout):
-            raise OSError("network down")
-
-        self.assertIsNone(fetch_binance_btc_price(opener=fake_opener))
+    def test_no_quote_is_no_price(self):
+        with mock.patch.object(pt_paper_mode, "fetch_public_quote", return_value=None):
+            self.assertIsNone(fetch_live_price())
 
 
 class TestSampleScenario(unittest.TestCase):
@@ -114,9 +115,9 @@ class TestSampleScenario(unittest.TestCase):
         result = run_sample_scenario(
             account,
             quantity=Decimal("0.001"),
-            price_fetcher=lambda: seed,
+            price_fetcher=lambda: LivePrice(seed, "kraken"),
         )
-        self.assertEqual(result["source"], "binance_public")
+        self.assertEqual((result["source"], result["exchange"]), ("live", "kraken"))
         self.assertEqual(result["buy_status"], "filled")
         self.assertEqual(result["sell_status"], "filled")
         # The PaperTradingAccount calls MarketDataSimulator.get_current_price
@@ -157,28 +158,19 @@ class TestSampleScenario(unittest.TestCase):
         self.assertLess(delta, 20.0)
 
 
-class TestUrllibIntegration(unittest.TestCase):
-    """Sanity check the default opener path actually calls urllib."""
+class TestDefaultFetcher(unittest.TestCase):
+    """Without a price_fetcher, the sample asks the exchange layer."""
 
-    def test_default_opener_uses_urlopen(self):
-        fake_payload = json.dumps({"symbol": "BTCUSDT", "price": "100.00"}).encode()
-
-        class FakeResp:
-            def read(self):
-                return fake_payload
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-        with mock.patch(
-            "pt_paper_mode.urllib.request.urlopen", return_value=FakeResp()
-        ) as patched:
-            price = fetch_binance_btc_price()
-            self.assertTrue(patched.called)
-            self.assertEqual(price, Decimal("100.00"))
+    def test_default_fetcher_is_the_exchanges_in_settings(self):
+        account = PaperTradingAccount(initial_balance=Decimal("10000"))
+        with mock.patch.object(
+            pt_paper_mode,
+            "fetch_live_price",
+            return_value=LivePrice(Decimal("76000"), "coinbase"),
+        ) as fetch:
+            result = run_sample_scenario(account, quantity=Decimal("0.001"))
+        fetch.assert_called_once_with("BTC")
+        self.assertEqual((result["source"], result["exchange"]), ("live", "coinbase"))
 
 
 if __name__ == "__main__":

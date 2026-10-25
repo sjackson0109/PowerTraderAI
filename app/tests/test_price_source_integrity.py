@@ -10,7 +10,8 @@ import time
 import unittest
 from unittest import mock
 
-from helpers import FakeBinance, PaperTraderCase
+import requests
+from helpers import PaperTraderCase
 
 import pt_settings_manager as psm
 import trading_mode as tm
@@ -234,25 +235,38 @@ class PaperExchangePolicyTests(unittest.TestCase):
 
 
 class PublicQuoteFeedTests(PaperTraderCase):
-    def test_quote_ts_comes_from_the_response_date_header(self):
-        self.binance.age_s = 4.0
+    """The paper feed asks the exchange layer: the exchanges in Settings, primary
+    first (FDS-MX-001 phase B)."""
+
+    def test_quote_ts_is_the_exchanges_time_for_the_quote(self):
+        self.quotes.age_s = 4.0
         q = tm.fetch_public_quote("BTC")
         self.assertAlmostEqual(q.age_s, 4.0, delta=1.5)
         self.assertEqual((q.bid, q.ask), (99.0, 101.0))
-        self.assertTrue(
-            self.binance.urls[0].startswith(
-                "https://api.binance.com/api/v3/ticker/bookTicker"
-            )
-        )
+        self.assertEqual(self.quotes.asked, ["BTC"])
+
+    def test_the_quote_says_which_exchange_and_market_gave_it(self):
+        self.quotes.exchange = "kraken"
+        q = tm.fetch_public_quote("ETH")
+        self.assertEqual((q.exchange, q.pair), ("kraken", "ETH-USD"))
+
+    def test_a_quote_is_reused_for_two_seconds(self):
+        tm.fetch_public_quote("BTC")
+        tm.fetch_public_quote("BTC")
+        self.assertEqual(self.quotes.asked, ["BTC"])
+
+    def test_a_failing_exchange_layer_is_no_quote(self):
+        with mock.patch.object(tm, "_layer_quote", side_effect=RuntimeError("down")):
+            self.assertIsNone(tm.fetch_public_quote("BTC"))
 
     def test_missing_date_header_means_stale_not_live(self):
-        self.binance.send_date = False
+        self.quotes.send_date = False
         q = tm.fetch_public_quote("BTC")
         self.assertIsNone(q.quote_ts)
         self.assertEqual(tm.classify_quote(q, 30, time.time()), "stale")
 
     def test_unreachable_feed_returns_none(self):
-        self.binance.reachable = False
+        self.quotes.reachable = False
         self.assertIsNone(tm.fetch_public_quote("BTC"))
 
 
@@ -267,7 +281,7 @@ class TraderLedgerTests(PaperTraderCase):
         self.assertLess(row["age_s"], 5.0)
 
     def test_unreachable_feed_with_pause_places_no_fill_and_warns(self):
-        self.binance.reachable = False
+        self.quotes.reachable = False
         trader = self.trader(copy.deepcopy(PAUSE))
         w_tm, w_trader = spy_warnings()
         with w_tm, w_trader as trader_warn:
@@ -279,12 +293,12 @@ class TraderLedgerTests(PaperTraderCase):
         self.assertEqual(trader._pnl_ledger.get("pending_orders"), {})
 
     def test_trader_retries_next_cycle_once_the_feed_returns(self):
-        self.binance.reachable = False
+        self.quotes.reachable = False
         trader = self.trader(copy.deepcopy(PAUSE))
         self.assertIsNone(
             trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
         )
-        self.binance.reachable = True
+        self.quotes.reachable = True
         tm._quote_cache.clear()
         self.assertEqual(
             trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)["state"],
@@ -292,7 +306,7 @@ class TraderLedgerTests(PaperTraderCase):
         )
 
     def test_unreachable_feed_with_simulate_and_flag_records_simulated(self):
-        self.binance.reachable = False
+        self.quotes.reachable = False
         trader = self.trader(copy.deepcopy(SIM))
         response = trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
         self.assertIsNotNone(response)
@@ -301,7 +315,7 @@ class TraderLedgerTests(PaperTraderCase):
         self.assertIsNone(row["quote_ts"])
 
     def test_stale_feed_is_treated_as_stale(self):
-        self.binance.age_s = 90.0  # Binance's own Date header is 90 s old
+        self.quotes.age_s = 90.0  # Binance's own Date header is 90 s old
         trader = self.trader(copy.deepcopy(SIM))
         trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
         (row,) = self.ledger_rows()
@@ -309,7 +323,7 @@ class TraderLedgerTests(PaperTraderCase):
         self.assertGreater(row["age_s"], 60.0)
 
     def test_stale_feed_with_pause_places_no_order(self):
-        self.binance.age_s = 90.0
+        self.quotes.age_s = 90.0
         trader = self.trader(copy.deepcopy(PAUSE))
         self.assertIsNone(
             trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
@@ -360,7 +374,7 @@ class TraderLedgerTests(PaperTraderCase):
 
     def test_ledger_row_provenance_survives_a_restart(self):
         trader = self.trader(copy.deepcopy(SIM))
-        self.binance.reachable = False
+        self.quotes.reachable = False
         trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
         restarted = self.trader(copy.deepcopy(SIM))
         self.assertEqual(restarted._fills_by_source(), {"simulated": 1})
@@ -378,7 +392,7 @@ class VisibilityTests(PaperTraderCase):
         self.assertEqual(status["policy"], "pause")
 
     def test_status_counts_degraded_events_in_the_last_hour(self):
-        self.binance.reachable = False
+        self.quotes.reachable = False
         trader = self.trader(copy.deepcopy(PAUSE))
         trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)  # no price
         trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
@@ -501,18 +515,21 @@ class EmergencyDrawdownTests(PaperTraderCase):
 
 
 class NoNetworkTests(PaperTraderCase):
-    def test_only_the_public_ticker_was_ever_requested(self):
-        trader = self.trader(copy.deepcopy(PAUSE))
-        trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
-        trader.manage_trades()
-        self.assertTrue(self.binance.urls)
-        for url in self.binance.urls:
-            self.assertTrue(
-                url.startswith(
-                    "https://api.binance.com/api/v3/ticker/bookTicker?symbol="
-                ),
-                url,
-            )
+    def test_paper_prices_come_only_from_the_exchange_layer(self):
+        """No request of the trader's own: requests and urllib are blocked, and
+        every price comes through the (faked) exchange layer."""
+        blocked = AssertionError("network used")
+        with mock.patch.object(
+            requests.Session, "request", side_effect=blocked
+        ), mock.patch.object(requests, "get", side_effect=blocked), mock.patch(
+            "urllib.request.urlopen", side_effect=blocked
+        ):
+            trader = self.trader(copy.deepcopy(PAUSE))
+            response = trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
+            trader.manage_trades()
+        self.assertEqual(response["state"], "filled")
+        self.assertTrue(self.quotes.asked)
+        self.assertEqual(self.ledger_rows()[0]["price_exchange"], "coinbase")
 
 
 if __name__ == "__main__":

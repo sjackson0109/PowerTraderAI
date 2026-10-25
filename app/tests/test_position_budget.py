@@ -321,7 +321,7 @@ class TraderSizing(PaperTraderCase):
         ):
             p.start()
             self.addCleanup(p.stop)
-        self.binance.bid, self.binance.ask = 99.95, 100.05
+        self.quotes.bid, self.quotes.ask = 99.95, 100.05
 
     def long_signal(self):
         for name, value in (
@@ -409,7 +409,7 @@ class TraderSizing(PaperTraderCase):
         trader = self.trader(dict(self.SETTINGS))
         trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0, tag="ENTRY")
         trader.cost_basis = trader.calculate_cost_basis()  # as its next pass would
-        self.binance.bid, self.binance.ask = 89.95, 90.05
+        self.quotes.bid, self.quotes.ask = 89.95, 90.05
         tm._quote_cache.clear()
         return trader
 

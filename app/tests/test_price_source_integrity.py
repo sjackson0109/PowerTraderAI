@@ -10,7 +10,7 @@ import time
 import unittest
 from unittest import mock
 
-from helpers import PUBLIC_BINANCE_URLS, FakeBinance, PaperTraderCase
+from helpers import FakeBinance, PaperTraderCase
 
 import pt_settings_manager as psm
 import trading_mode as tm
@@ -501,13 +501,18 @@ class EmergencyDrawdownTests(PaperTraderCase):
 
 
 class NoNetworkTests(PaperTraderCase):
-    def test_only_public_market_data_was_ever_requested(self):
+    def test_only_the_public_ticker_was_ever_requested(self):
         trader = self.trader(copy.deepcopy(PAUSE))
         trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
         trader.manage_trades()
         self.assertTrue(self.binance.urls)
         for url in self.binance.urls:
-            self.assertTrue(url.startswith(PUBLIC_BINANCE_URLS), url)
+            self.assertTrue(
+                url.startswith(
+                    "https://api.binance.com/api/v3/ticker/bookTicker?symbol="
+                ),
+                url,
+            )
 
 
 if __name__ == "__main__":

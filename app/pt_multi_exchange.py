@@ -413,6 +413,14 @@ class MultiExchangeManager:
         else:
             return self.exchange_manager.get_current_price(symbol)
 
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """The minimum order value for ``symbol``: the primary exchange's, else the
+        first other enabled exchange's that states one; None when none does."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.min_order_usd(symbol)
+
     def compare_prices(self, symbol: str) -> Dict[str, float]:
         """Compare prices across all connected exchanges"""
         if not self.initialized:

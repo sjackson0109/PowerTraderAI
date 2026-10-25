@@ -9,7 +9,7 @@ import unittest
 from unittest import mock
 
 import requests
-from helpers import PUBLIC_BINANCE_URLS, FakeBinance
+from helpers import FakeBinance
 
 import demo_paper_trading as demo
 import trading_mode as tm
@@ -155,8 +155,8 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(len(made), 1)
         self.assertFalse(os.path.exists(made[0]))
 
-    # 4. only public market data is ever asked for
-    def test_only_public_market_data_endpoints_are_called(self):
+    # 4. only the public ticker is ever called
+    def test_only_the_public_ticker_endpoint_is_called(self):
         with mock.patch.object(
             requests.Session, "request", side_effect=AssertionError("requests used")
         ) as session, mock.patch.object(
@@ -169,8 +169,12 @@ class DemoTests(unittest.TestCase):
         self.assertEqual(session.call_count + get.call_count + post.call_count, 0)
         self.assertTrue(self.binance.urls)
         for url in self.binance.urls:
-            self.assertTrue(url.startswith(PUBLIC_BINANCE_URLS), url)
-            self.assertTrue(url.endswith("symbol=BTCUSDT"), url)
+            self.assertTrue(
+                url.startswith(
+                    "https://api.binance.com/api/v3/ticker/bookTicker?symbol=BTCUSDT"
+                ),
+                url,
+            )
 
     def test_main_returns_one_on_unexpected_errors(self):
         with mock.patch.object(demo, "run_demo", side_effect=RuntimeError("boom")):

@@ -12,7 +12,7 @@ import pt_paths
 from colorama import Fore, Style
 from market_data.listing import not_trading_reason
 from pt_cost import CostManager, PerformanceTier
-from pt_exchange_abstraction import OrderResult
+from pt_exchange_abstraction import OrderResult, usable_minimum
 from pt_logging import get_logger
 from pt_risk import RiskLimits, RiskManager
 from pt_validation import InputValidator, ValidationError
@@ -263,6 +263,18 @@ def _refresh_paths_and_symbols():
 # Initialize secure logging
 logger = get_logger(__name__)
 logger.info("PowerTrader Crypto Trader initialized")
+
+
+def _market_exchanges():
+    """The exchanges in Settings, primary first (the shared multi-exchange manager),
+    for public market information; connected on first use, as the neural runner
+    does. No credentials are read."""
+    from pt_multi_exchange import shared_manager
+
+    manager = shared_manager()
+    if not manager.initialized:
+        manager.initialize(os.environ.get("POWERTRADER_USER_REGION", "GLOBAL"))
+    return manager
 
 
 class _TraderRiskAdapter:
@@ -1416,10 +1428,9 @@ class CryptoAPITrading:
         # minimum order is always allowed, as the entry is raised to it
         max_buy_usd = 0.0
         if side == "buy":
-            max_buy_usd = max(
-                position_sizing.coin_budget_usd(portfolio_value, MAX_COIN_PCT),
-                self._minimum_order_usd(symbol) or 0.0,
-            )
+            max_buy_usd = position_sizing.coin_budget_usd(portfolio_value, MAX_COIN_PCT)
+            if quantity * price > max_buy_usd:
+                max_buy_usd = max(max_buy_usd, self._minimum_order_usd(symbol) or 0.0)
         validation = self.risk_manager.validate_order(
             {
                 "symbol": symbol,
@@ -1662,17 +1673,17 @@ class CryptoAPITrading:
             pass
 
     def _minimum_order_usd(self, symbol: str) -> Optional[float]:
-        """The exchange's minimum order value for ``symbol``, or None when it does not
-        say (Binance's NOTIONAL filter, also for the paper book, which fills at
-        Binance's prices)."""
+        """The smallest order the exchange takes for ``symbol``, or None when no
+        exchange states one. Live: the broker the order goes to. Paper: the exchanges
+        in Settings, primary first, then the others."""
         try:
-            minimum = self._target.exchange.min_order_usd(symbol)
+            if self._settings.is_live:
+                minimum = self._target.exchange.min_order_usd(symbol)
+            else:
+                minimum = _market_exchanges().min_order_usd(symbol)
         except Exception:
             return None
-        # only a positive, finite number counts (a connector may answer anything)
-        if isinstance(minimum, bool) or not isinstance(minimum, (int, float)):
-            return None
-        return float(minimum) if 0.0 < minimum < float("inf") else None
+        return usable_minimum(minimum)
 
     def place_buy_order(
         self,

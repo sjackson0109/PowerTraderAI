@@ -2,7 +2,9 @@
 Settings hints and the Account panel's DCA counts.
 
 * An entry is ``start_allocation_pct`` of the account value (default 1%). An amount
-  below the exchange's minimum order is raised to that minimum.
+  below the exchange's minimum order is raised to that minimum (the broker's when
+  trading live; in paper trading, the primary exchange's, else another enabled
+  exchange's).
 * A coin may use at most ``max_coin_allocation_pct`` of the account (default 10%). A
   DCA buy that would take the coin past that budget is skipped, so the DCA ladder ends
   there instead of repeating its last level for ever. Each DCA buy is the position's
@@ -10,7 +12,8 @@ Settings hints and the Account panel's DCA counts.
   triples what the coin holds.
 
 The upstream defaults were a 0.005% entry and a fixed $0.50 floor. On an account
-under $10,000 every entry was the floor, and $0.50 is below Binance's minimum order.
+under $10,000 every entry was the floor, and $0.50 is below many exchanges' minimum
+order.
 """
 
 from typing import Optional

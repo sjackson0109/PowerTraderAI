@@ -23,6 +23,7 @@ import position_sizing as ps  # noqa: E402
 import pt_paths  # noqa: E402
 import trading_mode as tm  # noqa: E402
 from helpers import PaperTraderCase  # noqa: E402
+from pt_exchange_abstraction import usable_minimum  # noqa: E402
 
 # --- the rules -------------------------------------------------------------------------
 
@@ -85,72 +86,93 @@ def test_upstreams_saved_default_is_replaced_once(saved, migrated):
     assert saved["start_allocation_pct"] == 0.005
 
 
-# --- the exchange minimum ---------------------------------------------------------------
+# --- the exchange minimum: each connector states its own; primary exchange first ------
 
 
-class _Response:
+class _Json:
+    """A requests response with a JSON body."""
+
     def __init__(self, payload):
-        self._body = json.dumps(payload).encode("utf-8")
+        self._payload = payload
 
-    def read(self):
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
+    def json(self):
+        return self._payload
 
 
-def test_the_paper_book_reads_binances_public_minimum_order(monkeypatch):
+def connector(name, **attrs):
+    """A connector built without credentials; ``attrs`` replace its methods."""
+    import pt_exchanges
+
+    exchange = getattr(pt_exchanges, name)("", "")
+    for attr, value in attrs.items():
+        setattr(exchange, attr, value)
+    return exchange
+
+
+@pytest.mark.parametrize(
+    "value, minimum",
+    [
+        (5, 5.0),
+        (2.5, 2.5),
+        (None, None),
+        (0, None),
+        (-1, None),
+        (float("nan"), None),
+        (float("inf"), None),
+        (True, None),
+        ("5", None),
+        (mock.Mock(), None),
+    ],
+)
+def test_only_a_positive_finite_number_is_a_minimum(value, minimum):
+    assert usable_minimum(value) == minimum
+
+
+def test_coinbase_states_its_minimum_market_funds(monkeypatch):
+    import pt_exchanges
+
     urls = []
 
-    def opener(url, timeout=None):
+    def get(url, timeout=None):
         urls.append(url)
-        return _Response(
-            {
-                "symbols": [
-                    {
-                        "filters": [
-                            {"filterType": "LOT_SIZE", "minQty": "0.00001"},
-                            {"filterType": "NOTIONAL", "minNotional": "5.00000000"},
-                        ]
-                    }
-                ]
-            }
-        )
+        return _Json({"id": "BTC-USD", "min_market_funds": "1", "status": "online"})
 
-    monkeypatch.setattr(tm, "_min_notional_cache", {})
-    monkeypatch.setattr(tm.urllib.request, "urlopen", opener)
-    assert tm.fetch_public_min_notional("ETH") == 5.0
-    assert tm.fetch_public_min_notional("ETH") == 5.0  # kept for the process
-    assert urls == ["https://api.binance.com/api/v3/exchangeInfo?symbol=ETHUSDT"]
-    book = tm.PaperExchange(
-        price_feed=tm.fetch_public_quote,
-        minimum_feed=tm._minimum_feed_for(tm.fetch_public_quote),
+    monkeypatch.setattr(pt_exchanges.requests, "get", get)
+    assert connector("CoinbaseExchange").min_order_usd("BTC-USD") == 1.0
+    assert urls == ["https://api.exchange.coinbase.com/products/BTC-USD"]
+
+
+def test_kraken_states_the_larger_of_its_cost_and_order_minimums(monkeypatch):
+    import pt_exchanges
+
+    pair = {"XXBTZUSD": {"altname": "XBTUSD", "ordermin": "0.00006", "costmin": "0.5"}}
+    monkeypatch.setattr(
+        pt_exchanges.requests,
+        "get",
+        lambda url, timeout=None: _Json({"error": [], "result": pair}),
     )
-    assert book.min_order_usd("ETH-USD") == 5.0
+    kraken = connector("KrakenExchange", get_current_price=lambda symbol: 100_000.0)
+    assert kraken.min_order_usd("BTC-USD") == pytest.approx(6.0)  # 0.00006 BTC
+    kraken.get_current_price = lambda symbol: 1_000.0
+    assert kraken.min_order_usd("BTC-USD") == pytest.approx(0.5)  # costmin
 
 
-def test_an_unreadable_minimum_is_no_minimum_and_is_tried_again(monkeypatch):
-    calls = []
+def test_kucoin_states_the_largest_of_its_minimums(monkeypatch):
+    import pt_exchanges
 
-    def opener(url, timeout=None):
-        calls.append(url)
-        raise OSError("offline")
-
-    monkeypatch.setattr(tm, "_min_notional_cache", {})
-    monkeypatch.setattr(tm.urllib.request, "urlopen", opener)
-    assert tm.fetch_public_min_notional("BTC") is None
-    assert tm.fetch_public_min_notional("BTC") is None
-    assert len(calls) == 2
-    # a book on any other price feed (a test's) asks no one
-    assert (
-        tm.PaperExchange(price_feed=lambda base: None).min_order_usd("BTC-USD") is None
+    info = {"baseMinSize": "0.00001", "quoteMinSize": "0.1", "minFunds": "0.1"}
+    monkeypatch.setattr(
+        pt_exchanges.requests,
+        "get",
+        lambda url, timeout=None: _Json({"code": "200000", "data": info}),
     )
+    kucoin = connector("KuCoinExchange", get_current_price=lambda symbol: 100_000.0)
+    assert kucoin.min_order_usd("BTC-USD") == pytest.approx(1.0)  # 0.00001 BTC
+    kucoin.get_current_price = lambda symbol: 1_000.0
+    assert kucoin.min_order_usd("BTC-USD") == pytest.approx(0.1)  # minFunds
 
 
-def test_binance_live_reads_its_symbol_filter():
+def test_binance_states_its_notional_filter():
     from pt_exchanges import BinanceExchange
 
     exchange = BinanceExchange.__new__(BinanceExchange)  # no credentials needed here
@@ -161,6 +183,85 @@ def test_binance_live_reads_its_symbol_filter():
     assert exchange.min_order_usd("BTC-USD") is None
     exchange._get_symbol_filters = mock.Mock(side_effect=ConnectionError("offline"))
     assert exchange.min_order_usd("BTC-USD") is None
+
+
+@pytest.mark.parametrize(
+    "name", ["CoinbaseExchange", "KrakenExchange", "KuCoinExchange"]
+)
+def test_a_minimum_that_cannot_be_read_is_none(monkeypatch, name):
+    import pt_exchanges
+
+    offline = mock.Mock(side_effect=ConnectionError("offline"))
+    monkeypatch.setattr(pt_exchanges.requests, "get", offline)
+    assert connector(name).min_order_usd("BTC-USD") is None
+    refused = {
+        "error": ["EQuery:Unknown asset pair"],
+        "code": "400100",
+        "message": "NotFound",
+    }
+    monkeypatch.setattr(
+        pt_exchanges.requests, "get", lambda url, timeout=None: _Json(refused)
+    )
+    assert connector(name).min_order_usd("BTC-USD") is None
+
+
+class _Exchange:
+    def __init__(self, minimum):
+        self.minimum = minimum
+        self.asked = 0
+
+    def min_order_usd(self, symbol):
+        self.asked += 1
+        if isinstance(self.minimum, Exception):
+            raise self.minimum
+        return self.minimum
+
+
+def exchange_manager(primary, **exchanges):
+    """An ExchangeManager holding ``exchanges`` in the order given."""
+    from pt_exchange_abstraction import ExchangeManager, ExchangeType
+
+    manager = ExchangeManager()
+    for name, exchange in exchanges.items():
+        manager.exchanges[ExchangeType(name)] = exchange
+    manager.primary_exchange = ExchangeType(primary)
+    return manager
+
+
+def test_the_primary_exchange_states_the_minimum():
+    kraken, coinbase, kucoin = _Exchange(0.5), _Exchange(1.0), _Exchange(0.1)
+    manager = exchange_manager(
+        "coinbase", kraken=kraken, coinbase=coinbase, kucoin=kucoin
+    )
+    assert manager.min_order_usd("BTC-USD") == 1.0
+    assert (kraken.asked, kucoin.asked) == (0, 0)
+
+
+def test_without_one_from_the_primary_the_other_exchanges_are_asked_in_order():
+    kraken = _Exchange(None)
+    coinbase = _Exchange(ConnectionError("offline"))
+    kucoin = _Exchange(0.1)
+    manager = exchange_manager(
+        "coinbase", kraken=kraken, coinbase=coinbase, kucoin=kucoin
+    )
+    assert manager.min_order_usd("BTC-USD") == 0.1  # Coinbase failed, Kraken has none
+    assert (coinbase.asked, kraken.asked, kucoin.asked) == (1, 1, 1)
+    kraken.minimum = mock.Mock()  # an answer that is not a number is no answer
+    assert manager.min_order_usd("BTC-USD") == 0.1
+    kucoin.minimum = None
+    assert manager.min_order_usd("BTC-USD") is None
+
+
+def test_the_multi_exchange_manager_asks_its_connected_exchanges():
+    from pt_multi_exchange import MultiExchangeManager
+
+    multi = MultiExchangeManager.__new__(MultiExchangeManager)  # no config file
+    multi.exchange_manager = exchange_manager("kraken", kraken=_Exchange(0.5))
+    multi.initialized = False
+    with pytest.raises(RuntimeError):
+        multi.min_order_usd("BTC-USD")
+    multi.initialized = True
+    assert multi.min_order_usd("BTC-USD") == 0.5
 
 
 # --- the hub: the saved 0.005% is replaced once ---------------------------------------
@@ -241,36 +342,38 @@ class TraderSizing(PaperTraderCase):
         assert self.entry_usd() == pytest.approx(100.0, rel=0.01)  # was $0.50
 
     def test_an_entry_below_the_exchange_minimum_is_raised_to_it(self):
-        self.binance.min_notional = 250.0  # Binance's NOTIONAL filter for BTCUSDT
+        self.markets.minimum = 250.0  # what the exchanges in Settings state
         trader = self.trader(dict(self.SETTINGS))
         self.long_signal()
         trader.manage_trades()
         assert self.entry_usd() == pytest.approx(250.0, rel=0.01)
-        assert any("exchangeInfo?symbol=BTCUSDT" in url for url in self.binance.urls)
+        assert self.markets.asked[0] == "BTC-USD"
 
-    def test_only_a_positive_finite_number_is_an_exchange_minimum(self):
+    def test_paper_asks_the_exchanges_in_settings_and_live_asks_the_broker(self):
         trader = self.trader(dict(self.SETTINGS))
-        exchange = trader._target.exchange
-        for answer, minimum in (
-            (5, 5.0),
-            (2.5, 2.5),
-            (None, None),
-            (0, None),
-            (-1, None),
-            (float("nan"), None),
-            (float("inf"), None),
-            (True, None),
-            ("5", None),
-            (mock.Mock(), None),
-        ):
-            with mock.patch.object(exchange, "min_order_usd", return_value=answer):
-                assert trader._minimum_order_usd("BTC-USD") == minimum, answer
-        with mock.patch.object(exchange, "min_order_usd", side_effect=OSError):
+        self.markets.minimum = 1.0
+        assert trader._minimum_order_usd("BTC-USD") == 1.0
+        assert self.markets.asked == ["BTC-USD"]
+
+        broker = mock.Mock()
+        broker.min_order_usd.return_value = 5.0
+        with mock.patch.object(
+            trader, "_settings", types.SimpleNamespace(is_live=True)
+        ), mock.patch.object(trader, "_target", types.SimpleNamespace(exchange=broker)):
+            assert trader._minimum_order_usd("BTC-USD") == 5.0
+            broker.min_order_usd.side_effect = OSError("offline")
             assert trader._minimum_order_usd("BTC-USD") is None
+        assert self.markets.asked == ["BTC-USD"]  # the live lookups went to the broker
+
+        self.markets.minimum = mock.Mock()  # an answer that is not a number
+        assert trader._minimum_order_usd("BTC-USD") is None
 
     def test_a_small_account_trades_at_the_exchange_minimum(self):
-        """1% of $50 is $0.50, under Binance's $5 minimum: the entry is $5. The old
-        risk gate refused any order over 1% of the account, so it refused this one."""
+        """1% of $50 is $0.50, under a $5 minimum order: the entry is $5, though the
+        coin's budget (Max per coin 5%) is $2.50. The old risk gate refused any order
+        over 1% of the account. (The paper book itself refuses an order over 10% of
+        the paper account, so $50 is the smallest account that takes $5.)"""
+        self.markets.minimum = 5.0
         book = os.path.join(self.tmp.name, "paper", "paper_account.json")
         os.makedirs(os.path.dirname(book), exist_ok=True)
         with open(book, "w", encoding="utf-8") as f:  # the trader loads this book
@@ -279,7 +382,8 @@ class TraderSizing(PaperTraderCase):
             )
         trader = self.trader(dict(self.SETTINGS))
         self.long_signal()
-        trader.manage_trades()
+        with mock.patch.object(self.pt_trader, "MAX_COIN_PCT", 5.0):
+            trader.manage_trades()
         assert self.entry_usd() == pytest.approx(5.0, rel=0.01)
 
     def test_a_position_worth_more_than_one_percent_can_be_sold(self):

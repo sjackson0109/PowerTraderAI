@@ -60,7 +60,7 @@ Checked against their public endpoints on 2026-10-25 ("verified"), or taken from
 
 | | Binance | Coinbase | Kraken | KuCoin |
 |---|---|---|---|---|
-| **Candle sizes** | all the app uses, 1m–1d and 1w (documented; used today) | 1m, 5m, 15m, 1h, 6h, 1d. **No 2h, 4h, 8h, 12h or 1w** (4h and 1w refused: verified) | 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 15d. **No 2h, 8h or 12h** (documented) | all the app uses, including 1w (verified) |
+| **Candle sizes** | all the app uses, 1m–1d and 1w; weeks open Monday (verified) | 1m, 5m, 15m, 1h, 6h, 1d. **No 2h, 4h, 8h, 12h or 1w** (4h and 1w refused: verified) | 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w, 15d. **No 2h, 8h or 12h** (documented); weeks open **Thursday** (verified) | all the app uses, including 1w (verified); weeks open **Thursday** (verified) |
 | **History** | years | years (2018 verified) | **only the latest ~720 bars**: 721 hourly bars = 30 days (verified) | years (2019 verified) |
 | **Bars per request** | 1000 | 350 returned (verified) | 720 | 1500 (documented) |
 | **Market status** | `exchangeInfo` `status` (TRADING, BREAK, HALT, ...) | product `status` (`online`, `delisted`) and `trading_disabled` (verified) | AssetPairs `status` (`online`, `cancel_only`, ...) (verified) | symbol `enableTrading` (verified) |
@@ -103,10 +103,11 @@ Phase A implements all four for Binance, Coinbase, Kraken and KuCoin. Paging and
 
 ### 5.3 Building candle sizes an exchange doesn't serve
 
-Missing sizes are built from a smaller native size:
+A missing size is built from the largest smaller size the exchange serves that divides it:
 
-- 2h, 4h, 8h and 12h from 1h;
-- 1w from 1d, with weeks opening Monday 00:00 UTC (as the weekly bars do today, `market_data/timeframes.py`).
+- on Coinbase, 2h, 4h and 8h from 1h, and 12h from 6h;
+- on Kraken, 2h from 1h, and 8h and 12h from 4h;
+- 1w from 1d on Coinbase, Kraken and KuCoin, with weeks opening Monday 00:00 UTC (as the weekly bars do today, `market_data/timeframes.py`). Kraken's and KuCoin's own weekly bars open on Thursday (checked 2026-10-25), so they are not used.
 
 Only complete groups are built. A 4h bar with an hour missing is not built; it shows as a gap, as `validate_candles` reports gaps today. This lives in a new `market_data/resample.py`, with its own tests.
 

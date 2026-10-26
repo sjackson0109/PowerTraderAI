@@ -1,37 +1,23 @@
 """
 Real-time Market Data Integration (Item 24)
-Comprehensive market data feeds supporting multiple exchanges with WebSocket connections
+
+Market data from the exchanges in Settings, primary first (FDS-MX-001 phase G2): a
+feed per exchange polls that exchange's public quote for the subscribed coins
+through the exchange layer (``pt_multi_exchange.market_exchanges``), every few
+seconds. No credentials, and no exchange is named here.
 """
 
 import asyncio
-import json
 import threading
 import time
 from collections import defaultdict, deque
 
-# Optional websocket import
-try:
-    import websocket
-
-    WEBSOCKET_AVAILABLE = True
-except ImportError:
-    WEBSOCKET_AVAILABLE = False
-    websocket = None
 import queue
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
-
-try:
-    import ccxt
-    import ccxt.pro as ccxtpro
-
-    CCXT_AVAILABLE = True
-except ImportError:
-    CCXT_AVAILABLE = False
-    print("Warning: CCXT not available. Limited exchange support.")
 
 try:
     import pandas as pd
@@ -59,19 +45,6 @@ class DataType(Enum):
     KLINE = "kline"
     FUNDING_RATE = "funding_rate"
     OPEN_INTEREST = "open_interest"
-
-
-class DataSource(Enum):
-    """Market data sources"""
-
-    BINANCE = "binance"
-    BINANCE_FUTURES = "binance_futures"
-    COINBASE_PRO = "coinbase_pro"
-    KRAKEN = "kraken"
-    BITFINEX = "bitfinex"
-    BYBIT = "bybit"
-    DERIBIT = "deribit"
-    AGGREGATED = "aggregated"
 
 
 @dataclass
@@ -267,31 +240,40 @@ class Kline:
         return self.close > self.open
 
 
+def _market(symbol: str) -> str:
+    """A coin's market as the exchange layer takes it: BTC, BTCUSDT and BTC-USD are
+    BTC-USD."""
+    from pt_exchange_abstraction import dollar_symbol
+
+    return dollar_symbol(symbol)
+
+
 class MarketDataAggregator:
     """Aggregates and normalizes market data from multiple sources"""
 
-    def __init__(self, db_path: Optional[str] = None):
+    def __init__(
+        self, db_path: Optional[str] = None, layer=None, poll_seconds: float = 5.0
+    ):
+        # layer: an ExchangeManager (None: the exchanges in Settings, primary first)
+        self._layer = layer
+        self.poll_seconds = float(poll_seconds)
+        self._stop_events: Dict[str, threading.Event] = {}
         if db_path is None:
             import pt_paths
 
             # tickers are safe to delete: cache folder
             db_path = pt_paths.cache_file("market_data.db")
         self.db_path = db_path
-        self.subscriptions: Dict[str, Set[DataSource]] = defaultdict(set)
+        self.subscriptions: Dict[str, Set[str]] = defaultdict(set)
         self.data_handlers: Dict[DataType, List[Callable]] = defaultdict(list)
         self.latest_data: Dict[str, Any] = {}
         self.price_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
         self.volume_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
-        self.active_feeds: Dict[DataSource, bool] = {}
-        self.feed_threads: Dict[DataSource, threading.Thread] = {}
+        self.active_feeds: Dict[str, bool] = {}
+        self.feed_threads: Dict[str, threading.Thread] = {}
         self.running = False
 
         self._setup_database()
-
-        # CCXT exchanges
-        self.exchanges: Dict[DataSource, Any] = {}
-        if CCXT_AVAILABLE:
-            self._setup_ccxt_exchanges()
 
     def _setup_database(self):
         """Setup SQLite database for market data storage"""
@@ -384,58 +366,34 @@ class MarketDataAggregator:
         conn.commit()
         conn.close()
 
-    def _setup_ccxt_exchanges(self):
-        """Setup CCXT exchange connections"""
+    # -- the exchanges in Settings ------------------------------------------------
+
+    def layer(self):
+        """The exchange layer: the exchanges in Settings, primary first."""
+        if self._layer is None:
+            from pt_multi_exchange import market_exchanges
+
+            self._layer = market_exchanges().exchange_manager
+        return self._layer
+
+    def exchange_names(self) -> List[str]:
+        """The exchanges in Settings, primary first ([] when none is connected)."""
         try:
-            # Binance Spot
-            self.exchanges[DataSource.BINANCE] = ccxt.binance(
-                {
-                    "apiKey": "",
-                    "secret": "",
-                    "sandbox": False,
-                    "enableRateLimit": True,
-                }
-            )
-
-            # Binance Futures
-            self.exchanges[DataSource.BINANCE_FUTURES] = ccxt.binance(
-                {
-                    "apiKey": "",
-                    "secret": "",
-                    "sandbox": False,
-                    "enableRateLimit": True,
-                    "options": {"defaultType": "future"},
-                }
-            )
-
-            # Coinbase Pro
-            self.exchanges[DataSource.COINBASE_PRO] = ccxt.coinbase(
-                {
-                    "apiKey": "",
-                    "secret": "",
-                    "passphrase": "",
-                    "sandbox": False,
-                    "enableRateLimit": True,
-                }
-            )
-
-            # Kraken
-            self.exchanges[DataSource.KRAKEN] = ccxt.kraken(
-                {
-                    "apiKey": "",
-                    "secret": "",
-                    "enableRateLimit": True,
-                }
-            )
-
+            return list(self.layer().exchange_names())
         except Exception as e:
-            print(f"Error setting up CCXT exchanges: {e}")
+            print(f"No exchanges in Settings for market data: {e}")
+            return []
 
-    def subscribe(
-        self, symbol: str, data_types: List[DataType], exchanges: List[DataSource]
-    ):
-        """Subscribe to market data for a symbol"""
-        key = f"{symbol}_{','.join([dt.value for dt in data_types])}"
+    def _connector(self, name: str):
+        for exchange_type, connector in self.layer().exchanges.items():
+            if exchange_type.value == name:
+                return connector
+        return None
+
+    def subscribe(self, symbol: str, data_types: List[DataType], exchanges: List[str]):
+        """Subscribe to market data for a coin on the named exchanges, and start their
+        feeds."""
+        key = f"{_market(symbol)}_{','.join([dt.value for dt in data_types])}"
         for exchange in exchanges:
             self.subscriptions[key].add(exchange)
 
@@ -448,10 +406,10 @@ class MarketDataAggregator:
         self,
         symbol: str,
         data_types: List[DataType],
-        exchanges: List[DataSource] = None,
+        exchanges: List[str] = None,
     ):
         """Unsubscribe from market data"""
-        key = f"{symbol}_{','.join([dt.value for dt in data_types])}"
+        key = f"{_market(symbol)}_{','.join([dt.value for dt in data_types])}"
 
         if exchanges is None:
             # Remove all subscriptions for this symbol/data type
@@ -471,38 +429,30 @@ class MarketDataAggregator:
         if handler in self.data_handlers[data_type]:
             self.data_handlers[data_type].remove(handler)
 
-    def start_feed(self, exchange: DataSource):
-        """Start market data feed for an exchange"""
-        if exchange in self.active_feeds and self.active_feeds[exchange]:
+    def start_feed(self, exchange: str):
+        """Start polling ``exchange``'s public quotes for the coins subscribed to it."""
+        if self.active_feeds.get(exchange):
             return  # Already running
-
-        if not WEBSOCKET_AVAILABLE:
-            print(f"WebSocket not available - {exchange.value} feed disabled")
+        if self._connector(exchange) is None:
+            print(f"{exchange} is not one of the exchanges in Settings; no feed")
             self.active_feeds[exchange] = False
             return
-
         self.active_feeds[exchange] = True
-
-        if exchange == DataSource.BINANCE:
-            thread = threading.Thread(target=self._binance_feed, daemon=True)
-        elif exchange == DataSource.COINBASE_PRO:
-            thread = threading.Thread(target=self._coinbase_feed, daemon=True)
-        elif exchange == DataSource.KRAKEN:
-            thread = threading.Thread(target=self._kraken_feed, daemon=True)
-        else:
-            print(f"Feed not implemented for {exchange}")
-            return
-
+        stop = self._stop_events[exchange] = threading.Event()
+        thread = threading.Thread(
+            target=self._poll_feed, args=(exchange, stop), daemon=True
+        )
         self.feed_threads[exchange] = thread
         thread.start()
-        print(f"Started {exchange.value} market data feed")
+        print(f"Started {exchange} market data feed")
 
-    def stop_feed(self, exchange: DataSource):
-        """Stop market data feed for an exchange"""
+    def stop_feed(self, exchange: str):
+        """Stop the market data feed of an exchange"""
         self.active_feeds[exchange] = False
-        if exchange in self.feed_threads:
-            # Thread will stop on next iteration
-            print(f"Stopping {exchange.value} market data feed")
+        event = self._stop_events.get(exchange)
+        if event is not None:
+            event.set()
+            print(f"Stopping {exchange} market data feed")
 
     def stop_all_feeds(self):
         """Stop all market data feeds"""
@@ -510,152 +460,57 @@ class MarketDataAggregator:
         for exchange in list(self.active_feeds.keys()):
             self.stop_feed(exchange)
 
-    def _binance_feed(self):
-        """Binance WebSocket feed"""
-        if not WEBSOCKET_AVAILABLE:
-            print("WebSocket not available - Binance feed disabled")
-            self.active_feeds[DataSource.BINANCE] = False
-            return
+    def _subscribed_markets(self, exchange: str) -> List[str]:
+        markets = []
+        for key, exchanges in list(self.subscriptions.items()):
+            if exchange in exchanges:
+                market = key.split("_", 1)[0]
+                if market not in markets:
+                    markets.append(market)
+        return markets
 
-        try:
+    def _poll_feed(self, exchange: str, stop: threading.Event):
+        while not stop.is_set() and self.active_feeds.get(exchange):
+            self.poll_once(exchange)
+            stop.wait(self.poll_seconds)
 
-            def on_message(ws, message):
-                try:
-                    data = json.loads(message)
-                    self._process_binance_message(data)
-                except Exception as e:
-                    print(f"Error processing Binance message: {e}")
-
-            def on_error(ws, error):
-                print(f"Binance WebSocket error: {error}")
-
-            def on_close(ws, close_status_code, close_msg):
-                print("Binance WebSocket connection closed")
-                if self.active_feeds.get(DataSource.BINANCE, False):
-                    # Attempt to reconnect
-                    time.sleep(5)
-                    self.start_feed(DataSource.BINANCE)
-
-            # Connect to Binance WebSocket
-            ws_url = "wss://stream.binance.com:9443/ws/btcusdt@ticker/ethusdt@ticker/adausdt@ticker"
-            ws = websocket.WebSocketApp(
-                ws_url, on_message=on_message, on_error=on_error, on_close=on_close
+    def poll_once(self, exchange: str) -> int:
+        """Ask ``exchange`` once for the quote of every coin subscribed to it; returns
+        how many tickers arrived."""
+        connector = self._connector(exchange)
+        if connector is None:
+            return 0
+        arrived = 0
+        for market in self._subscribed_markets(exchange):
+            try:
+                quote = connector.quote(market)
+            except Exception as e:
+                print(f"{exchange} quote for {market} failed: {e}")
+                continue
+            if quote is None or quote.bid <= 0 or quote.ask <= 0:
+                continue
+            when = (
+                datetime.fromtimestamp(quote.quote_ts)
+                if quote.quote_ts is not None
+                else datetime.now()
             )
-
-            ws.run_forever()
-
-        except Exception as e:
-            print(f"Error in Binance feed: {e}")
-            self.active_feeds[DataSource.BINANCE] = False
-
-    def _coinbase_feed(self):
-        """Coinbase Pro WebSocket feed"""
-        if not WEBSOCKET_AVAILABLE:
-            print("WebSocket not available - Coinbase feed disabled")
-            self.active_feeds[DataSource.COINBASE_PRO] = False
-            return
-
-        try:
-
-            def on_message(ws, message):
-                try:
-                    data = json.loads(message)
-                    self._process_coinbase_message(data)
-                except Exception as e:
-                    print(f"Error processing Coinbase message: {e}")
-
-            def on_error(ws, error):
-                print(f"Coinbase WebSocket error: {error}")
-
-            def on_close(ws, close_status_code, close_msg):
-                print("Coinbase WebSocket connection closed")
-                if self.active_feeds.get(DataSource.COINBASE_PRO, False):
-                    time.sleep(5)
-                    self.start_feed(DataSource.COINBASE_PRO)
-
-            def on_open(ws):
-                # Subscribe to ticker data
-                subscribe_message = {
-                    "type": "subscribe",
-                    "product_ids": ["BTC-USD", "ETH-USD", "ADA-USD"],
-                    "channels": ["ticker", "level2"],
-                }
-                ws.send(json.dumps(subscribe_message))
-
-            ws_url = "wss://ws-feed.exchange.coinbase.com"
-            ws = websocket.WebSocketApp(
-                ws_url,
-                on_message=on_message,
-                on_error=on_error,
-                on_close=on_close,
-                on_open=on_open,
+            self._update_ticker(
+                MarketTicker(
+                    symbol=market,
+                    exchange=exchange,
+                    timestamp=when,
+                    bid=float(quote.bid),
+                    ask=float(quote.ask),
+                    last=(float(quote.bid) + float(quote.ask)) / 2,
+                    volume=0.0,
+                    high_24h=0.0,
+                    low_24h=0.0,
+                    change_24h=0.0,
+                    change_24h_pct=0.0,
+                )
             )
-
-            ws.run_forever()
-
-        except Exception as e:
-            print(f"Error in Coinbase feed: {e}")
-            self.active_feeds[DataSource.COINBASE_PRO] = False
-
-    def _kraken_feed(self):
-        """Kraken WebSocket feed"""
-        # Placeholder for Kraken WebSocket implementation
-        print("Kraken feed not yet implemented")
-        self.active_feeds[DataSource.KRAKEN] = False
-
-    def _process_binance_message(self, data: Dict):
-        """Process Binance WebSocket message"""
-        try:
-            if "e" in data and data["e"] == "24hrTicker":
-                # 24hr ticker statistics
-                ticker = MarketTicker(
-                    symbol=data["s"],
-                    exchange=DataSource.BINANCE.value,
-                    timestamp=datetime.fromtimestamp(data["E"] / 1000),
-                    bid=float(data["b"]),
-                    ask=float(data["a"]),
-                    last=float(data["c"]),
-                    volume=float(data["v"]),
-                    high_24h=float(data["h"]),
-                    low_24h=float(data["l"]),
-                    change_24h=float(data["P"]),
-                    change_24h_pct=float(data["p"]),
-                )
-
-                self._update_ticker(ticker)
-
-        except Exception as e:
-            print(f"Error processing Binance message: {e}")
-
-    def _process_coinbase_message(self, data: Dict):
-        """Process Coinbase Pro WebSocket message"""
-        try:
-            if data.get("type") == "ticker":
-                # Ticker update
-                ticker = MarketTicker(
-                    symbol=data["product_id"].replace("-", ""),
-                    exchange=DataSource.COINBASE_PRO.value,
-                    timestamp=datetime.fromisoformat(
-                        data["time"].replace("Z", "+00:00")
-                    ),
-                    bid=float(data["best_bid"]),
-                    ask=float(data["best_ask"]),
-                    last=float(data["price"]),
-                    volume=float(data["volume_24h"]),
-                    high_24h=float(data["high_24h"]),
-                    low_24h=float(data["low_24h"]),
-                    change_24h=0.0,  # Calculate from previous data
-                    change_24h_pct=0.0,  # Calculate from previous data
-                )
-
-                self._update_ticker(ticker)
-
-            elif data.get("type") == "l2update":
-                # Level 2 order book update
-                self._update_order_book_coinbase(data)
-
-        except Exception as e:
-            print(f"Error processing Coinbase message: {e}")
+            arrived += 1
+        return arrived
 
     def _update_ticker(self, ticker: MarketTicker):
         """Update ticker data and notify handlers"""
@@ -680,11 +535,6 @@ class MarketDataAggregator:
                 handler(ticker)
             except Exception as e:
                 print(f"Error in ticker handler: {e}")
-
-    def _update_order_book_coinbase(self, data: Dict):
-        """Update order book from Coinbase L2 update"""
-        # Placeholder for order book processing
-        pass
 
     def _store_ticker(self, ticker: MarketTicker):
         """Store ticker data in database"""
@@ -724,6 +574,7 @@ class MarketDataAggregator:
         self, symbol: str, exchange: str = None
     ) -> Optional[MarketTicker]:
         """Get latest ticker data"""
+        symbol = _market(symbol)
         if exchange:
             key = f"ticker_{symbol}_{exchange}"
             return self.latest_data.get(key)
@@ -742,6 +593,7 @@ class MarketDataAggregator:
         self, symbol: str, exchange: str = None, minutes: int = 60
     ) -> List[Dict]:
         """Get price history for the last N minutes"""
+        symbol = _market(symbol)
         cutoff_time = datetime.now() - timedelta(minutes=minutes)
 
         if exchange:
@@ -778,6 +630,7 @@ class MarketDataAggregator:
 
     def get_spread_analysis(self, symbol: str) -> Dict[str, Any]:
         """Analyze spreads across exchanges"""
+        symbol = _market(symbol)
         analysis = {
             "exchanges": {},
             "best_bid": None,
@@ -861,20 +714,18 @@ class MarketDataManager:
         if callback in self.update_callbacks:
             self.update_callbacks.remove(callback)
 
-    def subscribe_symbol(self, symbol: str, exchanges: List[str] = None):
-        """Subscribe to real-time data for a symbol"""
-        if exchanges is None:
-            exchanges = [DataSource.BINANCE.value, DataSource.COINBASE_PRO.value]
+    def exchange_names(self) -> List[str]:
+        """The exchanges in Settings, primary first."""
+        return self.aggregator.exchange_names()
 
-        exchange_sources = []
-        for exchange_name in exchanges:
-            try:
-                exchange_sources.append(DataSource(exchange_name))
-            except ValueError:
-                print(f"Unknown exchange: {exchange_name}")
+    def subscribe_symbol(self, symbol: str, exchanges: List[str] = None):
+        """Subscribe to real-time data for a coin (default: on the primary exchange)"""
+        symbol = _market(symbol)
+        if exchanges is None:
+            exchanges = self.exchange_names()[:1]
 
         self.aggregator.subscribe(
-            symbol, [DataType.TICKER, DataType.ORDER_BOOK], exchange_sources
+            symbol, [DataType.TICKER, DataType.ORDER_BOOK], list(exchanges)
         )
 
         self.active_subscriptions[symbol] = {
@@ -965,16 +816,16 @@ if __name__ == "__main__":
 
     manager.add_update_callback(on_market_update)
 
-    # Subscribe to symbols
-    manager.subscribe_symbol("BTCUSDT", ["binance"])
-    manager.subscribe_symbol("BTC-USD", ["coinbase_pro"])
+    # Subscribe to coins on the primary exchange in Settings
+    manager.subscribe_symbol("BTC")
+    manager.subscribe_symbol("ETH")
 
     try:
         # Run for 30 seconds
         time.sleep(30)
 
         # Get market summaries
-        btc_summary = manager.get_market_summary("BTCUSDT")
+        btc_summary = manager.get_market_summary("BTC")
         print(f"BTC Summary: {btc_summary}")
 
     finally:

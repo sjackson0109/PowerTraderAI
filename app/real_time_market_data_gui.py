@@ -15,7 +15,6 @@ import ui_tokens
 
 try:
     from real_time_market_data import (
-        DataSource,
         MarketTicker,
         get_market_data_manager,
         initialize_market_data,
@@ -141,11 +140,7 @@ class MarketDataGUI:
             font=ui_tokens.font("body", "bold"),
         ).pack(pady=5)
 
-        deps = [
-            "pip install websocket-client",
-            "pip install ccxt",
-            "pip install pandas numpy",
-        ]
+        deps = ["pip install pandas numpy"]
         for dep in deps:
             ttk.Label(frame, text=f"• {dep}", style="Muted.TLabel").pack()
 
@@ -172,12 +167,13 @@ class MarketDataGUI:
         self.symbol_entry.insert(0, "BTCUSDT")
 
         ttk.Label(symbol_frame, text="Exchange:").pack(side="left", padx=(10, 0))
-        self.exchange_var = tk.StringVar(value="binance")
+        names = self.exchange_names()
+        self.exchange_var = tk.StringVar(value=names[0] if names else "")
         exchange_combo = ttk.Combobox(
             symbol_frame,
             textvariable=self.exchange_var,
             width=15,
-            values=["binance", "binance_futures", "coinbase_pro", "kraken"],
+            values=names,
         )
         exchange_combo.pack(side="left", padx=5)
 
@@ -328,12 +324,13 @@ class MarketDataGUI:
         )
 
         ttk.Label(ob_controls, text="Exchange:").pack(side="left", padx=(10, 0))
-        self.ob_exchange_var = tk.StringVar(value="binance")
+        names = self.exchange_names()
+        self.ob_exchange_var = tk.StringVar(value=names[0] if names else "")
         ttk.Combobox(
             ob_controls,
             textvariable=self.ob_exchange_var,
             width=15,
-            values=["binance", "coinbase_pro", "kraken"],
+            values=names,
         ).pack(side="left", padx=5)
 
         ttk.Button(
@@ -462,7 +459,7 @@ class MarketDataGUI:
         feed_status_frame = ttk.LabelFrame(self.feeds_tab, text="Feed Status")
         feed_status_frame.pack(fill="x", padx=5, pady=5)
 
-        feeds = ["Binance", "Coinbase", "Kraken", "Bitfinex"]
+        feeds = self.exchange_names()  # the exchanges in Settings, primary first
         self.feed_indicators = {}
 
         for i, feed in enumerate(feeds):
@@ -509,6 +506,13 @@ class MarketDataGUI:
         self.stats_tree.pack(side="left", fill="both", expand=True)
         stats_scrollbar.pack(side="right", fill="y")
 
+    def exchange_names(self) -> List[str]:
+        """The exchanges in Settings, primary first ([] without a market manager)."""
+        try:
+            return self.market_manager.exchange_names() if self.market_manager else []
+        except Exception:
+            return []
+
     def subscribe_symbol(self):
         """Subscribe to a symbol"""
         symbol = self.symbol_entry.get().strip().upper()
@@ -521,7 +525,7 @@ class MarketDataGUI:
         if not self.market_manager:
             messagebox.showerror(
                 "Error",
-                "Market data manager not available.\nPlease install dependencies: websocket-client, ccxt",
+                "Market data manager not available.",
             )
             return
 
@@ -548,7 +552,7 @@ class MarketDataGUI:
         if not self.market_manager:
             messagebox.showerror(
                 "Error",
-                "Market data manager not available.\nPlease install dependencies: websocket-client, ccxt",
+                "Market data manager not available.",
             )
             return
 
@@ -569,13 +573,16 @@ class MarketDataGUI:
 
     def add_default_subscriptions(self):
         """Add some default symbol subscriptions"""
-        default_symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT"]
-        for symbol in default_symbols:
+        names = self.exchange_names()
+        if not names:
+            return
+        primary = names[0]
+        for symbol in ("BTC", "ETH", "ADA"):
             try:
-                self.market_manager.subscribe_symbol(symbol, ["binance"])
-                self.subscriptions[f"{symbol}_binance"] = {
+                self.market_manager.subscribe_symbol(symbol, [primary])
+                self.subscriptions[f"{symbol}_{primary}"] = {
                     "symbol": symbol,
-                    "exchange": "binance",
+                    "exchange": primary,
                     "subscribed_at": datetime.now(),
                 }
             except Exception as e:
@@ -866,7 +873,7 @@ if not MARKET_DATA_AVAILABLE:
                 frame, text="Missing dependencies:", font=ui_tokens.font("body", "bold")
             ).pack(pady=5)
 
-            deps = ["Real-time market data module", "WebSocket support", "CCXT library"]
+            deps = ["Real-time market data module"]
             for dep in deps:
                 ttk.Label(frame, text=f"• {dep}", style="Bad.TLabel").pack()
 

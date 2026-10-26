@@ -44,7 +44,7 @@ Do not change any code in this phase.
 ## 4. Phase 1: restore a real trainer (only if the verdict is STUB or MIXED)
 
 1. Port upstream `pt_trainer.py`. Record the upstream commit hash in the module header and the run log.
-2. Replace its KuCoin calls with `app/market_data/candles.py` (Binance, cached). Note in the run log that the data source changed, since this can change behaviour.
+2. Replace its KuCoin calls with `app/market_data/candles.py` (Binance, cached). Note in the run log that the data source changed, since this can change behaviour. *(Since FDS-MX-001 phase F, 2026-10-26: the candles of one exchange in Settings, primary first, and the model records that exchange.)*
 3. The trainer takes an explicit `train_start` and `train_end` and **must never read a candle after `train_end`**. Enforce this in the data call, not by convention.
 4. Make it seedable and deterministic for a given seed and data.
 5. Keep the output format the thinker already reads, so the legacy path still works.

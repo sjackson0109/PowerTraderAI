@@ -135,7 +135,7 @@ Audit `app/pt_trainer.py` as "the trainer the hub actually launches".
 
 ## 8. Credentials and network
 
-- **This spec needs no exchange credentials.** Training and backtesting use public Binance candles.
+- **This spec needs no exchange credentials.** Training and backtesting use public Binance candles. *(Since FDS-MX-001 phase F, 2026-10-26: public candles from the exchanges in Settings, primary first; the published model-1 run stays reproducible on Binance's, `run_backtest_model1.py` `EXCHANGE`.)*
 - **Never call `pt_secrets` setters,** and never read keyring entries.
 - **Network access is allowed only in `run_backtest_model1.py fetch`,** sandboxed as in section 4.3. Tests use fixtures only.
 

@@ -95,7 +95,7 @@ cached_data = cache_manager.get_market_data("BTCUSDT")
 # Async Operations Example
 async def fetch_market_data():
     http_client = get_http_client()
-    result = await http_client.get("https://api.binance.com/api/v3/ticker/24hr")
+    result = await http_client.get("https://example.com/api/status")
     return result.data
 ```
 
@@ -143,7 +143,7 @@ Those signals are noise from an untrained mock, so they are **not** a basis for 
 
 | Setting | Behaviour |
 |---|---|
-| `strategy.engine = catalogue` | `SignalEngine` fetches the latest *closed* candles (Binance public klines, cached under `<cache folder>/candles/`), runs the active strategy plus overlays through `StrategyRunner`, and the trader enters on `ENTER_LONG` and exits on `EXIT_LONG`. Legacy DCA buys and trailing-PM sells are **off** in this mode. |
+| `strategy.engine = catalogue` | `SignalEngine` fetches the latest *closed* candles from the exchanges in Settings, primary first (cached per exchange under `<cache folder>/candles/<exchange>/`; FDS-MX-001), runs the active strategy plus overlays through `StrategyRunner`, and the trader enters on `ENTER_LONG` and exits on `EXIT_LONG`. Legacy DCA buys and trailing-PM sells are **off** in this mode. |
 | `strategy.engine = legacy_neural` | The old neural-signal logic, unchanged. The hub strip shows `SIGNALS: LEGACY (UNTRAINED)`. |
 | anything else, or an unknown `strategy.active_id` | **No orders** are placed and an ERROR is logged (fail closed). |
 

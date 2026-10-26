@@ -192,23 +192,30 @@ Phase A comes first; the rest depend on it. B and C follow straight away, as the
 - a coin halted on the primary gets no new buys, and the log names the exchange;
 - unknown stays unknown and is asked again (as today).
 
-### Phase E — strategy candles, backtests, chart pattern labels (rows 7 and 9)
+### Phase E — live strategy candles and chart pattern labels (rows 7 and 9)
+
+Split as built (2026-10-26): the trainer fills the candle cache that the STRAT-003 model strategy and the backtest CLI read, so those three move together in phase F, with the cache's one-time move. Phase E covers the live readers only.
 
 **Scope:**
-- `get_candles` fetches through the layer, using the per-exchange cache (§5.5) with its one-time move.
-- `signal_engine`, `backtest/cli.py` (the backtest's source records the exchange), `model_strategy`'s cache read and `pt_chart_patterns` follow.
-- `strategy.symbols` and `pair_for` move from Binance pair names to coins (§5.4).
+- `market_data.candles.exchange_candles`: the first exchange in Settings order that can serve the whole range gives the series. It reads that exchange's own cache (`<cache>/candles/<exchange>/<PAIR>_<tf>.csv`) and tops it up from that exchange only (`ExchangeManager.candles(only=...)`).
+- `signal_engine`'s default candle provider and `pt_chart_patterns.closed_bars` (renamed from `binance_closed_bars`) use it.
+- `strategy.symbols` and the signal engine's keys become markets (`BTC-USD`). A saved `BTCUSDT` still works; the default is `BTC` (§5.4).
 
-**Acceptance:** a backtest report names the exchange and pair its bars came from.
+**Acceptance:** a strategy's candles come from the primary exchange's cache folder, and from the next exchange when the primary has no market for the coin.
 
-### Phase F — the pattern trainer, provenance, retraining (row 8)
+### Phase F — the pattern trainer, its cache readers, provenance, retraining (rows 7 and 8)
 
 **Scope:**
-- The trainer reads through the layer. It needs the whole training range, so an exchange that can't reach back (Kraken) is skipped for training (decision D6).
+- The trainer reads and fills the per-exchange cache through `exchange_candles`. It needs the whole training range, so an exchange that can't reach back (Kraken) is passed over for training (decision D6).
+- `backtest/cli.py` and `model_strategy`'s cache read follow, and the backtest's source records the exchange and pair.
+- The existing cache files (Binance bars) move once under `binance/`.
+- `BinanceKlines` leaves `market_data/candles.py`.
 - Model provenance records the exchange and pair.
 - The runner's provenance gate warns when a model was trained on another exchange than the one the runner reads.
 
-**Acceptance:** a model trained on a Coinbase-primary setup records Coinbase BTC-USD.
+**Acceptance:**
+- a model trained on a Coinbase-primary setup records Coinbase BTC-USD;
+- a backtest report names the exchange and pair its bars came from.
 
 **After merge:** retrain every coin (decision D5).
 

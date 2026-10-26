@@ -21,11 +21,7 @@ if APP_DIR not in sys.path:
 
 import pt_data_provider  # noqa: E402
 import pt_hub  # noqa: E402
-import pt_multi_exchange  # noqa: E402
 from market_data import runner_history  # noqa: E402
-
-# the real one: the isolation guard replaces it in every test
-REAL_MARKET_EXCHANGES = pt_multi_exchange.market_exchanges
 from pt_exchange_abstraction import MarketNotFound, PriceQuote, Sourced  # noqa: E402
 
 HOUR = 3600
@@ -458,7 +454,6 @@ def test_the_runner_takes_current_prices_from_the_shared_exchange_manager(
             return Sourced(PriceQuote(123.0, 123.45, None), "coinbase", symbol, True)
 
     monkeypatch.setattr(pt_multi_exchange, "_shared", None)
-    monkeypatch.setattr(pt_multi_exchange, "market_exchanges", REAL_MARKET_EXCHANGES)
     monkeypatch.setattr(pt_multi_exchange, "MultiExchangeManager", Manager)
     assert runner.current_ask("BTC-USD") == 123.45
     manager = pt_multi_exchange.shared_manager()

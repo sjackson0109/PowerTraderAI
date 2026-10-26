@@ -38,7 +38,10 @@ purpose, FDS-MDL owner decision; see docs/dev/RUN-LOG-model-1.md):
 
 Deviations from upstream, each with its reason:
 
-1. Data: Binance klines through ``app/market_data/candles.py`` (cached), not KuCoin.
+1. Data: the candles of one exchange in Settings, the primary exchange first, through
+   ``app/market_data/candles.py`` (cached per exchange; FDS-MX-001 phase F). An
+   exchange that cannot reach back to train_start (Kraken serves its latest 720 bars)
+   is passed over. The model records the exchange and its market.
    The window is ``[train_start, train_end)`` and only bars closed by ``train_end`` are
    read: every run reads the cache with ``now=train_end`` and checks the result, so no
    candle after ``train_end`` can be read (FDS-MDL 4.3). Upstream read up to the wall
@@ -204,6 +207,11 @@ def parse_args(argv=None, environ=None, now=None):
     parser.add_argument("--seed")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument(
+        "--exchange",
+        help="read this exchange's candles only (default: the exchanges in Settings, "
+        "primary first)",
+    )
+    parser.add_argument(
         "--upstream-flush-only",
         action="store_true",
         help="testing only: flush and write the threshold exactly as upstream did "
@@ -253,6 +261,7 @@ def parse_args(argv=None, environ=None, now=None):
         "train_end": train_end,
         "seed": seed,
         "offline": offline,
+        "exchanges": [str(args.exchange).strip().lower()] if args.exchange else None,
         "upstream_flush_only": bool(args.upstream_flush_only),
         "sources": {
             "train_start": start_src,
@@ -275,18 +284,35 @@ def _utc(epoch_seconds: int) -> datetime:
 
 
 class BarLoader:
-    """Closed bars for one pair inside ``[train_start, train_end)``, from the candle
-    cache (filled from Binance unless offline). This is the only data source."""
+    """Closed bars for one coin inside ``[train_start, train_end)``, from the candle
+    cache of one exchange: the first in Settings order (``exchanges`` narrows or
+    reorders them) that can serve the window, filled from that exchange unless
+    offline. Every timeframe comes from that exchange. This is the only data
+    source."""
 
     def __init__(
-        self, pair, train_start, train_end, offline, cache_dir=None, status_of=None
+        self,
+        coin,
+        train_start,
+        train_end,
+        offline,
+        cache_dir=None,
+        status_of=None,
+        exchanges=None,
+        manager=None,
     ):
-        self.pair = pair
+        from pt_exchange_abstraction import dollar_symbol
+
+        self.market = dollar_symbol(coin)  # e.g. BTC-USD
+        self.pair = self.market  # the chosen exchange's market, once known
+        self.exchange = None
+        self.exchanges = list(exchanges) if exchanges else None
+        self._manager = manager
         self.train_start = train_start
         self.train_end = train_end
         self.offline = offline
         self.cache_dir = cache_dir
-        self.status_of = status_of  # pair -> listing.PairStatus; None: the shared check
+        self.status_of = status_of  # market -> listing.PairStatus; None: shared check
         self._bars = {}
         self.frames = {}
         self.reports = {}
@@ -303,11 +329,11 @@ class BarLoader:
             return  # a late or missing bar or two, not a market that stopped
         try:
             if self.status_of is not None:
-                status = self.status_of(self.pair)
+                status = self.status_of(self.market)
             else:
                 from market_data import listing
 
-                status = listing.pair_status(self.pair)
+                status = listing.pair_status(self.market)
         except Exception:
             status = None
         last_close = _iso(last_open + step)
@@ -332,6 +358,7 @@ class BarLoader:
 
         from market_data.candles import CandleDataError, get_candles
         from market_data.timeframes import bar_open_floor, candle_timeframe_seconds
+        from pt_exchange_abstraction import MarketNotFound
 
         step = timedelta(seconds=candle_timeframe_seconds(tf))
         start, end = self.train_start, self.train_end
@@ -348,12 +375,14 @@ class BarLoader:
             )
         read_start, read_end = start, end_open
         try:
+            if self.exchange is None:
+                self._choose_exchange(tf, start, end_open)
             if not self.offline:
                 # Fill the cache. get_candles' default now (the wall clock) decides
                 # which fetched bars are closed enough to cache; a past now would drop
                 # the bars between train_end and the cache's first bar and leave a
                 # permanent hole in the shared cache.
-                get_candles(self.pair, tf, start, end_open, cache_dir=self.cache_dir)
+                self._fill(tf, start, end_open)
                 cached = self._cached_range(tf)
                 if cached is None:
                     raise TrainerError(
@@ -377,12 +406,11 @@ class BarLoader:
                 cache_dir=self.cache_dir,
                 offline=True,
                 now=end,
+                exchange=self.exchange,
             )
+        except MarketNotFound as exc:  # no exchange in Settings has the coin
+            raise MarketClosedError(self.market, str(exc)) from None
         except CandleDataError as exc:
-            if getattr(exc.__cause__, "code", None) == 400:  # klines: unknown symbol
-                raise MarketClosedError(
-                    self.pair, f"Binance has no spot market {self.pair}"
-                ) from None
             raise TrainerError(f"candles {self.pair} {tf}: {exc}") from exc
         if df.empty:
             raise TrainerError(
@@ -429,11 +457,52 @@ class BarLoader:
             df["low"].tolist(),
         )
 
+    def _manager_for_fetch(self):
+        from market_data import candles
+
+        return (
+            self._manager if self._manager is not None else candles._exchange_manager()
+        )
+
+    def _choose_exchange(self, tf, start, end_open):
+        """The exchange whose candles the whole run uses: the first that can serve
+        ``tf`` over the window (offline: whose cache covers it)."""
+        from market_data.candles import exchange_candles
+
+        df = exchange_candles(
+            self.market,
+            tf,
+            start,
+            end_open,
+            cache_dir=self.cache_dir,
+            offline=self.offline,
+            manager=self._manager if self.offline else self._manager_for_fetch(),
+            exchanges=self.exchanges,
+        )
+        self.exchange, self.pair = df.attrs["exchange"], df.attrs["pair"]
+        print(f"{self.market}: training bars from {self.exchange} {self.pair}")
+
+    def _fill(self, tf, start, end_open):
+        """Fill the cache with ``tf`` bars over the window from the chosen exchange
+        only (one model, one exchange)."""
+        from market_data.candles import ExchangeFetcher, get_candles
+
+        fetcher = ExchangeFetcher(self._manager_for_fetch(), self.exchange, self.market)
+        get_candles(
+            self.pair,
+            tf,
+            start,
+            end_open,
+            cache_dir=self.cache_dir,
+            fetcher=fetcher,
+            exchange=self.exchange,
+        )
+
     def _cached_range(self, tf):
         """(first, last) open time in the cache file, or None if it is empty."""
         from market_data.candles import cache_path, load_candles_csv
 
-        path = cache_path(self.pair, tf, self.cache_dir)
+        path = cache_path(self.pair, tf, self.cache_dir, self.exchange)
         if not os.path.isfile(path):
             return None
         df = load_candles_csv(path, tf)
@@ -816,11 +885,14 @@ def train(
     cache_dir=None,
     upstream_flush_only=False,
     log=print,
+    exchanges=None,
 ):
-    """Train every timeframe into ``folder``; return the run summary."""
+    """Train every timeframe into ``folder``; return the run summary, with the
+    exchange and market its candles came from."""
     random.seed(seed)
-    pair = f"{coin}USDT"
-    loader = BarLoader(pair, train_start, train_end, offline, cache_dir)
+    loader = BarLoader(
+        coin, train_start, train_end, offline, cache_dir, exchanges=exchanges
+    )
     files = ModelFiles(folder)
     summary_tfs = {}
     for tf_choice in TF_CHOICES:
@@ -867,7 +939,12 @@ def train(
             "final_threshold": final_threshold,
         }
         log(f"{tf_choice} done: {len(mem['memory_list'])} memories")
-    return {"timeframes": summary_tfs, "candles": loader.reports}
+    return {
+        "timeframes": summary_tfs,
+        "candles": loader.reports,
+        "exchange": loader.exchange,
+        "pair": loader.pair,
+    }
 
 
 # --- provenance (FDS-MDL Phase 2) -------------------------------------------------------
@@ -910,7 +987,16 @@ def validation_cut(train_start, train_end):
     return cut
 
 
-def validate(coin, train_start, train_end, seed, offline, cache_dir=None, log=print):
+def validate(
+    coin,
+    train_start,
+    train_end,
+    seed,
+    offline,
+    cache_dir=None,
+    log=print,
+    exchanges=None,
+):
     """FDS-MDL Phase 2 validation metrics: a separate fit on the first 80% of
     ``[train_start, train_end)``, scored, frozen, on the last 20%. The published model is
     the whole-window fit (owner decision, 2026-10-06), so the metrics describe this
@@ -941,12 +1027,16 @@ def validate(coin, train_start, train_end, seed, offline, cache_dir=None, log=pr
             offline=offline,
             cache_dir=cache_dir,
             log=_quiet,
+            exchanges=exchanges,
         )
         model = PatternModel.from_folder(work)
         fit_files = {n: _file_sha256(os.path.join(work, n)) for n in model_file_names()}
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    holdout = BarLoader(f"{coin}USDT", cut, train_end, offline, cache_dir)
+    # the held-out bars come from the same exchange as the fit's
+    holdout = BarLoader(
+        coin, cut, train_end, offline, cache_dir, exchanges=[fit["exchange"]]
+    )
     metrics = {}
     for tf_choice in TF_CHOICES:
         tf = CANDLE_TF[tf_choice]
@@ -1072,7 +1162,13 @@ def provenance(coin, folder, cfg, result, log=print):
     data_start, data_end = max(start, first_bar), min(end, last_close)
     try:
         validation, metrics = validate(
-            coin, data_start, data_end, cfg["seed"], cfg["offline"], log=log
+            coin,
+            data_start,
+            data_end,
+            cfg["seed"],
+            cfg["offline"],
+            log=log,
+            exchanges=[result["exchange"]],
         )
     except TrainerError as exc:
         # too little data before the cut for a fit: published without metrics, and
@@ -1101,6 +1197,8 @@ def provenance(coin, folder, cfg, result, log=print):
         "candle_file_sha256": candle_hashes,
         "code_sha256": code,
         "params": TRAINER_PARAMS,
+        "exchange": result["exchange"],
+        "pair": result["pair"],
     }
     model_id = model_store.content_id(f"{coin}-{end:%Y%m%dT%H%MZ}", identity)
     trainer_file = os.path.abspath(__file__)
@@ -1117,7 +1215,9 @@ def provenance(coin, folder, cfg, result, log=print):
         "trainer_git_dirty": _git_dirty(),
         "upstream_commit": UPSTREAM_COMMIT,
         "upstream": {"repo": UPSTREAM_REPO, "blob": UPSTREAM_BLOB},
-        "symbol": f"{coin}USDT",
+        # the market and exchange the candles came from (FDS-MX-001 phase F)
+        "symbol": result["pair"],
+        "exchange": result["exchange"],
         "coin": coin,
         "timeframes": list(TF_CHOICES),
         "candle_timeframes": dict(CANDLE_TF),
@@ -1206,6 +1306,7 @@ def main(argv=None) -> int:
             seed=cfg["seed"],
             offline=cfg["offline"],
             upstream_flush_only=cfg["upstream_flush_only"],
+            exchanges=cfg.get("exchanges"),
         )
         if cfg["upstream_flush_only"]:
             # test mode: the incomplete upstream files are not published
@@ -1282,7 +1383,11 @@ def main(argv=None) -> int:
         from market_data.listing import write_market_status
 
         write_market_status(
-            folder, f"{coin}USDT", True, "training bars reach train_end"
+            folder,
+            f"{coin}-USD",
+            True,
+            "training bars reach train_end",
+            result.get("exchange") or "",
         )
     _write_text(os.path.join(folder, "trainer_last_start_time.txt"), str(started_at))
     # last, so a coin only counts as trained once every file is in place

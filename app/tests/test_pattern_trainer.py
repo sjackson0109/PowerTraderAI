@@ -254,7 +254,7 @@ EPOCH = pd.Timestamp("1970-01-01", tz="UTC")
 
 
 class FakeKlines:
-    """Stands in for ``candles.BinanceKlines``: serves fixture frames the way the
+    """One exchange behind the exchange layer (``hc.fake_layer``): serves fixture frames the way the
     public endpoint does (open time in ``[start_ms, end_ms]``, oldest first, Binance
     column order) and records every request. Nothing touches the network."""
 
@@ -293,7 +293,7 @@ def exchange(monkeypatch):
 
     def install(frames_by_pair):
         fake = FakeKlines(frames_by_pair)
-        monkeypatch.setattr(candles, "BinanceKlines", lambda *a, **k: fake)
+        hc.fake_layer(monkeypatch, fake)
         return fake
 
     return install
@@ -339,7 +339,9 @@ def test_an_older_window_after_a_newer_one_leaves_no_hole_in_the_cache(exchange)
     load_all(ppt.BarLoader(PAIR, START, START + 10 * weeks, offline=False))
 
     for tf in hc.TRAINER_TFS:
-        cached = candles.load_candles_csv(candles.cache_path(PAIR, tf), tf)
+        cached = candles.load_candles_csv(
+            candles.cache_path(PAIR, tf, exchange=hc.FIXTURE_EXCHANGE), tf
+        )
         assert cached.attrs["report"].gaps == [], tf
     reports = load_all(
         ppt.BarLoader(PAIR, START + 5 * weeks, START + 25 * weeks, offline=True)
@@ -451,7 +453,9 @@ def upstream_klines(end):
     bar opening at ``end``."""
     out = {}
     for choice, tf in ppt.CANDLE_TF.items():
-        frame = candles.load_candles_csv(candles.cache_path(PAIR, tf), tf)
+        frame = candles.load_candles_csv(
+            candles.cache_path(PAIR, tf, exchange=hc.FIXTURE_EXCHANGE), tf
+        )
         out[choice] = hu.kucoin_rows(frame, end.timestamp())
     return out
 
@@ -891,7 +895,7 @@ def test_the_backtest_cli_rejects_weekly_bars_before_touching_data(monkeypatch, 
     from backtest import cli
 
     calls = []
-    monkeypatch.setattr(cli, "get_candles", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(cli, "exchange_candles", lambda *a, **k: calls.append(a))
     argv = ["--strategy", "STRAT-001", "--symbol", PAIR, "--tf", "1w"]
     argv += ["--start", "2025-01-01", "--end", "2025-11-01"]
     assert cli.main(argv) == 2

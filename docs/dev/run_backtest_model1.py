@@ -1,7 +1,7 @@
 """
 FDS-MDL Phase 4: the STRAT-003 backtest declared in docs/dev/BACKTEST-REPORT-model-1.md.
 
-    python docs/dev/run_backtest_model1.py fetch    # candles, public Binance klines (network)
+    python docs/dev/run_backtest_model1.py fetch    # candles from EXCHANGE, public data (network)
     python docs/dev/run_backtest_model1.py train    # the 20 models, offline from the cache
     python docs/dev/run_backtest_model1.py run      # Test A, the random baselines, Test B
     python docs/dev/run_backtest_model1.py report   # append the results under the header
@@ -391,10 +391,16 @@ def supersede(
 # --- fetch ------------------------------------------------------------------------------------
 
 
+# The exchange whose bars batch 1 and this run were computed on: reproducing their
+# published numbers reads the same exchange's bars (FDS-MX-001 phase F). Another
+# exchange is a new run, with its own results.
+EXCHANGE = "binance"
+
+
 def _file_record(pair: str, tf: str, cache_dir: Optional[str]) -> Dict[str, Any]:
     from market_data.candles import cache_path, file_sha256, load_candles_csv
 
-    path = cache_path(pair, tf, cache_dir)
+    path = cache_path(pair, tf, cache_dir, EXCHANGE)
     frame = load_candles_csv(path, tf)
     return {
         "path": path,
@@ -432,14 +438,22 @@ def fetch(
 
     s = _state(state)
     targets = [(p, tf) for p in plan.pairs for tf in plan.model_tfs]
-    present = [candles.cache_path(p, tf, cache_dir) for p, tf in targets]
+    present = [candles.cache_path(p, tf, cache_dir, EXCHANGE) for p, tf in targets]
     present = [path for path in present if os.path.exists(path)]
     if present:
         raise Stop(
             "the candle cache must be empty when fetch starts (so each file holds "
             f"exactly the window); found {present}. Use a fresh POWERTRADER_HOME."
         )
-    make = fetcher_factory or candles.BinanceKlines
+    from pt_exchange_abstraction import dollar_symbol
+
+    def make(pair):
+        if fetcher_factory is not None:
+            return fetcher_factory()
+        return candles.ExchangeFetcher(
+            candles._exchange_manager(), EXCHANGE, dollar_symbol(pair)
+        )
+
     end_ts = min(_ts(plan.end), pd.Timestamp.now(tz="UTC"))
     for pair, tf in targets:
         # bars that close by the end of the window
@@ -447,7 +461,13 @@ def fetch(
             bar_open_floor(int(end_ts.timestamp()), tf), unit="s", tz="UTC"
         )
         candles.get_candles(
-            pair, tf, plan.start, end_open, cache_dir=cache_dir, fetcher=make()
+            pair,
+            tf,
+            plan.start,
+            end_open,
+            cache_dir=cache_dir,
+            fetcher=make(pair),
+            exchange=EXCHANGE,
         )
     files = {_key(p, tf): _file_record(p, tf, cache_dir) for p, tf in targets}
     for key, rec in files.items():
@@ -489,7 +509,7 @@ def check_data(
     for pair in plan.pairs:
         for tf in plan.model_tfs:
             rec = data["files"].get(_key(pair, tf))
-            file = cache_path(pair, tf, cache_dir)
+            file = cache_path(pair, tf, cache_dir, EXCHANGE)
             got = file_sha256(file) if os.path.isfile(file) else None
             if rec is None or got != rec["sha256"]:
                 changed.append(
@@ -652,7 +672,7 @@ def train(
         if os.path.exists(summary_path):
             os.remove(summary_path)  # so the id read below is this run's
         argv = [
-            sys.executable, "-u", trainer, coin, "--offline",
+            sys.executable, "-u", trainer, coin, "--offline", "--exchange", EXCHANGE,
             "--train-start", job["train_start"], "--train-end", job["train_end"],
             "--seed", str(plan.trainer_seed),
         ]  # fmt: skip
@@ -937,7 +957,7 @@ def run(
             raise Stop(str(exc)) from exc
         frames = {
             pair: {
-                tf: load_candles_csv(cache_path(pair, tf, cache_dir), tf)
+                tf: load_candles_csv(cache_path(pair, tf, cache_dir, EXCHANGE), tf)
                 for tf in plan.model_tfs
             }
             for pair in plan.pairs

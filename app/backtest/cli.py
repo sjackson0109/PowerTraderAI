@@ -1,14 +1,16 @@
 """
 Backtest CLI::
 
-    python -m app.backtest --strategy STRAT-000 --symbol BTCUSDT --tf 1h \\
+    python -m app.backtest --strategy STRAT-000 --symbol BTC --tf 1h \\
         --start 2023-01-01 --end 2026-09-30 [--overlays OVL-ATR,OVL-COOLDOWN] \\
-        [--out results.json]
+        [--exchange coinbase] [--out results.json]
 
 Writes JSON KPIs (in-sample and out-of-sample, each with the buy-and-hold
 benchmark) and a trades CSV next to it. ``--end`` is exclusive (bars with
-``open_time < end``). Candles come from the cache / Binance public klines, or
-from ``--candles-file`` (a cache-format CSV; no network).
+``open_time < end``). Candles come from the exchanges in Settings, primary first
+(``--exchange`` names one), through the per-exchange candle cache, or from
+``--candles-file`` (a cache-format CSV; no network). A trained model's run uses
+the exchange the model was trained on.
 """
 
 from __future__ import annotations
@@ -24,13 +26,13 @@ import pandas as pd
 
 from backtest.engine import CostModel, evaluate_split
 from market_data.candles import (
-    BinanceKlines,
     CandleDataError,
     cache_path,
+    exchange_candles,
     file_sha256,
-    get_candles,
     load_candles_csv,
 )
+from pt_exchange_abstraction import dollar_symbol
 from market_data.timeframes import candle_timeframe_seconds, timeframe_seconds
 from strategies.catalogue import CatalogueError, ParamError
 from strategies.factory import build_runner, parse_overlay_ids
@@ -80,7 +82,7 @@ def _section(parts: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _check_same_bars(candles: pd.DataFrame, cached, args) -> None:
+def _check_same_bars(candles: pd.DataFrame, cached, args, path: str) -> None:
     """With --candles-file the run trades the file's bars while a multi-timeframe
     strategy reads the cache: refuse unless the cache's bars of the run's timeframe are
     the file's bars wherever both exist (another symbol, venue or edit would mix two
@@ -95,7 +97,7 @@ def _check_same_bars(candles: pd.DataFrame, cached, args) -> None:
     if both.empty or differ:
         raise ValueError(
             f"the cache's {args.symbol} {args.tf} bars "
-            f"({cache_path(args.symbol, args.tf, args.cache_dir)}) are not the bars of "
+            f"({path}) are not the bars of "
             f"{args.candles_file} (overlap {len(both)} bars, {differ} values differ): "
             "the strategy's other timeframes would come from a different series"
         )
@@ -124,11 +126,23 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             f"(it supports {sorted(supported)} s)"
         )
     model_symbol = getattr(probe.strategy, "model_symbol", None)
-    if model_symbol is not None and model_symbol.upper() != args.symbol.upper():
+    if model_symbol is not None and dollar_symbol(model_symbol) != dollar_symbol(
+        args.symbol
+    ):
         raise ValueError(
             f"the strategy's model was trained on {model_symbol}; this run is "
             f"{args.symbol} (use --symbol)"
         )
+    # one series, one exchange: --exchange, or the exchange a model was trained on
+    model_exchange = getattr(probe.strategy, "model_exchange", None)
+    if model_exchange and args.exchange and args.exchange != model_exchange:
+        raise ValueError(
+            f"the strategy's model was trained on {model_exchange} bars; this run "
+            f"asks {args.exchange} (leave --exchange out)"
+        )
+    chosen = model_exchange or args.exchange
+    exchanges = [chosen] if chosen else None
+    exchange, pair = chosen, model_symbol or args.symbol
     # a strategy timeframe (the candle layer also accepts the candle-only "1w")
     timeframe_seconds(args.tf)
 
@@ -155,18 +169,21 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             raise SystemExit(
                 "--start and --end are required unless --candles-file is given"
             )
-        candles = get_candles(
+        candles = exchange_candles(
             args.symbol,
             args.tf,
             args.start,
             args.end,
             cache_dir=args.cache_dir,
-            fetcher=BinanceKlines(),
             offline=args.offline,
+            exchanges=exchanges,
         )
-        path = cache_path(args.symbol, args.tf, args.cache_dir)
+        exchange, pair = candles.attrs["exchange"], candles.attrs["pair"]
+        path = cache_path(pair, args.tf, args.cache_dir, exchange)
         source = {
-            "kind": "binance_klines_cache",
+            "kind": "exchange_candles_cache",
+            "exchange": exchange,
+            "pair": pair,
             "path": path,
             "sha256": file_sha256(path) if os.path.isfile(path) else None,
         }
@@ -187,31 +204,36 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         for tf in extra_tfs:
             if offline:  # what the cache holds; a shortfall is reported as missing bars
                 frame = load_candles_csv(
-                    cache_path(args.symbol, tf, args.cache_dir), tf
+                    cache_path(pair, tf, args.cache_dir, exchange), tf
                 )
                 keep = (frame["open_time"] >= first - back) & (frame["open_time"] < end)
                 frame = frame[keep].reset_index(drop=True)
             else:
-                frame = get_candles(
+                frame = exchange_candles(
                     args.symbol,
                     tf,
                     first - back,
                     end,
                     cache_dir=args.cache_dir,
-                    fetcher=BinanceKlines(),
+                    exchanges=[exchange],
                 )
             strategy_bars[tf] = frame
         if args.candles_file:
-            _check_same_bars(candles, strategy_bars.get(args.tf), args)
+            _check_same_bars(
+                candles,
+                strategy_bars.get(args.tf),
+                args,
+                cache_path(pair, args.tf, args.cache_dir, exchange),
+            )
         source["strategy_bars"] = {}
         for tf, frame in strategy_bars.items():
-            path = cache_path(args.symbol, tf, args.cache_dir)
+            path = cache_path(pair, tf, args.cache_dir, exchange)
             source["strategy_bars"][tf] = {
                 "bars": len(frame),
                 "path": path,
                 "sha256": file_sha256(path) if os.path.isfile(path) else None,
             }
-        if source["kind"] == "binance_klines_cache":
+        if source["kind"] == "exchange_candles_cache":
             # online, loading the history before the window can extend the run's own
             # cache file: its hash is the one of the file as the run leaves it
             path = source["path"]
@@ -252,6 +274,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         results["model"] = {
             "model_id": strategy.model_id,
             "symbol": strategy.model_symbol,
+            "exchange": strategy.model_exchange,
             "train_start": strategy.model_window[0],
             "train_end": strategy.model_window[1],
         }
@@ -299,7 +322,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m app.backtest", description=__doc__.split("\n\n")[0]
     )
     p.add_argument("--strategy", required=True, help="catalogue id, e.g. STRAT-000")
-    p.add_argument("--symbol", default="BTCUSDT")
+    p.add_argument("--symbol", default="BTC", help="the coin, e.g. BTC")
+    p.add_argument(
+        "--exchange",
+        help="read this exchange's bars only (default: the exchanges in Settings, "
+        "primary first)",
+    )
     p.add_argument("--tf", default="1h")
     p.add_argument("--start", help="YYYY-MM-DD (UTC)")
     p.add_argument("--end", help="YYYY-MM-DD (UTC, exclusive)")

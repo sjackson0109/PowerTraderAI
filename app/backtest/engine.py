@@ -124,6 +124,13 @@ def _fill_sell(price: float, slip_bps: float) -> float:
     return price * (1.0 - slip_bps / 1e4)
 
 
+def _market(symbol) -> str:
+    """The coin's market: BTC, BTC-USD and BTCUSDT are the same (FDS-MX-001)."""
+    from pt_exchange_abstraction import dollar_symbol
+
+    return dollar_symbol(str(symbol))
+
+
 def run_backtest(
     candles: pd.DataFrame,
     runner: StrategyRunner,
@@ -143,7 +150,7 @@ def run_backtest(
         raise ValueError("invalid trading window")
     check_lookahead(runner, candles["open_time"].iloc[start_index])
     model_symbol = getattr(runner.strategy, "model_symbol", None)
-    if model_symbol is not None and str(model_symbol).upper() != str(symbol).upper():
+    if model_symbol is not None and _market(model_symbol) != _market(symbol):
         raise ValueError(
             f"the strategy's model was trained on {model_symbol}; this run is {symbol}"
         )

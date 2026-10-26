@@ -1,7 +1,7 @@
 """
 Reproduces docs/dev/BACKTEST-REPORT-batch-1.md.
 
-    python docs/dev/run_backtest_batch1.py fetch    # download + cache candles (public Binance klines)
+    python docs/dev/run_backtest_batch1.py fetch    # download + cache candles from EXCHANGE (public data)
     python docs/dev/run_backtest_batch1.py run      # run every backtest (offline, from the cache)
     python docs/dev/run_backtest_batch1.py report   # write the markdown report from the results
 
@@ -40,24 +40,28 @@ def tag(strategy, symbol, tf, overlay_name):
     return f"{strategy}_{symbol}_{tf}_{overlay_name.replace('+', '_')}"
 
 
+# The exchange whose bars this batch was computed on: reproducing its published
+# numbers reads the same exchange's bars (FDS-MX-001 phase F); another is a new run.
+EXCHANGE = "binance"
+
+
 def fetch():
-    from market_data.candles import BinanceKlines, cache_path, file_sha256, get_candles
+    from market_data.candles import cache_path, exchange_candles, file_sha256
 
     for symbol in SYMBOLS:
         for tf in TIMEFRAMES:
-            fetcher = BinanceKlines()
-            df = get_candles(symbol, tf, START, END, fetcher=fetcher)
+            df = exchange_candles(symbol, tf, START, END, exchanges=[EXCHANGE])
             r = df.attrs["report"]
+            path = cache_path(df.attrs["pair"], tf, exchange=EXCHANGE)
             print(f"{symbol} {tf}: {len(df)} candles {df['open_time'].iloc[0]} -> {df['open_time'].iloc[-1]} "
-                  f"gaps={r.missing_bars} requests={fetcher.requests_made} "
-                  f"sha256={file_sha256(cache_path(symbol, tf))[:16]}")
+                  f"gaps={r.missing_bars} sha256={file_sha256(path)[:16]}")
 
 
 def _run_one(job):
     strategy, symbol, tf, overlay_name, overlays = job
     out = os.path.join(OUT, tag(strategy, symbol, tf, overlay_name) + ".json")
     argv = [sys.executable, "-m", "app.backtest", "--strategy", strategy, "--symbol", symbol, "--tf", tf,
-            "--start", START, "--end", END, "--offline", "--out", out]
+            "--start", START, "--end", END, "--offline", "--exchange", EXCHANGE, "--out", out]
     if overlays:
         argv += ["--overlays", overlays]
     proc = subprocess.run(argv, cwd=REPO, capture_output=True, text=True)
@@ -135,7 +139,7 @@ def report():
             if (sym, tf) in seen:
                 continue
             seen.add((sym, tf))
-            sha = file_sha256(cache_path(sym, tf))
+            sha = file_sha256(cache_path(sym, tf, exchange=EXCHANGE))
             w(f"| {sym} | {tf} | {r['first'][:16]} → {r['last'][:16]} | {r['candles']:,} | "
               f"{r['gaps']['missing_bars']} missing bars | Binance public klines (`/api/v3/klines`) | `{sha}` |")
     w("")

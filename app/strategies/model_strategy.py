@@ -14,7 +14,7 @@ published by the pattern trainer, mapped to long-only:
   evaluation just before the bar closes (owner decision, 2026-10-06). The bars are given
   by the caller (``use_bars({candle timeframe: frame})``: the backtest CLI loads them
   from the run's own data source); otherwise they are read from the default candle
-  cache, for the model's own symbol, when the run's timeframe is set (never in
+  cache, for the model's own market and exchange, when the run's timeframe is set (never in
   ``on_bar``). A timeframe whose expected bar is missing makes the decision HOLD
   (``BARS_MISSING:<timeframe>``): no older bar is used instead. The backtester counts
   those decisions and reports them.
@@ -47,7 +47,13 @@ import pandas as pd
 
 import model_store
 import pt_paths
-from market_data.candles import CandleDataError, cache_path, load_candles_csv
+from market_data.candles import (
+    FLAT_CACHE_EXCHANGE,
+    CandleDataError,
+    cache_path,
+    load_candles_csv,
+    move_flat_cache,
+)
 from market_data.timeframes import bar_open_floor, candle_timeframe_seconds
 from pattern_model import CANDLE_TF, TIMEFRAMES, GapPassStuck, thinker_decision
 from strategies.base import Action, Signal, Strategy, StrategyError
@@ -84,14 +90,16 @@ class _Bars:
         return i if i >= 0 else None
 
 
-def cached_bars(symbol: str) -> Dict[str, pd.DataFrame]:
-    """The candle cache's bars for ``symbol`` in the model's candle timeframes (read
-    only; a missing file is simply absent)."""
+def cached_bars(symbol: str, exchange: str) -> Dict[str, pd.DataFrame]:
+    """The candle cache's bars for ``symbol`` (the model's market) from ``exchange``
+    (the one the model was trained on), in the model's candle timeframes (read only; a
+    missing file is simply absent)."""
     folder = os.path.join(pt_paths.cache_dir(create=False), "candles")
+    move_flat_cache(folder)
     frames = {}
     for tf in TIMEFRAMES:
         ctf = CANDLE_TF[tf]
-        path = cache_path(symbol, ctf, folder)
+        path = cache_path(symbol, ctf, folder, exchange)
         if not os.path.isfile(path):
             logger.warning("STRAT-003: no cached %s %s bars at %s", symbol, ctf, path)
             continue
@@ -136,7 +144,11 @@ class TrainedModelStrategy(Strategy):
         self.model_id = loaded.model_id
         self.model = loaded.model
         self.symbol = loaded.manifest["symbol"]
+        # the exchange the model's candles came from; a model trained before FDS-MX-001
+        # phase F records none, and was trained on Binance bars
+        self.exchange = loaded.manifest.get("exchange") or FLAT_CACHE_EXCHANGE
         self.model_symbol = self.symbol  # the backtester refuses a run on another pair
+        self.model_exchange = self.exchange  # and reads this exchange's bars
         self.model_window = (loaded.manifest["train_start"], loaded.train_end)
         # read by the backtester: nothing that opens before this may be scored
         self.model_train_end = _utc_time(loaded.train_end, self.model_id)
@@ -172,7 +184,7 @@ class TrainedModelStrategy(Strategy):
             )
         super().set_timeframe(tf_seconds)
         if self._bars is None:  # nobody gave it bars: the default candle cache, once
-            self.use_bars(cached_bars(self.symbol))
+            self.use_bars(cached_bars(self.symbol, self.exchange))
 
     # -- the decision -------------------------------------------------------------------
 

@@ -76,6 +76,14 @@ class TradingConfig:
     auto_best_price: bool = False
 
 
+def _rank(preference) -> int:
+    """An exchange's preference rank as a number (unreadable ranks go last)."""
+    try:
+        return int(preference)
+    except (TypeError, ValueError):
+        return 1_000_000
+
+
 def _credential_field(exchange: str, attr: str) -> Optional[str]:
     """pt_secrets field behind an ExchangeConfig credential attribute
     (Coinbase ``api_key`` -> ``key_name``), or None if the exchange has none."""
@@ -274,11 +282,14 @@ class ExchangeConfigManager:
         return config
 
     def get_enabled_exchanges(self) -> List[ExchangeConfig]:
-        """Get list of enabled exchange configurations"""
+        """The enabled exchanges in preference order (``region_preference`` 1 first;
+        equal ranks keep their file order). The exchange layer asks them in this
+        order after the primary (FDS-MX-001 section 5.2)."""
         if not self.config:
             return []
 
-        return [ex for ex in self.config.exchanges if ex.enabled]
+        enabled = [ex for ex in self.config.exchanges if ex.enabled]
+        return sorted(enabled, key=lambda ex: _rank(ex.region_preference))
 
     def get_exchange_config(self, exchange_name: str) -> Optional[ExchangeConfig]:
         """Get configuration for specific exchange"""
@@ -420,6 +431,30 @@ class MultiExchangeManager:
             raise RuntimeError("MultiExchangeManager not initialized")
 
         return self.exchange_manager.min_order_usd(symbol)
+
+    def candles(self, symbol: str, tf: str, start_ms: int, end_ms: int, now_ms=None):
+        """Closed ``tf`` candles from the primary exchange, else the next that can
+        serve the whole range (``ExchangeManager.candles``)."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.candles(symbol, tf, start_ms, end_ms, now_ms)
+
+    def market_status(self, symbol: str):
+        """Whether ``symbol``'s market is trading, from the primary exchange unless it
+        does not list the coin (``ExchangeManager.market_status``)."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.market_status(symbol)
+
+    def quote(self, symbol: str):
+        """Best bid and ask, from the primary exchange, else the next that gives one
+        (``ExchangeManager.quote``)."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.quote(symbol)
 
     def compare_prices(self, symbol: str) -> Dict[str, float]:
         """Compare prices across all connected exchanges"""

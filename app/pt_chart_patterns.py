@@ -3,8 +3,9 @@ Candlestick patterns on the hub's coin charts, and the Chart settings pop-out
 (FDS-CHART-001). Display only: nothing here reaches a strategy, the trainer, the
 runner or the trader.
 
-- PatternLayer: fetches Binance spot closed bars for the displayed coin and timeframe
-  and runs detection in a background thread, never on the Tk thread. It then draws one
+- PatternLayer: fetches closed bars for the displayed coin and timeframe from the
+  exchanges in Settings, primary first, and runs detection in a background thread,
+  never on the Tk thread. It then draws one
   label per candle, placed by open time, with hover brackets, a click-for-detail window
   and keyboard stepping.
 - ChartSettingsWindow: the pop-out with a toggle for every overlay and pattern.
@@ -62,14 +63,15 @@ def room_for_labels(
     return bottom, top
 
 
-def binance_closed_bars(coin: str, interval: str, start_ts: int, end_ts: int):
-    """Binance spot closed bars for ``{coin}USDT`` (FDS-CHART-001 section 4)."""
+def closed_bars(coin: str, interval: str, start_ts: int, end_ts: int):
+    """Closed bars of the coin's market from the exchanges in Settings, primary first
+    (``exchange_candles``; FDS-CHART-001 section 4, FDS-MX-001 phase E)."""
     import pandas as pd
 
-    from market_data.candles import get_candles
+    from market_data.candles import exchange_candles
 
-    df = get_candles(
-        f"{coin.upper()}USDT",
+    df = exchange_candles(
+        coin,
         interval,
         pd.Timestamp(int(start_ts), unit="s", tz="UTC"),
         pd.Timestamp(int(end_ts), unit="s", tz="UTC"),
@@ -98,8 +100,9 @@ class PatternResult:
 
 
 def _describe_error(exc: BaseException) -> str:
-    cause = getattr(exc, "__cause__", None)
-    if getattr(cause, "code", None) == 400:
+    from pt_exchange_abstraction import MarketNotFound
+
+    if isinstance(exc, MarketNotFound):  # no exchange in Settings has the coin
         return "not available for this coin"
     return "unavailable right now"
 
@@ -148,7 +151,7 @@ class PatternLayer:
     # --- data -------------------------------------------------------------------------
 
     def _step(self) -> Optional[int]:
-        interval = cp.HUB_TO_BINANCE.get(self._tf)
+        interval = cp.HUB_TO_CANDLE.get(self._tf)
         if interval is None:
             return None
         from market_data.timeframes import candle_timeframe_seconds
@@ -174,7 +177,7 @@ class PatternLayer:
         self._pending, self._pending_key = q, key
         end_ts = int(self.clock())
         # looked up per call, so the test isolation guard can stub the network fetch
-        fetch = self.fetch_bars or binance_closed_bars
+        fetch = self.fetch_bars or closed_bars
 
         def work():
             try:
@@ -248,7 +251,7 @@ class PatternLayer:
             if self._needs_fetch(key, first_ts, step):
                 start = first_ts - (cp.WARMUP_BARS + 2) * step
                 self._start_fetch(
-                    key, self.chart.coin, cp.HUB_TO_BINANCE[tf], start, step
+                    key, self.chart.coin, cp.HUB_TO_CANDLE[tf], start, step
                 )
             self._draw_labels()
             self._restore_hover()

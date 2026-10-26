@@ -599,6 +599,10 @@ class ExchangeManager:
             self.exchanges.items(), key=lambda item: item[0] != self.primary_exchange
         )
 
+    def exchange_names(self) -> List[str]:
+        """The connected exchanges' names, primary first, then the Settings order."""
+        return [exchange_type.value for exchange_type, _ in self._ordered()]
+
     def _sourced(self, value, exchange_type, exchange, symbol, built_from=""):
         return Sourced(
             value=value,
@@ -630,6 +634,7 @@ class ExchangeManager:
         start_ms: int,
         end_ms: int,
         now_ms: Optional[int] = None,
+        only: Optional[str] = None,
     ) -> Sourced:
         """Closed ``tf`` bars of ``symbol`` opening from ``start_ms`` to ``end_ms``
         (inclusive), oldest first, as ``[open_time_ms, open, high, low, close,
@@ -642,6 +647,9 @@ class ExchangeManager:
         two exchanges are never mixed. A size the exchange does not serve is built
         from a smaller one it does (``Sourced.built_from``).
 
+        ``only`` asks that one exchange and no other (a cached series is topped up
+        from the exchange it came from).
+
         Raises MarketNotFound when every exchange asked has no market for the coin,
         otherwise MarketDataUnavailable with each exchange's answer."""
         symbol = dollar_symbol(symbol)
@@ -651,6 +659,8 @@ class ExchangeManager:
         not_found = 0
         for exchange_type, exchange in self._ordered():
             name = exchange_type.value
+            if only is not None and name != only:
+                continue
             native = exchange.candle_timeframes()
             fetch_tf = tf if tf in native else build_from(tf, native)
             if fetch_tf is None:

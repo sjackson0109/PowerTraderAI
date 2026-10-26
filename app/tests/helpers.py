@@ -121,8 +121,23 @@ class FakeBinance:
         )
 
 
+class FakeMarkets:
+    """Stands in for the trader's exchanges in Settings (pt_trader._market_exchanges),
+    so no trader test reaches a real exchange. States no minimum order unless a test
+    sets ``minimum``; records the symbols it was asked about."""
+
+    def __init__(self) -> None:
+        self.minimum: Optional[float] = None
+        self.asked: List[str] = []
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        self.asked.append(symbol)
+        return self.minimum
+
+
 class PaperTraderCase(unittest.TestCase):
-    """A paper trader in a temp dir with a fake Binance and no real network."""
+    """A paper trader in a temp dir with a fake Binance price feed, fake exchanges
+    in Settings (FakeMarkets) and no real network."""
 
     @classmethod
     def setUpClass(cls):
@@ -140,9 +155,13 @@ class PaperTraderCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
         self.binance = FakeBinance()
+        self.markets = FakeMarkets()
         for p in (
             mock.patch.object(self.pt_trader, "HUB_DATA_DIR", self.tmp.name),
             mock.patch.object(tm.urllib.request, "urlopen", self.binance),
+            mock.patch.object(
+                self.pt_trader, "_market_exchanges", lambda: self.markets
+            ),
         ):
             p.start()
             self.addCleanup(p.stop)

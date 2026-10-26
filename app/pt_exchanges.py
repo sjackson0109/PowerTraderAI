@@ -136,6 +136,27 @@ class KrakenExchange(AbstractExchange):
             exchange="kraken",
         )
 
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """Kraken's minimum order for ``symbol`` in its quote currency: the pair's
+        ``costmin``, or its ``ordermin`` (in the coin) at the current ask when that is
+        more. None if it cannot be read."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/0/public/AssetPairs?pair={self._convert_symbol(symbol)}",
+                timeout=10,
+            )
+            data = response.json()
+            if data.get("error"):
+                return None
+            pair = list(data["result"].values())[0]
+            minimum = float(pair.get("costmin") or 0)
+            ordermin = float(pair.get("ordermin") or 0)
+            if ordermin > 0:
+                minimum = max(minimum, ordermin * self.get_current_price(symbol))
+        except Exception:
+            return None
+        return minimum if minimum > 0 else None
+
     def place_order(
         self, symbol: str, side: str, amount: float, price: Optional[float] = None
     ) -> OrderResult:
@@ -479,6 +500,17 @@ class BinanceExchange(AbstractExchange):
     # ------------------------------------------------------------------
     # Symbol filter handling (LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL)
     # ------------------------------------------------------------------
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """Binance's minimum order value for ``symbol`` (its NOTIONAL / MIN_NOTIONAL
+        filter), or None if it cannot be read. Orders below it are refused."""
+        try:
+            minimum = self._get_symbol_filters(self._convert_symbol(symbol))[
+                "minNotional"
+            ]
+        except Exception:
+            return None
+        return float(minimum) if minimum > 0 else None
 
     def _get_symbol_filters(self, binance_symbol: str) -> Dict[str, Decimal]:
         """
@@ -1132,6 +1164,19 @@ class CoinbaseExchange(AbstractExchange):
             exchange="coinbase",
         )
 
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """Coinbase's minimum order for ``symbol`` in its quote currency (the product's
+        ``min_market_funds``), from the unauthenticated product endpoint. None if it
+        cannot be read."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/products/{self._convert_symbol(symbol)}", timeout=10
+            )
+            minimum = float(response.json().get("min_market_funds") or 0)
+        except Exception:
+            return None
+        return minimum if minimum > 0 else None
+
     def place_order(
         self, symbol: str, side: str, amount: float, price: Optional[float] = None
     ) -> OrderResult:
@@ -1225,6 +1270,29 @@ class KuCoinExchange(AbstractExchange):
             timestamp=time.time(),
             exchange="kucoin",
         )
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """KuCoin's minimum order for ``symbol`` in its quote currency: the largest of
+        the symbol's ``minFunds``, ``quoteMinSize``, and ``baseMinSize`` (in the coin)
+        at the current ask. None if it cannot be read."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/v2/symbols/{self._convert_symbol(symbol)}",
+                timeout=10,
+            )
+            data = response.json()
+            if data.get("code") != "200000":
+                return None
+            info = data["data"]
+            minimum = max(
+                float(info.get("minFunds") or 0), float(info.get("quoteMinSize") or 0)
+            )
+            base_min = float(info.get("baseMinSize") or 0)
+            if base_min > 0:
+                minimum = max(minimum, base_min * self.get_current_price(symbol))
+        except Exception:
+            return None
+        return minimum if minimum > 0 else None
 
     def place_order(
         self, symbol: str, side: str, amount: float, price: Optional[float] = None

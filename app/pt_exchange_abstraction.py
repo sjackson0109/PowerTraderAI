@@ -26,6 +26,14 @@ class MarketNotFound(RuntimeError):
     instead of retrying for ever."""
 
 
+def usable_minimum(value: Any) -> Optional[float]:
+    """``value`` as a minimum order value: a positive, finite number, else None (a
+    connector may answer anything)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if 0.0 < value < float("inf") else None
+
+
 class ExchangeType(Enum):
     """Supported exchange types"""
 
@@ -239,6 +247,12 @@ class AbstractExchange(abc.ABC):
         self.api_key = api_key
         self.api_secret = api_secret
         self.exchange_name = self.get_exchange_name()
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """The exchange's minimum order value for ``symbol``, in its quote currency
+        (USD or a USD stablecoin), or None when this connector does not know it.
+        Connectors that can read it from their exchange override this."""
+        return None
 
     @abc.abstractmethod
     def get_exchange_name(self) -> str:
@@ -479,6 +493,23 @@ class ExchangeManager:
             raise ValueError(f"Exchange {exchange_type.value} not connected")
 
         return self.exchanges[exchange_type].get_current_price(symbol)
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """The minimum order value for ``symbol``: the primary exchange's; when it does
+        not state one, the first other connected exchange's that does (in the order
+        they were connected). None when no exchange states one."""
+        ordered = sorted(
+            self.exchanges.items(), key=lambda item: item[0] != self.primary_exchange
+        )
+        for exchange_type, exchange in ordered:
+            try:
+                minimum = usable_minimum(exchange.min_order_usd(symbol))
+            except Exception as exc:
+                logger.debug(f"No minimum order from {exchange_type.value}: {exc}")
+                continue
+            if minimum is not None:
+                return minimum
+        return None
 
     def get_best_price(
         self, symbol: str, side: str = "buy"

@@ -111,8 +111,9 @@ if keyring is not None:
 @pytest.fixture(autouse=True)
 def isolated_user_dirs(tmp_path, monkeypatch):
     """Fresh POWERTRADER_HOME, empty legacy folder and empty keyring per test, and no
-    request to Binance: the shared market-status check answers "unknown", and the chart's
-    candlestick-pattern fetch raises (a test that needs either passes its own)."""
+    request to any exchange: the shared market-status check answers "unknown", the
+    shared exchange layer (pt_multi_exchange.market_exchanges) raises, and the chart's
+    candlestick-pattern fetch raises (a test that needs one passes its own)."""
     home = tmp_path / "pt_home"
     legacy = tmp_path / "pt_legacy"
     legacy.mkdir()
@@ -135,6 +136,16 @@ def isolated_user_dirs(tmp_path, monkeypatch):
             ),
         )
         monkeypatch.setattr(listing, "_shared", None)
+    try:
+        import pt_multi_exchange
+    except ImportError:  # loaded from outside app/ (.github/scripts)
+        pt_multi_exchange = None
+    if pt_multi_exchange is not None:
+
+        def _no_exchange_layer(*args, **kwargs):
+            raise RuntimeError("tests: no network (the exchange layer)")
+
+        monkeypatch.setattr(pt_multi_exchange, "market_exchanges", _no_exchange_layer)
     try:
         import pt_chart_patterns
     except ImportError:  # loaded from outside app/, or no tkinter

@@ -563,7 +563,7 @@ UNAVAILABLE_RECHECK_SECONDS = 3600
 
 
 def _recheck_unavailable(sym: str) -> bool:
-    """For a skipped coin: once an hour, ask Binance again. True when its market
+    """For a skipped coin: once an hour, ask again. True when its market
     trades again, and the coin is taken off the skipped list (its next step fetches
     bars and records it trading); False while it stays skipped."""
     if time.time() - _UNAVAILABLE_SINCE.get(sym, 0.0) < UNAVAILABLE_RECHECK_SECONDS:
@@ -580,9 +580,10 @@ def _recheck_unavailable(sym: str) -> bool:
 
 
 def _market_status(sym: str):
-    """Binance's cached verdict on the coin's spot pair, or None if unknown."""
+    """The cached verdict on the coin's market from the exchanges in Settings (the
+    primary exchange, unless it does not list the coin), or None if unknown."""
     try:
-        return market_listing.pair_status(f"{sym}USDT")
+        return market_listing.pair_status(sym)
     except Exception:
         return None
 
@@ -596,7 +597,7 @@ def _record_market(sym: str, trading: bool, reason: str) -> None:
     record = market_listing.read_market_status(folder)
     if record is not None and record.get("trading") is trading:
         return
-    market_listing.write_market_status(folder, f"{sym}USDT", trading, reason)
+    market_listing.write_market_status(folder, f"{sym}-USD", trading, reason)
 
 
 def _note_coin_error(sym: str, exc) -> None:
@@ -775,7 +776,7 @@ def step_coin(sym: str):
     # A trained coin whose model files match no published manifest is held the same way.
     trained = _coin_is_trained(sym)
     if not trained or not _model_verified(sym):
-        # No bars are fetched for this coin below, so ask Binance directly whether its
+        # No bars are fetched for this coin below, so ask directly whether its
         # market still trades: a held coin must not keep getting DCA buys after a
         # delisting just because it is untrained (cached: one request per hour).
         status = _market_status(sym)

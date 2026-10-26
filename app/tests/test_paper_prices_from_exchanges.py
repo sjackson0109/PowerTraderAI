@@ -15,6 +15,9 @@ if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 import pt_multi_exchange  # noqa: E402
+
+# the real one: the isolation guard replaces it in every test
+REAL_MARKET_EXCHANGES = pt_multi_exchange.market_exchanges
 import trading_mode as tm  # noqa: E402
 from helpers import PaperTraderCase  # noqa: E402
 
@@ -23,6 +26,7 @@ def test_the_market_data_connection_writes_no_settings(monkeypatch):
     """Reading prices never creates the user's exchange settings: with no
     trading_config.json, the region's defaults are used in memory."""
     monkeypatch.setattr(pt_multi_exchange, "_shared", None)
+    monkeypatch.setattr(pt_multi_exchange, "market_exchanges", REAL_MARKET_EXCHANGES)
     monkeypatch.delenv("POWERTRADER_USER_REGION", raising=False)
     with mock.patch.object(pt_multi_exchange.ExchangeManager, "add_exchange") as add:
         add.return_value = True

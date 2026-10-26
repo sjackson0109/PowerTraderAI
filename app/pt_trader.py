@@ -926,7 +926,7 @@ class CryptoAPITrading:
 
     def _market_not_trading(self, symbol: str) -> Optional[str]:
         """Why ``symbol`` must get no buys, or None. The runner and the trainer record
-        in the coin's folder when its Binance market is not trading (delisted, halted,
+        in the coin's folder when its market is not trading (delisted, halted,
         or never listed): no entry and no DCA buy is made in such a coin. Sells are
         not blocked. The reason is printed once per coin."""
         sym = str(symbol).upper().strip()

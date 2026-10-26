@@ -74,7 +74,7 @@ class RecentCandles:
         self._ttl = ttl
         self._closed_bars = closed_bars
         self._clock = clock
-        self._listing = listing  # pair -> listing.PairStatus; None: the shared check
+        self._listing = listing  # symbol -> listing.PairStatus; None: shared check
         self._cache: Dict[Tuple[str, str], Tuple[float, str]] = {}
         self._lock = threading.Lock()
         self.last_source: Dict[Tuple[str, str], str] = {}  # (symbol, tf) -> exchange
@@ -139,16 +139,14 @@ class RecentCandles:
         return text
 
     def _market_status(self, symbol: str):
-        """The market's status, or None if the check itself failed. The check still
-        takes a USDT pair name; FDS-MX-001 phase D moves it onto the exchange
-        layer."""
-        pair = f"{symbol.split('-')[0]}USDT"
+        """The market's status from the exchanges in Settings, or None if the check
+        itself failed."""
         try:
             if self._listing is not None:
-                return self._listing(pair)
+                return self._listing(symbol)
             from market_data import listing
 
-            return listing.pair_status(pair)
+            return listing.pair_status(symbol)
         except Exception:
             return None
 

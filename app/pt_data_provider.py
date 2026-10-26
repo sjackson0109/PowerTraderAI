@@ -151,20 +151,20 @@ class DataProvider:
             **kwargs: Ignored (kept for older callers)
 
         Returns:
-            JSON rows, newest first: the forming bar, then the last few closed
-            bars, each [open_time_s, open, close, high, low, volume, turnover]
+            JSON rows, newest first: a placeholder for the forming bar, then the
+            last few closed bars, each [open_time_s, open, close, high, low,
+            volume, turnover]
 
         Raises:
-            MarketNotFound: the source lists no such market
+            MarketNotFound: no exchange in Settings has the market
             CandleDataError: the candles could not be read
         """
-        # Real recent candles from the pattern trainer's source (Binance spot
-        # <COIN>USDT), newest first in the KuCoin row order the neural runner
-        # parses. Independent of the multi-exchange connection, which only
-        # supplies current prices. MarketNotFound passes through.
-        from market_data.runner_history import kucoin_text
+        # Recent candles from the exchanges in Settings, primary first (FDS-MX-001
+        # phase C), newest first in the KuCoin-style row order the neural runner
+        # parses. MarketNotFound passes through.
+        from market_data.runner_history import history_text
 
-        return kucoin_text(coin, timeframe)
+        return history_text(coin, timeframe)
 
     def get_ticker_data(self, symbol: str) -> str:
         """

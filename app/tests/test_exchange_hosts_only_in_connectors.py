@@ -30,15 +30,6 @@ DIRECT = re.compile(
 
 # file (relative to app/, forward slashes) -> what it still uses directly
 KNOWN_BYPASSES = {
-    # phase C: neural runner price history, and its Robinhood fallback
-    "market_data/runner_history.py": {
-        "BinanceKlines",
-        "binance_interval",
-        "binance_pair",
-        "kucoin_text",
-    },
-    "pt_data_provider.py": {"kucoin_text"},
-    "pt_thinker.py": {"trading.robinhood.com"},
     # phase D: market status
     "market_data/listing.py": {"api.binance.com"},
     # phase E: strategy candles, backtests, chart pattern labels

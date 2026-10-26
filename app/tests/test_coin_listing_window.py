@@ -32,7 +32,7 @@ import trading_mode as tm  # noqa: E402
 from helpers import PaperTraderCase  # noqa: E402
 from market_data import candles, listing, runner_history  # noqa: E402
 from market_data.candles import CandleDataError  # noqa: E402
-from pt_exchange_abstraction import MarketNotFound  # noqa: E402
+from pt_exchange_abstraction import MarketNotFound, Sourced  # noqa: E402
 
 EPOCH = pd.Timestamp("1970-01-01", tz="UTC")
 LISTED = datetime(2024, 3, 4, tzinfo=timezone.utc)  # a Monday
@@ -402,27 +402,30 @@ def kline(open_s, close):
 
 
 class Klines:
+    """The exchange layer's candles: fixed bars, served by "fake"."""
+
     def __init__(self, rows):
         self.rows = rows
 
-    def fetch(self, symbol, tf, start_ms, end_ms=None):
-        return list(self.rows)
+    def __call__(self, symbol, tf, start_ms, end_ms, now_ms):
+        bars = [r for r in self.rows if start_ms <= r[0] <= end_ms]
+        return Sourced(bars, "fake", symbol, primary=True)
 
 
 def test_bars_that_stopped_from_a_closed_market_are_a_missing_market():
     forming = NOW - NOW % HOUR
     stale = [kline(forming - 3 * HOUR, 5.0)]  # nothing for the last two hours
     candles_ = runner_history.RecentCandles(
-        fetcher=Klines(stale), clock=lambda: NOW, listing=status_is("BREAK")
+        source=Klines(stale), clock=lambda: NOW, listing=status_is("BREAK")
     )
     with pytest.raises(MarketNotFound, match="HYPEUSDT is BREAK, not trading"):
-        candles_.kucoin_text("HYPE", "1hour")
+        candles_.history_text("HYPE", "1hour")
 
     gone = runner_history.RecentCandles(
-        fetcher=Klines([]), clock=lambda: NOW, listing=status_is(listing.NOT_LISTED)
+        source=Klines([]), clock=lambda: NOW, listing=status_is(listing.NOT_LISTED)
     )
     with pytest.raises(MarketNotFound, match="no spot market HYPEUSDT"):
-        gone.kucoin_text("HYPE", "1hour")
+        gone.history_text("HYPE", "1hour")
 
 
 def test_bars_that_stopped_while_binance_says_trading_or_cannot_say_are_waited_for():
@@ -431,10 +434,12 @@ def test_bars_that_stopped_while_binance_says_trading_or_cannot_say_are_waited_f
     stale = [kline(forming - 4 * HOUR, 5.0), kline(forming - 3 * HOUR, 5.5)]
     for status in (status_is(listing.TRADING), status_is(None)):
         stopped = runner_history.RecentCandles(
-            fetcher=Klines(stale), clock=lambda: NOW, listing=status
+            source=Klines(stale), clock=lambda: NOW, listing=status
         )
-        with pytest.raises(CandleDataError, match="no 1h candle for BTCUSDT since"):
-            stopped.kucoin_text("BTC", "1hour")
+        with pytest.raises(
+            CandleDataError, match="no 1h candle for BTC-USD on fake since"
+        ):
+            stopped.history_text("BTC", "1hour")
 
 
 def test_a_gap_in_a_trading_market_is_only_waiting_for_data():
@@ -445,18 +450,18 @@ def test_a_gap_in_a_trading_market_is_only_waiting_for_data():
         return listing.PairStatus(pair, listing.TRADING)
 
     empty = runner_history.RecentCandles(
-        fetcher=Klines([]), clock=lambda: NOW, listing=trading
+        source=Klines([]), clock=lambda: NOW, listing=trading
     )
     with pytest.raises(CandleDataError):
-        empty.kucoin_text("BTC", "1hour")
+        empty.history_text("BTC", "1hour")
     assert asked == ["BTCUSDT"]
 
     forming = NOW - NOW % HOUR
     fresh = [kline(forming - 2 * HOUR, 5.0), kline(forming - HOUR, 6.0)]
     ok = runner_history.RecentCandles(
-        fetcher=Klines(fresh), clock=lambda: NOW, listing=trading
+        source=Klines(fresh), clock=lambda: NOW, listing=trading
     )
-    assert json.loads(ok.kucoin_text("BTC", "1hour"))[1][2] == 6.0
+    assert json.loads(ok.history_text("BTC", "1hour"))[1][2] == 6.0
     assert asked == ["BTCUSDT"]  # the last closed bar is there: nothing to ask
 
 

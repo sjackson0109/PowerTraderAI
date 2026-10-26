@@ -2,8 +2,8 @@
 signal counts where the trader and the hub read them, and says TRAINING while a
 coin trains. The trader ignores signal files the runner has stopped updating.
 
-Everything runs under the isolation guard (app/conftest.py); no network: candle
-requests go to fakes.
+Everything runs under the isolation guard (app/conftest.py); no network: the
+exchange layer's candles and quotes are fakes.
 """
 
 import json
@@ -11,7 +11,6 @@ import os
 import sys
 import time
 import types
-import urllib.error
 from unittest import mock
 
 import pytest
@@ -23,27 +22,35 @@ if APP_DIR not in sys.path:
 import pt_data_provider  # noqa: E402
 import pt_hub  # noqa: E402
 from market_data import runner_history  # noqa: E402
-from market_data.candles import CandleFetchError  # noqa: E402
-from pt_exchange_abstraction import MarketNotFound  # noqa: E402
+from pt_exchange_abstraction import MarketNotFound, PriceQuote, Sourced  # noqa: E402
 
 HOUR = 3600
 NOW = 1_760_000_000 + 1800  # half way through an hour bar
 
 
-def kline(open_s, o, h, lo, c, quote_volume=10.0):
-    """A Binance klines row: [open ms, o, h, l, c, volume, close ms, quote volume, ...]."""
-    return [open_s * 1000, str(o), str(h), str(lo), str(c), "1.5", 0, str(quote_volume)]
+def kline(open_s, o, h, lo, c):
+    """One bar as the exchange layer gives it: [open ms, o, h, l, c, volume]."""
+    return [open_s * 1000, float(o), float(h), float(lo), float(c), 1.5]
 
 
-class FakeKlines:
-    def __init__(self, rows=None, error=None):
-        self.rows, self.error, self.calls = rows or [], error, []
+class FakeSource:
+    """The exchange layer's candles (``market_exchanges().candles``): the closed
+    bars in the range asked for, as served by ``exchange``."""
 
-    def fetch(self, symbol, tf, start_ms, end_ms=None):
-        self.calls.append((symbol, tf, start_ms))
+    def __init__(self, rows=None, error=None, exchange="coinbase"):
+        self.rows, self.error, self.exchange, self.calls = (
+            rows or [],
+            error,
+            exchange,
+            [],
+        )
+
+    def __call__(self, symbol, tf, start_ms, end_ms, now_ms):
+        self.calls.append((symbol, tf, start_ms, end_ms, now_ms))
         if self.error:
             raise self.error
-        return list(self.rows)
+        bars = [r for r in self.rows if start_ms <= r[0] <= end_ms]
+        return Sourced(bars, self.exchange, symbol, primary=True)
 
 
 def hour_rows():
@@ -51,75 +58,65 @@ def hour_rows():
     return [
         kline(forming - 2 * HOUR, 100, 103, 99, 102),
         kline(forming - HOUR, 102, 106, 101, 105),
-        kline(forming, 105, 107, 104, 106),  # still forming
     ]
 
 
 def test_recent_candles_are_newest_first_in_the_runners_row_order():
-    fake = FakeKlines(hour_rows())
-    candles = runner_history.RecentCandles(fetcher=fake, clock=lambda: NOW)
-    rows = json.loads(candles.kucoin_text("BTC-USDT", "1hour"))
+    fake = FakeSource(hour_rows())
+    candles = runner_history.RecentCandles(source=fake, clock=lambda: NOW)
+    rows = json.loads(candles.history_text("BTC-USDT", "1hour"))
     forming = NOW - NOW % HOUR
-    # [time_s, open, close, high, low, volume, turnover]
-    assert rows[0] == [forming, 105.0, 106.0, 107.0, 104.0, 1.5, 10.0]
-    assert rows[1] == [forming - HOUR, 102.0, 105.0, 106.0, 101.0, 1.5, 10.0]
+    # [time_s, open, close, high, low, volume, turnover]; row 0 stands for the
+    # forming bar: flat at the last close
+    assert rows[0] == [forming, 105.0, 105.0, 105.0, 105.0, 0.0, 0.0]
+    assert rows[1] == [forming - HOUR, 102.0, 105.0, 106.0, 101.0, 1.5, 0.0]
     assert rows[2][0] == forming - 2 * HOUR
-    assert fake.calls == [("BTCUSDT", "1h", (forming - 3 * HOUR) * 1000)]
+    start, end = (forming - 3 * HOUR) * 1000, (forming - HOUR) * 1000
+    assert fake.calls == [("BTC-USD", "1h", start, end, NOW * 1000)]
+    assert candles.last_source[("BTC-USD", "1h")] == "coinbase"
 
 
 def test_recent_candles_are_reused_for_a_short_while():
-    fake = FakeKlines(hour_rows())
+    fake = FakeSource(hour_rows())
     clock = [NOW]
-    candles = runner_history.RecentCandles(fetcher=fake, ttl=30, clock=lambda: clock[0])
-    first = candles.kucoin_text("BTC", "1hour")
+    candles = runner_history.RecentCandles(source=fake, ttl=30, clock=lambda: clock[0])
+    first = candles.history_text("BTC", "1hour")
     clock[0] += 10
-    assert candles.kucoin_text("BTCUSDT", "1h") == first
+    assert candles.history_text("BTCUSDT", "1h") == first
     assert len(fake.calls) == 1
     clock[0] += 30
-    candles.kucoin_text("BTC", "1hour")
+    candles.history_text("BTC", "1hour")
     assert len(fake.calls) == 2
 
 
-def test_a_bar_with_no_trade_yet_gets_a_flat_placeholder():
-    fake = FakeKlines(hour_rows()[:2])  # Binance sent no forming bar
-    candles = runner_history.RecentCandles(fetcher=fake, clock=lambda: NOW)
-    rows = json.loads(candles.kucoin_text("BTC", "1hour"))
-    assert rows[0] == [NOW - NOW % HOUR, 105.0, 105.0, 105.0, 105.0, 0.0, 0.0]
-    assert rows[1][2] == 105.0
-
-
 def test_weekly_bars_open_on_monday():
-    fake = FakeKlines([])
+    fake = FakeSource([])
     candles = runner_history.RecentCandles(
-        fetcher=fake, clock=lambda: NOW, listing=lambda pair: None  # no network
+        source=fake, clock=lambda: NOW, listing=lambda pair: None  # no network
     )
     with pytest.raises(Exception):
-        candles.kucoin_text("ETH", "1week")  # no closed bar in the fake
-    symbol, tf, start_ms = fake.calls[0]
-    assert (symbol, tf) == ("ETHUSDT", "1w")
+        candles.history_text("ETH", "1week")  # no closed bar in the fake
+    symbol, tf, start_ms, _, _ = fake.calls[0]
+    assert (symbol, tf) == ("ETH-USD", "1w")
     assert time.gmtime(start_ms // 1000).tm_wday == 0  # Monday 00:00 UTC
     assert start_ms // 1000 % 86400 == 0
 
 
-def test_an_unknown_symbol_is_a_missing_market():
-    http = urllib.error.HTTPError("u", 400, "Bad Request", {}, None)
-    error = CandleFetchError("klines HTTP 400 for HYPEUSDT 1h")
-    error.__cause__ = http
+def test_a_coin_no_exchange_lists_is_a_missing_market():
+    gone = MarketNotFound("No exchange has a market for HYPE-USD")
     candles = runner_history.RecentCandles(
-        fetcher=FakeKlines(error=error), clock=lambda: NOW
+        source=FakeSource(error=gone), clock=lambda: NOW
     )
-    with pytest.raises(MarketNotFound, match="no spot market HYPEUSDT"):
-        candles.kucoin_text("HYPE-USDT", "1hour")
+    with pytest.raises(MarketNotFound, match="No exchange has a market for HYPE-USD"):
+        candles.history_text("HYPE-USDT", "1hour")
 
 
-def test_the_data_provider_serves_history_without_the_exchange_connection(
-    monkeypatch,
-):
+def test_the_data_provider_serves_history_from_the_exchange_layer(monkeypatch):
     provider = pt_data_provider.DataProvider.__new__(pt_data_provider.DataProvider)
-    provider.initialized = False  # e.g. Coinbase could not be reached
+    provider.initialized = False  # its own connection is not needed
     provider.multi_exchange = None
     shared = runner_history.RecentCandles(
-        fetcher=FakeKlines(hour_rows()), clock=lambda: NOW
+        source=FakeSource(hour_rows()), clock=lambda: NOW
     )
     monkeypatch.setattr(runner_history, "_shared", shared)
     rows = json.loads(provider.get_historical_data("BTC-USDT", "1hour"))
@@ -163,8 +160,8 @@ def runner():
 
 def history_text():
     return runner_history.RecentCandles(
-        fetcher=FakeKlines(hour_rows()), clock=lambda: NOW
-    ).kucoin_text("BTC", "1hour")
+        source=FakeSource(hour_rows()), clock=lambda: NOW
+    ).history_text("BTC", "1hour")
 
 
 def test_the_runner_reads_the_last_closed_bar(runner, monkeypatch):
@@ -193,15 +190,16 @@ def test_a_failing_source_is_retried_briefly_then_skipped(runner, monkeypatch):
     assert len(sleeps) == runner._HISTORY_ATTEMPTS - 1
 
 
-def test_the_current_price_falls_back_to_the_candles(runner, monkeypatch):
-    def no_market(symbol):
-        raise RuntimeError("Coinbase has no market BNB-USD")
+def test_the_current_price_is_the_exchanges_best_ask(runner, monkeypatch):
+    asked = []
+    monkeypatch.setattr(runner, "current_ask", lambda s: asked.append(s) or 106.0)
+    assert runner._current_price("BNB") == 106.0
+    assert asked == ["BNB-USD"]
 
-    monkeypatch.setattr(runner, "robinhood_current_ask", no_market)
-    monkeypatch.setattr(runner, "data_provider", TextProvider(history_text()))
-    assert runner._current_price("BNB") == 106.0  # the forming bar's latest close
-    monkeypatch.setattr(runner, "data_provider", TextProvider(error=OSError("dns")))
-    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    def no_quote(symbol):
+        raise RuntimeError("no exchange in Settings gave a price for BNB-USD")
+
+    monkeypatch.setattr(runner, "current_ask", no_quote)
     with pytest.raises(runner.CoinDataError, match="no current price for BNB"):
         runner._current_price("BNB")
 
@@ -342,12 +340,13 @@ def test_a_stopped_trainer_is_not_left_marked_training(tmp_path):
 
 def test_recent_candles_are_fetched_again_once_the_bar_closes():
     forming = NOW - NOW % HOUR
-    fake = FakeKlines(hour_rows())
+    fake = FakeSource(hour_rows())
     clock = [forming + HOUR - 10]
-    candles = runner_history.RecentCandles(fetcher=fake, ttl=30, clock=lambda: clock[0])
-    candles.kucoin_text("BTC", "1hour")
+    candles = runner_history.RecentCandles(source=fake, ttl=30, clock=lambda: clock[0])
+    candles.history_text("BTC", "1hour")
     clock[0] = forming + HOUR + 5  # inside the ttl, but the bar has closed
-    candles.kucoin_text("BTC", "1hour")
+    with pytest.raises(Exception):  # the fake has no bar for the hour just closed
+        candles.history_text("BTC", "1hour")
     assert len(fake.calls) == 2
 
 
@@ -436,25 +435,30 @@ def test_the_runner_takes_current_prices_from_the_shared_exchange_manager(
 ):
     """#144 removed pt_multi_exchange.multi_exchange_manager (built at import), and
     the runner's import of it failed on every price: "Multi-exchange system not
-    available, using legacy Robinhood". It now uses shared_manager(), which connects
-    for public prices without credentials."""
+    available, using legacy Robinhood". It now asks the shared manager's quotes
+    (market_exchanges: public prices, no credentials, nothing written), primary
+    exchange first; there is no Robinhood fallback (FDS-MX-001 decision D4)."""
     import pt_multi_exchange
 
     class Manager:
         initialized = False
 
-        def initialize(self, user_region=None, with_credentials=False):
+        def initialize(
+            self, user_region=None, with_credentials=False, save_defaults=True
+        ):
             self.initialized, self.with_credentials = True, with_credentials
+            self.save_defaults = save_defaults
             return True
 
-        def get_current_price(self, symbol):
-            return 123.45
+        def quote(self, symbol):
+            return Sourced(PriceQuote(123.0, 123.45, None), "coinbase", symbol, True)
 
     monkeypatch.setattr(pt_multi_exchange, "_shared", None)
     monkeypatch.setattr(pt_multi_exchange, "MultiExchangeManager", Manager)
-    assert runner.robinhood_current_ask("BTC-USD") == 123.45
+    assert runner.current_ask("BTC-USD") == 123.45
     manager = pt_multi_exchange.shared_manager()
     assert manager is pt_multi_exchange.shared_manager()  # one per process
     assert manager.with_credentials is False  # market data reads no credentials
+    assert manager.save_defaults is False  # and writes no settings
     out = capsys.readouterr().out
     assert "not available" not in out and "legacy Robinhood" not in out

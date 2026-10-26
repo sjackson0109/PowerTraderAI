@@ -30,8 +30,7 @@ DIRECT = re.compile(
 
 # file (relative to app/, forward slashes) -> what it still uses directly
 KNOWN_BYPASSES = {
-    # phase G: hub chart, Market Data tab, unused module
-    "pt_hub.py": {"api.kucoin.com", "kucoin.client"},
+    # phase G: the Market Data tab
     "real_time_market_data.py": {
         "ccxt.binance(",
         "ccxt.coinbase(",
@@ -39,7 +38,6 @@ KNOWN_BYPASSES = {
         "stream.binance.com",
         "ws-feed.exchange.coinbase.com",
     },
-    "pt_async_patterns.py": {"api.binance.com"},
 }
 
 

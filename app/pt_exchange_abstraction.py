@@ -635,6 +635,7 @@ class ExchangeManager:
         end_ms: int,
         now_ms: Optional[int] = None,
         only: Optional[str] = None,
+        closed_only: bool = True,
     ) -> Sourced:
         """Closed ``tf`` bars of ``symbol`` opening from ``start_ms`` to ``end_ms``
         (inclusive), oldest first, as ``[open_time_ms, open, high, low, close,
@@ -648,7 +649,9 @@ class ExchangeManager:
         from a smaller one it does (``Sourced.built_from``).
 
         ``only`` asks that one exchange and no other (a cached series is topped up
-        from the exchange it came from).
+        from the exchange it came from). ``closed_only=False`` keeps the bar still
+        forming too, where the exchange serves that size itself (a chart shows it; a
+        built size has no forming bar, as its group is not complete).
 
         Raises MarketNotFound when every exchange asked has no market for the coin,
         otherwise MarketDataUnavailable with each exchange's answer."""
@@ -688,10 +691,11 @@ class ExchangeManager:
                 continue
             if fetch_tf != tf:
                 rows = build_candles(rows, fetch_tf, tf)
+            last_open = now_ms - step_ms if closed_only else now_ms
             bars = {
                 int(r[0]): r
                 for r in rows
-                if start_ms <= int(r[0]) <= end_ms and int(r[0]) + step_ms <= now_ms
+                if start_ms <= int(r[0]) <= min(end_ms, last_open)
             }
             series = [bars[t] for t in sorted(bars)]
             built = fetch_tf if fetch_tf != tf else ""

@@ -462,88 +462,6 @@ class AsyncBatch:
         return results
 
 
-class AsyncMarketDataFetcher:
-    """
-    Specialized async fetcher for market data with caching and error handling.
-    """
-
-    def __init__(self, http_client: AsyncHTTPClient = None, cache_manager=None):
-        self.http_client = http_client or AsyncHTTPClient()
-        self.cache_manager = cache_manager
-        self.rate_limiter = AsyncRateLimiter(rate=10.0, burst=20)  # 10 requests/sec
-
-    async def fetch_ticker(self, symbol: str, exchange: str = "binance") -> AsyncResult:
-        """Fetch ticker data for a symbol."""
-        cache_key = f"ticker_{exchange}_{symbol}"
-
-        # Check cache first
-        if self.cache_manager:
-            cached_data = self.cache_manager.get_market_data(cache_key)
-            if cached_data:
-                return AsyncResult(success=True, data=cached_data)
-
-        # Fetch from API
-        await self.rate_limiter.acquire()
-
-        if exchange.lower() == "binance":
-            url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
-        else:
-            return AsyncResult(success=False, error=f"Unsupported exchange: {exchange}")
-
-        result = await self.http_client.get(url)
-
-        # Cache successful results
-        if result.success and self.cache_manager:
-            self.cache_manager.cache_market_data(cache_key, result.data, ttl_seconds=60)
-
-        return result
-
-    async def fetch_multiple_tickers(
-        self, symbols: List[str], exchange: str = "binance"
-    ) -> List[AsyncResult]:
-        """Fetch ticker data for multiple symbols."""
-        batch = AsyncBatch(batch_size=10, max_concurrent=5)
-
-        async def fetch_single(symbol):
-            return await self.fetch_ticker(symbol, exchange)
-
-        return await batch.process_batch(symbols, fetch_single)
-
-    async def fetch_klines(
-        self,
-        symbol: str,
-        interval: str = "1h",
-        limit: int = 100,
-        exchange: str = "binance",
-    ) -> AsyncResult:
-        """Fetch kline/candlestick data."""
-        cache_key = f"klines_{exchange}_{symbol}_{interval}_{limit}"
-
-        # Check cache first
-        if self.cache_manager:
-            cached_data = self.cache_manager.get_market_data(cache_key)
-            if cached_data:
-                return AsyncResult(success=True, data=cached_data)
-
-        # Fetch from API
-        await self.rate_limiter.acquire()
-
-        if exchange.lower() == "binance":
-            url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
-        else:
-            return AsyncResult(success=False, error=f"Unsupported exchange: {exchange}")
-
-        result = await self.http_client.get(url)
-
-        # Cache successful results
-        if result.success and self.cache_manager:
-            self.cache_manager.cache_market_data(
-                cache_key, result.data, ttl_seconds=300
-            )
-
-        return result
-
-
 def async_to_sync(async_func: Callable[..., Awaitable[Any]]) -> Callable[..., Any]:
     """
     Decorator to convert async function to sync by running in event loop.
@@ -624,16 +542,6 @@ def get_task_queue() -> AsyncTaskQueue:
 if __name__ == "__main__":
     # Example usage
     async def main():
-        # HTTP client example
-        http_client = AsyncHTTPClient()
-        result = await http_client.get(
-            "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT"
-        )
-        print(
-            f"HTTP Result: {result.success}, Data: {result.data if result.success else result.error}"
-        )
-        await http_client.close()
-
         # File operations example
         file_manager = AsyncFileManager()
         write_result = await file_manager.write_json_file("test.json", {"test": "data"})
@@ -658,12 +566,6 @@ if __name__ == "__main__":
         )
 
         await task_queue.stop()
-
-        # Market data fetcher example
-        market_fetcher = AsyncMarketDataFetcher()
-        ticker_result = await market_fetcher.fetch_ticker("BTCUSDT")
-        print(f"Ticker Result: {ticker_result.success}")
-        await market_fetcher.http_client.close()
 
     # Run the example
     asyncio.run(main())

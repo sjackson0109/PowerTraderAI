@@ -44,7 +44,7 @@ Found by searching all tracked app code for exchange hosts and names, 2026-10-25
 | 10 | Hub chart candles | `pt_hub.CandleFetcher` | KuCoin `{COIN}-USDT` | upstream |
 | 11 | Hub "Market Data" tab | `real_time_market_data.py`, `real_time_market_data_gui.py` | its own ccxt clients (Binance, Coinbase, Kraken) and Binance/Coinbase websockets; default selection "binance" | `3d59d58`, 2026-02-24 |
 
-Also: `pt_async_patterns.py` holds Binance ticker and kline URLs, but no module imports it.
+Also: `pt_async_patterns.py` holds Binance ticker and kline URLs. No app module imports it, but `test_phase1_phase2_integration.py` tests its async helpers (found while building phase G).
 
 These stay as they are (they are not data sources):
 
@@ -219,12 +219,15 @@ Split as built (2026-10-26): the trainer fills the candle cache that the STRAT-0
 
 **After merge:** retrain every coin (decision D5).
 
-### Phase G — hub chart, Market Data tab, unused module (rows 10–11)
+### Phase G — hub chart, Market Data tab, `pt_async_patterns` (rows 10–11)
 
-**Scope:**
-- `CandleFetcher` reads through the layer, primary first, and shows which exchange the chart is from.
-- The Market Data tab lists the exchanges in Settings with the primary selected (decision D9).
-- `pt_async_patterns.py`, imported by nothing, is deleted (decision D10).
+As built (2026-10-26), in two commits:
+
+- **G1, the hub chart.**
+  - `CandleFetcher` reads through the layer, primary first, including the bar still forming where the exchange serves that size itself.
+  - It records the exchange it read, for logs, but the chart doesn't show it: FDS-CHART-001 §7.1 (owner, 2026-10-13) keeps data-provider names off the screen.
+- **G1, `pt_async_patterns.py`.** It isn't deleted, because a CI test uses its async helpers. Only its Binance-only `AsyncMarketDataFetcher`, which nothing uses, goes, along with the Binance URL in its demo.
+- **G2, the Market Data tab.** It lists the exchanges in Settings with the primary selected (decision D9). Its feeds poll each exchange's public quote through the layer, replacing its own ccxt clients and websockets.
 
 ### Phase H — docs, fakes and the empty allowlist
 
@@ -262,6 +265,7 @@ Split as built (2026-10-26): the trainer fills the candle cache that the STRAT-0
 | D8 | Whose market status counts for a coin? | **The exchange that serves the coin's data** (the primary, unless it doesn't list the coin) | The primary's only |
 | D9 | The Market Data tab | **Rewire it to the exchanges in Settings** | Remove the tab |
 | D10 | `pt_async_patterns.py` (imported by nothing) | **Delete it** | Rewire it |
+| D10, as built (2026-10-26) | A CI test imports `pt_async_patterns.py` for its async helpers, so it stays. Its Binance-only market-data fetcher is removed. | — | — |
 
 ## 9. Out of scope
 

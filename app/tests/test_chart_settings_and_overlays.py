@@ -345,7 +345,7 @@ def as_candles(bars, shift=0):
     ]
 
 
-class FakeKuCoin:
+class FakeCandles:
     def __init__(self, candles):
         self.candles = candles
 
@@ -398,7 +398,7 @@ def make_chart(tk_root, tmp_path, monkeypatch):
             + "\n"
         )
         chart = pt_hub.CandleChart(
-            tk_root, FakeKuCoin(candles), "BTC", lambda: settings, str(history)
+            tk_root, FakeCandles(candles), "BTC", lambda: settings, str(history)
         )
         fake = FakeBars(bars if bars is not None else [])
         chart.pattern_layer.fetch_bars = fake

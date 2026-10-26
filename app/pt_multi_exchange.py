@@ -448,7 +448,14 @@ class MultiExchangeManager:
         return self.exchange_manager.min_order_usd(symbol)
 
     def candles(
-        self, symbol: str, tf: str, start_ms: int, end_ms: int, now_ms=None, only=None
+        self,
+        symbol: str,
+        tf: str,
+        start_ms: int,
+        end_ms: int,
+        now_ms=None,
+        only=None,
+        closed_only: bool = True,
     ):
         """Closed ``tf`` candles from the primary exchange, else the next that can
         serve the whole range; ``only`` asks one exchange (``ExchangeManager.candles``).
@@ -457,7 +464,7 @@ class MultiExchangeManager:
             raise RuntimeError("MultiExchangeManager not initialized")
 
         return self.exchange_manager.candles(
-            symbol, tf, start_ms, end_ms, now_ms, only=only
+            symbol, tf, start_ms, end_ms, now_ms, only=only, closed_only=closed_only
         )
 
     def market_status(self, symbol: str):

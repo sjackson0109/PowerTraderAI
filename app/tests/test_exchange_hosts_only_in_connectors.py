@@ -28,19 +28,9 @@ DIRECT = re.compile(
     r"|\bfetch_binance_btc_price\b|\bkucoin_text\b|\bbinance_pair\b|\bbinance_interval\b"
 )
 
-# file (relative to app/, forward slashes) -> what it still uses directly
-KNOWN_BYPASSES = {
-    # phase G: hub chart, Market Data tab, unused module
-    "pt_hub.py": {"api.kucoin.com", "kucoin.client"},
-    "real_time_market_data.py": {
-        "ccxt.binance(",
-        "ccxt.coinbase(",
-        "ccxt.kraken(",
-        "stream.binance.com",
-        "ws-feed.exchange.coinbase.com",
-    },
-    "pt_async_patterns.py": {"api.binance.com"},
-}
+# file (relative to app/, forward slashes) -> what it still uses directly. Empty:
+# FDS-MX-001 phases A-G moved every one onto the exchange layer (2026-10-26).
+KNOWN_BYPASSES = {}
 
 
 def app_sources():

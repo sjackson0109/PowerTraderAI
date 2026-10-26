@@ -786,33 +786,25 @@ def read_short_signal(folder: str) -> int:
 
 
 # -----------------------------
-# Candle fetching (KuCoin)
+# Candle fetching: the exchanges in Settings, primary first (FDS-MX-001 phase G)
 # -----------------------------
 
 
 class CandleFetcher:
     """
-    Uses kucoin-python if available; otherwise falls back to KuCoin REST via requests.
+    The chart's candles from the exchanges in Settings: the primary exchange, else the
+    next that serves the coin (``pt_multi_exchange.market_exchanges``). The bar still
+    forming is included where the exchange serves that candle size itself.
+    ``last_source`` names the exchange and market each chart's candles came from (for
+    logs: the chart itself never names a data provider, FDS-CHART-001 section 7.1).
     """
 
-    def __init__(self):
-        self._mode = "kucoin_client"
-        self._market = None
-        try:
-            from kucoin.client import Market  # type: ignore
-
-            self._market = Market(url="https://api.kucoin.com")
-        except Exception:
-            self._mode = "rest"
-            self._market = None
-
-        if self._mode == "rest":
-            import requests  # local import
-
-            self._requests = requests
+    def __init__(self, manager=None):
+        self._manager = manager  # None: the shared exchange layer
+        self.last_source: Dict[Tuple[str, str], str] = {}
 
         # Enhanced in-memory cache with automatic cleanup
-        # key: (pair, timeframe, limit) -> (saved_time_epoch, candles, access_count)
+        # key: (symbol, timeframe, limit) -> (saved_time_epoch, candles, access_count)
         self._cache: Dict[Tuple[str, str, int], Tuple[float, List[dict], int]] = {}
         self._cache_ttl_seconds: float = 10.0
         self._cache_max_entries: int = 50  # Prevent unlimited memory growth
@@ -823,14 +815,19 @@ class CandleFetcher:
         Returns candles oldest->newest as:
           [{"ts": int, "open": float, "high": float, "low": float, "close": float}, ...]
         """
-        symbol = symbol.upper().strip()
+        from candlestick_patterns import HUB_TO_CANDLE
+        from market_data.timeframes import candle_timeframe_seconds
 
-        # Your neural uses USDT pairs on KuCoin (ex: BTC-USDT)
-        pair = f"{symbol}-USDT"
+        symbol = symbol.upper().strip()
         limit = int(limit or 0)
+        tf = HUB_TO_CANDLE.get(timeframe, timeframe)
+        try:
+            step = candle_timeframe_seconds(tf)
+        except ValueError:
+            return []
 
         now = time.time()
-        cache_key = (pair, timeframe, limit)
+        cache_key = (symbol, timeframe, limit)
         cached = self._cache.get(cache_key)
         if (
             cached
@@ -846,85 +843,37 @@ class CandleFetcher:
         if len(self._cache) > self._cache_cleanup_threshold:
             self._cleanup_cache()
 
-        # rough window (timeframe-dependent) so we get enough candles
-        tf_seconds = {
-            "1min": 60,
-            "5min": 300,
-            "15min": 900,
-            "30min": 1800,
-            "1hour": 3600,
-            "2hour": 7200,
-            "4hour": 14400,
-            "8hour": 28800,
-            "12hour": 43200,
-            "1day": 86400,
-            "1week": 604800,
-        }.get(timeframe, 3600)
-
-        end_at = int(now)
-        start_at = end_at - (tf_seconds * max(200, (limit + 50) if limit else 250))
-
-        if self._mode == "kucoin_client" and self._market is not None:
-            try:
-                # IMPORTANT: limit the server response by passing startAt/endAt.
-                # This avoids downloading a huge default kline set every switch.
-                try:
-                    raw = self._market.get_kline(pair, timeframe, startAt=start_at, endAt=end_at)  # type: ignore
-                except Exception:
-                    # fallback if that client version doesn't accept kwargs
-                    raw = self._market.get_kline(
-                        pair, timeframe
-                    )  # returns newest->oldest
-
-                candles: List[dict] = []
-                for row in raw:
-                    # KuCoin kline row format:
-                    # [time, open, close, high, low, volume, turnover]
-                    ts = int(float(row[0]))
-                    o = float(row[1])
-                    c = float(row[2])
-                    h = float(row[3])
-                    l = float(row[4])
-                    candles.append(
-                        {"ts": ts, "open": o, "high": h, "low": l, "close": c}
-                    )
-                candles.sort(key=lambda x: x["ts"])
-                if limit and len(candles) > limit:
-                    candles = candles[-limit:]
-
-                self._cache[cache_key] = (now, candles, 1)
-                return candles
-            except Exception:
-                return []
-
-        # REST fallback
+        # enough bars back for the window (and a little more), up to now
+        now_ms = int(now * 1000)
+        start_ms = now_ms - step * 1000 * (max(limit, 1) + 2)
         try:
-            url = "https://api.kucoin.com/api/v1/market/candles"
-            params = {
-                "symbol": pair,
-                "type": timeframe,
-                "startAt": start_at,
-                "endAt": end_at,
-            }
-            resp = self._requests.get(url, params=params, timeout=10)
-            j = resp.json()
-            data = j.get("data", [])  # newest->oldest
-            candles: List[dict] = []
-            for row in data:
-                ts = int(float(row[0]))
-                o = float(row[1])
-                c = float(row[2])
-                h = float(row[3])
-                l = float(row[4])
-                candles.append({"ts": ts, "open": o, "high": h, "low": l, "close": c})
-            candles.sort(key=lambda x: x["ts"])
-            if limit and len(candles) > limit:
-                candles = candles[-limit:]
+            if self._manager is not None:
+                manager = self._manager
+            else:
+                from pt_multi_exchange import market_exchanges
 
-            self._cache[cache_key] = (now, candles, 1)
-            return candles
+                manager = market_exchanges()
+            answer = manager.candles(
+                f"{symbol}-USD", tf, start_ms, now_ms, now_ms, closed_only=False
+            )
         except Exception:
             return []
+
+        candles: List[dict] = [
+            {
+                "ts": int(r[0]) // 1000,
+                "open": float(r[1]),
+                "high": float(r[2]),
+                "low": float(r[3]),
+                "close": float(r[4]),
+            }
+            for r in answer.value
+        ]
+        if limit and len(candles) > limit:
+            candles = candles[-limit:]
+        self.last_source[(symbol, timeframe)] = f"{answer.exchange} {answer.pair}"
+        self._cache[cache_key] = (now, candles, 1)
+        return candles
 
     def _cleanup_cache(self) -> None:
         """Clean up old cache entries to prevent unlimited memory growth."""

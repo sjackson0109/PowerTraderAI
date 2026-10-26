@@ -99,7 +99,17 @@ def test_market_data_connects_without_reading_a_credential(manager, reads, conne
     the runner and trainer processes, which only need public prices."""
     assert MultiExchangeManager(manager).initialize("GLOBAL")
     assert reads == []
-    assert connects == [("binance", {})]
+    assert connects == [("binance", {"api_key": "", "api_secret": ""})]
+
+
+def test_the_market_data_connectors_are_made_without_a_credential(manager, reads):
+    """The connectors themselves, not only the manager's request: the exchange
+    factory looks credentials up whenever it is given none."""
+    multi = MultiExchangeManager(manager)
+    assert multi.initialize("GLOBAL")
+    assert reads == []
+    (binance,) = multi.exchange_manager.exchanges.values()
+    assert (binance.api_key, binance.api_secret) == ("", "")
 
 
 def test_a_connection_with_credentials_reads_only_its_own_exchanges(

@@ -1,7 +1,9 @@
-"""Shared test helpers: a fake Binance public endpoint and a paper-trader harness.
+"""Shared test helpers: fake exchange-layer quotes and minimum orders, and a
+paper-trader harness.
 
-Nothing here (or in any test using it) touches the network: `urlopen` inside
-trading_mode is replaced for the duration of every test.
+Nothing here (or in any test using it) touches the network: the exchange layer's
+quotes (``trading_mode._layer_quote``) and the trader's exchanges in Settings
+(``pt_trader._market_exchanges``) are replaced for the duration of every test.
 """
 
 from __future__ import annotations
@@ -12,8 +14,7 @@ import sys
 import tempfile
 import time
 import unittest
-from email.utils import formatdate
-from typing import Dict, List, Optional
+from typing import List, Optional
 from unittest import mock
 
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +24,7 @@ if APP_DIR not in sys.path:
 import pandas as pd  # noqa: E402
 
 import trading_mode as tm  # noqa: E402
+from pt_exchange_abstraction import PriceQuote, Sourced  # noqa: E402
 
 
 def make_candles(closes, start="2026-01-01", tf_seconds=3600, opens=None, wick=0.001):
@@ -78,46 +80,31 @@ class Feed:
         return closed.tail(n).reset_index(drop=True)
 
 
-class _FakeResponse:
-    def __init__(self, payload: dict, headers: Dict[str, str]):
-        self._body = json.dumps(payload).encode("utf-8")
-        self.headers = headers
-
-    def read(self) -> bytes:
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-class FakeBinance:
-    """Stands in for Binance's public bookTicker endpoint.
-
-    Records every requested URL so tests can assert that only the public ticker
-    was ever called.
+class FakeQuotes:
+    """Stands in for the exchange layer's quotes (``trading_mode._layer_quote``):
+    the exchanges in Settings, primary first. It answers as ``exchange`` with the
+    pair ``<COIN>-USD``, and records every coin it was asked about.
     """
 
     def __init__(self) -> None:
-        self.urls: List[str] = []
+        self.asked: List[str] = []
         self.bid = 99.0
         self.ask = 101.0
-        self.reachable = True
-        self.age_s = 0.0  # server Date header = now - age_s
-        self.send_date = True
+        self.reachable = True  # False: no exchange gives a quote
+        self.age_s = 0.0  # the exchange's time for the quote = now - age_s
+        self.send_date = True  # False: the exchange gives no time for the quote
+        self.exchange = "coinbase"
 
-    def __call__(self, url, timeout=None):
-        self.urls.append(url)
+    def layer_quote(self, base: str) -> Optional[Sourced]:
+        self.asked.append(base)
         if not self.reachable:
-            raise OSError("fake: Binance unreachable")
-        headers = {}
-        if self.send_date:
-            headers["Date"] = formatdate(time.time() - self.age_s, usegmt=True)
-        return _FakeResponse(
-            {"symbol": "BTCUSDT", "bidPrice": str(self.bid), "askPrice": str(self.ask)},
-            headers,
+            return None
+        quote_ts = time.time() - self.age_s if self.send_date else None
+        return Sourced(
+            PriceQuote(self.bid, self.ask, quote_ts),
+            exchange=self.exchange,
+            pair=f"{base}-USD",
+            primary=True,
         )
 
 
@@ -136,8 +123,8 @@ class FakeMarkets:
 
 
 class PaperTraderCase(unittest.TestCase):
-    """A paper trader in a temp dir with a fake Binance price feed, fake exchanges
-    in Settings (FakeMarkets) and no real network."""
+    """A paper trader in a temp dir with fake exchange-layer quotes (FakeQuotes),
+    fake exchanges in Settings (FakeMarkets) and no real network."""
 
     @classmethod
     def setUpClass(cls):
@@ -154,11 +141,11 @@ class PaperTraderCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
 
-        self.binance = FakeBinance()
+        self.quotes = FakeQuotes()
         self.markets = FakeMarkets()
         for p in (
             mock.patch.object(self.pt_trader, "HUB_DATA_DIR", self.tmp.name),
-            mock.patch.object(tm.urllib.request, "urlopen", self.binance),
+            mock.patch.object(tm, "_layer_quote", self.quotes.layer_quote),
             mock.patch.object(
                 self.pt_trader, "_market_exchanges", lambda: self.markets
             ),

@@ -221,8 +221,12 @@ class ExchangeConfigManager:
                 pt_secrets.set_credentials(ex.exchange_type, values)
                 ex.credential_source = pt_secrets.SOURCE_KEYRING
 
-    def create_default_config(self, user_region: str = "GLOBAL") -> TradingConfig:
-        """Create default configuration based on user region"""
+    def create_default_config(
+        self, user_region: str = "GLOBAL", save: bool = True
+    ) -> TradingConfig:
+        """The default configuration for ``user_region``, saved to
+        ``trading_config.json`` unless ``save`` is False (then it is used in memory
+        only)."""
         exchanges = []
         primary = ""
 
@@ -272,6 +276,10 @@ class ExchangeConfigManager:
         config = TradingConfig(
             user_region=user_region, primary_exchange=primary, exchanges=exchanges
         )
+
+        if not save:
+            self.config = config
+            return config
 
         # Defaults never silently replace a file: an existing one is kept (#144)
         if os.path.exists(self.config_file):
@@ -348,7 +356,10 @@ class MultiExchangeManager:
         self.initialized = False
 
     def initialize(
-        self, user_region: str = None, with_credentials: bool = False
+        self,
+        user_region: str = None,
+        with_credentials: bool = False,
+        save_defaults: bool = True,
     ) -> bool:
         """Connect the enabled exchanges in the configuration.
 
@@ -356,13 +367,17 @@ class MultiExchangeManager:
         endpoints) no credential is read. With it, each enabled exchange's
         credentials are read as it connects, and no other exchange's (#144).
         A ``trading_config.json`` that exists but cannot be read is left as it
-        is, and initialisation fails (``load_config`` says why)."""
+        is, and initialisation fails (``load_config`` says why). With no file, the
+        defaults for ``user_region`` are used, and saved unless ``save_defaults``
+        is False."""
         # Load or create configuration
         config = self.config_manager.load_config()
         if config is None and os.path.exists(self.config_manager.config_file):
             return False  # unreadable: never replaced by defaults
         if not config and user_region:
-            config = self.config_manager.create_default_config(user_region)
+            config = self.config_manager.create_default_config(
+                user_region, save=save_defaults
+            )
         elif not config:
             print(
                 "No configuration found. Please set user_region or create config manually."
@@ -595,3 +610,16 @@ def shared_manager() -> MultiExchangeManager:
     if _shared is None:
         _shared = MultiExchangeManager()
     return _shared
+
+
+def market_exchanges() -> MultiExchangeManager:
+    """The shared manager, connected on first use for public market data: the
+    exchanges in ``trading_config.json``, primary first (FDS-MX-001). No credentials
+    are read, and nothing is written: with no file, the defaults for the region
+    (``POWERTRADER_USER_REGION``, else GLOBAL) are used in memory."""
+    manager = shared_manager()
+    if not manager.initialized:
+        manager.initialize(
+            os.environ.get("POWERTRADER_USER_REGION", "GLOBAL"), save_defaults=False
+        )
+    return manager

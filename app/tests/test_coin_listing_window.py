@@ -611,10 +611,10 @@ class NoBuysInAClosedMarket(PaperTraderCase):
         """A trader holding BTC bought at ~100, now quoted ~90 (past every DCA level
         up to -10%)."""
         trader = self.trader(dict(self.SETTINGS))
-        self.binance.bid, self.binance.ask = 99.95, 100.05
+        self.quotes.bid, self.quotes.ask = 99.95, 100.05
         trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0, tag="ENTRY")
         trader.cost_basis = trader.calculate_cost_basis()  # as its next pass would
-        self.binance.bid, self.binance.ask = 89.95, 90.05
+        self.quotes.bid, self.quotes.ask = 89.95, 90.05
         tm._quote_cache.clear()
         return trader
 

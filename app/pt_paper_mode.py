@@ -6,8 +6,8 @@ Provides:
   instantly see they are not trading real money, is ui_tokens.PAPER; the hub
   picks it with ui_tokens.palette(paper_mode) and ui_theme applies it.)
 - "PAPER TRADING" banner label that gets injected into the trading section.
-- A sample-trade runner that pulls a live BTC price from Binance's public
-  ticker endpoint and routes a simulated BUY then SELL through
+- A sample-trade runner that takes a live BTC price from the exchanges in
+  Settings (primary exchange first) and routes a simulated BUY then SELL through
   PaperTradingAccount.
 - Helpers that read the persisted `trading.mode` (the source of truth, owned by
   trading_mode.py) so the hub can paint itself correctly at start-up.
@@ -20,17 +20,15 @@ paper-mode branch directly.
 
 from __future__ import annotations
 
-import json
 import os
 import tkinter as tk
-import urllib.error
-import urllib.request
+from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, Union
 
 import ui_tokens
 from pt_paper_trading import OrderSide, OrderType, PaperTradingAccount
-from trading_mode import read_trading_settings
+from trading_mode import fetch_public_quote, read_trading_settings
 
 # Owner spec (PR #90 comment): "paper mode changes the CSS of the background.
 # Say BLUE instead of BLACK." Tk has no CSS: ui_tokens.PAPER mirrors the dark
@@ -52,34 +50,27 @@ def is_paper_mode(settings: Any = None) -> bool:
     return not read_trading_settings(settings).is_live
 
 
-# --- Live BTC price (Binance public ticker, no auth) -------------------------
-BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+# --- Live price (the exchanges in Settings, primary first; no auth) ----------
+@dataclass(frozen=True)
+class LivePrice:
+    price: Decimal  # the mid of the best bid and ask
+    exchange: str  # the exchange that gave it, e.g. "coinbase"
 
 
-def fetch_binance_btc_price(
-    timeout: float = 5.0,
-    url: str = BINANCE_TICKER_URL,
-    opener: Optional[Callable[[str, float], Any]] = None,
-) -> Optional[Decimal]:
+def fetch_live_price(symbol: str = "BTC") -> Optional[LivePrice]:
     """
-    Pull the current BTC/USDT price from Binance's public REST endpoint.
+    The current mid price of ``symbol`` from the exchanges in Settings, primary
+    exchange first (``trading_mode.fetch_public_quote``), with the exchange that
+    gave it.
 
-    Returns None on any failure - the sample runner falls back to the
-    PaperTradingAccount's own MarketDataSimulator so the demo still works
-    when offline. `opener` is overridable for tests.
+    Returns None when no exchange gives one - the sample runner then falls back to
+    the PaperTradingAccount's own MarketDataSimulator, so the sample still works
+    offline.
     """
-    try:
-        if opener is None:
-            with urllib.request.urlopen(url, timeout=timeout) as resp:
-                payload = json.loads(resp.read().decode("utf-8"))
-        else:
-            payload = json.loads(opener(url, timeout))
-        price = payload.get("price")
-        if price is None:
-            return None
-        return Decimal(str(price))
-    except (urllib.error.URLError, ValueError, KeyError, OSError):
+    quote = fetch_public_quote(symbol)
+    if quote is None:
         return None
+    return LivePrice(Decimal(str((quote.bid + quote.ask) / 2)), quote.exchange)
 
 
 # --- Sample-scenario runner ---------------------------------------------------
@@ -87,7 +78,7 @@ def run_sample_scenario(
     account: PaperTradingAccount,
     quantity: Decimal = Decimal("0.001"),
     symbol: str = "BTC",
-    price_fetcher: Callable[[], Optional[Decimal]] = fetch_binance_btc_price,
+    price_fetcher: Optional[Callable[[], Optional[Union[LivePrice, Decimal]]]] = None,
 ) -> Dict[str, Any]:
     """
     Place a simulated BUY then SELL through the paper account, using a live
@@ -95,12 +86,18 @@ def run_sample_scenario(
     standalone demo_paper_trading.py but lives behind the hub's "Run sample"
     button.
 
+    ``price_fetcher`` defaults to ``fetch_live_price(symbol)``; it may also return a
+    bare Decimal.
+
     Returns a dict the GUI can render directly. Keys:
-      starting_balance, final_balance, buy_price, sell_price, source
+      starting_balance, final_balance, buy_price, sell_price, source ("live" or
+      "simulated"), exchange (the exchange that gave the live price, or "")
     """
     starting = account.cash_balance
-    live_price = price_fetcher()
-    source = "binance_public" if live_price is not None else "simulated"
+    fetched = price_fetcher() if price_fetcher else fetch_live_price(symbol)
+    exchange = fetched.exchange if isinstance(fetched, LivePrice) else ""
+    live_price = fetched.price if isinstance(fetched, LivePrice) else fetched
+    source = "live" if live_price is not None else "simulated"
 
     # Seed the simulator so BUY/SELL fills land near the live spot price
     # instead of the simulator's default $45k anchor.
@@ -125,6 +122,7 @@ def run_sample_scenario(
 
     return {
         "source": source,
+        "exchange": exchange,
         "starting_balance": float(starting),
         "final_balance": float(account.cash_balance),
         "buy_price": float(buy_order.filled_price),

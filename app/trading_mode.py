@@ -25,12 +25,9 @@ import os
 import re
 import threading
 import time
-import urllib.error
-import urllib.request
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
-from email.utils import parsedate_to_datetime
 from enum import Enum
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
@@ -302,6 +299,8 @@ class Quote:
     ask: float
     quote_ts: Optional[float]  # exchange timestamp (epoch s, UTC); None if unknown
     fetched_ts: float  # local time the quote was fetched (epoch s, UTC)
+    exchange: str = ""  # the exchange that gave it (e.g. "coinbase"); "" if unknown
+    pair: str = ""  # that exchange's market (e.g. "BTC-USD")
 
     @property
     def age_s(self) -> Optional[float]:
@@ -318,6 +317,7 @@ class PricedQuote:
     quote_ts: Optional[float]
     fetched_ts: float
     age_s: Optional[float]
+    exchange: str = ""  # the exchange whose quote it is; "" when simulated
 
 
 class PriceUnavailable(RuntimeError):
@@ -339,41 +339,47 @@ def classify_quote(quote: Optional[Quote], max_age_s: float, now: float) -> str:
 
 # --- Public quote feed (paper pricing only; never an order call) -------------
 
-_QUOTE_URL = "https://api.binance.com/api/v3/ticker/bookTicker?symbol={symbol}"
 _QUOTE_TTL_SECONDS = 2.0
 _quote_cache: Dict[str, Quote] = {}
 
 
-def fetch_public_quote(base: str, timeout: float = 3.0) -> Optional[Quote]:
-    """
-    Binance public book ticker for ``base``/USDT, or None if unreachable.
+def _layer_quote(base: str):
+    """The exchange layer's best bid and ask for ``base``: a ``Sourced``
+    ``PriceQuote`` from the exchanges in Settings, primary first, or None."""
+    from pt_multi_exchange import market_exchanges
 
-    The book ticker carries no timestamp of its own, so ``quote_ts`` is the
-    server time of the response (HTTP ``Date`` header, 1 s resolution). A
-    response without a usable Date header has ``quote_ts=None`` and is treated
-    as stale.
+    return market_exchanges().quote(base)
+
+
+def fetch_public_quote(base: str) -> Optional[Quote]:
+    """
+    The best bid and ask for ``base`` from the exchanges in Settings: the primary
+    exchange first, then the other enabled exchanges (FDS-MX-001 phase B). None when
+    no exchange gives one. Public market data only: no credentials.
+
+    ``quote_ts`` is the exchange's own time for the quote (its timestamp, or the
+    Date of its answer); a quote without one is treated as stale. ``exchange`` and
+    ``pair`` say which exchange and market gave it. A quote is reused for 2 s.
     """
     now = time.time()
     cached = _quote_cache.get(base)
     if cached and now - cached.fetched_ts < _QUOTE_TTL_SECONDS:
         return cached
     try:
-        url = _QUOTE_URL.format(symbol=f"{base}USDT")
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-            date_header = resp.headers.get("Date") if resp.headers else None
-        bid, ask = float(payload["bidPrice"]), float(payload["askPrice"])
-    except (urllib.error.URLError, ValueError, KeyError, TypeError, OSError):
+        answer = _layer_quote(base)
+    except Exception as exc:
+        logger.debug(f"No quote for {base} from the exchange layer: {exc}")
         return None
-    if bid <= 0 or ask <= 0:
+    if answer is None:
         return None
-    quote_ts: Optional[float] = None
-    if date_header:
-        try:
-            quote_ts = parsedate_to_datetime(date_header).timestamp()
-        except (TypeError, ValueError):
-            quote_ts = None
-    quote = Quote(bid=bid, ask=ask, quote_ts=quote_ts, fetched_ts=time.time())
+    quote = Quote(
+        bid=float(answer.value.bid),
+        ask=float(answer.value.ask),
+        quote_ts=answer.value.quote_ts,
+        fetched_ts=time.time(),
+        exchange=answer.exchange,
+        pair=answer.pair,
+    )
     _quote_cache[base] = quote
     return quote
 
@@ -470,6 +476,7 @@ class PaperExchange(AbstractExchange):
                 quote.quote_ts,
                 quote.fetched_ts,
                 quote.age_s,
+                quote.exchange,
             )
         elif paper.price_fallback_policy != "simulate_and_flag":
             logger.warning(
@@ -490,6 +497,7 @@ class PaperExchange(AbstractExchange):
                 quote.quote_ts,
                 quote.fetched_ts,
                 quote.age_s,
+                quote.exchange,
             )
         else:
             mid = float(MarketDataSimulator.get_current_price(self._simulator, base))
@@ -597,11 +605,13 @@ class PaperExchange(AbstractExchange):
             order.price_source = priced.price_source
             order.quote_ts = priced.quote_ts
             order.age_s = priced.age_s
+            order.price_exchange = priced.exchange
         for trade in reversed(self.account.trade_history):
             if trade.order_id == order_id:
                 trade.price_source = order.price_source
                 trade.quote_ts = order.quote_ts
                 trade.age_s = order.age_s
+                trade.price_exchange = order.price_exchange
                 break
 
     def get_balance(self) -> Dict[str, float]:
@@ -637,6 +647,7 @@ class PaperExchange(AbstractExchange):
             price_source=order.price_source,
             quote_ts=order.quote_ts,
             age_s=order.age_s,
+            price_exchange=order.price_exchange,
         )
 
     # -- persistence (so the paper book survives a trader restart) --

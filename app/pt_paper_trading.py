@@ -100,6 +100,7 @@ class Order:
     price_source: str = "unknown"
     quote_ts: Optional[float] = None
     age_s: Optional[float] = None
+    price_exchange: str = ""  # the exchange whose quote priced the fill
 
     @property
     def is_filled(self) -> bool:
@@ -129,6 +130,7 @@ class TradeRecord:
     price_source: str = "unknown"
     quote_ts: Optional[float] = None
     age_s: Optional[float] = None
+    price_exchange: str = ""  # the exchange whose quote priced the fill
 
 
 @dataclass
@@ -346,40 +348,13 @@ class PaperTradingAccount:
         return order.order_id
 
     def _validate_order_risk(self, order: Order) -> bool:
-        """Validate order against risk limits.
-
-        The size limit guards new exposure. A sell of no more than the coin held
-        only reduces exposure, so it is never refused for its size: otherwise a
-        position worth over 10% of the account could not be closed."""
-        held = self.positions.get(order.symbol)
-        if (
-            order.side == OrderSide.SELL
-            and held is not None
-            and order.quantity <= held.quantity
-        ):
-            return True
-        try:
-            current_value = float(self.total_portfolio_value)
-            current_price = self.market_simulator.get_current_price(order.symbol)
-            order_value = float(order.quantity * current_price)
-
-            # Calculate max position size (2% of portfolio)
-            max_position_value = current_value * 0.02
-
-            # For testing, also ensure we don't exceed 10% of portfolio
-            max_portfolio_percent = current_value * 0.10
-
-            # Use the more generous limit for now
-            max_allowed = max(max_position_value, max_portfolio_percent)
-
-            self.logger.info(
-                f"Risk check: order_value=${order_value:.2f}, max_allowed=${max_allowed:.2f}"
-            )
-            return order_value <= max_allowed
-
-        except Exception as e:
-            self.logger.error(f"Risk validation failed: {e}")
-            return False
+        """Whether the paper book accepts the order's size. It sets no limit of its
+        own, as a real exchange sets none: the trader's own rules (Start allocation
+        % and Max per coin %) size its orders, and an order the cash cannot cover is
+        refused by the funds check that follows. The book used to refuse any buy
+        over 10% of the paper account, so paper and live differed (FDS-MX-001
+        decision D7, 2026-10-25)."""
+        return True
 
     def _estimate_order_cost(self, order: Order) -> Decimal:
         """Estimate the total cost of an order including commission."""

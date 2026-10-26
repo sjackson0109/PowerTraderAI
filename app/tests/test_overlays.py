@@ -657,7 +657,7 @@ class TraderRestartTests(PaperTraderCase):
         self.feed.set_after_bar(k)
         # the paper quote follows the scripted candles, as the real feed would
         close = float(self.frame["close"].iloc[k])
-        self.binance.bid, self.binance.ask = close * 0.9995, close * 1.0005
+        self.quotes.bid, self.quotes.ask = close * 0.9995, close * 1.0005
         tm._quote_cache.clear()
         trader.manage_trades()
 

@@ -147,10 +147,10 @@ class UsageError(TrainerError):
 
 
 class MarketClosedError(TrainerError):
-    """The pair's bars stop well before a live run's train_end, or Binance does not
-    list it. ``confirmed``: Binance says the pair is not trading (or not listed), so
-    the coin is recorded as not trading; otherwise (Binance says it trades, or could
-    not be asked) the run is refused but nothing is recorded."""
+    """The pair's bars stop well before a live run's train_end, or its market is not
+    listed. ``confirmed``: the market status says it is not trading (or not listed),
+    so the coin is recorded as not trading; otherwise (it says the market trades, or
+    could not be asked) the run is refused but nothing is recorded."""
 
     def __init__(self, pair, reason, confirmed=True):
         if confirmed:
@@ -293,7 +293,7 @@ class BarLoader:
 
     def _check_tail(self, tf, last_open, step, missing_end):
         """A live run whose bars stop well before train_end: the pair stopped trading.
-        Binance is asked why; the run is refused either way."""
+        The market status is asked why; the run is refused either way."""
         if self.offline or missing_end == 0:
             return
         now = datetime.now(timezone.utc)
@@ -317,7 +317,9 @@ class BarLoader:
         said = (
             "status unknown" if status is None or status.trading is None else "trading"
         )
-        reason = f"{self.pair} has no {tf} bars after {last_close} (Binance: {said})"
+        reason = (
+            f"{self.pair} has no {tf} bars after {last_close} (market status: {said})"
+        )
         raise MarketClosedError(self.pair, reason, confirmed=False)
 
     def bars(self, tf_choice):
@@ -1211,7 +1213,7 @@ def main(argv=None) -> int:
         else:
             model_id = provenance(coin, folder, cfg, result)
     except MarketClosedError as exc:
-        # Not a crash: say why. A closure Binance confirmed is recorded, so the
+        # Not a crash: say why. A confirmed closure is recorded, so the
         # trader makes no buys in the coin; an unconfirmed one is only refused.
         if exc.confirmed:
             from market_data.listing import write_market_status

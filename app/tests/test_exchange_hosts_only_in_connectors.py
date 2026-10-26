@@ -30,8 +30,6 @@ DIRECT = re.compile(
 
 # file (relative to app/, forward slashes) -> what it still uses directly
 KNOWN_BYPASSES = {
-    # phase D: market status
-    "market_data/listing.py": {"api.binance.com"},
     # phase E: strategy candles, backtests, chart pattern labels
     "market_data/candles.py": {"BinanceKlines", "api.binance.com"},
     "signal_engine.py": {"BinanceKlines"},

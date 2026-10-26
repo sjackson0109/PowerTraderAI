@@ -1226,9 +1226,9 @@ def layout(
     return Layout(shown, len(hidden), sum(1 + len(lb.others) for lb in shown))
 
 
-# --- the hub's timeframe names -> Binance intervals ---------------------------------
+# --- the hub's timeframe names -> candle sizes -------------------------------------
 
-HUB_TO_BINANCE = {
+HUB_TO_CANDLE = {
     "1min": "1m",
     "5min": "5m",
     "15min": "15m",

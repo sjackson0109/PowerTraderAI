@@ -1,10 +1,15 @@
 """
-Candle data layer (FDS-121 section 8): real Binance klines + an on-disk cache.
+Candle data layer (FDS-121 section 8): real candles + an on-disk cache.
 
-* Public endpoint only (``GET /api/v3/klines``): no keys, no authentication.
-* Pagination (1000 rows per request) with backoff on rate limits / transient errors.
-* Cache: ``<cache>/candles/<SYMBOL>_<TF>.csv`` (``cache_dir_default``; CSV: parquet
-  needs pyarrow, which is not a project dependency). Only missing ranges are
+* ``exchange_candles``: candles from the exchanges in Settings, the primary exchange
+  first (FDS-MX-001 phase E). One series comes from one exchange: the first that can
+  serve the whole range, from its own cache topped up from that exchange only.
+  Public market data only: no keys, no authentication.
+* Cache: ``<cache>/candles/<exchange>/<PAIR>_<TF>.csv`` for ``exchange_candles``
+  (``PAIR`` is that exchange's market, e.g. ``BTC-USD``). The pattern trainer still
+  fills ``<cache>/candles/<SYMBOL>_<TF>.csv`` from ``BinanceKlines`` until FDS-MX-001
+  phase F moves it (and those files) onto the exchanges in Settings. CSV: parquet
+  needs pyarrow, which is not a project dependency. Only missing ranges are
   fetched, and a forming (not yet closed) bar is never written to the cache.
 * Validation: timestamps must be strictly increasing with no duplicates (raises);
   gaps are *reported* in ``df.attrs["report"]``, never filled silently.
@@ -63,8 +68,18 @@ def cache_dir_default() -> str:
     return os.path.join(pt_paths.cache_dir(), "candles")
 
 
-def cache_path(symbol: str, tf: str, cache_dir: Optional[str] = None) -> str:
-    return os.path.join(cache_dir or cache_dir_default(), f"{symbol.upper()}_{tf}.csv")
+def cache_path(
+    symbol: str,
+    tf: str,
+    cache_dir: Optional[str] = None,
+    exchange: Optional[str] = None,
+) -> str:
+    """The cache file for ``symbol``/``tf``: in the exchange's own folder when
+    ``exchange`` is given (one series, one exchange)."""
+    folder = cache_dir or cache_dir_default()
+    if exchange:
+        folder = os.path.join(folder, str(exchange).lower())
+    return os.path.join(folder, f"{symbol.upper()}_{tf}.csv")
 
 
 # --- validation ----------------------------------------------------------------
@@ -271,9 +286,12 @@ def get_candles(
     fetcher: Optional[BinanceKlines] = None,
     offline: bool = False,
     now=None,
+    exchange: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Candles for ``symbol``/``tf`` with ``start <= open_time < end`` (UTC).
+    Candles for ``symbol``/``tf`` with ``start <= open_time < end`` (UTC). With
+    ``exchange``, the cache is that exchange's own (``cache_path``), and ``fetcher``
+    should read from that exchange (``exchange_candles`` does both).
 
     Missing ranges are fetched from Binance and cached; with ``offline=True`` only
     the cache is used and a request it cannot satisfy raises ``CandleDataError``.
@@ -288,7 +306,7 @@ def get_candles(
     step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
     start_ts, end_ts = to_utc(start), to_utc(end)
     now_ts = to_utc(now) if now is not None else pd.Timestamp.now(tz="UTC")
-    path = cache_path(symbol, tf, cache_dir)
+    path = cache_path(symbol, tf, cache_dir, exchange)
     cached = _read_cache(path)
     validate_candles(
         cached, tf
@@ -340,6 +358,117 @@ def get_candles(
     df = df.reset_index(drop=True)
     df.attrs["report"] = validate_candles(df, tf)
     return df
+
+
+# --- the exchanges in Settings (FDS-MX-001 phase E) ----------------------------------
+
+
+def _exchange_manager():
+    """The exchange layer (an ExchangeManager): the exchanges in Settings, primary
+    first, connected for public market data."""
+    from pt_multi_exchange import market_exchanges
+
+    return market_exchanges().exchange_manager
+
+
+class ExchangeFetcher:
+    """Reads one exchange's candles through the exchange layer, for ``get_candles``:
+    a cached series is only ever topped up from the exchange it came from."""
+
+    def __init__(self, manager, exchange: str, symbol: str) -> None:
+        self.manager = manager
+        self.exchange = exchange
+        self.symbol = symbol  # the coin's market as the layer takes it, e.g. BTC-USD
+
+    def fetch(
+        self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int] = None
+    ) -> List[list]:
+        now_ms = int(time.time() * 1000)
+        end = now_ms if end_ms is None else int(end_ms)
+        return self.manager.candles(
+            self.symbol, tf, int(start_ms), end, now_ms, only=self.exchange
+        ).value
+
+
+def exchange_candles(
+    symbol: str,
+    tf: str,
+    start,
+    end,
+    closed_only: bool = True,
+    cache_dir: Optional[str] = None,
+    offline: bool = False,
+    now=None,
+    manager=None,
+    exchanges: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """
+    Candles for a coin (``BTC``, ``BTC-USD`` or ``BTCUSDT``) with ``start <= open_time
+    < end``, from the exchanges in Settings: the primary exchange first, then the
+    others in order (``exchanges`` narrows or reorders them). The first exchange that
+    can serve the whole range gives the series, from its own cache topped up from it
+    only; one that has no market for the coin, cannot reach back, or fails is passed
+    over. ``df.attrs`` names the ``exchange`` and ``pair``.
+
+    ``offline=True`` reads the caches only: the first exchange whose cache covers the
+    range. Raises MarketNotFound when no exchange has the coin, otherwise
+    CandleDataError with each exchange's answer.
+    """
+    from pt_exchange_abstraction import (
+        MarketDataUnavailable,
+        MarketNotFound,
+        dollar_symbol,
+    )
+
+    market = dollar_symbol(symbol)
+    manager = manager if manager is not None else _exchange_manager()
+    names = list(exchanges) if exchanges is not None else manager.exchange_names()
+    reasons: List[str] = []
+    not_found = 0
+    for name in names:
+        connector = _connector(manager, name)
+        if connector is None:
+            reasons.append(f"{name}: not connected")
+            continue
+        pair = connector.market_symbol(market)
+        try:
+            df = get_candles(
+                pair,
+                tf,
+                start,
+                end,
+                closed_only=closed_only,
+                cache_dir=cache_dir,
+                fetcher=ExchangeFetcher(manager, name, market),
+                offline=offline,
+                now=now,
+                exchange=name,
+            )
+        except MarketNotFound as exc:
+            not_found += 1
+            reasons.append(f"{name}: {exc}")
+            continue
+        except (CandleDataError, MarketDataUnavailable, OSError) as exc:
+            reasons.append(f"{name}: {exc}")
+            continue
+        df.attrs["exchange"] = name
+        df.attrs["pair"] = pair
+        return df
+    if reasons and not_found == len(reasons):
+        raise MarketNotFound(
+            f"No exchange has a market for {market}: " + "; ".join(reasons)
+        )
+    raise CandleDataError(
+        f"No exchange gave {tf} candles for {market}: "
+        + ("; ".join(reasons) or "no exchange connected")
+    )
+
+
+def _connector(manager, name: str):
+    for exchange_type, exchange in manager.exchanges.items():
+        if exchange_type.value == name:
+            return exchange
+    return None
 
 
 def load_candles_csv(path: str, tf: str) -> pd.DataFrame:

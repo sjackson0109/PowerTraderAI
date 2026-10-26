@@ -152,10 +152,10 @@ def isolated_user_dirs(tmp_path, monkeypatch):
         pt_chart_patterns = None
     if pt_chart_patterns is not None:
 
-        def _no_binance_fetch(*args, **kwargs):
+        def _no_bars_fetch(*args, **kwargs):
             raise RuntimeError("tests: no network (chart candlestick patterns)")
 
-        monkeypatch.setattr(pt_chart_patterns, "binance_closed_bars", _no_binance_fetch)
+        monkeypatch.setattr(pt_chart_patterns, "closed_bars", _no_bars_fetch)
     memory = None
     if keyring is not None:
         previous = keyring.get_keyring()

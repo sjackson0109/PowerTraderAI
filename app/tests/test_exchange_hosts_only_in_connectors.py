@@ -30,12 +30,9 @@ DIRECT = re.compile(
 
 # file (relative to app/, forward slashes) -> what it still uses directly
 KNOWN_BYPASSES = {
-    # phase E: strategy candles, backtests, chart pattern labels
+    # phase F: the pattern trainer's candle cache, and the backtests that read it
     "market_data/candles.py": {"BinanceKlines", "api.binance.com"},
-    "signal_engine.py": {"BinanceKlines"},
     "backtest/cli.py": {"BinanceKlines"},
-    "candlestick_patterns.py": {"HUB_TO_BINANCE"},
-    "pt_chart_patterns.py": {"HUB_TO_BINANCE", "binance_closed_bars"},
     # phase G: hub chart, Market Data tab, unused module
     "pt_hub.py": {"api.kucoin.com", "kucoin.client"},
     "real_time_market_data.py": {

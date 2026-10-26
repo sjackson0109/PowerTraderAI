@@ -8,7 +8,9 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import datetime, timezone
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from email.utils import parsedate_to_datetime
 from typing import Dict, List, Optional
 
 import coinbase_auth
@@ -20,8 +22,133 @@ from pt_exchange_abstraction import (
     ExchangeType,
     MarketData,
     MarketNotFound,
+    MarketStatus,
     OrderResult,
+    PriceQuote,
 )
+from market_data.timeframes import candle_timeframe_seconds
+
+# --- public market data helpers (FDS-MX-001 phase A) ----------------------------
+
+
+def _public_get(url: str, params: Optional[dict] = None, timeout: float = 10.0):
+    """GET a public market-data endpoint. A rate-limit (429, 418) or server-error
+    (5xx) answer is tried again, up to three times, after a pause (the exchange's
+    Retry-After when it sends one); the last answer is returned whatever it is."""
+    for attempt in range(4):
+        response = requests.get(url, params=params, timeout=timeout)
+        status = getattr(response, "status_code", 200)
+        if (status not in (418, 429) and status < 500) or attempt == 3:
+            return response
+        time.sleep(_retry_after(response) or min(2**attempt, 30))
+
+
+def _retry_after(response) -> Optional[float]:
+    try:
+        return float(response.headers.get("Retry-After"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _server_time(response) -> Optional[float]:
+    """The exchange's clock, from the response's Date header (epoch seconds)."""
+    try:
+        return parsedate_to_datetime(response.headers["Date"]).timestamp()
+    except Exception:
+        return None
+
+
+def _iso_seconds(text) -> Optional[float]:
+    """An ISO-8601 time (``2026-10-25T23:08:46.210719770Z``) as epoch seconds."""
+    try:
+        value = str(text).strip().replace("Z", "+00:00")
+        if "." in value:
+            head, rest = value.split(".", 1)
+            digits = len(rest) - len(rest.lstrip("0123456789"))
+            value = f"{head}.{rest[:min(digits, 6)]}{rest[digits:]}"
+        moment = datetime.fromisoformat(value)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return moment.timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _iso(seconds: int) -> str:
+    return datetime.fromtimestamp(int(seconds), timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
+def _bar(open_ms, open_, high, low, close, volume) -> list:
+    """One candle in the exchange layer's form."""
+    return [
+        int(open_ms),
+        float(open_),
+        float(high),
+        float(low),
+        float(close),
+        float(volume),
+    ]
+
+
+def _paged_windows(start_ms: int, end_ms: int, seconds: int, page: int):
+    """(from_s, to_s) request windows of at most ``page`` bars covering
+    ``start_ms``..``end_ms``, each overlapping its neighbours by one bar on both
+    sides, so a bar on a window's edge is read whether the exchange counts its
+    start and end as inclusive or not."""
+    cursor, last = int(start_ms) // 1000, int(end_ms) // 1000
+    while cursor <= last:
+        window_end = min(cursor + (page - 3) * seconds, last)
+        yield cursor - seconds, window_end + seconds
+        cursor = window_end + seconds
+
+
+_KRAKEN_INTERVAL = {
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "30m": 30,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
+}
+# Kraken's weekly bars open on Thursday and the app's on Monday, so 1w is built from 1d.
+_KRAKEN_HISTORY_BARS = 720  # its OHLC endpoint serves only the latest 720 bars
+
+_BINANCE_CANDLE_TFS = frozenset(
+    {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "1w"}
+)
+_BINANCE_KLINES_PAGE = 1000
+_BINANCE_UNKNOWN_SYMBOL = -1121
+
+_COINBASE_GRANULARITY = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "6h": 21600,
+    "1d": 86400,
+}
+_COINBASE_CANDLES_PAGE = 300
+
+_KUCOIN_TYPE = {
+    "1m": "1min",
+    "3m": "3min",
+    "5m": "5min",
+    "15m": "15min",
+    "30m": "30min",
+    "1h": "1hour",
+    "2h": "2hour",
+    "4h": "4hour",
+    "6h": "6hour",
+    "8h": "8hour",
+    "12h": "12hour",
+    "1d": "1day",
+}
+# KuCoin's weekly bars open on Thursday and the app's on Monday, so 1w is built from 1d.
+_KUCOIN_CANDLES_PAGE = 1500
+_KUCOIN_UNKNOWN_PAIR = {"400100", "900001"}
 
 
 class RobinhoodExchange(AbstractExchange):
@@ -135,6 +262,91 @@ class KrakenExchange(AbstractExchange):
             timestamp=time.time(),
             exchange="kraken",
         )
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """Kraken's minimum order for ``symbol`` in its quote currency: the pair's
+        ``costmin``, or its ``ordermin`` (in the coin) at the current ask when that is
+        more. None if it cannot be read."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/0/public/AssetPairs?pair={self._convert_symbol(symbol)}",
+                timeout=10,
+            )
+            data = response.json()
+            if data.get("error"):
+                return None
+            pair = list(data["result"].values())[0]
+            minimum = float(pair.get("costmin") or 0)
+            ordermin = float(pair.get("ordermin") or 0)
+            if ordermin > 0:
+                minimum = max(minimum, ordermin * self.get_current_price(symbol))
+        except Exception:
+            return None
+        return minimum if minimum > 0 else None
+
+    def candle_timeframes(self):
+        return frozenset(_KRAKEN_INTERVAL)
+
+    def max_history_bars(self, tf: str) -> Optional[int]:
+        return _KRAKEN_HISTORY_BARS
+
+    def _kraken_result(self, data: dict, pair: str) -> dict:
+        errors = data.get("error") or []
+        if any("Unknown asset pair" in str(e) for e in errors):
+            raise MarketNotFound(f"Kraken has no market {pair}")
+        if errors:
+            raise RuntimeError(f"Kraken API error for {pair}: {errors}")
+        return data["result"]
+
+    def candles(self, symbol: str, tf: str, start_ms: int, end_ms: int) -> List[list]:
+        pair = self._convert_symbol(symbol)
+        data = _public_get(
+            f"{self.base_url}/0/public/OHLC",
+            params={
+                "pair": pair,
+                "interval": _KRAKEN_INTERVAL[tf],
+                "since": max(0, int(start_ms) // 1000 - 1),
+            },
+        ).json()
+        result = self._kraken_result(data, pair)
+        rows = next(v for k, v in result.items() if k != "last")
+        # [time, open, high, low, close, vwap, volume, count]
+        return [
+            _bar(int(r[0]) * 1000, r[1], r[2], r[3], r[4], r[6])
+            for r in rows
+            if start_ms <= int(r[0]) * 1000 <= end_ms
+        ]
+
+    def market_status(self, symbol: str) -> Optional[MarketStatus]:
+        pair = self._convert_symbol(symbol)
+        try:
+            data = _public_get(
+                f"{self.base_url}/0/public/AssetPairs", params={"pair": pair}
+            ).json()
+            info = list(self._kraken_result(data, pair).values())[0]
+        except MarketNotFound as exc:
+            return MarketStatus(False, False, "NOT_LISTED", str(exc))
+        except Exception:
+            return None
+        status = str(info.get("status") or "")
+        if not status:
+            return None
+        return MarketStatus(
+            True, status == "online", status, f"Kraken {pair} is {status}"
+        )
+
+    def quote(self, symbol: str) -> Optional[PriceQuote]:
+        pair = self._convert_symbol(symbol)
+        try:
+            response = _public_get(
+                f"{self.base_url}/0/public/Ticker", params={"pair": pair}
+            )
+            ticker = list(self._kraken_result(response.json(), pair).values())[0]
+            return PriceQuote(
+                float(ticker["b"][0]), float(ticker["a"][0]), _server_time(response)
+            )
+        except Exception:
+            return None
 
     def place_order(
         self, symbol: str, side: str, amount: float, price: Optional[float] = None
@@ -479,6 +691,81 @@ class BinanceExchange(AbstractExchange):
     # ------------------------------------------------------------------
     # Symbol filter handling (LOT_SIZE, PRICE_FILTER, MIN_NOTIONAL)
     # ------------------------------------------------------------------
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """Binance's minimum order value for ``symbol`` (its NOTIONAL / MIN_NOTIONAL
+        filter), or None if it cannot be read. Orders below it are refused."""
+        try:
+            minimum = self._get_symbol_filters(self._convert_symbol(symbol))[
+                "minNotional"
+            ]
+        except Exception:
+            return None
+        return float(minimum) if minimum > 0 else None
+
+    def candle_timeframes(self):
+        return _BINANCE_CANDLE_TFS
+
+    def candles(self, symbol: str, tf: str, start_ms: int, end_ms: int) -> List[list]:
+        pair = self._convert_symbol(symbol)
+        step_ms = candle_timeframe_seconds(tf) * 1000
+        rows: List[list] = []
+        cursor = int(start_ms)
+        while cursor <= end_ms:
+            data = _public_get(
+                f"{self.base_url}/api/v3/klines",
+                params={
+                    "symbol": pair,
+                    "interval": tf,
+                    "startTime": cursor,
+                    "endTime": int(end_ms),
+                    "limit": _BINANCE_KLINES_PAGE,
+                },
+            ).json()
+            if isinstance(data, dict):
+                if data.get("code") == _BINANCE_UNKNOWN_SYMBOL:
+                    raise MarketNotFound(f"Binance has no market {pair}")
+                raise RuntimeError(
+                    f"Binance klines for {pair}: {data.get('msg', data)}"
+                )
+            rows.extend(_bar(r[0], r[1], r[2], r[3], r[4], r[5]) for r in data)
+            if len(data) < _BINANCE_KLINES_PAGE:
+                break
+            cursor = int(data[-1][0]) + step_ms
+        return rows
+
+    def market_status(self, symbol: str) -> Optional[MarketStatus]:
+        pair = self._convert_symbol(symbol)
+        try:
+            data = _public_get(
+                f"{self.base_url}/api/v3/exchangeInfo", params={"symbol": pair}
+            ).json()
+        except Exception:
+            return None
+        if isinstance(data, dict) and data.get("code") == _BINANCE_UNKNOWN_SYMBOL:
+            return MarketStatus(
+                False, False, "NOT_LISTED", f"Binance has no market {pair}"
+            )
+        try:
+            status = str(data["symbols"][0]["status"])
+        except (KeyError, IndexError, TypeError):
+            return None
+        return MarketStatus(
+            True, status == "TRADING", status, f"Binance {pair} is {status}"
+        )
+
+    def quote(self, symbol: str) -> Optional[PriceQuote]:
+        pair = self._convert_symbol(symbol)
+        try:
+            response = _public_get(
+                f"{self.base_url}/api/v3/ticker/bookTicker", params={"symbol": pair}
+            )
+            data = response.json()
+            return PriceQuote(
+                float(data["bidPrice"]), float(data["askPrice"]), _server_time(response)
+            )
+        except Exception:
+            return None
 
     def _get_symbol_filters(self, binance_symbol: str) -> Dict[str, Decimal]:
         """
@@ -1132,6 +1419,75 @@ class CoinbaseExchange(AbstractExchange):
             exchange="coinbase",
         )
 
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """Coinbase's minimum order for ``symbol`` in its quote currency (the product's
+        ``min_market_funds``), from the unauthenticated product endpoint. None if it
+        cannot be read."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/products/{self._convert_symbol(symbol)}", timeout=10
+            )
+            minimum = float(response.json().get("min_market_funds") or 0)
+        except Exception:
+            return None
+        return minimum if minimum > 0 else None
+
+    def candle_timeframes(self):
+        return frozenset(_COINBASE_GRANULARITY)
+
+    def candles(self, symbol: str, tf: str, start_ms: int, end_ms: int) -> List[list]:
+        product = self._convert_symbol(symbol)
+        seconds = _COINBASE_GRANULARITY[tf]
+        bars: Dict[int, list] = {}
+        for first, last in _paged_windows(
+            start_ms, end_ms, seconds, _COINBASE_CANDLES_PAGE
+        ):
+            data = _public_get(
+                f"{self.base_url}/products/{product}/candles",
+                params={
+                    "granularity": seconds,
+                    "start": _iso(first),
+                    "end": _iso(last),
+                },
+            ).json()
+            if isinstance(data, dict):
+                message = str(data.get("message", data))
+                if message.lower() == "notfound":
+                    raise MarketNotFound(f"Coinbase has no market {product} (NotFound)")
+                raise RuntimeError(f"Coinbase candles for {product}: {message}")
+            # newest first: [time, low, high, open, close, volume]
+            for t, low, high, open_, close, volume in data:
+                bars[int(t) * 1000] = _bar(
+                    int(t) * 1000, open_, high, low, close, volume
+                )
+        return [bars[t] for t in sorted(bars) if start_ms <= t <= end_ms]
+
+    def market_status(self, symbol: str) -> Optional[MarketStatus]:
+        product = self._convert_symbol(symbol)
+        try:
+            data = _public_get(f"{self.base_url}/products/{product}").json()
+        except Exception:
+            return None
+        if str(data.get("message", "")).lower() == "notfound":
+            return MarketStatus(
+                False, False, "NOT_LISTED", f"Coinbase has no market {product}"
+            )
+        status = str(data.get("status") or "")
+        if not status:
+            return None
+        blocked = [f for f in ("trading_disabled", "cancel_only") if data.get(f)]
+        reason = f"Coinbase {product} is {status}" + "".join(f", {f}" for f in blocked)
+        return MarketStatus(True, status == "online" and not blocked, status, reason)
+
+    def quote(self, symbol: str) -> Optional[PriceQuote]:
+        try:
+            data = self._public_ticker(self._convert_symbol(symbol))
+            return PriceQuote(
+                float(data["bid"]), float(data["ask"]), _iso_seconds(data.get("time"))
+            )
+        except Exception:
+            return None
+
     def place_order(
         self, symbol: str, side: str, amount: float, price: Optional[float] = None
     ) -> OrderResult:
@@ -1225,6 +1581,96 @@ class KuCoinExchange(AbstractExchange):
             timestamp=time.time(),
             exchange="kucoin",
         )
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """KuCoin's minimum order for ``symbol`` in its quote currency: the largest of
+        the symbol's ``minFunds``, ``quoteMinSize``, and ``baseMinSize`` (in the coin)
+        at the current ask. None if it cannot be read."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/v2/symbols/{self._convert_symbol(symbol)}",
+                timeout=10,
+            )
+            data = response.json()
+            if data.get("code") != "200000":
+                return None
+            info = data["data"]
+            minimum = max(
+                float(info.get("minFunds") or 0), float(info.get("quoteMinSize") or 0)
+            )
+            base_min = float(info.get("baseMinSize") or 0)
+            if base_min > 0:
+                minimum = max(minimum, base_min * self.get_current_price(symbol))
+        except Exception:
+            return None
+        return minimum if minimum > 0 else None
+
+    def candle_timeframes(self):
+        return frozenset(_KUCOIN_TYPE)
+
+    def candles(self, symbol: str, tf: str, start_ms: int, end_ms: int) -> List[list]:
+        pair = self._convert_symbol(symbol)
+        seconds = candle_timeframe_seconds(tf)
+        bars: Dict[int, list] = {}
+        for first, last in _paged_windows(
+            start_ms, end_ms, seconds, _KUCOIN_CANDLES_PAGE
+        ):
+            data = _public_get(
+                f"{self.base_url}/api/v1/market/candles",
+                params={
+                    "type": _KUCOIN_TYPE[tf],
+                    "symbol": pair,
+                    "startAt": first,
+                    "endAt": last,
+                },
+            ).json()
+            code = str(data.get("code"))
+            if code in _KUCOIN_UNKNOWN_PAIR:
+                raise MarketNotFound(f"KuCoin has no market {pair} ({data.get('msg')})")
+            if code != "200000":
+                raise RuntimeError(
+                    f"KuCoin candles for {pair}: {data.get('msg', code)}"
+                )
+            # newest first: [time, open, close, high, low, volume, turnover]
+            for t, open_, close, high, low, volume, *_ in data.get("data") or []:
+                bars[int(t) * 1000] = _bar(
+                    int(t) * 1000, open_, high, low, close, volume
+                )
+        return [bars[t] for t in sorted(bars) if start_ms <= t <= end_ms]
+
+    def market_status(self, symbol: str) -> Optional[MarketStatus]:
+        pair = self._convert_symbol(symbol)
+        try:
+            data = _public_get(f"{self.base_url}/api/v2/symbols/{pair}").json()
+        except Exception:
+            return None
+        code = str(data.get("code"))
+        if code in _KUCOIN_UNKNOWN_PAIR:
+            return MarketStatus(
+                False, False, "NOT_LISTED", f"KuCoin has no market {pair}"
+            )
+        info = data.get("data") if code == "200000" else None
+        if not isinstance(info, dict) or "enableTrading" not in info:
+            return None
+        trading = bool(info["enableTrading"])
+        status = "enableTrading" if trading else "trading disabled"
+        return MarketStatus(True, trading, status, f"KuCoin {pair}: {status}")
+
+    def quote(self, symbol: str) -> Optional[PriceQuote]:
+        pair = self._convert_symbol(symbol)
+        try:
+            data = _public_get(
+                f"{self.base_url}/api/v1/market/orderbook/level1",
+                params={"symbol": pair},
+            ).json()["data"]
+            stamp = data.get("time")
+            return PriceQuote(
+                float(data["bestBid"]),
+                float(data["bestAsk"]),
+                float(stamp) / 1000.0 if stamp else None,
+            )
+        except Exception:
+            return None
 
     def place_order(
         self, symbol: str, side: str, amount: float, price: Optional[float] = None

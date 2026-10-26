@@ -101,7 +101,7 @@ DEFAULT_SETTINGS = {
     "strategy": {
         "engine": "catalogue",
         "active_id": "STRAT-001",
-        "symbols": ["BTCUSDT"],
+        "symbols": ["BTC"],
         "timeframe": "1h",
         "overlays": [],
     },

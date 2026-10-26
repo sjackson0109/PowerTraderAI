@@ -834,7 +834,7 @@ def test_the_cli_feeds_strat003_the_bars_of_the_runs_own_cache(
     assert set(bars_source) == set(TrainedModelStrategy.candle_timeframes)
     for tf, info in bars_source.items():
         assert info["sha256"] == candles.file_sha256(
-            candles.cache_path("BTCUSDT", tf, str(other))
+            candles.cache_path("BTCUSDT", tf, str(other), hc.FIXTURE_EXCHANGE)
         )
     # the default cache holds other prices: had the CLI read it, the result would differ
     poisoned = {}
@@ -859,7 +859,7 @@ def test_the_cli_reports_decisions_held_for_missing_bars(
     """A timeframe the cache does not have: every out-of-sample decision holds, and the
     report says so instead of showing a strategy that chose to stay out."""
     _, hourly, _ = crafted
-    os.remove(candles.cache_path("BTCUSDT", "2h"))
+    os.remove(candles.cache_path("BTCUSDT", "2h", exchange=hc.FIXTURE_EXCHANGE))
     split_open = pd.Timestamp(hourly["open_time"].iloc[int(len(hourly) * 0.7)])
     model_id = publish_scenario(
         record, 0, str(tmp_path / "m"), "missing-2h", split_open.isoformat()
@@ -1003,7 +1003,7 @@ def test_online_the_recorded_hash_is_of_the_file_the_run_leaves(
 
     hourly = h3.hourly_from_rows(record["hourly"])
     fake = FakeKlines({"BTCUSDT": hc.all_timeframes(hourly)})
-    monkeypatch.setattr(bt_cli, "BinanceKlines", lambda *a, **k: fake)
+    hc.fake_layer(monkeypatch, fake)
     split_open = pd.Timestamp(hourly["open_time"].iloc[int(len(hourly) * 0.7)])
     model_id = publish_scenario(
         record, 0, str(tmp_path / "m"), "online-model", split_open.isoformat()
@@ -1015,7 +1015,7 @@ def test_online_the_recorded_hash_is_of_the_file_the_run_leaves(
     )  # fmt: skip
     assert code == 0, capsys.readouterr().err
     source = json.loads(out.read_text(encoding="utf-8"))["data"]["source"]
-    path = candles.cache_path("BTCUSDT", "1h")
+    path = candles.cache_path("BTCUSDT", "1h", exchange=hc.FIXTURE_EXCHANGE)
     first_cached = candles.load_candles_csv(path, "1h")["open_time"].iloc[0]
     assert first_cached < pd.Timestamp("2024-01-08", tz="UTC")  # it was extended
     assert source["sha256"] == candles.file_sha256(path)

@@ -20,6 +20,7 @@ its set-up runs once per session, before any test module is imported:
 import os
 import sys
 import tempfile
+import urllib.parse
 
 import pytest
 
@@ -111,8 +112,11 @@ if keyring is not None:
 @pytest.fixture(autouse=True)
 def isolated_user_dirs(tmp_path, monkeypatch):
     """Fresh POWERTRADER_HOME, empty legacy folder and empty keyring per test, and no
-    request to Binance: the shared market-status check answers "unknown", and the chart's
-    candlestick-pattern fetch raises (a test that needs either passes its own)."""
+    request to any exchange: ``requests`` raises for every host but this machine (every
+    exchange connector uses it; a test that brings its own ``Session.request`` wins),
+    the shared exchange layer starts afresh (built offline from the test's own
+    settings), the shared market-status check answers "unknown", and the chart's
+    candlestick-pattern fetch raises (a test that needs one passes its own)."""
     home = tmp_path / "pt_home"
     legacy = tmp_path / "pt_legacy"
     legacy.mkdir()
@@ -136,15 +140,36 @@ def isolated_user_dirs(tmp_path, monkeypatch):
         )
         monkeypatch.setattr(listing, "_shared", None)
     try:
+        import requests
+    except ImportError:
+        requests = None
+    if requests is not None:
+        real_request = requests.sessions.Session.request
+
+        def _no_remote_http(self, method, url, *args, **kwargs):
+            # the funnel under requests.get/post/... and every Session
+            host = urllib.parse.urlsplit(str(url)).hostname or ""
+            if host in ("localhost", "127.0.0.1", "::1"):
+                return real_request(self, method, url, *args, **kwargs)
+            raise RuntimeError(f"tests: no network (requests to {host})")
+
+        monkeypatch.setattr(requests.sessions.Session, "request", _no_remote_http)
+    try:
+        import pt_multi_exchange
+    except ImportError:  # loaded from outside app/ (.github/scripts)
+        pt_multi_exchange = None
+    if pt_multi_exchange is not None:
+        monkeypatch.setattr(pt_multi_exchange, "_shared", None)
+    try:
         import pt_chart_patterns
     except ImportError:  # loaded from outside app/, or no tkinter
         pt_chart_patterns = None
     if pt_chart_patterns is not None:
 
-        def _no_binance_fetch(*args, **kwargs):
+        def _no_bars_fetch(*args, **kwargs):
             raise RuntimeError("tests: no network (chart candlestick patterns)")
 
-        monkeypatch.setattr(pt_chart_patterns, "binance_closed_bars", _no_binance_fetch)
+        monkeypatch.setattr(pt_chart_patterns, "closed_bars", _no_bars_fetch)
     memory = None
     if keyring is not None:
         previous = keyring.get_keyring()

@@ -57,7 +57,7 @@ class SettingsReaderTests(unittest.TestCase):
         s = read_strategy_settings({})
         self.assertEqual(
             (s.engine, s.active_id, s.symbols, s.timeframe),
-            ("catalogue", "STRAT-001", ("BTCUSDT",), "1h"),
+            ("catalogue", "STRAT-001", ("BTC-USD",), "1h"),
         )
         self.assertIsNone(s.problem)
         self.assertEqual(s.note, "SIGNALS: STRAT-001 1h")
@@ -112,8 +112,11 @@ class SettingsReaderTests(unittest.TestCase):
         self.assertEqual(s.note, "SIGNALS: LEGACY (UNTRAINED)")
 
     def test_symbols_are_normalised(self):
-        s = read_strategy_settings({"strategy": {"symbols": [" btcusdt ", "ETHUSDT"]}})
-        self.assertEqual(s.symbols, ("BTCUSDT", "ETHUSDT"))
+        s = read_strategy_settings(
+            {"strategy": {"symbols": [" btcusdt ", "ETH", "sol-usd"]}}
+        )
+        # markets, whatever form was saved (FDS-MX-001 phase E)
+        self.assertEqual(s.symbols, ("BTC-USD", "ETH-USD", "SOL-USD"))
 
     def test_signature_changes_with_strategy_overlays_and_timeframe(self):
         a = read_strategy_settings({}).signature
@@ -132,7 +135,7 @@ class SettingsManagerTests(unittest.TestCase):
             m = SettingsManager("pt_config.json", d)
             self.assertEqual(m.get("strategy.engine"), "catalogue")
             self.assertEqual(m.get("strategy.active_id"), "STRAT-001")
-            self.assertEqual(m.get("strategy.symbols"), ["BTCUSDT"])
+            self.assertEqual(m.get("strategy.symbols"), ["BTC"])
             self.assertEqual(m.get("strategy.timeframe"), "1h")
             self.assertEqual(m.get("strategy.overlays"), [])
             self.assertTrue(m.set("strategy.engine", "legacy_neural"))

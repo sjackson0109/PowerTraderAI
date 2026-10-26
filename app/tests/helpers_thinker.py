@@ -9,7 +9,7 @@ candle (#141). ``run_thinker`` runs ``pt_thinker.step_coin`` in a child process 
   row 1 the last closed one. Row 1 is the timeframe's last bar that closed strictly
   before the decision time (FDS-MDL Phase 3 cadence, owner decision 2026-10-06: the
   live thinker's last evaluation inside bar t);
-* ``robinhood_current_ask`` replaced by the decision's price, and ``time.sleep`` by a
+* ``current_ask`` replaced by the decision's price, and ``time.sleep`` by a
   no-op (the thinker only sleeps while retrying).
 
 The child is started like a trainer child in the tests: the caller's guard
@@ -103,7 +103,7 @@ sys.modules["pt_data_provider"] = module
 import pt_thinker  # noqa: E402
 
 pt_thinker.time.sleep = lambda seconds: None
-pt_thinker.robinhood_current_ask = lambda symbol: NOW["price"]
+pt_thinker.current_ask = lambda symbol: NOW["price"]
 
 coin = scenario["coin"]
 records = []

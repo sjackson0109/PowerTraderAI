@@ -443,7 +443,7 @@ def test_a_pair_listed_late_is_validated_on_the_bars_it_has(tmp_path, monkeypatc
     listed = START + timedelta(weeks=4)
     hourly = hc.synthetic_hourly(HOURS - 4 * 168, listed, seed=3)
     fake = FakeKlines({"NEWUSDT": hc.all_timeframes(hourly)})
-    monkeypatch.setattr(candles, "BinanceKlines", lambda *a, **k: fake)
+    hc.fake_layer(monkeypatch, fake)
     monkeypatch.delenv(ppt.ENV_CANDLES_OFFLINE, raising=False)
     summary = train_main(str(tmp_path / "new"), coin="NEW", extra=())
     assert summary["offline"] is False
@@ -462,7 +462,7 @@ def test_a_pair_whose_bars_stop_early_is_validated_on_the_bars_it_has(
     hourly = hc.synthetic_hourly(HOURS - 3 * 168, START, seed=3)
     last_close = START + timedelta(hours=HOURS - 3 * 168)
     fake = FakeKlines({"OLDUSDT": hc.all_timeframes(hourly)})
-    monkeypatch.setattr(candles, "BinanceKlines", lambda *a, **k: fake)
+    hc.fake_layer(monkeypatch, fake)
     monkeypatch.delenv(ppt.ENV_CANDLES_OFFLINE, raising=False)
     summary = train_main(str(tmp_path / "old"), coin="OLD", extra=())
     assert summary["candles"]["1h"]["missing_at_end"] == 3 * 168
@@ -912,8 +912,8 @@ def test_the_thinker_prints_the_model_it_uses_and_refuses_an_unpublished_one(tmp
     )
     assert code == 0, out[-3000:]
     assert (
-        f"Model for BTC: {summary['model_id']}, trained 2024-01-01T00:00:00Z .. 2024-03-11T00:00:00Z"
-        in out
+        f"Model for BTC: {summary['model_id']}, trained on binance BTCUSDT bars "
+        "2024-01-01T00:00:00Z .. 2024-03-11T00:00:00Z" in out
     )
     # checked once: rewriting the thresholds unchanged (every step) is not a change
     assert out.count("Model for BTC") == 1

@@ -423,10 +423,9 @@ class TraderGateTests(unittest.TestCase):
 
         patches = [
             mock.patch.object(self.pt_trader, "HUB_DATA_DIR", self.tmp.name),
-            # nothing in these tests may use the network, public quotes included
-            mock.patch.object(
-                tm.urllib.request, "urlopen", side_effect=OSError("no network")
-            ),
+            # nothing in these tests may use the network, public quotes included:
+            # the exchange layer gives no quote
+            mock.patch.object(tm, "_layer_quote", return_value=None),
         ]
         for p in patches:
             p.start()
@@ -518,14 +517,14 @@ class TraderGateTests(unittest.TestCase):
 
         with HttpSpy() as spy, mock.patch.object(
             tm.ExchangeFactory, "get_exchange"
-        ) as get_exchange, mock.patch.object(tm.urllib.request, "urlopen") as urlopen:
+        ) as get_exchange, mock.patch.object(tm, "_layer_quote") as layer_quote:
             buy = trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
             sell = trader.place_sell_order("id", "sell", "market", "BTC-USD", 1.0)
 
         self.assertIsNone(buy)
         self.assertIsNone(sell)
         self.assertEqual(spy.calls, 0)
-        urlopen.assert_not_called()
+        layer_quote.assert_not_called()
         get_exchange.assert_not_called()
         self.assertEqual(len(paper_orders), 0)
 

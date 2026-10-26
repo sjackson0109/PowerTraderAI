@@ -18,8 +18,10 @@ TIMEFRAME_SECONDS = {
 # Candle-only timeframes: the candle cache can fetch, validate and filter them
 # (candle_timeframe_seconds), but they are not strategy timeframes: strategy settings,
 # the catalogue, the signal engine and the backtester use TIMEFRAME_SECONDS through
-# timeframe_seconds. The pattern trainer needs weekly bars (FDS-MDL). Binance weekly
-# bars open on Monday 00:00 UTC, not on a multiple of the period since the epoch.
+# timeframe_seconds. The pattern trainer needs weekly bars (FDS-MDL). The app's weekly
+# bars open on Monday 00:00 UTC, not on a multiple of the period since the epoch; an
+# exchange whose weeks open on another day has them built from daily bars
+# (market_data/resample.py).
 CANDLE_ONLY_TIMEFRAME_SECONDS = {
     "1w": 604800,
 }

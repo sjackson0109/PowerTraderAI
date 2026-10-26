@@ -1,11 +1,16 @@
 """
-Candle data layer (FDS-121 section 8): real Binance klines + an on-disk cache.
+Candle data layer (FDS-121 section 8): real candles + an on-disk cache.
 
-* Public endpoint only (``GET /api/v3/klines``): no keys, no authentication.
-* Pagination (1000 rows per request) with backoff on rate limits / transient errors.
-* Cache: ``<cache>/candles/<SYMBOL>_<TF>.csv`` (``cache_dir_default``; CSV: parquet
-  needs pyarrow, which is not a project dependency). Only missing ranges are
-  fetched, and a forming (not yet closed) bar is never written to the cache.
+* ``exchange_candles``: candles from the exchanges in Settings, the primary exchange
+  first (FDS-MX-001 phase E). One series comes from one exchange: the first that can
+  serve the whole range, from its own cache topped up from that exchange only.
+  Public market data only: no keys, no authentication.
+* Cache: ``<cache>/candles/<exchange>/<PAIR>_<TF>.csv`` (``PAIR`` is that exchange's
+  market, e.g. ``BTC-USD``). Files cached before FDS-MX-001 phase F sit directly in
+  ``<cache>/candles`` and hold Binance bars; they move once into ``binance/``
+  (``move_flat_cache``). CSV: parquet needs pyarrow, which is not a project
+  dependency. Only missing ranges are fetched, and a forming (not yet closed) bar
+  is never written to the cache.
 * Validation: timestamps must be strictly increasing with no duplicates (raises);
   gaps are *reported* in ``df.attrs["report"]``, never filled silently.
 
@@ -16,12 +21,10 @@ Candle frames have exactly the columns the strategy interface expects::
 
 from __future__ import annotations
 
-import json
 import os
+import shutil
+import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
 
@@ -29,8 +32,8 @@ import pandas as pd
 
 from market_data.timeframes import candle_timeframe_seconds
 
-KLINES_URL = "https://api.binance.com/api/v3/klines"
-PAGE_LIMIT = 1000
+# Every bar cached before FDS-MX-001 phase F came from Binance spot klines.
+FLAT_CACHE_EXCHANGE = "binance"
 CANDLE_COLUMNS = ["open_time", "open", "high", "low", "close", "volume"]
 _NUMERIC = ["open", "high", "low", "close", "volume"]
 
@@ -63,8 +66,18 @@ def cache_dir_default() -> str:
     return os.path.join(pt_paths.cache_dir(), "candles")
 
 
-def cache_path(symbol: str, tf: str, cache_dir: Optional[str] = None) -> str:
-    return os.path.join(cache_dir or cache_dir_default(), f"{symbol.upper()}_{tf}.csv")
+def cache_path(
+    symbol: str,
+    tf: str,
+    cache_dir: Optional[str] = None,
+    exchange: Optional[str] = None,
+) -> str:
+    """The cache file for ``symbol``/``tf``: in the exchange's own folder when
+    ``exchange`` is given (one series, one exchange)."""
+    folder = cache_dir or cache_dir_default()
+    if exchange:
+        folder = os.path.join(folder, str(exchange).lower())
+    return os.path.join(folder, f"{symbol.upper()}_{tf}.csv")
 
 
 # --- validation ----------------------------------------------------------------
@@ -119,7 +132,7 @@ def validate_candles(df: pd.DataFrame, tf: str) -> CandleReport:
     )
 
 
-# --- binance klines ------------------------------------------------------------
+# --- candle rows -------------------------------------------------------------
 
 RawFetcher = Callable[[str, str, int, Optional[int]], List[list]]
 
@@ -142,88 +155,6 @@ def _frame_from_klines(rows: List[list]) -> pd.DataFrame:
         }
     )
     return df
-
-
-class BinanceKlines:
-    """Paginating, backing-off reader for the public klines endpoint."""
-
-    def __init__(
-        self,
-        opener: Callable = urllib.request.urlopen,
-        sleep: Callable[[float], None] = time.sleep,
-        max_retries: int = 5,
-        timeout: float = 10.0,
-    ) -> None:
-        self._opener = opener
-        self._sleep = sleep
-        self.max_retries = max_retries
-        self.timeout = timeout
-        self.requests_made = 0
-
-    def _page(
-        self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int]
-    ) -> List[list]:
-        params = {
-            "symbol": symbol.upper(),
-            "interval": tf,
-            "startTime": start_ms,
-            "limit": PAGE_LIMIT,
-        }
-        if end_ms is not None:
-            params["endTime"] = end_ms
-        url = f"{KLINES_URL}?{urllib.parse.urlencode(params)}"
-        delay = 1.0
-        for attempt in range(self.max_retries + 1):
-            self.requests_made += 1
-            try:
-                with self._opener(url, timeout=self.timeout) as resp:
-                    return json.loads(resp.read().decode("utf-8"))
-            except urllib.error.HTTPError as exc:
-                # 429/418: rate limited -> honour Retry-After; 5xx: transient
-                retryable = exc.code in (418, 429) or exc.code >= 500
-                if not retryable or attempt == self.max_retries:
-                    raise CandleFetchError(
-                        f"klines HTTP {exc.code} for {symbol} {tf}"
-                    ) from exc
-                retry_after = None
-                try:
-                    retry_after = (
-                        float(exc.headers.get("Retry-After")) if exc.headers else None
-                    )
-                except (TypeError, ValueError):
-                    retry_after = None
-                self._sleep(retry_after if retry_after is not None else delay)
-            except (urllib.error.URLError, OSError, ValueError) as exc:
-                if attempt == self.max_retries:
-                    raise CandleFetchError(
-                        f"klines unreachable for {symbol} {tf}: {exc}"
-                    ) from exc
-                self._sleep(delay)
-            delay = min(delay * 2, 30.0)
-        raise CandleFetchError("unreachable")  # pragma: no cover
-
-    def fetch(
-        self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int] = None
-    ) -> List[list]:
-        """All klines with open_time in [start_ms, end_ms] (inclusive), paginated."""
-        step_ms = candle_timeframe_seconds(tf) * 1000
-        out: List[list] = []
-        cursor = start_ms
-        while True:
-            page = self._page(symbol, tf, cursor, end_ms)
-            if not page:
-                break
-            out.extend(page)
-            last_open = int(page[-1][0])
-            if len(page) < PAGE_LIMIT:
-                break
-            cursor = last_open + step_ms
-            if end_ms is not None and cursor > end_ms:
-                break
-        return out
-
-
-# --- cache + public API --------------------------------------------------------
 
 
 def _read_cache(path: str) -> pd.DataFrame:
@@ -268,15 +199,20 @@ def get_candles(
     end,
     closed_only: bool = True,
     cache_dir: Optional[str] = None,
-    fetcher: Optional[BinanceKlines] = None,
+    fetcher: Optional[object] = None,
     offline: bool = False,
     now=None,
+    exchange: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Candles for ``symbol``/``tf`` with ``start <= open_time < end`` (UTC).
+    Candles for ``symbol``/``tf`` with ``start <= open_time < end`` (UTC). With
+    ``exchange``, the cache is that exchange's own (``cache_path``), and ``fetcher``
+    should read from that exchange (``exchange_candles`` does both).
 
-    Missing ranges are fetched from Binance and cached; with ``offline=True`` only
-    the cache is used and a request it cannot satisfy raises ``CandleDataError``.
+    Missing ranges are fetched with ``fetcher`` (``.fetch(symbol, tf, start_ms,
+    end_ms)``; ``exchange_candles`` passes one per exchange) and cached; with
+    ``offline=True`` only the cache is used and a request it cannot satisfy raises
+    ``CandleDataError``.
     ``closed_only`` (default) never returns the still-forming bar. The result's
     ``attrs["report"]`` is a ``CandleReport`` (gaps are reported, not filled).
 
@@ -288,7 +224,7 @@ def get_candles(
     step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
     start_ts, end_ts = to_utc(start), to_utc(end)
     now_ts = to_utc(now) if now is not None else pd.Timestamp.now(tz="UTC")
-    path = cache_path(symbol, tf, cache_dir)
+    path = cache_path(symbol, tf, cache_dir, exchange)
     cached = _read_cache(path)
     validate_candles(
         cached, tf
@@ -315,7 +251,11 @@ def get_candles(
         )
 
     if want:
-        fetcher = fetcher or BinanceKlines()
+        if fetcher is None:
+            raise CandleDataError(
+                f"no fetcher for the missing {symbol} {tf} bars: read through "
+                "exchange_candles (the exchanges in Settings)"
+            )
         frames = [cached]
         for a, b in want:
             rows = fetcher.fetch(symbol, tf, _ms(a), _ms(b))
@@ -340,6 +280,151 @@ def get_candles(
     df = df.reset_index(drop=True)
     df.attrs["report"] = validate_candles(df, tf)
     return df
+
+
+# --- the exchanges in Settings (FDS-MX-001 phase E) ----------------------------------
+
+
+def _exchange_manager():
+    """The exchange layer (an ExchangeManager): the exchanges in Settings, primary
+    first, connected for public market data."""
+    from pt_multi_exchange import market_exchanges
+
+    return market_exchanges().exchange_manager
+
+
+class ExchangeFetcher:
+    """Reads one exchange's candles through the exchange layer, for ``get_candles``:
+    a cached series is only ever topped up from the exchange it came from."""
+
+    def __init__(self, manager, exchange: str, symbol: str) -> None:
+        self.manager = manager
+        self.exchange = exchange
+        self.symbol = symbol  # the coin's market as the layer takes it, e.g. BTC-USD
+
+    def fetch(
+        self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int] = None
+    ) -> List[list]:
+        now_ms = int(time.time() * 1000)
+        end = now_ms if end_ms is None else int(end_ms)
+        return self.manager.candles(
+            self.symbol, tf, int(start_ms), end, now_ms, only=self.exchange
+        ).value
+
+
+def exchange_candles(
+    symbol: str,
+    tf: str,
+    start,
+    end,
+    closed_only: bool = True,
+    cache_dir: Optional[str] = None,
+    offline: bool = False,
+    now=None,
+    manager=None,
+    exchanges: Optional[List[str]] = None,
+) -> pd.DataFrame:
+    """
+    Candles for a coin (``BTC``, ``BTC-USD`` or ``BTCUSDT``) with ``start <= open_time
+    < end``, from the exchanges in Settings: the primary exchange first, then the
+    others in order (``exchanges`` narrows or reorders them). The first exchange that
+    can serve the whole range gives the series, from its own cache topped up from it
+    only; one that has no market for the coin, cannot reach back, or fails is passed
+    over. ``df.attrs`` names the ``exchange`` and ``pair``.
+
+    ``offline=True`` reads the caches only: the first exchange whose cache covers the
+    range. Raises MarketNotFound when no exchange has the coin, otherwise
+    CandleDataError with each exchange's answer.
+    """
+    from pt_exchange_abstraction import (
+        MarketDataUnavailable,
+        MarketNotFound,
+        dollar_symbol,
+    )
+
+    market = dollar_symbol(symbol)
+    move_flat_cache(cache_dir)
+    manager = manager if manager is not None else _exchange_manager()
+    names = list(exchanges) if exchanges is not None else manager.exchange_names()
+    reasons: List[str] = []
+    not_found = 0
+    for name in names:
+        connector = _connector(manager, name)
+        if connector is None:
+            reasons.append(f"{name}: not connected")
+            continue
+        pair = connector.market_symbol(market)
+        try:
+            df = get_candles(
+                pair,
+                tf,
+                start,
+                end,
+                closed_only=closed_only,
+                cache_dir=cache_dir,
+                fetcher=ExchangeFetcher(manager, name, market),
+                offline=offline,
+                now=now,
+                exchange=name,
+            )
+        except MarketNotFound as exc:
+            not_found += 1
+            reasons.append(f"{name}: {exc}")
+            continue
+        except (CandleDataError, MarketDataUnavailable, OSError) as exc:
+            reasons.append(f"{name}: {exc}")
+            continue
+        df.attrs["exchange"] = name
+        df.attrs["pair"] = pair
+        return df
+    if reasons and not_found == len(reasons):
+        raise MarketNotFound(
+            f"No exchange has a market for {market}: " + "; ".join(reasons)
+        )
+    raise CandleDataError(
+        f"No exchange gave {tf} candles for {market}: "
+        + ("; ".join(reasons) or "no exchange connected")
+    )
+
+
+_moved: set = set()
+_move_lock = threading.Lock()
+
+
+def move_flat_cache(cache_dir: Optional[str] = None) -> None:
+    """Move the files cached before FDS-MX-001 phase F (directly in the cache folder;
+    every one holds Binance bars) into the ``binance`` folder, once per folder and
+    process. A file already there is kept, and the old one stays where it was."""
+    folder = os.path.abspath(cache_dir or cache_dir_default())
+    with _move_lock:
+        if folder in _moved:
+            return
+        _moved.add(folder)
+        try:
+            names = [
+                n
+                for n in os.listdir(folder)
+                if n.endswith(".csv") and os.path.isfile(os.path.join(folder, n))
+            ]
+        except OSError:
+            return
+        target = os.path.join(folder, FLAT_CACHE_EXCHANGE)
+        for name in names:
+            destination = os.path.join(target, name)
+            if os.path.exists(destination):
+                continue
+            try:
+                os.makedirs(target, exist_ok=True)
+                shutil.move(os.path.join(folder, name), destination)
+            except OSError:
+                continue
+
+
+def _connector(manager, name: str):
+    for exchange_type, exchange in manager.exchanges.items():
+        if exchange_type.value == name:
+            return exchange
+    return None
 
 
 def load_candles_csv(path: str, tf: str) -> pd.DataFrame:

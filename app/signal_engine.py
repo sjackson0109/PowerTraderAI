@@ -29,7 +29,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 import pandas as pd
 
-from market_data.candles import BinanceKlines, CandleDataError, get_candles
+from market_data.candles import CandleDataError, exchange_candles
 from market_data.timeframes import timeframe_seconds
 from pt_logging import get_logger
 from model_store import ModelStoreError
@@ -49,22 +49,22 @@ FETCH_RETRY_SECONDS = 30.0
 def default_candle_provider(
     symbol: str, tf: str, n_bars: int, now: pd.Timestamp
 ) -> pd.DataFrame:
-    """The ``n_bars`` most recent closed bars, via the cache + Binance public klines."""
+    """The ``n_bars`` most recent closed bars of a coin's market, from the exchanges
+    in Settings, primary first, through the per-exchange candle cache
+    (``exchange_candles``; FDS-MX-001 phase E)."""
     step = pd.Timedelta(seconds=timeframe_seconds(tf))
     forming_open = now.floor(step)  # the bar that is still forming opens here
-    return get_candles(
-        symbol,
-        tf,
-        forming_open - n_bars * step,
-        forming_open,
-        closed_only=True,
-        fetcher=BinanceKlines(),
+    return exchange_candles(
+        symbol, tf, forming_open - n_bars * step, forming_open, closed_only=True
     )
 
 
-def pair_for(base: str) -> str:
-    """Trader coin ``BTC`` -> Binance pair ``BTCUSDT``."""
-    return f"{str(base).upper().strip()}USDT"
+def market_for(base: str) -> str:
+    """Trader coin ``BTC`` -> its market ``BTC-USD`` (USD, USDT and USDC count as the
+    same dollar), as ``strategy.symbols`` holds them."""
+    from pt_exchange_abstraction import dollar_symbol
+
+    return dollar_symbol(base)
 
 
 class SignalEngine:
@@ -153,7 +153,7 @@ class SignalEngine:
         if pos is None:
             s = self.settings
             runner = self._runner_for(s)
-            candles = self._candles.get(pair_for(base), (None, pd.DataFrame()))[1]
+            candles = self._candles.get(market_for(base), (None, pd.DataFrame()))[1]
             when = bar_time if bar_time is not None else pd.Timestamp.now(tz="UTC")
             if runner is None:
                 # no strategy to manage it (decide() returns None): keep the record only
@@ -261,7 +261,7 @@ class SignalEngine:
             return None
         if not s.is_catalogue:
             return None
-        pair = pair_for(base)
+        pair = market_for(base)
         if pair not in s.symbols:
             return None
 

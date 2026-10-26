@@ -594,16 +594,20 @@ def world(tmp_path, script, monkeypatch):
         frames = hc.all_timeframes(hc.synthetic_hourly(24 * 7 * 6, START, seed=seed))
         hc.seed_cache(str(src), pair, frames)
         for tf in frames:
-            sources[f"{pair} {tf}"] = candles.cache_path(pair, tf, str(src))
+            sources[f"{pair} {tf}"] = candles.cache_path(
+                pair, tf, str(src), hc.FIXTURE_EXCHANGE
+            )
     cache = str(tmp_path / "cache")
     calls = []
 
     def fake_get_candles(symbol, tf, start, end, cache_dir=None, fetcher=None, **kw):
         calls.append((symbol, tf, start, end))
-        os.makedirs(cache_dir, exist_ok=True)
+        os.makedirs(os.path.join(cache_dir, kw.get("exchange") or ""), exist_ok=True)
         with open(sources[f"{symbol} {tf}"], "rb") as f:
             data = f.read()
-        with open(candles.cache_path(symbol, tf, cache_dir), "wb") as f:
+        with open(
+            candles.cache_path(symbol, tf, cache_dir, kw.get("exchange")), "wb"
+        ) as f:
             f.write(data)
 
     monkeypatch.setattr(candles, "get_candles", fake_get_candles)
@@ -744,7 +748,10 @@ def test_every_step_refuses_frozen_files_that_differ_from_the_commit(world, scri
 
 def test_fetch_refuses_a_cache_that_is_not_empty(world, script):
     os.makedirs(world.cache, exist_ok=True)
-    open(candles.cache_path("BTCUSDT", "2h", world.cache), "w").close()
+    os.makedirs(os.path.join(world.cache, hc.FIXTURE_EXCHANGE), exist_ok=True)
+    open(
+        candles.cache_path("BTCUSDT", "2h", world.cache, hc.FIXTURE_EXCHANGE), "w"
+    ).close()
     with pytest.raises(script.Stop, match="must be empty"):
         script.fetch(
             world.plan,
@@ -800,7 +807,9 @@ def test_run_stops_when_a_candle_file_changed_since_fetch(world, script):
     _fetched(world, script)
     _publish_all(world, script)
     with open(
-        candles.cache_path("ETHUSDT", "1w", world.cache), "a", encoding="utf-8"
+        candles.cache_path("ETHUSDT", "1w", world.cache, hc.FIXTURE_EXCHANGE),
+        "a",
+        encoding="utf-8",
     ) as f:
         f.write("\n")
     assert script.run(world.plan, world.out, world.cache, state=_fake_state()) == 1
@@ -1316,13 +1325,14 @@ def test_train_runs_every_window_and_records_what_was_published(world, script):
         )
         == 0
     )
-    # the command line the hub's way: the coin, offline, the window, seed 0, its own folder
+    # the command line the hub's way: the coin, offline, the exchange batch 1 read, the
+    # window, seed 0, its own folder
     with open(world.tmp / "good.calls.jsonl", encoding="utf-8") as f:
         calls = [json.loads(line) for line in f]
     assert len(calls) == len(world.plan.trainings())
     for call, job in zip(calls, world.plan.trainings()):
         assert call["argv"] == [
-            job["coin"], "--offline", "--train-start", job["train_start"], "--train-end", job["train_end"], "--seed", "0",
+            job["coin"], "--offline", "--exchange", script.EXCHANGE, "--train-start", job["train_start"], "--train-end", job["train_end"], "--seed", "0",
         ]  # fmt: skip
         assert os.path.basename(call["cwd"]) == job["coin"] and not call["stale"]
     with open(os.path.join(world.out, "train.json"), encoding="utf-8") as f:

@@ -7,11 +7,12 @@ import uuid
 from typing import Any, Dict, Optional
 
 import colorama
+import position_sizing
 import pt_paths
 from colorama import Fore, Style
 from market_data.listing import not_trading_reason
 from pt_cost import CostManager, PerformanceTier
-from pt_exchange_abstraction import OrderResult
+from pt_exchange_abstraction import OrderResult, usable_minimum
 from pt_logging import get_logger
 from pt_risk import RiskLimits, RiskManager
 from pt_validation import InputValidator, ValidationError
@@ -63,7 +64,8 @@ _gui_settings_cache = {
     "coins": ["BTC", "ETH", "XRP", "BNB", "DOGE"],  # fallback defaults
     "main_neural_dir": None,
     "trade_start_level": 3,
-    "start_allocation_pct": 0.005,
+    "start_allocation_pct": position_sizing.DEFAULT_START_ALLOCATION_PCT,
+    "max_coin_allocation_pct": position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT,
     "dca_multiplier": 2.0,
     "dca_levels": [-2.5, -5.0, -10.0, -20.0, -30.0, -40.0, -50.0],
     "max_dca_buys_per_24h": 2,
@@ -158,7 +160,8 @@ TRADE_START_LEVEL = 3
 # The neural runner rewrites its signal counts about once a minute; an older file
 # (runner stopped, or carried over from an earlier install) counts as 0.
 SIGNAL_MAX_AGE_SECONDS = 15 * 60
-START_ALLOC_PCT = 0.005
+START_ALLOC_PCT = position_sizing.DEFAULT_START_ALLOCATION_PCT
+MAX_COIN_PCT = position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT
 DCA_MULTIPLIER = 2.0
 DCA_LEVELS = [-2.5, -5.0, -10.0, -20.0, -30.0, -40.0, -50.0]
 MAX_DCA_BUYS_PER_24H = 2
@@ -176,11 +179,13 @@ def _refresh_paths_and_symbols():
     """
     Hot-reload GUI settings while trader is running.
     Updates globals: crypto_symbols, main_dir, base_paths,
-                    TRADE_START_LEVEL, START_ALLOC_PCT, DCA_MULTIPLIER, DCA_LEVELS, MAX_DCA_BUYS_PER_24H,
+                    TRADE_START_LEVEL, START_ALLOC_PCT, MAX_COIN_PCT, DCA_MULTIPLIER, DCA_LEVELS,
+                    MAX_DCA_BUYS_PER_24H,
                     TRAILING_GAP_PCT, PM_START_PCT_NO_DCA, PM_START_PCT_WITH_DCA
     """
     global crypto_symbols, main_dir, base_paths
-    global TRADE_START_LEVEL, START_ALLOC_PCT, DCA_MULTIPLIER, DCA_LEVELS, MAX_DCA_BUYS_PER_24H
+    global TRADE_START_LEVEL, START_ALLOC_PCT, MAX_COIN_PCT, DCA_MULTIPLIER, DCA_LEVELS
+    global MAX_DCA_BUYS_PER_24H
     global TRAILING_GAP_PCT, PM_START_PCT_NO_DCA, PM_START_PCT_WITH_DCA
     global _last_settings_mtime
 
@@ -207,6 +212,7 @@ def _refresh_paths_and_symbols():
     )
     if START_ALLOC_PCT < 0.0:
         START_ALLOC_PCT = 0.0
+    MAX_COIN_PCT = float(s.get("max_coin_allocation_pct", MAX_COIN_PCT) or MAX_COIN_PCT)
 
     DCA_MULTIPLIER = float(s.get("dca_multiplier", DCA_MULTIPLIER) or DCA_MULTIPLIER)
     if DCA_MULTIPLIER < 0.0:
@@ -259,6 +265,14 @@ logger = get_logger(__name__)
 logger.info("PowerTrader Crypto Trader initialized")
 
 
+def _market_exchanges():
+    """The exchanges in Settings, primary first, for public market information
+    (``pt_multi_exchange.market_exchanges``: no credentials, nothing written)."""
+    from pt_multi_exchange import market_exchanges
+
+    return market_exchanges()
+
+
 class _TraderRiskAdapter:
     """
     The trader's view of risk management, backed by pt_risk.RiskManager.
@@ -286,12 +300,28 @@ class _TraderRiskAdapter:
         self.manager.portfolio_value = float(value)
         self.peak_value = max(self.peak_value, float(value))
 
-    def validate_order(self, order: dict, portfolio_value: float) -> dict:
+    def validate_order(
+        self, order: dict, portfolio_value: float, max_buy_usd: float
+    ) -> dict:
+        """A halt refuses every order. A buy may be worth at most ``max_buy_usd`` (the
+        trader passes the coin's budget). A sell is never refused for its size: it only
+        reduces a holding, and a cap there would leave a position that cannot be sold.
+
+        RiskManager.validate_trade is not used for size: it caps every order, sells
+        included, at 1% of the account, below the trader's own sizing rules."""
         self.manager.portfolio_value = float(portfolio_value)
-        approved, reason = self.manager.validate_trade(
-            order["symbol"], float(order["quantity"]), float(order["price"])
-        )
-        return {"approved": approved, "reason": reason}
+        if self.is_trading_halted():
+            return {"approved": False, "reason": "Trading is halted by risk controls"}
+        value = float(order["quantity"]) * float(order["price"])
+        # half a cent: the quantity is rounded to 8 decimals, so value can pass the
+        # limit by a fraction of a cent
+        if order.get("side") == "buy" and value > float(max_buy_usd) + 0.005:
+            return {
+                "approved": False,
+                "reason": f"Trade size exceeds risk limits: ${value:,.2f} "
+                f"(at most ${float(max_buy_usd):,.2f} per buy)",
+            }
+        return {"approved": True, "reason": "Trade approved"}
 
     def check_emergency_conditions(self, portfolio_value: float) -> dict:
         warnings = []
@@ -676,6 +706,7 @@ class CryptoAPITrading:
         price_source: Optional[str] = None,
         quote_ts: Optional[float] = None,
         age_s: Optional[float] = None,
+        price_exchange: Optional[str] = None,
     ) -> None:
         """
         Minimal local ledger for GUI:
@@ -825,6 +856,7 @@ class CryptoAPITrading:
             entry["price_source"] = price_source
             entry["quote_ts"] = quote_ts
             entry["age_s"] = age_s
+            entry["price_exchange"] = price_exchange or ""
             self._note_price_event(price_source, ts)
         self._append_jsonl(self.trade_history_path, entry)
 
@@ -894,7 +926,7 @@ class CryptoAPITrading:
 
     def _market_not_trading(self, symbol: str) -> Optional[str]:
         """Why ``symbol`` must get no buys, or None. The runner and the trainer record
-        in the coin's folder when its Binance market is not trading (delisted, halted,
+        in the coin's folder when its market is not trading (delisted, halted,
         or never listed): no entry and no DCA buy is made in such a coin. Sells are
         not blocked. The reason is printed once per coin."""
         sym = str(symbol).upper().strip()
@@ -1390,6 +1422,13 @@ class CryptoAPITrading:
             portfolio_value = self._get_buying_power()
         self.risk_manager.update_portfolio_value(portfolio_value)
 
+        # One buy may use the coin's whole budget (Max per coin %); the exchange's
+        # minimum order is always allowed, as the entry is raised to it
+        max_buy_usd = 0.0
+        if side == "buy":
+            max_buy_usd = position_sizing.coin_budget_usd(portfolio_value, MAX_COIN_PCT)
+            if quantity * price > max_buy_usd:
+                max_buy_usd = max(max_buy_usd, self._minimum_order_usd(symbol) or 0.0)
         validation = self.risk_manager.validate_order(
             {
                 "symbol": symbol,
@@ -1399,6 +1438,7 @@ class CryptoAPITrading:
                 "order_value": quantity * price,
             },
             portfolio_value,
+            max_buy_usd,
         )
         if not validation["approved"]:
             print(f"{Fore.YELLOW}RISK BLOCK: {validation['reason']}{Style.RESET_ALL}")
@@ -1555,6 +1595,8 @@ class CryptoAPITrading:
             "price_source": order.price_source or "unknown",
             "quote_ts": order.quote_ts,
             "age_s": order.age_s,
+            # the exchange whose quote priced the fill (FDS-MX-001 phase B)
+            "price_exchange": getattr(order, "price_exchange", "") or "",
         }
 
     def _catalogue_exit_quantity(self, symbol: str, holding_qty: float) -> float:
@@ -1629,6 +1671,19 @@ class CryptoAPITrading:
                 self._save_pnl_ledger()
         except Exception:
             pass
+
+    def _minimum_order_usd(self, symbol: str) -> Optional[float]:
+        """The smallest order the exchange takes for ``symbol``, or None when no
+        exchange states one. Live: the broker the order goes to. Paper: the exchanges
+        in Settings, primary first, then the others."""
+        try:
+            if self._settings.is_live:
+                minimum = self._target.exchange.min_order_usd(symbol)
+            else:
+                minimum = _market_exchanges().min_order_usd(symbol)
+        except Exception:
+            return None
+        return usable_minimum(minimum)
 
     def place_buy_order(
         self,
@@ -2272,10 +2327,23 @@ class CryptoAPITrading:
                 print(f"  Buying Power: ${buying_power:.2f}")
 
                 recent_dca = self._dca_window_count(symbol)
+                invested = float(avg_cost_basis or 0.0) * float(quantity or 0.0)
                 if recent_dca >= int(getattr(self, "max_dca_buys_per_24h", 2)):
                     print(
                         f"  Skipping DCA for {symbol}. "
                         f"Already placed {recent_dca} DCA buys in the last 24h (max {self.max_dca_buys_per_24h})."
+                    )
+
+                elif not position_sizing.dca_fits_budget(
+                    invested, dca_amount, total_account_value, MAX_COIN_PCT
+                ):
+                    budget = position_sizing.coin_budget_usd(
+                        total_account_value, MAX_COIN_PCT
+                    )
+                    print(
+                        f"  Skipping DCA for {symbol}. It would take the coin to "
+                        f"${invested + dca_amount:.2f}, past its budget of ${budget:.2f} "
+                        f"(Max per coin {MAX_COIN_PCT:g}% of ${total_account_value:.2f})."
                     )
 
                 elif dca_amount <= buying_power:
@@ -2363,11 +2431,6 @@ class CryptoAPITrading:
         if not trading_pairs:
             return
 
-        alloc_pct = float(START_ALLOC_PCT or 0.005)
-        allocation_in_usd = total_account_value * (alloc_pct / 100.0)
-        if allocation_in_usd < 0.5:
-            allocation_in_usd = 0.5
-
         holding_full_symbols = [
             f"{h['asset_code']}-USD" for h in holdings.get("results", [])
         ]
@@ -2415,6 +2478,12 @@ class CryptoAPITrading:
                     start_index += 1
                     continue
 
+            # Start allocation % of the account, raised to the exchange's minimum
+            allocation_in_usd = position_sizing.entry_usd(
+                total_account_value,
+                START_ALLOC_PCT,
+                self._minimum_order_usd(full_symbol),
+            )
             response = self.place_buy_order(
                 str(uuid.uuid4()),
                 "buy",

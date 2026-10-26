@@ -345,7 +345,7 @@ def as_candles(bars, shift=0):
     ]
 
 
-class FakeKuCoin:
+class FakeCandles:
     def __init__(self, candles):
         self.candles = candles
 
@@ -353,7 +353,7 @@ class FakeKuCoin:
         return list(self.candles)
 
 
-class FakeBinance:
+class FakeBars:
     def __init__(self, bars, error=None):
         self.bars, self.error, self.calls, self.threads = bars, error, [], []
 
@@ -398,14 +398,14 @@ def make_chart(tk_root, tmp_path, monkeypatch):
             + "\n"
         )
         chart = pt_hub.CandleChart(
-            tk_root, FakeKuCoin(candles), "BTC", lambda: settings, str(history)
+            tk_root, FakeCandles(candles), "BTC", lambda: settings, str(history)
         )
-        fake = FakeBinance(bars if bars is not None else [])
+        fake = FakeBars(bars if bars is not None else [])
         chart.pattern_layer.fetch_bars = fake
         last = max(b.ts for b in bars) if bars else candles[-1]["ts"]
         chart.pattern_layer.clock = lambda: last + HOUR + 1
         chart.settings = settings
-        chart.fake_binance = fake
+        chart.fake_bars = fake
         chart.folder = str(folder)
         return chart
 
@@ -503,7 +503,7 @@ def test_labels_come_from_binance_bars_off_the_tk_thread_and_sit_on_their_candle
     refresh(chart)
     chart.pattern_layer.wait()
     assert labels(chart).get("bullish_engulfing") == len(bars) - 1
-    fake = chart.fake_binance
+    fake = chart.fake_bars
     assert fake.calls and fake.calls[0][:2] == ("BTC", "1h")
     assert all(t is not threading.main_thread() for t in fake.threads)
 
@@ -543,19 +543,15 @@ def test_a_coin_recorded_not_trading_gets_a_note_and_no_fetch(make_chart):
         chart.patterns_status_label.cget("text")
         == "Candlestick patterns: not available for this coin"
     )
-    assert chart.fake_binance.calls == []
+    assert chart.fake_bars.calls == []
 
 
-def test_a_failed_fetch_is_a_note_not_an_error(make_chart):
-    import urllib.error
-
-    from market_data.candles import CandleFetchError
+def test_a_coin_no_exchange_has_is_a_note_not_an_error(make_chart):
+    from pt_exchange_abstraction import MarketNotFound
 
     bars = down_then_engulfing()
     chart = make_chart(as_candles(bars), bars=bars)
-    err = CandleFetchError("klines HTTP 400 for BTCUSDT 1h")
-    err.__cause__ = urllib.error.HTTPError("u", 400, "Bad Request", {}, None)
-    chart.fake_binance.error = err
+    chart.fake_bars.error = MarketNotFound("No exchange has a market for BTC-USD")
     refresh(chart)
     chart.pattern_layer.wait()
     assert (

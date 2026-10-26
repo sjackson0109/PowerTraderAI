@@ -6,8 +6,10 @@ Zero setup: no GUI, no config file, no API keys. It drives the *real* paper path
 
     resolve_order_target(settings)  ->  PaperExchange  ->  PaperTradingAccount
 
-with live BTCUSDT bid/ask from Binance's public ticker. It never reads or writes
-the user's pt_config.json (settings are built in memory) and keeps its paper
+with a live BTC bid/ask from the exchanges in the user's exchange settings
+(trading_config.json, read only), primary exchange first; with no settings file,
+the region's default exchanges. It never reads or writes the user's pt_config.json
+(settings are built in memory), writes no exchange settings, and keeps its paper
 book in a throw-away temp directory.
 
 There is deliberately NO simulated-price fallback here: a demo that quietly
@@ -87,7 +89,7 @@ def _run(out: Callable[[str], None], workdir: str, settings: dict) -> int:
     start_cash = exchange.get_balance()["USD"]
     out(f"Starting balance : {_money(start_cash)}")
 
-    # 3. Live BTCUSDT bid/ask from Binance's public API.
+    # 3. Live BTC bid/ask from the exchanges in Settings, primary first.
     quote = tm.fetch_public_quote("BTC")
     paper = tm.read_paper_settings(settings)
     source = tm.classify_quote(quote, paper.max_quote_age_s, time.time())
@@ -99,7 +101,10 @@ def _run(out: Callable[[str], None], workdir: str, settings: dict) -> int:
         out("Paper trading system: DEGRADED (no live price)")
         return EXIT_DEGRADED
     mid = (quote.bid + quote.ask) / 2
-    out(f"Live BTC price   : {_money(mid)}  (Binance public feed, source={source})")
+    out(
+        f"Live BTC price   : {_money(mid)}  "
+        f"(from {quote.exchange or 'an exchange'} {quote.pair}, source={source})"
+    )
     out("")
 
     # 4. BUY through the gate's target.

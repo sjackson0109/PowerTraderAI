@@ -76,6 +76,14 @@ class TradingConfig:
     auto_best_price: bool = False
 
 
+def _rank(preference) -> int:
+    """An exchange's preference rank as a number (unreadable ranks go last)."""
+    try:
+        return int(preference)
+    except (TypeError, ValueError):
+        return 1_000_000
+
+
 def _credential_field(exchange: str, attr: str) -> Optional[str]:
     """pt_secrets field behind an ExchangeConfig credential attribute
     (Coinbase ``api_key`` -> ``key_name``), or None if the exchange has none."""
@@ -213,8 +221,12 @@ class ExchangeConfigManager:
                 pt_secrets.set_credentials(ex.exchange_type, values)
                 ex.credential_source = pt_secrets.SOURCE_KEYRING
 
-    def create_default_config(self, user_region: str = "GLOBAL") -> TradingConfig:
-        """Create default configuration based on user region"""
+    def create_default_config(
+        self, user_region: str = "GLOBAL", save: bool = True
+    ) -> TradingConfig:
+        """The default configuration for ``user_region``, saved to
+        ``trading_config.json`` unless ``save`` is False (then it is used in memory
+        only)."""
         exchanges = []
         primary = ""
 
@@ -265,6 +277,10 @@ class ExchangeConfigManager:
             user_region=user_region, primary_exchange=primary, exchanges=exchanges
         )
 
+        if not save:
+            self.config = config
+            return config
+
         # Defaults never silently replace a file: an existing one is kept (#144)
         if os.path.exists(self.config_file):
             backup = _free_name(self.config_file + ".bak")
@@ -274,11 +290,14 @@ class ExchangeConfigManager:
         return config
 
     def get_enabled_exchanges(self) -> List[ExchangeConfig]:
-        """Get list of enabled exchange configurations"""
+        """The enabled exchanges in preference order (``region_preference`` 1 first;
+        equal ranks keep their file order). The exchange layer asks them in this
+        order after the primary (FDS-MX-001 section 5.2)."""
         if not self.config:
             return []
 
-        return [ex for ex in self.config.exchanges if ex.enabled]
+        enabled = [ex for ex in self.config.exchanges if ex.enabled]
+        return sorted(enabled, key=lambda ex: _rank(ex.region_preference))
 
     def get_exchange_config(self, exchange_name: str) -> Optional[ExchangeConfig]:
         """Get configuration for specific exchange"""
@@ -337,7 +356,10 @@ class MultiExchangeManager:
         self.initialized = False
 
     def initialize(
-        self, user_region: str = None, with_credentials: bool = False
+        self,
+        user_region: str = None,
+        with_credentials: bool = False,
+        save_defaults: bool = True,
     ) -> bool:
         """Connect the enabled exchanges in the configuration.
 
@@ -345,13 +367,17 @@ class MultiExchangeManager:
         endpoints) no credential is read. With it, each enabled exchange's
         credentials are read as it connects, and no other exchange's (#144).
         A ``trading_config.json`` that exists but cannot be read is left as it
-        is, and initialisation fails (``load_config`` says why)."""
+        is, and initialisation fails (``load_config`` says why). With no file, the
+        defaults for ``user_region`` are used, and saved unless ``save_defaults``
+        is False."""
         # Load or create configuration
         config = self.config_manager.load_config()
         if config is None and os.path.exists(self.config_manager.config_file):
             return False  # unreadable: never replaced by defaults
         if not config and user_region:
-            config = self.config_manager.create_default_config(user_region)
+            config = self.config_manager.create_default_config(
+                user_region, save=save_defaults
+            )
         elif not config:
             print(
                 "No configuration found. Please set user_region or create config manually."
@@ -412,6 +438,50 @@ class MultiExchangeManager:
             return self.exchange_manager.get_current_price(symbol, exchange_type)
         else:
             return self.exchange_manager.get_current_price(symbol)
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """The minimum order value for ``symbol``: the primary exchange's, else the
+        first other enabled exchange's that states one; None when none does."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.min_order_usd(symbol)
+
+    def candles(
+        self,
+        symbol: str,
+        tf: str,
+        start_ms: int,
+        end_ms: int,
+        now_ms=None,
+        only=None,
+        closed_only: bool = True,
+    ):
+        """Closed ``tf`` candles from the primary exchange, else the next that can
+        serve the whole range; ``only`` asks one exchange (``ExchangeManager.candles``).
+        """
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.candles(
+            symbol, tf, start_ms, end_ms, now_ms, only=only, closed_only=closed_only
+        )
+
+    def market_status(self, symbol: str):
+        """Whether ``symbol``'s market is trading, from the primary exchange unless it
+        does not list the coin (``ExchangeManager.market_status``)."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.market_status(symbol)
+
+    def quote(self, symbol: str):
+        """Best bid and ask, from the primary exchange, else the next that gives one
+        (``ExchangeManager.quote``)."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.quote(symbol)
 
     def compare_prices(self, symbol: str) -> Dict[str, float]:
         """Compare prices across all connected exchanges"""
@@ -552,3 +622,16 @@ def shared_manager() -> MultiExchangeManager:
     if _shared is None:
         _shared = MultiExchangeManager()
     return _shared
+
+
+def market_exchanges() -> MultiExchangeManager:
+    """The shared manager, connected on first use for public market data: the
+    exchanges in ``trading_config.json``, primary first (FDS-MX-001). No credentials
+    are read, and nothing is written: with no file, the defaults for the region
+    (``POWERTRADER_USER_REGION``, else GLOBAL) are used in memory."""
+    manager = shared_manager()
+    if not manager.initialized:
+        manager.initialize(
+            os.environ.get("POWERTRADER_USER_REGION", "GLOBAL"), save_defaults=False
+        )
+    return manager

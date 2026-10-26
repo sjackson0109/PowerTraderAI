@@ -212,7 +212,16 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 0, stderr)
         res = json.load(open(self.out, encoding="utf-8"))
-        self.assertEqual(res["data"]["source"]["kind"], "binance_klines_cache")
+        # a file cached before FDS-MX-001 phase F (Binance bars, flat in the cache)
+        # moves once into binance/ and is read from there
+        source = res["data"]["source"]
+        self.assertEqual(
+            (source["kind"], source["exchange"], source["pair"]),
+            ("exchange_candles_cache", "binance", "BTCUSDT"),
+        )
+        self.assertTrue(
+            os.path.isfile(os.path.join(cache, "binance", "BTCUSDT_1h.csv"))
+        )
         # a range the cache cannot satisfy is an error, not a download
         code, _, stderr = run_cli(
             "--strategy",

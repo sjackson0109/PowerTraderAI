@@ -118,11 +118,17 @@ def all_timeframes(hourly, tfs=TRAINER_TFS):
     return {tf: resample(hourly, tf) for tf in tfs}
 
 
-def seed_cache(cache_dir, symbol, frames):
-    """Write ``{tf: frame}`` to ``cache_dir`` in the candle cache format."""
+# The fixtures are Binance bars named <COIN>USDT: they are seeded where the candle layer
+# keeps Binance's (FDS-MX-001 phase F: one folder per exchange).
+FIXTURE_EXCHANGE = "binance"
+
+
+def seed_cache(cache_dir, symbol, frames, exchange=FIXTURE_EXCHANGE):
+    """Write ``{tf: frame}`` to ``exchange``'s folder of the candle cache in
+    ``cache_dir``, in the candle cache format."""
     os.makedirs(cache_dir, exist_ok=True)
     for tf, frame in frames.items():
-        _write_cache(cache_path(symbol, tf, cache_dir), frame)
+        _write_cache(cache_path(symbol, tf, cache_dir, exchange), frame)
     return cache_dir
 
 
@@ -138,3 +144,43 @@ def seed_trainer_window(monkeypatch, coins, hours=FIXTURE_HOURS, seed=1):
     monkeypatch.setenv("POWERTRADER_TRAIN_END", end.isoformat())
     monkeypatch.setenv("POWERTRADER_CANDLES_OFFLINE", "1")
     return FIXTURE_START, end
+
+
+# --- one fake exchange as the exchanges in Settings (FDS-MX-001 phase F) -------------
+
+
+class FakeConnector:
+    """One exchange behind a real ExchangeManager, serving the bars of ``fetcher``
+    (anything with ``fetch(pair, tf, start_ms, end_ms)`` returning cache-style rows,
+    such as the tests' fake exchanges). Every trainer timeframe is served as is."""
+
+    def __init__(self, fetcher, pair_format="{}USDT"):
+        self.fetcher = fetcher
+        self.pair_format = pair_format
+
+    def market_symbol(self, symbol):
+        return self.pair_format.format(str(symbol).split("-")[0].upper())
+
+    def candle_timeframes(self):
+        return frozenset(TRAINER_TFS)
+
+    def max_history_bars(self, tf):
+        return None
+
+    def candles(self, symbol, tf, start_ms, end_ms):
+        rows = self.fetcher.fetch(self.market_symbol(symbol), tf, start_ms, end_ms)
+        return [[int(r[0])] + [float(v) for v in r[1:6]] for r in rows]
+
+
+def fake_layer(monkeypatch, fetcher, exchange="binance", pair_format="{}USDT"):
+    """Make ``fetcher`` the only exchange in Settings for the candle layer (the
+    trainer's, the backtests' and the strategies' source). The tests' fixtures are
+    Binance bars named ``<COIN>USDT``, so by default it answers as Binance does."""
+    from market_data import candles
+    from pt_exchange_abstraction import ExchangeManager, ExchangeType
+
+    manager = ExchangeManager()
+    manager.exchanges[ExchangeType(exchange)] = FakeConnector(fetcher, pair_format)
+    manager.primary_exchange = ExchangeType(exchange)
+    monkeypatch.setattr(candles, "_exchange_manager", lambda: manager)
+    return manager

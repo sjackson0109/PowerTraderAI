@@ -14,7 +14,6 @@ import json
 import os
 import sys
 import time
-import urllib.error
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -32,7 +31,7 @@ import trading_mode as tm  # noqa: E402
 from helpers import PaperTraderCase  # noqa: E402
 from market_data import candles, listing, runner_history  # noqa: E402
 from market_data.candles import CandleDataError  # noqa: E402
-from pt_exchange_abstraction import MarketNotFound  # noqa: E402
+from pt_exchange_abstraction import MarketNotFound, MarketStatus, Sourced  # noqa: E402
 
 EPOCH = pd.Timestamp("1970-01-01", tz="UTC")
 LISTED = datetime(2024, 3, 4, tzinfo=timezone.utc)  # a Monday
@@ -60,7 +59,8 @@ def binance_rows(frame, start_ms, end_ms):
 
 
 class Exchange:
-    """Stands in for candles.BinanceKlines over ``{pair: {tf: frame}}``."""
+    """One exchange's bars over ``{pair: {tf: frame}}`` (a ``get_candles`` fetcher, or
+    behind the exchange layer through ``hc.fake_layer``)."""
 
     def __init__(self, frames_by_pair):
         self.frames = frames_by_pair
@@ -141,7 +141,7 @@ def test_a_pair_listed_late_trains_again_from_its_cache(tmp_path, monkeypatch):
     end = LISTED + timedelta(weeks=8)
     hourly = hc.synthetic_hourly(8 * 168, LISTED, seed=3)
     fake = Exchange({"NEWUSDT": hc.all_timeframes(hourly)})
-    monkeypatch.setattr(candles, "BinanceKlines", lambda *a, **k: fake)
+    hc.fake_layer(monkeypatch, fake)
 
     first = load_all(
         ppt.BarLoader("NEWUSDT", start, end, False, cache_dir=str(tmp_path))
@@ -166,7 +166,7 @@ def test_a_live_run_whose_bars_stop_early_is_refused(tmp_path, monkeypatch):
     start, end = live_window()
     hourly = hc.synthetic_hourly(6 * 168 - 72, start, seed=5)  # stops 3 days early
     fake = Exchange({"GONEUSDT": hc.all_timeframes(hourly)})
-    monkeypatch.setattr(candles, "BinanceKlines", lambda *a, **k: fake)
+    hc.fake_layer(monkeypatch, fake)
 
     closed = ppt.BarLoader(
         "GONEUSDT",
@@ -177,12 +177,13 @@ def test_a_live_run_whose_bars_stop_early_is_refused(tmp_path, monkeypatch):
         status_of=status_is("BREAK"),
     )
     with pytest.raises(
-        ppt.MarketClosedError, match="GONEUSDT is BREAK, not trading"
+        ppt.MarketClosedError, match="GONE-USD is BREAK, not trading"
     ) as e:
         closed.bars("1hour")
     assert e.value.confirmed and "no longer trades" in str(e.value)
 
-    # Binance says it trades, or cannot be asked: refused, but not "no longer trades"
+    # the market status says it trades, or cannot say: refused, but not "no longer
+    # trades"
     for code, said in ((listing.TRADING, "trading"), (None, "status unknown")):
         loader = ppt.BarLoader(
             "GONEUSDT",
@@ -199,20 +200,18 @@ def test_a_live_run_whose_bars_stop_early_is_refused(tmp_path, monkeypatch):
         assert not e.value.confirmed and "Try again later" in str(e.value)
 
 
-def test_a_pair_binance_does_not_list_is_refused_cleanly(tmp_path, monkeypatch):
+def test_a_coin_no_exchange_lists_is_refused_cleanly(tmp_path, monkeypatch):
     class Unknown:
-        requests_made = 0
-
         def fetch(self, symbol, tf, start_ms, end_ms=None):
-            error = candles.CandleFetchError(f"klines HTTP 400 for {symbol} {tf}")
-            error.__cause__ = urllib.error.HTTPError("u", 400, "Bad Request", {}, None)
-            raise error
+            raise MarketNotFound(f"the exchange has no market {symbol}")
 
-    monkeypatch.setattr(candles, "BinanceKlines", lambda *a, **k: Unknown())
+    hc.fake_layer(monkeypatch, Unknown())
     loader = ppt.BarLoader(
         "NOPEUSDT", LISTED, LISTED + timedelta(weeks=2), False, cache_dir=str(tmp_path)
     )
-    with pytest.raises(ppt.MarketClosedError, match="no spot market NOPEUSDT") as e:
+    with pytest.raises(
+        ppt.MarketClosedError, match="No exchange has a market for NOPE-USD"
+    ) as e:
         loader.bars("1hour")
     assert e.value.confirmed
 
@@ -222,9 +221,7 @@ def test_a_live_run_missing_only_the_last_bar_or_two_is_not_refused(
 ):
     start, end = live_window()
     hourly = hc.synthetic_hourly(6 * 168 - 2, start, seed=6)
-    monkeypatch.setattr(
-        candles, "BinanceKlines", lambda *a, **k: Exchange({"LATEUSDT": {"1h": hourly}})
-    )
+    hc.fake_layer(monkeypatch, Exchange({"LATEUSDT": {"1h": hourly}}))
     asked = []
     loader = ppt.BarLoader(
         "LATEUSDT", start, end, False, cache_dir=str(tmp_path), status_of=asked.append
@@ -237,9 +234,7 @@ def test_an_older_window_with_a_short_tail_is_reported_not_refused(
     tmp_path, monkeypatch
 ):
     hourly = hc.synthetic_hourly(300, LISTED, seed=7)
-    monkeypatch.setattr(
-        candles, "BinanceKlines", lambda *a, **k: Exchange({"OLDUSDT": {"1h": hourly}})
-    )
+    hc.fake_layer(monkeypatch, Exchange({"OLDUSDT": {"1h": hourly}}))
     loader = ppt.BarLoader(
         "OLDUSDT", LISTED, LISTED + timedelta(hours=400), False, cache_dir=str(tmp_path)
     )
@@ -306,79 +301,85 @@ def test_a_live_run_that_finishes_records_its_market_trading(tmp_path, monkeypat
     assert listing.read_market_status(str(folder))["trading"] is True
 
 
-# --- the exchange-information check -------------------------------------------------
+# --- the market-status check: the exchanges in Settings ---------------------------
 
 
-class FakeResponse:
-    def __init__(self, payload):
-        self.payload = payload
+class Layer:
+    """The exchange layer's market status (``market_exchanges().market_status``)."""
 
-    def read(self):
-        return json.dumps(self.payload).encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
-class Opener:
     def __init__(self, answer):
-        self.answer, self.urls = answer, []
+        self.answer, self.asked = answer, []
 
-    def __call__(self, url, timeout=None):
-        self.urls.append(url)
+    def __call__(self, symbol):
+        self.asked.append(symbol)
         if isinstance(self.answer, Exception):
             raise self.answer
-        return FakeResponse(self.answer)
+        return self.answer
 
 
-def info(pair, status):
-    return {"symbols": [{"symbol": pair, "status": status}]}
+def said(exchange, listed, trading, word):
+    return Sourced(MarketStatus(listed, trading, word), exchange, "x", primary=True)
 
 
-def test_the_status_of_a_pair_comes_from_exchange_information():
-    trading = listing.ListingChecker(opener=Opener(info("BTCUSDT", "TRADING")))
-    assert trading.status("BTC-USDT").trading is True
-    halted = listing.ListingChecker(opener=Opener(info("HYPEUSDT", "BREAK"))).status(
-        "HYPEUSDT"
+def test_the_status_of_a_market_comes_from_the_exchanges_in_settings():
+    trading = listing.ListingChecker(
+        source=Layer(said("coinbase", True, True, "online"))
     )
+    status = trading.status("BTC-USDT")
+    assert (status.trading, status.exchange, status.pair) == (
+        True,
+        "coinbase",
+        "BTC-USD",
+    )
+    halted = listing.ListingChecker(
+        source=Layer(said("kraken", True, False, "cancel_only"))
+    ).status("HYPEUSDT")
     assert halted.trading is False
-    assert halted.describe() == "Binance spot HYPEUSDT is BREAK, not trading"
+    assert halted.describe() == "HYPE-USD on kraken is cancel_only, not trading"
 
-    invalid = urllib.error.HTTPError("u", 400, "Bad Request", {}, None)
-    gone = listing.ListingChecker(opener=Opener(invalid)).status("OLDUSDT")
+    gone = listing.ListingChecker(
+        source=Layer(said("coinbase", False, False, "NOT_LISTED"))
+    ).status("OLDUSDT")
     assert (gone.status, gone.trading) == (listing.NOT_LISTED, False)
-    assert gone.describe() == "Binance has no spot market OLDUSDT"
+    assert gone.describe() == "no exchange in Settings has a market for OLD-USD"
 
 
-def test_an_unreachable_endpoint_gives_no_verdict_and_is_asked_again_soon():
+def test_an_exchange_layer_that_cannot_say_gives_no_verdict_and_is_asked_again_soon():
     clock = [1000.0]
-    opener = Opener(urllib.error.URLError("offline"))
+    layer = Layer(None)  # no exchange could say
     checker = listing.ListingChecker(
-        opener=opener, clock=lambda: clock[0], retry_ttl=300
+        source=layer, clock=lambda: clock[0], retry_ttl=300
     )
     assert checker.status("BTCUSDT").trading is None
     clock[0] += 100
     checker.status("BTCUSDT")
-    assert len(opener.urls) == 1  # cached briefly
+    assert len(layer.asked) == 1  # cached briefly
     clock[0] += 300
     checker.status("BTCUSDT")
-    assert len(opener.urls) == 2
+    assert len(layer.asked) == 2
+    failing = listing.ListingChecker(source=Layer(RuntimeError("down")))
+    assert failing.status("BTC").trading is None
 
 
 def test_a_known_status_is_kept_for_an_hour():
     clock = [0.0]
-    opener = Opener(info("BTCUSDT", "TRADING"))
-    checker = listing.ListingChecker(opener=opener, clock=lambda: clock[0], ttl=3600)
+    layer = Layer(said("coinbase", True, True, "online"))
+    checker = listing.ListingChecker(source=layer, clock=lambda: clock[0], ttl=3600)
     checker.status("BTCUSDT")
     clock[0] += 3599
-    checker.status("BTCUSDT")
-    assert len(opener.urls) == 1
+    checker.status("BTC")  # the same market
+    assert layer.asked == ["BTC-USD"]
     clock[0] += 2
     checker.status("BTCUSDT")
-    assert len(opener.urls) == 2
+    assert len(layer.asked) == 2
+
+
+def test_the_verdict_file_records_the_exchange(tmp_path):
+    listing.write_market_status(
+        str(tmp_path), "hype-usd", False, "delisted", "coinbase"
+    )
+    record = listing.read_market_status(str(tmp_path))
+    assert (record["pair"], record["exchange"]) == ("HYPE-USD", "coinbase")
 
 
 def test_the_market_verdict_file_round_trips(tmp_path):
@@ -402,27 +403,32 @@ def kline(open_s, close):
 
 
 class Klines:
+    """The exchange layer's candles: fixed bars, served by "fake"."""
+
     def __init__(self, rows):
         self.rows = rows
 
-    def fetch(self, symbol, tf, start_ms, end_ms=None):
-        return list(self.rows)
+    def __call__(self, symbol, tf, start_ms, end_ms, now_ms):
+        bars = [r for r in self.rows if start_ms <= r[0] <= end_ms]
+        return Sourced(bars, "fake", symbol, primary=True)
 
 
 def test_bars_that_stopped_from_a_closed_market_are_a_missing_market():
     forming = NOW - NOW % HOUR
     stale = [kline(forming - 3 * HOUR, 5.0)]  # nothing for the last two hours
     candles_ = runner_history.RecentCandles(
-        fetcher=Klines(stale), clock=lambda: NOW, listing=status_is("BREAK")
+        source=Klines(stale), clock=lambda: NOW, listing=status_is("BREAK")
     )
-    with pytest.raises(MarketNotFound, match="HYPEUSDT is BREAK, not trading"):
-        candles_.kucoin_text("HYPE", "1hour")
+    with pytest.raises(MarketNotFound, match="HYPE-USD is BREAK, not trading"):
+        candles_.history_text("HYPE", "1hour")
 
     gone = runner_history.RecentCandles(
-        fetcher=Klines([]), clock=lambda: NOW, listing=status_is(listing.NOT_LISTED)
+        source=Klines([]), clock=lambda: NOW, listing=status_is(listing.NOT_LISTED)
     )
-    with pytest.raises(MarketNotFound, match="no spot market HYPEUSDT"):
-        gone.kucoin_text("HYPE", "1hour")
+    with pytest.raises(
+        MarketNotFound, match="no exchange in Settings has a market for HYPE-USD"
+    ):
+        gone.history_text("HYPE", "1hour")
 
 
 def test_bars_that_stopped_while_binance_says_trading_or_cannot_say_are_waited_for():
@@ -431,10 +437,12 @@ def test_bars_that_stopped_while_binance_says_trading_or_cannot_say_are_waited_f
     stale = [kline(forming - 4 * HOUR, 5.0), kline(forming - 3 * HOUR, 5.5)]
     for status in (status_is(listing.TRADING), status_is(None)):
         stopped = runner_history.RecentCandles(
-            fetcher=Klines(stale), clock=lambda: NOW, listing=status
+            source=Klines(stale), clock=lambda: NOW, listing=status
         )
-        with pytest.raises(CandleDataError, match="no 1h candle for BTCUSDT since"):
-            stopped.kucoin_text("BTC", "1hour")
+        with pytest.raises(
+            CandleDataError, match="no 1h candle for BTC-USD on fake since"
+        ):
+            stopped.history_text("BTC", "1hour")
 
 
 def test_a_gap_in_a_trading_market_is_only_waiting_for_data():
@@ -445,19 +453,19 @@ def test_a_gap_in_a_trading_market_is_only_waiting_for_data():
         return listing.PairStatus(pair, listing.TRADING)
 
     empty = runner_history.RecentCandles(
-        fetcher=Klines([]), clock=lambda: NOW, listing=trading
+        source=Klines([]), clock=lambda: NOW, listing=trading
     )
     with pytest.raises(CandleDataError):
-        empty.kucoin_text("BTC", "1hour")
-    assert asked == ["BTCUSDT"]
+        empty.history_text("BTC", "1hour")
+    assert asked == ["BTC-USD"]
 
     forming = NOW - NOW % HOUR
     fresh = [kline(forming - 2 * HOUR, 5.0), kline(forming - HOUR, 6.0)]
     ok = runner_history.RecentCandles(
-        fetcher=Klines(fresh), clock=lambda: NOW, listing=trading
+        source=Klines(fresh), clock=lambda: NOW, listing=trading
     )
-    assert json.loads(ok.kucoin_text("BTC", "1hour"))[1][2] == 6.0
-    assert asked == ["BTCUSDT"]  # the last closed bar is there: nothing to ask
+    assert json.loads(ok.history_text("BTC", "1hour"))[1][2] == 6.0
+    assert asked == ["BTC-USD"]  # the last closed bar is there: nothing to ask
 
 
 class TextProvider:
@@ -570,17 +578,17 @@ def test_a_skipped_coin_is_checked_again_after_an_hour(runner, monkeypatch):
 
 
 def test_an_untrained_coin_whose_market_closed_is_skipped(runner, monkeypatch):
-    """No bars are fetched for an untrained coin, so Binance is asked directly: a
-    held coin must not keep getting DCA buys after a delisting."""
+    """No bars are fetched for an untrained coin, so its market status is asked
+    directly: a held coin must not keep getting DCA buys after a delisting."""
     monkeypatch.setattr(
         listing, "pair_status", lambda pair: listing.PairStatus(pair, "BREAK")
     )
     os.makedirs(runner.coin_folder("SOL"), exist_ok=True)
-    with pytest.raises(runner.CoinUnavailable, match="SOLUSDT is BREAK"):
+    with pytest.raises(runner.CoinUnavailable, match="SOL is BREAK"):
         runner.step_coin("SOL")
 
 
-def test_tests_never_ask_binance_for_a_market_status():
+def test_tests_never_ask_an_exchange_for_a_market_status():
     """The isolation guard answers the shared check with "unknown"."""
     status = listing.pair_status("BTCUSDT")
     assert status.trading is None and "tests" in status.detail
@@ -611,10 +619,10 @@ class NoBuysInAClosedMarket(PaperTraderCase):
         """A trader holding BTC bought at ~100, now quoted ~90 (past every DCA level
         up to -10%)."""
         trader = self.trader(dict(self.SETTINGS))
-        self.binance.bid, self.binance.ask = 99.95, 100.05
+        self.quotes.bid, self.quotes.ask = 99.95, 100.05
         trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0, tag="ENTRY")
         trader.cost_basis = trader.calculate_cost_basis()  # as its next pass would
-        self.binance.bid, self.binance.ask = 89.95, 90.05
+        self.quotes.bid, self.quotes.ask = 89.95, 90.05
         tm._quote_cache.clear()
         return trader
 

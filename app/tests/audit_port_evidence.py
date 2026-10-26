@@ -177,7 +177,9 @@ def older_half(n):
 def window_bars(pair, tf, start, end):
     """The bars of ``tf`` the trainer can use: from the cache file, opening at or after
     ``start`` and closing by ``end``."""
-    frame = candles.load_candles_csv(candles.cache_path(pair, tf), tf)
+    frame = candles.load_candles_csv(
+        candles.cache_path(pair, tf, exchange=hc.FIXTURE_EXCHANGE), tf
+    )
     step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
     end_open = pd.Timestamp(
         bar_open_floor(int(end.timestamp()), tf), unit="s", tz="UTC"
@@ -292,9 +294,14 @@ def train(
         hc.seed_cache(candles.cache_dir_default(), pair, hc.all_timeframes(hourly))
         start, end = window(hourly)
     else:
-        os.makedirs(candles.cache_dir_default(), exist_ok=True)
+        os.makedirs(
+            os.path.join(candles.cache_dir_default(), hc.FIXTURE_EXCHANGE),
+            exist_ok=True,
+        )
         for tf, path in cache_files.items():
-            shutil.copyfile(path, candles.cache_path(pair, tf))
+            shutil.copyfile(
+                path, candles.cache_path(pair, tf, exchange=hc.FIXTURE_EXCHANGE)
+            )
         start, end = span
     expected = expectations(pair, start, end)
     monkeypatch.setenv(ppt.ENV_TRAIN_START, start.isoformat())

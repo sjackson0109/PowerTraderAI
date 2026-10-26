@@ -1,5 +1,4 @@
 # Standard library imports
-import base64
 import calendar
 import datetime
 import hashlib
@@ -18,17 +17,12 @@ from typing import Any, Dict, List, Optional
 
 import psutil
 
-# Third-party imports
-import requests
-from nacl.signing import SigningKey
-
 # Local imports
 import model_store
 import pt_paths
 import trainer_status
 from market_data import listing as market_listing
 from pattern_model import GAP_PASS_LIMIT
-from pt_credentials import get_credentials
 from pt_data_provider import get_data_provider
 
 # Universal data provider (supports 66+ exchanges, user configurable)
@@ -49,227 +43,48 @@ except Exception as e:
     data_provider = None
 
 # -----------------------------
-# Robinhood market-data (current ASK), same source as rhcb.py trader:
-#   GET /api/v1/crypto/marketdata/best_bid_ask/?symbol=BTC-USD
-#   use result["ask_inclusive_of_buy_spread"]
+# Current prices: the exchanges in Settings, the primary exchange first, then the
+# other enabled exchanges (FDS-MX-001 phase C). The fallback to the Robinhood API
+# with credentials is gone (owner decision D4, 2026-10-25): Robinhood is one of the
+# exchanges in Settings like any other.
 # -----------------------------
-ROBINHOOD_BASE_URL = "https://trading.robinhood.com"
-
-_RH_MD = None  # lazy-init so import doesn't explode if creds missing
 
 
-class RobinhoodMarketData:
-    def __init__(
-        self,
-        api_key: str,
-        base64_private_key: str,
-        base_url: str = ROBINHOOD_BASE_URL,
-        timeout: int = 10,
-    ):
-        self.api_key = (api_key or "").strip()
-        self.base_url = (base_url or "").rstrip("/")
-        self.timeout = timeout
+def current_ask(symbol: str) -> float:
+    """The best ask for ``symbol`` (e.g. ``BTC-USD``) from the exchanges in Settings:
+    the primary exchange's, else the next enabled exchange's that gives one. Raises
+    RuntimeError when none does."""
+    from pt_multi_exchange import market_exchanges
 
-        if not self.api_key:
-            raise RuntimeError("Robinhood API key is empty (r_key.txt).")
-
-        try:
-            raw_private = base64.b64decode((base64_private_key or "").strip())
-            self.private_key = SigningKey(raw_private)
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to decode Robinhood private key (r_secret.txt): {e}"
-            )
-
-        self.session = requests.Session()
-
-    def _get_current_timestamp(self) -> int:
-        return int(time.time())
-
-    def _get_authorization_header(
-        self, method: str, path: str, body: str, timestamp: int
-    ) -> dict:
-        # matches the trader's signing format
-        method = method.upper()
-        body = body or ""
-        message_to_sign = f"{self.api_key}{timestamp}{path}{method}{body}"
-        signed = self.private_key.sign(message_to_sign.encode("utf-8"))
-        signature_b64 = base64.b64encode(signed.signature).decode("utf-8")
-
-        return {
-            "x-api-key": self.api_key,
-            "x-timestamp": str(timestamp),
-            "x-signature": signature_b64,
-            "Content-Type": "application/json",
-        }
-
-    def make_api_request(self, method: str, path: str, body: str = "") -> dict:
-        url = f"{self.base_url}{path}"
-        ts = self._get_current_timestamp()
-        headers = self._get_authorization_header(method, path, body, ts)
-
-        try:
-            resp = self.session.request(
-                method=method.upper(),
-                url=url,
-                headers=headers,
-                data=body or None,
-                timeout=self.timeout,
-            )
-            if resp.status_code >= 400:
-                # Return sanitized error information
-                return {
-                    "error": "API request failed",
-                    "status_code": resp.status_code,
-                    "message": "Authentication or request error",
-                }
-            return resp.json()
-        except requests.RequestException:
-            return {"error": "Network request failed"}
-        except Exception:
-            return {"error": "Request processing failed"}
-
-    def get_current_ask(self, symbol: str) -> float:
-        symbol = (symbol or "").strip().upper()
-        path = f"/api/v1/crypto/marketdata/best_bid_ask/?symbol={symbol}"
-        data = self.make_api_request("GET", path)
-
-        if not data or "results" not in data or not data["results"]:
-            raise RuntimeError(
-                f"Robinhood best_bid_ask returned no results for {symbol}: {data}"
-            )
-
-        result = data["results"][0]
-        # EXACTLY like rhcb.py's get_price(): ask_inclusive_of_buy_spread
-        return float(result["ask_inclusive_of_buy_spread"])
-
-
-_PRINTED = set()
-
-
-def _print_once(message: str) -> None:
-    if message not in _PRINTED:
-        _PRINTED.add(message)
-        print(message)
-
-
-def robinhood_current_ask(symbol: str) -> float:
-    """
-    Returns current BUY price (ask_inclusive_of_buy_spread) for symbols like 'BTC-USD'.
-
-    NEW: Now uses multi-exchange system with fallback to legacy Robinhood.
-    Priority: Multi-exchange manager → Legacy Robinhood API
-    """
-    global _RH_MD
-
-    # Try new multi-exchange system first
-    try:
-        from pt_multi_exchange import shared_manager
-
-        multi_exchange_manager = shared_manager()
-
-        # Initialize if needed (will use config or environment)
-        if not multi_exchange_manager.initialized:
-            # Try to detect region from environment or use GLOBAL
-            user_region = os.environ.get("POWERTRADER_USER_REGION", "GLOBAL")
-            if multi_exchange_manager.initialize(user_region):
-                print(f"✓ Multi-exchange system initialized for {user_region}")
-            else:
-                print(
-                    "⚠ Multi-exchange system failed to initialize, falling back to legacy"
-                )
-
-        if multi_exchange_manager.initialized:
-            try:
-                # Use the best available exchange for pricing
-                price = multi_exchange_manager.get_current_price(symbol)
-                return price
-            except Exception as e:
-                _print_once(
-                    f"Multi-exchange pricing failed: {e}, falling back to legacy Robinhood"
-                )
-
-    except ImportError:
-        print("Multi-exchange system not available, using legacy Robinhood")
-    except Exception as e:
-        print(f"Multi-exchange error: {e}, falling back to legacy Robinhood")
-
-    # Fallback to legacy Robinhood system
-    if _RH_MD is None:
-        credentials = get_credentials()
-        if not credentials:
-            raise RuntimeError(
-                "Missing Robinhood API credentials (POWERTRADER_ROBINHOOD_API_KEY / "
-                "POWERTRADER_ROBINHOOD_PRIVATE_KEY, or the OS credential store)."
-            )
-
-        api_key, priv_b64 = credentials
-        _RH_MD = RobinhoodMarketData(api_key=api_key, base64_private_key=priv_b64)
-
-    return _RH_MD.get_current_ask(symbol)
+    answer = market_exchanges().quote(symbol)
+    if answer is None:
+        raise RuntimeError(f"no exchange in Settings gave a price for {symbol}")
+    return float(answer.value.ask)
 
 
 def get_multi_exchange_prices(symbol: str) -> dict:
-    """
-    NEW: Get prices from all available exchanges for comparison.
-    Returns dict of {exchange_name: price}
-    """
+    """Each connected exchange's price for ``symbol``: {exchange: price}."""
+    from pt_multi_exchange import market_exchanges
+
     try:
-        from pt_multi_exchange import shared_manager
-
-        multi_exchange_manager = shared_manager()
-
-        if not multi_exchange_manager.initialized:
-            user_region = os.environ.get("POWERTRADER_USER_REGION", "GLOBAL")
-            multi_exchange_manager.initialize(user_region)
-
-        if multi_exchange_manager.initialized:
-            return multi_exchange_manager.compare_prices(symbol)
-        else:
-            # Fallback to single exchange
-            price = robinhood_current_ask(symbol)
-            return {"robinhood": price}
-
+        return market_exchanges().compare_prices(symbol)
     except Exception as e:
         print(f"Multi-exchange comparison failed: {e}")
-        # Fallback to single price
-        try:
-            price = robinhood_current_ask(symbol)
-            return {"robinhood": price}
-        except Exception:
-            return {}
+        return {}
 
 
 def get_best_price(symbol: str, side: str = "buy") -> tuple:
-    """
-    NEW: Get best price across all exchanges.
-    Returns (price, exchange_name)
-    """
+    """The best price for ``symbol`` across the connected exchanges:
+    (price, exchange name)."""
+    from pt_multi_exchange import market_exchanges
+
     try:
-        from pt_multi_exchange import shared_manager
-
-        multi_exchange_manager = shared_manager()
-
-        if not multi_exchange_manager.initialized:
-            user_region = os.environ.get("POWERTRADER_USER_REGION", "GLOBAL")
-            multi_exchange_manager.initialize(user_region)
-
-        if multi_exchange_manager.initialized:
-            price, exchange_type = multi_exchange_manager.get_best_price(symbol, side)
-            return price, exchange_type.value
-        else:
-            # Fallback to single exchange
-            price = robinhood_current_ask(symbol)
-            return price, "robinhood"
-
+        price, exchange_type = market_exchanges().get_best_price(symbol, side)
     except Exception as e:
-        print(f"Best price lookup failed: {e}")
-        # Fallback to single price
-        try:
-            price = robinhood_current_ask(symbol)
-            return price, "robinhood"
-        except Exception:
-            raise RuntimeError(f"Could not get price for {symbol} from any exchange")
+        raise RuntimeError(
+            f"Could not get price for {symbol} from any exchange: {e}"
+        ) from None
+    return price, exchange_type.value
 
 
 def restart_program() -> None:
@@ -510,10 +325,46 @@ def _model_verified(sym: str) -> bool:
         )
         return False
     print(
-        f"Model for {sym}: {manifest['model_id']}, trained "
+        f"Model for {sym}: {manifest['model_id']}, trained on "
+        f"{_model_exchange(manifest)} {manifest['symbol']} bars "
         f"{manifest['train_start']} .. {manifest['train_end']}"
     )
     return True
+
+
+def _model_exchange(manifest: dict) -> str:
+    """The exchange whose bars the model was trained on. A model trained before
+    FDS-MX-001 phase F records none: it was trained on Binance bars."""
+    from market_data.candles import FLAT_CACHE_EXCHANGE
+
+    return manifest.get("exchange") or FLAT_CACHE_EXCHANGE
+
+
+_EXCHANGE_WARNED = set()  # coins already warned about a model/bars exchange mismatch
+
+
+def _check_bars_exchange(sym: str, coin: str, tf: str) -> None:
+    """Warn once per coin when its model was trained on another exchange's bars than
+    the ones the runner now reads (the exchanges in Settings, primary first)."""
+    cached = _verified_models.get(sym)
+    manifest = cached[1] if cached else None
+    if not manifest or sym in _EXCHANGE_WARNED:
+        return
+    from market_data import runner_history
+    from pt_exchange_abstraction import dollar_symbol
+
+    shared = runner_history._shared
+    if shared is None:
+        return
+    key = (dollar_symbol(coin), runner_history.candle_interval(tf))
+    reads, trained = shared.last_source.get(key), _model_exchange(manifest)
+    if reads and reads != trained:
+        _EXCHANGE_WARNED.add(sym)
+        print(
+            f"WARNING: {sym}: the model was trained on {trained} bars "
+            f"({manifest['symbol']}); the runner now reads {reads} bars. Retrain {sym} "
+            "to match."
+        )
 
 
 HUB_DIR = os.environ.get("POWERTRADER_HUB_DIR") or pt_paths.hub_dir()
@@ -629,9 +480,9 @@ def _history_rows(coin: str, tf: str) -> list:
         rows = history.split("], [")
         if len(rows) >= 2:
             # bars arrived, so the market trades (a closed market raises above)
-            _record_market(
-                coin.split("-")[0].upper(), True, "the runner receives its bars"
-            )
+            sym = coin.split("-")[0].upper()
+            _record_market(sym, True, "the runner receives its bars")
+            _check_bars_exchange(sym, coin, tf)
             return [
                 str(r).replace('"', "").replace("'", "").replace("[", "").split(", ")
                 for r in rows
@@ -653,24 +504,15 @@ def _last_closed_bar(coin: str, tf: str) -> tuple:
 
 
 def _current_price(sym: str) -> float:
-    """The coin's current price: the primary exchange's ask, as before, else the
-    latest trade on the candles' source (the forming 1-hour bar's close). Raises
-    CoinDataError instead of retrying for ever."""
+    """The coin's current price: the best ask from the exchanges in Settings, the
+    primary exchange first (``current_ask``). Raises CoinDataError instead of
+    retrying for ever; the coin is tried again next pass."""
     try:
-        price = float(robinhood_current_ask(f"{sym}-USD"))
-        if price > 0:
-            return price
-        primary = "price 0"
+        price = float(current_ask(f"{sym}-USD"))
     except Exception as exc:
-        primary = exc
-    try:
-        price = float(_history_rows(f"{sym}-USDT", "1hour")[0][2])
-    except CoinUnavailable:
-        raise
-    except Exception as exc:
-        raise CoinDataError(f"no current price for {sym}: {primary}; {exc}") from None
+        raise CoinDataError(f"no current price for {sym}: {exc}") from None
     if price <= 0:
-        raise CoinDataError(f"no current price for {sym}: {primary}")
+        raise CoinDataError(f"no current price for {sym}: price 0")
     return price
 
 
@@ -757,7 +599,7 @@ UNAVAILABLE_RECHECK_SECONDS = 3600
 
 
 def _recheck_unavailable(sym: str) -> bool:
-    """For a skipped coin: once an hour, ask Binance again. True when its market
+    """For a skipped coin: once an hour, ask again. True when its market
     trades again, and the coin is taken off the skipped list (its next step fetches
     bars and records it trading); False while it stays skipped."""
     if time.time() - _UNAVAILABLE_SINCE.get(sym, 0.0) < UNAVAILABLE_RECHECK_SECONDS:
@@ -774,9 +616,10 @@ def _recheck_unavailable(sym: str) -> bool:
 
 
 def _market_status(sym: str):
-    """Binance's cached verdict on the coin's spot pair, or None if unknown."""
+    """The cached verdict on the coin's market from the exchanges in Settings (the
+    primary exchange, unless it does not list the coin), or None if unknown."""
     try:
-        return market_listing.pair_status(f"{sym}USDT")
+        return market_listing.pair_status(sym)
     except Exception:
         return None
 
@@ -790,7 +633,7 @@ def _record_market(sym: str, trading: bool, reason: str) -> None:
     record = market_listing.read_market_status(folder)
     if record is not None and record.get("trading") is trading:
         return
-    market_listing.write_market_status(folder, f"{sym}USDT", trading, reason)
+    market_listing.write_market_status(folder, f"{sym}-USD", trading, reason)
 
 
 def _note_coin_error(sym: str, exc) -> None:
@@ -969,7 +812,7 @@ def step_coin(sym: str):
     # A trained coin whose model files match no published manifest is held the same way.
     trained = _coin_is_trained(sym)
     if not trained or not _model_verified(sym):
-        # No bars are fetched for this coin below, so ask Binance directly whether its
+        # No bars are fetched for this coin below, so ask directly whether its
         # market still trades: a held coin must not keep getting DCA buys after a
         # delisting just because it is untrained (cached: one request per hour).
         status = _market_status(sym)

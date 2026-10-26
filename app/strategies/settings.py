@@ -3,8 +3,9 @@ Strategy settings reader (FDS-121 section 7), fail-closed.
 
 Keys (all under ``strategy.``): ``engine`` (``catalogue`` | ``legacy_neural``,
 default ``catalogue``), ``active_id`` (default ``STRAT-000``; ``STRAT-001`` once
-that strategy exists), ``symbols`` (default ``["BTCUSDT"]``), ``timeframe``
-(default ``1h``) and ``overlays`` (``[{"id", "params"}]``, default none).
+that strategy exists), ``symbols`` (default ``["BTC"]``; read as markets, so a
+saved ``BTC``, ``BTC-USD`` or ``BTCUSDT`` is ``BTC-USD``), ``timeframe`` (default
+``1h``) and ``overlays`` (``[{"id", "params"}]``, default none).
 
 Missing keys take their defaults. A value that is present but wrong (unknown
 engine, unknown strategy id, bad timeframe, bad overlay spec) is *not* replaced:
@@ -17,13 +18,14 @@ from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
 from market_data.timeframes import TIMEFRAME_SECONDS
+from pt_exchange_abstraction import dollar_symbol
 from strategies.catalogue import CATALOGUE
 from trading_mode import lookup_setting, settings_mapping
 
 ENGINES = ("catalogue", "legacy_neural")
 DEFAULT_ENGINE = "catalogue"
 DEFAULT_ACTIVE_ID = "STRAT-001"
-DEFAULT_SYMBOLS = ("BTCUSDT",)
+DEFAULT_SYMBOLS = ("BTC",)
 DEFAULT_TIMEFRAME = "1h"
 
 
@@ -94,7 +96,8 @@ def read_strategy_settings(settings: Any = None) -> StrategySettings:
         and raw_symbols
         and all(isinstance(s, str) and s.strip() for s in raw_symbols)
     ):
-        symbols = tuple(s.strip().upper() for s in raw_symbols)
+        # markets, whatever form was saved: BTC, BTC-USD and BTCUSDT are BTC-USD
+        symbols = tuple(dollar_symbol(s) for s in raw_symbols)
     else:
         symbols = ()
         problems.append(f"invalid strategy.symbols {raw_symbols!r}")

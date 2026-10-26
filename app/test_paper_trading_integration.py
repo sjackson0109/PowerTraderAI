@@ -105,7 +105,8 @@ class TestPaperTradingIntegration(unittest.TestCase):
         self.assertEqual(self.account.get_order_status(order_id), OrderStatus.CANCELLED)
 
     def test_oversized_order_rejected(self):
-        """Order exceeding risk limits (>10% of $10k portfolio) should be rejected.
+        """An order worth more than the cash is rejected, as a real exchange would.
+        (The paper book sets no size limit of its own: FDS-MX-001 decision D7.)
 
         Quantity is derived from the live simulator price so this test remains
         valid regardless of what price MarketDataSimulator returns.  We request

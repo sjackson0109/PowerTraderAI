@@ -7,11 +7,14 @@ import abc
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 import pt_secrets
+from market_data.resample import build_candles, build_from
+from market_data.timeframes import candle_timeframe_seconds
 
 logger = logging.getLogger("pt_exchange_abstraction")
 
@@ -24,6 +27,70 @@ class MarketNotFound(RuntimeError):
 
     Unlike a network error, retrying cannot help, so callers can skip the coin
     instead of retrying for ever."""
+
+
+def usable_minimum(value: Any) -> Optional[float]:
+    """``value`` as a minimum order value: a positive, finite number, else None (a
+    connector may answer anything)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if 0.0 < value < float("inf") else None
+
+
+_DOLLARS = ("USDT", "USDC", "USD")
+
+
+def dollar_symbol(symbol: str) -> str:
+    """``symbol`` in the form the connectors take, ``COIN-USD``. A bare coin
+    (``BTC``) and the USDT / USDC forms (``BTCUSDT``, ``BTC-USDT``, ``BTC/USDC``)
+    all become ``BTC-USD``: USD, USDT and USDC count as the same dollar (FDS-MX-001
+    decision D3). Other quotes are kept (``ETH-BTC``)."""
+    text = str(symbol).strip().upper().replace("/", "-").replace("_", "-")
+    if "-" in text:
+        base, quote = text.split("-", 1)
+    else:
+        for candidate in _DOLLARS:
+            if text.endswith(candidate) and len(text) > len(candidate):
+                base, quote = text[: -len(candidate)], candidate
+                break
+        else:
+            return f"{text}-USD"
+    return f"{base}-USD" if quote in _DOLLARS else f"{base}-{quote}"
+
+
+class MarketDataUnavailable(RuntimeError):
+    """No connected exchange could give the market data asked for. The message says
+    what each exchange answered."""
+
+
+@dataclass
+class MarketStatus:
+    """Whether an exchange's market for a coin is trading (``market_status``)."""
+
+    listed: bool  # False: the exchange has no market for the coin
+    trading: Optional[bool]  # None when the exchange's answer is not clear
+    status: str  # the exchange's own word: TRADING, online, cancel_only, ...
+    reason: str = ""
+
+
+@dataclass
+class PriceQuote:
+    """Best bid and ask, with the exchange's own time for them where it gives one."""
+
+    bid: float
+    ask: float
+    quote_ts: Optional[float]  # epoch seconds (UTC) by the exchange's clock, or None
+
+
+@dataclass
+class Sourced:
+    """A market-data answer from the exchange layer, and where it came from."""
+
+    value: Any
+    exchange: str  # ExchangeType value, e.g. "coinbase"
+    pair: str  # that exchange's market, e.g. "BTC-USD"
+    primary: bool  # True when the primary exchange answered
+    built_from: str = ""  # candles only: the size they were built from, e.g. "1h"
 
 
 class ExchangeType(Enum):
@@ -182,6 +249,7 @@ class OrderResult:
     price_source: str = ""
     quote_ts: Optional[float] = None  # exchange timestamp of the quote (epoch s, UTC)
     age_s: Optional[float] = None  # fetched_ts - quote_ts
+    price_exchange: str = ""  # the exchange whose quote priced the fill (paper)
 
 
 class ConnectionStatus(str, Enum):
@@ -239,6 +307,50 @@ class AbstractExchange(abc.ABC):
         self.api_key = api_key
         self.api_secret = api_secret
         self.exchange_name = self.get_exchange_name()
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """The exchange's minimum order value for ``symbol``, in its quote currency
+        (USD or a USD stablecoin), or None when this connector does not know it.
+        Connectors that can read it from their exchange override this."""
+        return None
+
+    # --- public market data (FDS-MX-001 section 5.1) ------------------------------
+    # Optional: a connector that leaves these as they are answers "not supported",
+    # and the exchange layer asks the next exchange.
+
+    def market_symbol(self, symbol: str) -> str:
+        """This exchange's market for ``symbol`` (``BTC-USD`` is ``BTCUSDT`` on
+        Binance)."""
+        convert = getattr(self, "_convert_symbol", None)
+        return convert(symbol) if callable(convert) else symbol
+
+    def candle_timeframes(self) -> FrozenSet[str]:
+        """The candle sizes the exchange serves itself (``1h``, ``1d``, ...); empty
+        when this connector reads no candles."""
+        return frozenset()
+
+    def max_history_bars(self, tf: str) -> Optional[int]:
+        """How many of its most recent ``tf`` bars the exchange serves; None when it
+        serves its whole history."""
+        return None
+
+    def candles(self, symbol: str, tf: str, start_ms: int, end_ms: int) -> List[list]:
+        """``tf`` bars of ``symbol`` opening from ``start_ms`` to ``end_ms``
+        (inclusive), oldest first, as ``[open_time_ms, open, high, low, close,
+        volume]``. ``tf`` is one of ``candle_timeframes()``. The still-forming bar
+        may be included (the exchange layer drops it). Raises MarketNotFound when the
+        exchange has no market for the coin."""
+        raise NotImplementedError(f"{self.get_exchange_name()} reads no candles")
+
+    def market_status(self, symbol: str) -> Optional[MarketStatus]:
+        """Whether the exchange's market for ``symbol`` is trading; None when this
+        connector cannot say, or the exchange could not be asked."""
+        return None
+
+    def quote(self, symbol: str) -> Optional[PriceQuote]:
+        """Best bid and ask for ``symbol``; None when this connector cannot give
+        one."""
+        return None
 
     @abc.abstractmethod
     def get_exchange_name(self) -> str:
@@ -479,6 +591,158 @@ class ExchangeManager:
             raise ValueError(f"Exchange {exchange_type.value} not connected")
 
         return self.exchanges[exchange_type].get_current_price(symbol)
+
+    def _ordered(self) -> List[Tuple[ExchangeType, AbstractExchange]]:
+        """The connected exchanges, primary first, then the others in the order they
+        were connected (the Settings order)."""
+        return sorted(
+            self.exchanges.items(), key=lambda item: item[0] != self.primary_exchange
+        )
+
+    def exchange_names(self) -> List[str]:
+        """The connected exchanges' names, primary first, then the Settings order."""
+        return [exchange_type.value for exchange_type, _ in self._ordered()]
+
+    def _sourced(self, value, exchange_type, exchange, symbol, built_from=""):
+        return Sourced(
+            value=value,
+            exchange=exchange_type.value,
+            pair=exchange.market_symbol(symbol),
+            primary=exchange_type == self.primary_exchange,
+            built_from=built_from,
+        )
+
+    def min_order_usd(self, symbol: str) -> Optional[float]:
+        """The minimum order value for ``symbol``: the primary exchange's; when it does
+        not state one, the first other connected exchange's that does (in the order
+        they were connected). None when no exchange states one."""
+        symbol = dollar_symbol(symbol)
+        for exchange_type, exchange in self._ordered():
+            try:
+                minimum = usable_minimum(exchange.min_order_usd(symbol))
+            except Exception as exc:
+                logger.debug(f"No minimum order from {exchange_type.value}: {exc}")
+                continue
+            if minimum is not None:
+                return minimum
+        return None
+
+    def candles(
+        self,
+        symbol: str,
+        tf: str,
+        start_ms: int,
+        end_ms: int,
+        now_ms: Optional[int] = None,
+        only: Optional[str] = None,
+        closed_only: bool = True,
+    ) -> Sourced:
+        """Closed ``tf`` bars of ``symbol`` opening from ``start_ms`` to ``end_ms``
+        (inclusive), oldest first, as ``[open_time_ms, open, high, low, close,
+        volume]``, with the exchange and pair that served them.
+
+        The primary exchange is asked first, then the others in order. An exchange
+        is passed over when it serves no ``tf`` candles (and none to build them
+        from), when it cannot reach back to ``start_ms``, when it has no market for
+        the coin, or when it fails. One exchange serves the whole series: bars from
+        two exchanges are never mixed. A size the exchange does not serve is built
+        from a smaller one it does (``Sourced.built_from``).
+
+        ``only`` asks that one exchange and no other (a cached series is topped up
+        from the exchange it came from). ``closed_only=False`` keeps the bar still
+        forming too, where the exchange serves that size itself (a chart shows it; a
+        built size has no forming bar, as its group is not complete).
+
+        Raises MarketNotFound when every exchange asked has no market for the coin,
+        otherwise MarketDataUnavailable with each exchange's answer."""
+        symbol = dollar_symbol(symbol)
+        now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        step_ms = candle_timeframe_seconds(tf) * 1000
+        reasons: List[str] = []
+        not_found = 0
+        for exchange_type, exchange in self._ordered():
+            name = exchange_type.value
+            if only is not None and name != only:
+                continue
+            native = exchange.candle_timeframes()
+            fetch_tf = tf if tf in native else build_from(tf, native)
+            if fetch_tf is None:
+                reasons.append(f"{name}: no {tf} candles")
+                continue
+            fetch_step_ms = candle_timeframe_seconds(fetch_tf) * 1000
+            limit = exchange.max_history_bars(fetch_tf)
+            if limit is not None:
+                earliest = (now_ms // fetch_step_ms - limit + 1) * fetch_step_ms
+                if start_ms < earliest:
+                    reasons.append(
+                        f"{name}: serves only its latest {limit} {fetch_tf} bars"
+                    )
+                    continue
+            # the last tf bar wanted, and every smaller bar it is built from
+            fetch_end = end_ms + step_ms - fetch_step_ms
+            try:
+                rows = exchange.candles(symbol, fetch_tf, start_ms, fetch_end)
+            except MarketNotFound as exc:
+                not_found += 1
+                reasons.append(f"{name}: {exc}")
+                continue
+            except Exception as exc:
+                reasons.append(f"{name}: {type(exc).__name__}: {exc}")
+                continue
+            if fetch_tf != tf:
+                rows = build_candles(rows, fetch_tf, tf)
+            last_open = now_ms - step_ms if closed_only else now_ms
+            bars = {
+                int(r[0]): r
+                for r in rows
+                if start_ms <= int(r[0]) <= min(end_ms, last_open)
+            }
+            series = [bars[t] for t in sorted(bars)]
+            built = fetch_tf if fetch_tf != tf else ""
+            return self._sourced(series, exchange_type, exchange, symbol, built)
+        if reasons and not_found == len(reasons):
+            raise MarketNotFound(
+                f"No exchange has a market for {symbol}: " + "; ".join(reasons)
+            )
+        raise MarketDataUnavailable(
+            f"No exchange gave {tf} candles for {symbol}: "
+            + ("; ".join(reasons) or "no exchange connected")
+        )
+
+    def market_status(self, symbol: str) -> Optional[Sourced]:
+        """Whether ``symbol``'s market is trading, from the primary exchange; when the
+        primary does not list the coin or cannot say, from the next exchange that
+        lists it. An exchange that does not list the coin is the answer only when
+        no exchange lists it. None when no exchange could say."""
+        symbol = dollar_symbol(symbol)
+        not_listed: Optional[Sourced] = None
+        for exchange_type, exchange in self._ordered():
+            try:
+                status = exchange.market_status(symbol)
+            except Exception as exc:
+                logger.debug(f"No market status from {exchange_type.value}: {exc}")
+                continue
+            if status is None:
+                continue
+            answer = self._sourced(status, exchange_type, exchange, symbol)
+            if status.listed:
+                return answer
+            not_listed = not_listed or answer
+        return not_listed
+
+    def quote(self, symbol: str) -> Optional[Sourced]:
+        """Best bid and ask for ``symbol`` (a PriceQuote), from the primary exchange,
+        else the next that gives one. None when none does."""
+        symbol = dollar_symbol(symbol)
+        for exchange_type, exchange in self._ordered():
+            try:
+                quote = exchange.quote(symbol)
+            except Exception as exc:
+                logger.debug(f"No quote from {exchange_type.value}: {exc}")
+                continue
+            if quote is not None and quote.bid > 0 and quote.ask > 0:
+                return self._sourced(quote, exchange_type, exchange, symbol)
+        return None
 
     def get_best_price(
         self, symbol: str, side: str = "buy"

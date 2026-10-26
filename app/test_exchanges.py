@@ -88,10 +88,10 @@ def test_legacy_fallback():
 
     try:
         # Import the updated thinker module
-        from pt_thinker import robinhood_current_ask
+        from pt_thinker import current_ask
 
-        # This should try multi-exchange first, then fallback
-        price = robinhood_current_ask("BTC-USD")
+        # The exchanges in Settings, primary first (no Robinhood fallback)
+        price = current_ask("BTC-USD")
         print(f"✅ Legacy function returned: ${price:,.2f}")
         return True
 

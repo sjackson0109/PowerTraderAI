@@ -795,7 +795,8 @@ class CandleFetcher:
     The chart's candles from the exchanges in Settings: the primary exchange, else the
     next that serves the coin (``pt_multi_exchange.market_exchanges``). The bar still
     forming is included where the exchange serves that candle size itself.
-    ``last_source`` names the exchange and market each chart's candles came from.
+    ``last_source`` names the exchange and market each chart's candles came from (for
+    logs: the chart itself never names a data provider, FDS-CHART-001 section 7.1).
     """
 
     def __init__(self, manager=None):
@@ -1042,11 +1043,6 @@ class CandleChart(ttk.Frame):
         self.patterns_status_label = ttk.Label(top, text="", cursor="hand2")
         self.patterns_status_label.pack(side="left", padx=(12, 0))
 
-        # Which exchange and market the candles come from (the exchanges in Settings,
-        # primary first)
-        self.candles_source_label = ttk.Label(top, text="")
-        self.candles_source_label.pack(side="left", padx=(12, 0))
-
         # The Chart settings cog sits at the right end of the hub's tab row. No "Last:"
         # time: it was the neural level files' age, which says nothing about the
         # chart, whose candles are fetched on every refresh (owner, 2026-10-14).
@@ -1221,10 +1217,6 @@ class CandleChart(ttk.Frame):
         limit = int(cfg.get("candles_limit", 120))
 
         candles = self.fetcher.get_klines(self.coin, tf, limit=limit)
-        source = getattr(self.fetcher, "last_source", {}).get((self.coin, tf))
-        self.candles_source_label.config(
-            text=f"Candles: {source}" if candles and source else ""
-        )
 
         folder = coin_folders.get(self.coin, "")
         low_path = os.path.join(folder, "low_bound_prices.html")

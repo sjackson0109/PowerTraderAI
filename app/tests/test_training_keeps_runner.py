@@ -9,6 +9,7 @@ import os
 import queue
 import subprocess
 import sys
+import threading
 import types
 from unittest import mock
 
@@ -235,12 +236,20 @@ def test_a_read_only_or_locked_file_is_not_retried(tmp_path):
         calls.append(path)
         raise os_error(5)  # access denied: waiting cannot help
 
+    # time.sleep is the process's: count only this thread's waits, not those of a
+    # background thread an earlier test left running
+    here, waits = threading.current_thread(), []
+
+    def sleep(seconds):
+        if threading.current_thread() is here:
+            waits.append(seconds)
+
     with mock.patch.object(pt_hub.os, "remove", side_effect=remove), mock.patch.object(
         pt_hub.subprocess, "Popen", return_value=RunningProc()
-    ), mock.patch.object(pt_hub.time, "sleep") as sleep:
+    ), mock.patch.object(pt_hub.time, "sleep", side_effect=sleep):
         Hub.start_trainer_for_selected_coin(hub)
     assert len(calls) == 1
-    sleep.assert_not_called()
+    assert waits == []
 
 
 def test_a_file_briefly_open_elsewhere_is_deleted_on_a_retry(tmp_path):

@@ -14,7 +14,6 @@ import json
 import os
 import sys
 import time
-import urllib.error
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
@@ -60,7 +59,8 @@ def binance_rows(frame, start_ms, end_ms):
 
 
 class Exchange:
-    """Stands in for candles.BinanceKlines over ``{pair: {tf: frame}}``."""
+    """One exchange's bars over ``{pair: {tf: frame}}`` (a ``get_candles`` fetcher, or
+    behind the exchange layer through ``hc.fake_layer``)."""
 
     def __init__(self, frames_by_pair):
         self.frames = frames_by_pair
@@ -141,7 +141,7 @@ def test_a_pair_listed_late_trains_again_from_its_cache(tmp_path, monkeypatch):
     end = LISTED + timedelta(weeks=8)
     hourly = hc.synthetic_hourly(8 * 168, LISTED, seed=3)
     fake = Exchange({"NEWUSDT": hc.all_timeframes(hourly)})
-    monkeypatch.setattr(candles, "BinanceKlines", lambda *a, **k: fake)
+    hc.fake_layer(monkeypatch, fake)
 
     first = load_all(
         ppt.BarLoader("NEWUSDT", start, end, False, cache_dir=str(tmp_path))
@@ -166,7 +166,7 @@ def test_a_live_run_whose_bars_stop_early_is_refused(tmp_path, monkeypatch):
     start, end = live_window()
     hourly = hc.synthetic_hourly(6 * 168 - 72, start, seed=5)  # stops 3 days early
     fake = Exchange({"GONEUSDT": hc.all_timeframes(hourly)})
-    monkeypatch.setattr(candles, "BinanceKlines", lambda *a, **k: fake)
+    hc.fake_layer(monkeypatch, fake)
 
     closed = ppt.BarLoader(
         "GONEUSDT",
@@ -177,12 +177,13 @@ def test_a_live_run_whose_bars_stop_early_is_refused(tmp_path, monkeypatch):
         status_of=status_is("BREAK"),
     )
     with pytest.raises(
-        ppt.MarketClosedError, match="GONEUSDT is BREAK, not trading"
+        ppt.MarketClosedError, match="GONE-USD is BREAK, not trading"
     ) as e:
         closed.bars("1hour")
     assert e.value.confirmed and "no longer trades" in str(e.value)
 
-    # Binance says it trades, or cannot be asked: refused, but not "no longer trades"
+    # the market status says it trades, or cannot say: refused, but not "no longer
+    # trades"
     for code, said in ((listing.TRADING, "trading"), (None, "status unknown")):
         loader = ppt.BarLoader(
             "GONEUSDT",
@@ -199,20 +200,18 @@ def test_a_live_run_whose_bars_stop_early_is_refused(tmp_path, monkeypatch):
         assert not e.value.confirmed and "Try again later" in str(e.value)
 
 
-def test_a_pair_binance_does_not_list_is_refused_cleanly(tmp_path, monkeypatch):
+def test_a_coin_no_exchange_lists_is_refused_cleanly(tmp_path, monkeypatch):
     class Unknown:
-        requests_made = 0
-
         def fetch(self, symbol, tf, start_ms, end_ms=None):
-            error = candles.CandleFetchError(f"klines HTTP 400 for {symbol} {tf}")
-            error.__cause__ = urllib.error.HTTPError("u", 400, "Bad Request", {}, None)
-            raise error
+            raise MarketNotFound(f"the exchange has no market {symbol}")
 
-    monkeypatch.setattr(candles, "BinanceKlines", lambda *a, **k: Unknown())
+    hc.fake_layer(monkeypatch, Unknown())
     loader = ppt.BarLoader(
         "NOPEUSDT", LISTED, LISTED + timedelta(weeks=2), False, cache_dir=str(tmp_path)
     )
-    with pytest.raises(ppt.MarketClosedError, match="no spot market NOPEUSDT") as e:
+    with pytest.raises(
+        ppt.MarketClosedError, match="No exchange has a market for NOPE-USD"
+    ) as e:
         loader.bars("1hour")
     assert e.value.confirmed
 
@@ -222,9 +221,7 @@ def test_a_live_run_missing_only_the_last_bar_or_two_is_not_refused(
 ):
     start, end = live_window()
     hourly = hc.synthetic_hourly(6 * 168 - 2, start, seed=6)
-    monkeypatch.setattr(
-        candles, "BinanceKlines", lambda *a, **k: Exchange({"LATEUSDT": {"1h": hourly}})
-    )
+    hc.fake_layer(monkeypatch, Exchange({"LATEUSDT": {"1h": hourly}}))
     asked = []
     loader = ppt.BarLoader(
         "LATEUSDT", start, end, False, cache_dir=str(tmp_path), status_of=asked.append
@@ -237,9 +234,7 @@ def test_an_older_window_with_a_short_tail_is_reported_not_refused(
     tmp_path, monkeypatch
 ):
     hourly = hc.synthetic_hourly(300, LISTED, seed=7)
-    monkeypatch.setattr(
-        candles, "BinanceKlines", lambda *a, **k: Exchange({"OLDUSDT": {"1h": hourly}})
-    )
+    hc.fake_layer(monkeypatch, Exchange({"OLDUSDT": {"1h": hourly}}))
     loader = ppt.BarLoader(
         "OLDUSDT", LISTED, LISTED + timedelta(hours=400), False, cache_dir=str(tmp_path)
     )

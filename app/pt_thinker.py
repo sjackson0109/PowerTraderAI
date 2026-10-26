@@ -325,10 +325,46 @@ def _model_verified(sym: str) -> bool:
         )
         return False
     print(
-        f"Model for {sym}: {manifest['model_id']}, trained "
+        f"Model for {sym}: {manifest['model_id']}, trained on "
+        f"{_model_exchange(manifest)} {manifest['symbol']} bars "
         f"{manifest['train_start']} .. {manifest['train_end']}"
     )
     return True
+
+
+def _model_exchange(manifest: dict) -> str:
+    """The exchange whose bars the model was trained on. A model trained before
+    FDS-MX-001 phase F records none: it was trained on Binance bars."""
+    from market_data.candles import FLAT_CACHE_EXCHANGE
+
+    return manifest.get("exchange") or FLAT_CACHE_EXCHANGE
+
+
+_EXCHANGE_WARNED = set()  # coins already warned about a model/bars exchange mismatch
+
+
+def _check_bars_exchange(sym: str, coin: str, tf: str) -> None:
+    """Warn once per coin when its model was trained on another exchange's bars than
+    the ones the runner now reads (the exchanges in Settings, primary first)."""
+    cached = _verified_models.get(sym)
+    manifest = cached[1] if cached else None
+    if not manifest or sym in _EXCHANGE_WARNED:
+        return
+    from market_data import runner_history
+    from pt_exchange_abstraction import dollar_symbol
+
+    shared = runner_history._shared
+    if shared is None:
+        return
+    key = (dollar_symbol(coin), runner_history.candle_interval(tf))
+    reads, trained = shared.last_source.get(key), _model_exchange(manifest)
+    if reads and reads != trained:
+        _EXCHANGE_WARNED.add(sym)
+        print(
+            f"WARNING: {sym}: the model was trained on {trained} bars "
+            f"({manifest['symbol']}); the runner now reads {reads} bars. Retrain {sym} "
+            "to match."
+        )
 
 
 HUB_DIR = os.environ.get("POWERTRADER_HUB_DIR") or pt_paths.hub_dir()
@@ -444,9 +480,9 @@ def _history_rows(coin: str, tf: str) -> list:
         rows = history.split("], [")
         if len(rows) >= 2:
             # bars arrived, so the market trades (a closed market raises above)
-            _record_market(
-                coin.split("-")[0].upper(), True, "the runner receives its bars"
-            )
+            sym = coin.split("-")[0].upper()
+            _record_market(sym, True, "the runner receives its bars")
+            _check_bars_exchange(sym, coin, tf)
             return [
                 str(r).replace('"', "").replace("'", "").replace("[", "").split(", ")
                 for r in rows

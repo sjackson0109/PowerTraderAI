@@ -1,14 +1,12 @@
-"""FDS-121 section 8: candle data layer (pagination, backoff, cache, validation)."""
+"""FDS-121 section 8: candle data layer (cache, validation). Fetching is the exchange
+connectors' (tests/test_exchange_market_data.py); here a fake fetcher stands in for
+the exchange layer (FDS-MX-001 phase F)."""
 
 from __future__ import annotations
 
-import http.client
-import json
 import os
 import tempfile
 import unittest
-import urllib.error
-import urllib.parse
 
 import pandas as pd
 
@@ -19,36 +17,18 @@ T0 = pd.Timestamp("2026-01-01", tz="UTC")
 T0_MS = int(T0.timestamp() * 1000)
 
 
-class FakeResponse:
-    def __init__(self, payload):
-        self._body = json.dumps(payload).encode("utf-8")
-
-    def read(self):
-        return self._body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-
-def http_error(code, retry_after=None):
-    headers = http.client.HTTPMessage()
-    if retry_after is not None:
-        headers["Retry-After"] = str(retry_after)
-    return urllib.error.HTTPError("http://x", code, "err", headers, None)
-
-
 class FakeKlines:
-    """A fake Binance klines endpoint over ``bars`` hourly bars starting at T0.
-    ``script`` is a list of exceptions to raise on the first requests."""
+    """A fake fetcher (``get_candles``' ``fetcher``) over ``bars`` hourly bars starting
+    at T0, as one exchange serves them through the exchange layer."""
 
-    def __init__(self, bars=5000, script=None, skip=()):
+    def __init__(self, bars=5000, skip=()):
         self.bars = bars
-        self.script = list(script or [])
         self.skip = set(skip)  # bar indexes missing from the exchange data (gaps)
         self.calls = []
+
+    @property
+    def requests_made(self):
+        return len(self.calls)
 
     def row(self, i):
         o = 100.0 + i
@@ -59,89 +39,24 @@ class FakeKlines:
             f"{o - 1}",
             f"{o + 0.5}",
             "10.0",
-            T0_MS + (i + 1) * HOUR_MS - 1,
-            "0",
-            0,
-            "0",
-            "0",
-            "0",
         ]
 
-    def __call__(self, url, timeout=None):
-        q = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
-        self.calls.append(q)
-        if self.script:
-            exc = self.script.pop(0)
-            if exc is not None:
-                raise exc
-        start = int(q["startTime"])
-        end = int(q["endTime"]) if "endTime" in q else None
-        limit = int(q["limit"])
+    def fetch(self, symbol, tf, start_ms, end_ms=None):
+        self.calls.append({"startTime": int(start_ms), "endTime": end_ms})
         out = []
-        i = max(0, -(-(start - T0_MS) // HOUR_MS))
-        while i < self.bars and len(out) < limit:
+        i = max(0, -(-(int(start_ms) - T0_MS) // HOUR_MS))
+        while i < self.bars:
             ts = T0_MS + i * HOUR_MS
-            if end is not None and ts > end:
+            if end_ms is not None and ts > end_ms:
                 break
             if i not in self.skip:
                 out.append(self.row(i))
             i += 1
-        return FakeResponse(out)
-
-
-def fetcher_for(server, sleeps=None):
-    sleeps = sleeps if sleeps is not None else []
-    return cd.BinanceKlines(opener=server, sleep=sleeps.append, max_retries=3), sleeps
+        return out
 
 
 def at(hours):
     return T0 + pd.Timedelta(hours=hours)
-
-
-class FetchTests(unittest.TestCase):
-    def test_paginates_at_1000_rows_per_request(self):
-        server = FakeKlines(bars=2500)
-        f, _ = fetcher_for(server)
-        rows = f.fetch("BTCUSDT", "1h", T0_MS, T0_MS + 2499 * HOUR_MS)
-        self.assertEqual(len(rows), 2500)
-        self.assertEqual(f.requests_made, 3)
-        self.assertEqual([c["limit"] for c in server.calls], ["1000"] * 3)
-        times = [int(r[0]) for r in rows]
-        self.assertEqual(times, sorted(set(times)))  # no duplicate across pages
-
-    def test_only_the_public_klines_endpoint_is_used(self):
-        server = FakeKlines(bars=10)
-        f, _ = fetcher_for(server)
-        f.fetch("BTCUSDT", "1h", T0_MS, None)
-        self.assertEqual(server.calls[0]["symbol"], "BTCUSDT")
-        self.assertEqual(server.calls[0]["interval"], "1h")
-
-    def test_rate_limit_honours_retry_after(self):
-        server = FakeKlines(bars=5, script=[http_error(429, retry_after=7)])
-        f, sleeps = fetcher_for(server)
-        rows = f.fetch("BTCUSDT", "1h", T0_MS, T0_MS + 4 * HOUR_MS)
-        self.assertEqual(len(rows), 5)
-        self.assertEqual(sleeps, [7.0])
-
-    def test_server_errors_back_off_exponentially_then_succeed(self):
-        server = FakeKlines(bars=5, script=[http_error(503), OSError("reset"), None])
-        f, sleeps = fetcher_for(server)
-        self.assertEqual(len(f.fetch("BTCUSDT", "1h", T0_MS, T0_MS + 4 * HOUR_MS)), 5)
-        self.assertEqual(sleeps, [1.0, 2.0])
-
-    def test_gives_up_after_max_retries_with_a_clear_error(self):
-        server = FakeKlines(script=[http_error(500)] * 10)
-        f, sleeps = fetcher_for(server)
-        with self.assertRaises(cd.CandleFetchError):
-            f.fetch("BTCUSDT", "1h", T0_MS, None)
-        self.assertEqual(f.requests_made, 4)  # first try + 3 retries
-
-    def test_client_errors_are_not_retried(self):
-        server = FakeKlines(script=[http_error(400)])
-        f, sleeps = fetcher_for(server)
-        with self.assertRaises(cd.CandleFetchError):
-            f.fetch("BTCUSDT", "1h", T0_MS, None)
-        self.assertEqual((f.requests_made, sleeps), (1, []))
 
 
 class GetCandlesTests(unittest.TestCase):
@@ -151,7 +66,8 @@ class GetCandlesTests(unittest.TestCase):
         self.now = at(5000)  # everything in FakeKlines(5000) has closed
 
     def get(self, server, start, end, **kw):
-        f, _ = fetcher_for(server)
+        server.calls_before = len(server.calls)
+        f = server
         df = cd.get_candles(
             "BTCUSDT",
             "1h",
@@ -175,10 +91,11 @@ class GetCandlesTests(unittest.TestCase):
 
     def test_second_call_is_served_from_the_cache(self):
         server = FakeKlines()
-        first, f1 = self.get(server, at(0), at(100))
-        self.assertGreaterEqual(f1.requests_made, 1)
-        second, f2 = self.get(server, at(0), at(100))
-        self.assertEqual(f2.requests_made, 0)
+        first, _ = self.get(server, at(0), at(100))
+        self.assertGreaterEqual(server.requests_made, 1)
+        asked = server.requests_made
+        second, _ = self.get(server, at(0), at(100))
+        self.assertEqual(server.requests_made, asked)
         pd.testing.assert_frame_equal(first, second)
         self.assertTrue(os.path.isfile(cd.cache_path("BTCUSDT", "1h", self.tmp.name)))
 
@@ -264,8 +181,16 @@ class GetCandlesTests(unittest.TestCase):
                 at(0),
                 at(5),
                 cache_dir=self.tmp.name,
-                fetcher=cd.BinanceKlines(opener=FakeKlines()),
+                fetcher=FakeKlines(),
                 now=self.now,
+            )
+
+    def test_missing_bars_without_a_fetcher_are_an_error(self):
+        """Only the exchange layer fills the cache (exchange_candles passes a fetcher
+        for the exchange it reads); there is no default source."""
+        with self.assertRaises(cd.CandleDataError):
+            cd.get_candles(
+                "BTCUSDT", "1h", at(0), at(5), cache_dir=self.tmp.name, now=self.now
             )
 
     def test_cache_file_sha256_is_stable(self):

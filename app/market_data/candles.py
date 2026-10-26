@@ -132,7 +132,7 @@ def validate_candles(df: pd.DataFrame, tf: str) -> CandleReport:
     )
 
 
-# --- binance klines ------------------------------------------------------------
+# --- candle rows -------------------------------------------------------------
 
 RawFetcher = Callable[[str, str, int, Optional[int]], List[list]]
 

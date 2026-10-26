@@ -26,7 +26,7 @@ A second, unused `CandleChart` in `app/pt_hub_chart_components.py` was removed w
 
 | Aspect | Today |
 |---|---|
-| **Candle source** | **KuCoin** `{COIN}-USDT`, through `CandleFetcher.get_klines(symbol, timeframe, limit=120)`. The trainer, the runner and the FDS-SIG-001 audit use **Binance** spot `{COIN}USDT` (`app/market_data/candles.py`). |
+| **Candle source** | The exchanges in Settings, primary first (FDS-MX-001, 2026-10-26): the chart through `CandleFetcher.get_klines(symbol, timeframe, limit=120)`, the pattern labels, the trainer and the runner through the exchange layer and `app/market_data/candles.py`. Before FDS-MX-001 the chart read **KuCoin** `{COIN}-USDT` and the rest **Binance** spot `{COIN}USDT`; the FDS-SIG-001 audit used Binance bars. |
 | **Window** | Always the newest 120 bars, ending now. The fetch asks for about 200 and keeps the newest 120. |
 | **Forming bar** | Included: the last candle is still forming. |
 | **Refresh** | Every 10 s (`chart_refresh_seconds`), and on a timeframe change, the chart is cleared and redrawn (`ax.cla()`). Candles are plotted by list index, so every candle shifts one place when a new bar arrives. |
@@ -34,7 +34,7 @@ A second, unused `CandleChart` in `app/pt_hub_chart_components.py` was removed w
 | **Missing bars** | KuCoin publishes no bar for an interval with no trades. The chart does not check that timestamps are consecutive. |
 | **Candle colours** | Matplotlib `"green"` (#008000) up and `"red"` (#FF0000) down, bodies at alpha 0.9, on `DARK_PANEL` #0E1626 (figure `DARK_BG` #070B10). Both are fully saturated, and red is the brighter. The two differ by only 1.28:1 in luminance, which is the weakness. |
 | **Overlays** | The neural long and short price levels are full-width lines in `"blue"` and `"orange"` with no label. "Neural: long=N short=N" is a toolbar text label, not a line. ASK, BID, AVG, DCA and SELL lines are labelled at the right edge. `"green"` and `"red"` are also used for the SELL trail line, the DCA line and the trade dots. |
-| **Timeframes** | 1min, 5min, 15min, 30min, 1hour, 2hour, 4hour, 8hour, 12hour, 1day and 1week (`DEFAULT_SETTINGS["timeframes"]`). `app/market_data/timeframes.py` supports the same set on Binance (1m to 1d, plus 1w as candle-only). |
+| **Timeframes** | 1min, 5min, 15min, 30min, 1hour, 2hour, 4hour, 8hour, 12hour, 1day and 1week (`DEFAULT_SETTINGS["timeframes"]`). `app/market_data/timeframes.py` supports the same set (1m to 1d, plus 1w as candle-only); a size an exchange does not serve is built from a smaller one (`app/market_data/resample.py`). |
 | **Settings** | There is no chart-settings area, and the chosen timeframe is not saved. |
 
 Candlestick notation for raw OHLC is long established. The named patterns drawn on it have **no demonstrated predictive
@@ -43,7 +43,7 @@ value on this data** (§10).
 ## 3. Scope, non-goals and phases
 
 - **Phase 1 (this spec):**
-  - detection on Binance closed bars;
+  - detection on closed bars from the exchanges in Settings;
   - labels, hover and click detail;
   - a **Chart settings** pop-out with a planned on/off toggle for every chart overlay: each existing line, the markers,
     the Neural readout, and each candlestick pattern and pattern group (§8);
@@ -58,26 +58,27 @@ value on this data** (§10).
   - **No percentage from published sources appears anywhere in the UI** (§10).
   - The candle source of the chart itself does not change.
 
-## 4. Data: detect on Binance closed bars
+## 4. Data: detect on closed bars from the exchanges in Settings
 
-**Hard requirement.** Patterns are detected on **Binance spot closed bars**, read through
-`market_data.candles.get_candles(..., closed_only=True)`, not on the KuCoin bars the chart draws. That way a detection
-is exactly the event a future FDS-SIG-001 audit would score, on the same venue and bars (§10).
+**Hard requirement.** Patterns are detected on **closed bars from the exchanges in Settings, primary first**, read
+through `market_data.candles.exchange_candles(..., closed_only=True)` (FDS-MX-001, 2026-10-26; this replaced
+detection on Binance spot closed bars, see §12.1). The chart draws bars from the same exchanges, primary first, so a
+detection and its candle normally come from the same exchange; when they do not, placement falls back as item 3 says.
 
 1. **What is fetched:** for the displayed coin and timeframe, the bars matching the chart's visible window, plus each
    rule's warm-up bars (§5.3). Warm-up bars are never drawn.
 2. **Off the Tk thread:** the fetch and the detection run in a background thread. Results are applied with `after()`.
    While detection runs, the chart shows no labels and a small "detecting…" note.
-3. **Placement:** a detection is drawn on the chart candle whose **open time** equals the Binance bar's open time. If
-   no chart candle has that open time, the detection is listed in the detail panel only and not drawn. This happens with
-   a missing KuCoin bar, a venue mismatch, or weekly bars aligned differently.
-4. **No Binance market:**
-   - If the coin has no Binance spot market, or `market_status.json` records it as not trading (`market_data/listing.py`),
-     the chart shows "Candlestick patterns: not available for this coin" and detects nothing.
-   - The UI never names Binance (§7.1). The user's trading exchange may be different, so the data source is not
-     shown.
+3. **Placement:** a detection is drawn on the chart candle whose **open time** equals the bar's open time. If no
+   chart candle has that open time, the detection is listed in the detail panel only and not drawn. This happens with
+   a missing bar, two different exchanges, or weekly bars aligned differently.
+4. **No market:**
+   - If no exchange in Settings has a market for the coin, or `market_status.json` records it as not trading
+     (`market_data/listing.py`), the chart shows "Candlestick patterns: not available for this coin" and detects
+     nothing.
+   - The UI never names the exchange the bars come from (§7.1).
    - The listing check uses the shared cached check, so it adds at most one request per coin per hour.
-5. **Refresh:** detection re-runs only when a new Binance bar has closed for the displayed timeframe, not every 10 s.
+5. **Refresh:** detection re-runs only when a new bar has closed for the displayed timeframe, not every 10 s.
 
 ## 5. Detection rules (all patterns)
 
@@ -606,7 +607,7 @@ is already fetched", because the chart fetches only the newest 120 bars of the d
 
 Phase 2 needs:
 - **A windowed fetch:** a fetch for an explicit `[start, end)` window, through `market_data.candles.get_candles`, which
-  already pages through Binance's results and covers 1m–1w.
+  pages through the exchange's results and covers 1m–1w.
 - **A row cap:** a cap on child bars, for example at most 1,500, or one step down at a time. One weekly candle holds
   10,080 one-minute bars.
 - **Off the Tk thread:** the fetch runs in the background, with a loading state.
@@ -617,7 +618,9 @@ Phase 2 needs:
 
 ### 12.1 From the draft and the review (2026-10-12)
 
-1. **Detection runs on Binance closed bars** (§4). This is a hard requirement.
+1. **Detection runs on Binance closed bars** (§4). This is a hard requirement. *Superseded 2026-10-25 by the
+   owner's multi-exchange rule (FDS-MX-001): detection runs on closed bars from the exchanges in Settings, primary
+   first.*
 2. **The work is split into phases.** Phase 1 is closed-bar, gap-free detection with labels, hover and detail.
    Drill-down is phase 2 (§3, §11).
 3. **Gap patterns are split by meaning** (§6.5, §6.7).
@@ -683,9 +686,9 @@ Phase 2 needs:
    - each rule's count is reported in the test output, for the run log;
    - three white soldiers and three black crows reproduce the §6.3 counts (BTC 0, ETH 1);
    - no §6.7 pattern has a rule.
-3. **Data source (test).** Detection reads Binance closed bars through `market_data` (mocked; no network). A detection
-   with no matching chart candle is listed but not drawn. A coin with no Binance market, or one recorded not trading,
-   gets the "not available for this coin" note.
+3. **Data source (test).** Detection reads closed bars from the exchanges in Settings through `market_data` (mocked;
+   no network). A detection with no matching chart candle is listed but not drawn. A coin no exchange in Settings has,
+   or one recorded not trading, gets the "not available for this coin" note.
 4. **Off the Tk thread.** Fetching and detection never run on the Tk thread (test with a fake that asserts the thread).
 5. **Labels (tests):**
    - placement by open timestamp, surviving a redraw and a one-bar shift;
@@ -726,6 +729,6 @@ Phase 2 needs:
 
 Same as `00-RUN-ORDER.md`:
 - **Paper only.** No API keys are read or created.
-- **Network:** public Binance market data only, and never in tests.
+- **Network:** public market data from the exchanges in Settings only, and never in tests.
 - **Commits:** one commit per step, with the full suite no worse than before.
 - **Blocked steps:** log BLOCKED with the reason. Never weaken a test or a criterion to make it pass.

@@ -141,49 +141,15 @@ export BYBIT_TESTNET="false"
 
 ## 🔧 Step 4: Testing Connection
 
-### Manual Test
-```bash
-cd app
-python test_exchanges.py --exchange=bybit
-```
+In PowerTrader, open **Settings → Check Exchanges...**:
 
-### Expected Output
-```
-Testing Bybit connection...
-✅ API authentication successful
-✅ Account balance retrieved
-✅ Trading permissions verified
-✅ Market data available
-Current BTC price: $43,250.50
-```
+1. Tick **bybit** and the coins to check. The list shows the exchanges enabled in Settings, your primary exchange first.
+2. Tick **Also check the saved API keys (read-only)** to test the keys you entered.
+3. Press **Run check**.
 
-### Programmatic Test
-```python
-from pt_exchanges import BybitExchange
-import asyncio
+Each row is one check: each coin's market status and best bid and ask (a price older than 30 seconds fails), the last day of hourly BTC candles, the minimum order and, when ticked, the API key. Nothing is ordered.
 
-async def test_bybit():
-    exchange = BybitExchange({
-        "api_key": "your_api_key",
-        "api_secret": "your_secret_key"
-    })
-
-    if await exchange.initialize():
-        # Test account access
-        balance = await exchange.get_balance()
-        print(f"Account balance: {balance}")
-
-        # Test market data
-        market_data = await exchange.get_market_data("BTCUSDT")
-        print(f"BTC price: ${market_data.price}")
-
-        print("✅ Bybit connection successful")
-    else:
-        print("❌ Connection failed")
-
-asyncio.run(test_bybit())
-```
-
+This version of PowerTrader has no connector for Bybit, so the check reports that instead of running.
 ## 💰 Step 5: Funding Your Account
 
 ### Cryptocurrency Deposits (Only Option)

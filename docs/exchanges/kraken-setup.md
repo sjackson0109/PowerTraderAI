@@ -104,44 +104,13 @@ export KRAKEN_API_SECRET="your_private_api_key"
 
 ## 🔧 Step 4: Testing Connection
 
-### Manual Test
-```bash
-cd app
-python test_exchanges.py --exchange=kraken
-```
+In PowerTrader, open **Settings → Check Exchanges...**:
 
-### Expected Output
-```
-Testing Kraken connection...
-✅ API connection successful
-✅ Account balance retrieved
-✅ Market data available
-✅ Trading permissions verified
-```
+1. Tick **kraken** and the coins to check. The list shows the exchanges enabled in Settings, your primary exchange first.
+2. Tick **Also check the saved API keys (read-only)** to test the keys you entered.
+3. Press **Run check**.
 
-### Programmatic Test
-```python
-from pt_exchanges import KrakenExchange
-import asyncio
-
-async def test_kraken():
-    exchange = KrakenExchange({
-        "api_key": "your_api_key",
-        "api_secret": "your_api_secret"
-    })
-
-    if await exchange.initialize():
-        balance = await exchange.get_balance()
-        print(f"Account balance: {balance}")
-
-        market_data = await exchange.get_market_data("XBTUSD")
-        print(f"BTC price: ${market_data.price}")
-    else:
-        print("Connection failed")
-
-asyncio.run(test_kraken())
-```
-
+Each row is one check: each coin's market status and best bid and ask (a price older than 30 seconds fails), the last day of hourly BTC candles, the minimum order and, when ticked, the API key. Nothing is ordered.
 ## 💰 Step 5: Funding Your Account
 
 ### Deposit Methods

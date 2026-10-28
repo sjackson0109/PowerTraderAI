@@ -112,6 +112,28 @@ def test_the_market_data_connectors_are_made_without_a_credential(manager, reads
     assert (binance.api_key, binance.api_secret) == ("", "")
 
 
+def test_exchanges_with_no_saved_keys_still_connect_for_market_data(tmp_path, reads):
+    """Coinbase, Kraken and KuCoin take their keys as required arguments. Given no
+    credentials and finding none saved, the factory built them with no arguments
+    at all, which raised, so an exchange with no saved keys gave no market data."""
+    folder = tmp_path / "keyless"
+    folder.mkdir()
+    names = ["coinbase", "kraken", "kucoin"]
+    config = {
+        "user_region": "GLOBAL",
+        "primary_exchange": "coinbase",
+        "exchanges": [
+            {"exchange_type": name, "enabled": True, "region_preference": i + 1}
+            for i, name in enumerate(names)
+        ],
+    }
+    (folder / "trading_config.json").write_text(json.dumps(config), encoding="utf-8")
+    multi = MultiExchangeManager(ExchangeConfigManager(str(folder)))
+    assert multi.initialize("GLOBAL")
+    assert reads == []
+    assert sorted(t.value for t in multi.exchange_manager.exchanges) == names
+
+
 def test_a_connection_with_credentials_reads_only_its_own_exchanges(
     manager, reads, connects
 ):

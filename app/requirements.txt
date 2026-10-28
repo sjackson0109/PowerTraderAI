@@ -22,7 +22,6 @@ pandas>=2.0.0
 scipy>=1.9.0  # Required for portfolio optimization
 
 # Multi-Exchange Support Dependencies
-python-binance>=1.0.15
 krakenex>=2.1.0
 
 # Order Management Database Dependencies

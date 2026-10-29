@@ -160,9 +160,13 @@ def test_the_enabled_exchanges_come_primary_first_then_in_settings_order(tmp_pat
     )
 
 
-def test_a_primary_that_is_not_enabled_is_not_named(tmp_path):
+def test_the_primary_is_listed_first_even_when_its_entry_is_disabled(tmp_path):
+    # the exchange layer always connects the primary, so it is checked too
     manager = _config(tmp_path, "binance", {"kraken"})
-    assert exchange_check.enabled_exchanges(manager) == (["kraken"], None)
+    assert exchange_check.enabled_exchanges(manager) == (
+        ["binance", "kraken"],
+        "binance",
+    )
 
 
 # --- the window ------------------------------------------------------------------------------

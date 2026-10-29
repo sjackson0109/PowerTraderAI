@@ -205,9 +205,10 @@ def check(
 
 
 def enabled_exchanges(config_manager=None) -> Tuple[List[str], Optional[str]]:
-    """The exchanges enabled in Settings, primary first, then in their Settings
-    order; and the primary exchange when it is one of them. Read from the file, so
-    an exchange that cannot connect is still listed."""
+    """The exchanges the exchange layer connects: the primary first (even when its
+    entry is disabled), then the other enabled ones in their Settings order; and the
+    primary exchange (None when none is chosen). Read from the file, so an exchange
+    that cannot connect is still listed."""
     from pt_multi_exchange import ExchangeConfigManager
 
     manager = config_manager or ExchangeConfigManager()

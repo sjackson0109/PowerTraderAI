@@ -34,7 +34,6 @@ sqlalchemy>=2.0.0
 ccxt>=4.0.0
 
 # Multi-Exchange Support Dependencies
-python-binance>=1.0.15
 krakenex>=2.1.0
 
 # Development and Testing

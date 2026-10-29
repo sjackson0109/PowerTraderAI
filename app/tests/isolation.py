@@ -182,12 +182,28 @@ def isolated_user_dirs(tmp_path, monkeypatch):
         "legacy_root": str(legacy_root),
         "keyring": memory,
     }
+    _stop_market_data_feeds()
     if keyring is not None:
         keyring.set_keyring(previous)
     after = _snapshot(_REAL_DIRS)
     if after != before:
         changed = [p for p in _REAL_DIRS if before[p] != after[p]]
         pytest.fail(f"test touched the real user folders: {changed}", pytrace=False)
+
+
+def _stop_market_data_feeds() -> None:
+    """Stop the price feeds of the Market Data tab's manager, a process-wide one
+    that a test building a whole hub starts. Left running, its feed asks the
+    exchange for quotes every 5 s during later tests, whose HTTP records then hold
+    requests they never made."""
+    market = sys.modules.get("real_time_market_data")
+    manager = getattr(market, "_market_data_manager", None)
+    if manager is None:
+        return
+    manager.stop()
+    for thread in list(manager.aggregator.feed_threads.values()):
+        thread.join(timeout=10)  # a poll in progress fails fast: no network here
+    market._market_data_manager = None
 
 
 @pytest.fixture

@@ -69,30 +69,19 @@ The PowerTraderAI+ desktop application (`pt_hub.py`) provides a comprehensive gr
 
 ### Exchange Provider Settings
 
-#### Regional Selection
-**Purpose**: Determines which exchanges are available based on regulatory compliance
+#### Region
+**Options**: US, EU or Global. The region is saved with your exchange settings. It does not change which exchanges you can choose: check that an exchange serves your country before you use it.
 
-**Options**:
-- **🇺🇸 US** - United States regulated exchanges only
-- **🇪🇺 EU/UK** - European Union and UK compliant exchanges
-- **🌐 Global** - All supported exchanges worldwide
-
-**Available Exchanges by Region**:
-
-| Region | Available Exchanges |
-|--------|-------------------|
-| 🇺🇸 US | Robinhood, Coinbase, Kraken, Binance.US, KuCoin |
-| 🇪🇺 EU/UK | Kraken, Coinbase, Binance, Bitstamp, KuCoin |
-| 🌐 Global | Binance, Kraken, KuCoin, Coinbase, Bybit, OKX |
-
-#### Primary Exchange Selection
-**Purpose**: Your main trading exchange for order execution
+#### Primary Exchange
+**Purpose**: The exchange PowerTrader reads prices, candles and minimum order sizes from first. When it has no answer, the other exchanges enabled in **Configure Exchange APIs** are asked, in order.
 
 **How it works**:
-1. Select your region first
-2. Dropdown automatically filters to compliant exchanges
-3. Choose your preferred exchange
-4. System validates availability and credentials
+- The list shows every exchange this version reads prices from: Binance, Coinbase, Kraken and KuCoin.
+- A new install uses Coinbase, with Kraken, KuCoin and Binance enabled as fallbacks. Your choice replaces this.
+- Your choice is never changed for you. Saving Settings also enables the exchange you chose.
+- Your primary exchange cannot be disabled in **Configure Exchange APIs**. Choose another primary first.
+- If your primary exchange cannot connect, the other enabled exchanges answer in order. None of them takes its place as primary, and the hub's Exchange status shows the error.
+- Live orders go to the broker chosen in **Trading Mode**, not to the primary exchange.
 
 #### Advanced Exchange Options
 - **🔍 Price Comparison Enabled**: Compare prices across multiple exchanges before trading

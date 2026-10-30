@@ -442,7 +442,9 @@ class MultiExchangeManager:
                     print(
                         f"No credentials for {exchange_config.exchange_type}, trying public access..."
                     )
-                credentials = credentials or {}
+                # Empty, not absent: given no credentials, the exchange factory
+                # looks them up itself (pt_secrets), which market data must not do
+                credentials = credentials or {"api_key": "", "api_secret": ""}
 
                 # Add exchange to manager
                 if self.exchange_manager.add_exchange(exchange_type, **credentials):

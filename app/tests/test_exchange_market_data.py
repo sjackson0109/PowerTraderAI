@@ -232,8 +232,25 @@ def test_coinbase_market_status_and_quote(get):
     ):
         quote = coinbase.quote("BTC-USD")
     assert (quote.bid, quote.ask) == (99.5, 99.6)
+    # no Date header: the last trade's time is all there is
     assert quote.quote_ts == pytest.approx(
         datetime(2026, 10, 25, 23, 8, 46, 210719, tzinfo=timezone.utc).timestamp()
+    )
+
+
+def test_a_coinbase_quote_is_as_old_as_the_response_not_the_last_trade(get):
+    # A quiet market's last trade can be minutes old while its bid and ask are
+    # current; the quote must not look stale because nobody traded.
+    get(
+        ticker=_Response(
+            {"bid": "99.5", "ask": "99.6", "time": "2026-10-25T23:06:46Z"},
+            headers={"Date": "Sun, 25 Oct 2026 23:08:46 GMT"},
+        )
+    )
+    quote = connector("CoinbaseExchange").quote("DASH-USD")
+    assert (
+        quote.quote_ts
+        == datetime(2026, 10, 25, 23, 8, 46, tzinfo=timezone.utc).timestamp()
     )
 
 
@@ -331,7 +348,25 @@ def test_kucoin_market_status_and_quote(get):
         )
     )
     quote = kucoin.quote("BTC-USD")
+    # no Date header: the book's last change is all there is
     assert (quote.bid, quote.ask, quote.quote_ts) == (99.0, 101.0, 1792969721.27)
+
+
+def test_a_kucoin_quote_is_as_old_as_the_response_not_the_last_book_change(get):
+    get(
+        level1=_Response(
+            {
+                "code": "200000",
+                "data": {"bestBid": "99", "bestAsk": "101", "time": 1792969721270},
+            },
+            headers={"Date": "Sun, 25 Oct 2026 23:08:46 GMT"},
+        )
+    )
+    quote = connector("KuCoinExchange").quote("DASH-USD")
+    assert (
+        quote.quote_ts
+        == datetime(2026, 10, 25, 23, 8, 46, tzinfo=timezone.utc).timestamp()
+    )
 
 
 def test_a_rate_limited_request_is_tried_again(monkeypatch):

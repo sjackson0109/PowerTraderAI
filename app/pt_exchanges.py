@@ -1388,6 +1388,10 @@ class CoinbaseExchange(AbstractExchange):
 
     def _public_ticker(self, coinbase_symbol: str) -> Dict:
         """Coinbase's unauthenticated ticker for one product, or a clear error."""
+        return self._public_ticker_response(coinbase_symbol)[0]
+
+    def _public_ticker_response(self, coinbase_symbol: str):
+        """The ticker and the HTTP response it came in (for its Date header)."""
         response = requests.get(
             f"{self.base_url}/products/{coinbase_symbol}/ticker", timeout=10
         )
@@ -1400,7 +1404,7 @@ class CoinbaseExchange(AbstractExchange):
             raise RuntimeError(
                 f"Coinbase API error for {coinbase_symbol}: {data['message']}"
             )
-        return data
+        return data, response
 
     def get_current_price(self, symbol: str) -> float:
         data = self._public_ticker(self._convert_symbol(symbol))
@@ -1481,9 +1485,13 @@ class CoinbaseExchange(AbstractExchange):
 
     def quote(self, symbol: str) -> Optional[PriceQuote]:
         try:
-            data = self._public_ticker(self._convert_symbol(symbol))
+            data, response = self._public_ticker_response(self._convert_symbol(symbol))
+            # The ticker's "time" is its last trade, which on a quiet market can be
+            # minutes old; the bid and ask are as of the response, so take its Date.
             return PriceQuote(
-                float(data["bid"]), float(data["ask"]), _iso_seconds(data.get("time"))
+                float(data["bid"]),
+                float(data["ask"]),
+                _server_time(response) or _iso_seconds(data.get("time")),
             )
         except Exception:
             return None
@@ -1659,15 +1667,18 @@ class KuCoinExchange(AbstractExchange):
     def quote(self, symbol: str) -> Optional[PriceQuote]:
         pair = self._convert_symbol(symbol)
         try:
-            data = _public_get(
+            response = _public_get(
                 f"{self.base_url}/api/v1/market/orderbook/level1",
                 params={"symbol": pair},
-            ).json()["data"]
+            )
+            data = response.json()["data"]
+            # level1's "time" is the book's last change, which on a quiet market can
+            # be a minute old; the best bid and ask are as of the response's Date.
             stamp = data.get("time")
             return PriceQuote(
                 float(data["bestBid"]),
                 float(data["bestAsk"]),
-                float(stamp) / 1000.0 if stamp else None,
+                _server_time(response) or (float(stamp) / 1000.0 if stamp else None),
             )
         except Exception:
             return None

@@ -8312,7 +8312,10 @@ Platform: {sys.platform}
                 cache = self._status_exchanges = {}
             exchange = cache.get(primary_exchange)
             if exchange is None:
-                exchange = ExchangeFactory.get_exchange(ExchangeType(primary_exchange))
+                # empty credentials: given none, the factory would read the saved ones
+                exchange = ExchangeFactory.get_exchange(
+                    ExchangeType(primary_exchange), api_key="", api_secret=""
+                )
                 cache[primary_exchange] = exchange
             price = float(exchange.get_current_price("BTC-USD"))
         except Exception as exc:

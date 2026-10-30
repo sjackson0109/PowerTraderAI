@@ -285,6 +285,7 @@ python pt_hub.py
 ```
 
 ### Test Exchange Connections
+In PowerTrader: **Settings → Check Exchanges...**. Developers can run the same checks from `app/`:
 ```bash
 python test_exchanges.py
 ```
@@ -396,8 +397,8 @@ git pull origin main
 # Update dependencies
 pip install -r requirements.txt
 
-# Test new exchanges
-python test_exchanges.py --exchange=new_exchange
+# Test the exchanges enabled in Settings (the same checks as Settings → Check Exchanges)
+python test_exchanges.py
 ```
 
 ### Credential Rotation
@@ -426,7 +427,7 @@ manager.refresh_exchange("kraken")
 
 ### Useful Commands
 ```bash
-# Test all exchanges
+# Test the exchanges enabled in Settings (also: Settings → Check Exchanges)
 python test_exchanges.py
 
 # Interactive setup

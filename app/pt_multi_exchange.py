@@ -25,6 +25,10 @@ logger = logging.getLogger("pt_multi_exchange")
 
 EXAMPLE_CONFIG_NAME = "trading_config.example.json"
 
+# The primary exchange of a new install, until the user chooses one in Settings. It is
+# named here and in the shipped template only; the user's choice always replaces it.
+DEFAULT_PRIMARY_EXCHANGE = "coinbase"
+
 # ExchangeConfig attributes that are credentials: kept in the OS keyring through
 # pt_secrets, never in trading_config.json.
 CREDENTIAL_ATTRS = ("api_key", "api_secret", "passphrase")
@@ -263,15 +267,16 @@ class ExchangeConfigManager:
             primary = "kraken"
 
         else:
-            # Global users - All exchanges available
+            # Global users: every exchange that serves prices without a key, so the
+            # primary always has fallbacks (the same as the shipped template)
             exchanges = [
-                ExchangeConfig("binance", True, 1),
+                ExchangeConfig(DEFAULT_PRIMARY_EXCHANGE, True, 1),
                 ExchangeConfig("kraken", True, 2),
                 ExchangeConfig("kucoin", True, 3),
-                ExchangeConfig("coinbase", False, 4),
+                ExchangeConfig("binance", True, 4),
                 ExchangeConfig("robinhood", False, 5),
             ]
-            primary = "binance"
+            primary = DEFAULT_PRIMARY_EXCHANGE
 
         config = TradingConfig(
             user_region=user_region, primary_exchange=primary, exchanges=exchanges
@@ -290,14 +295,49 @@ class ExchangeConfigManager:
         return config
 
     def get_enabled_exchanges(self) -> List[ExchangeConfig]:
-        """The enabled exchanges in preference order (``region_preference`` 1 first;
-        equal ranks keep their file order). The exchange layer asks them in this
-        order after the primary (FDS-MX-001 section 5.2)."""
+        """The exchanges to connect: the primary exchange first, then the other
+        enabled exchanges in preference order (``region_preference`` 1 first; equal
+        ranks keep their file order). The exchange layer asks them in this order
+        (FDS-MX-001 section 5.2).
+
+        The primary is always included, even when its entry is disabled or missing:
+        it is the user's choice in Settings, and leaving it out let the first other
+        exchange serve in its place."""
         if not self.config:
             return []
 
-        enabled = [ex for ex in self.config.exchanges if ex.enabled]
-        return sorted(enabled, key=lambda ex: _rank(ex.region_preference))
+        primary = (self.config.primary_exchange or "").strip().lower()
+        enabled = sorted(
+            (
+                ex
+                for ex in self.config.exchanges
+                if ex.enabled and ex.exchange_type != primary
+            ),
+            key=lambda ex: _rank(ex.region_preference),
+        )
+        if not primary:
+            return enabled
+        chosen = self.get_exchange_config(primary) or ExchangeConfig(primary, True, 0)
+        return [chosen] + enabled
+
+    def set_primary_exchange(self, exchange_name: str) -> bool:
+        """Make ``exchange_name`` the primary exchange and enable it (adding it to the
+        list when missing). True when that changed the configuration (save it)."""
+        if not self.config:
+            return False
+        name = (exchange_name or "").strip().lower()
+        changed = self.config.primary_exchange != name
+        self.config.primary_exchange = name
+        if not name:
+            return changed
+        ex = self.get_exchange_config(name)
+        if ex is None:  # the primary is asked first whatever its rank
+            self.config.exchanges.append(ExchangeConfig(name, True, 1))
+            return True
+        if not ex.enabled:
+            ex.enabled = True
+            changed = True
+        return changed
 
     def get_exchange_config(self, exchange_name: str) -> Optional[ExchangeConfig]:
         """Get configuration for specific exchange"""
@@ -402,7 +442,9 @@ class MultiExchangeManager:
                     print(
                         f"No credentials for {exchange_config.exchange_type}, trying public access..."
                     )
-                credentials = credentials or {}
+                # Empty, not absent: given no credentials, the exchange factory
+                # looks them up itself (pt_secrets), which market data must not do
+                credentials = credentials or {"api_key": "", "api_secret": ""}
 
                 # Add exchange to manager
                 if self.exchange_manager.add_exchange(exchange_type, **credentials):
@@ -416,14 +458,22 @@ class MultiExchangeManager:
             except Exception as e:
                 print(f"Error connecting to {exchange_config.exchange_type}: {e}")
 
-        # Set primary exchange
+        # Set primary exchange. One that did not connect is not replaced by another
+        # (the first to connect would otherwise be marked primary in its place).
         if config.primary_exchange and success_count > 0:
             try:
                 primary_type = ExchangeType(config.primary_exchange)
                 self.exchange_manager.set_primary_exchange(primary_type)
                 print(f"Primary exchange: {config.primary_exchange}")
             except Exception as e:
-                print(f"Could not set primary exchange: {e}")
+                self.exchange_manager.primary_exchange = None
+                others = ", ".join(self.exchange_manager.exchange_names())
+                message = (
+                    f"Primary exchange {config.primary_exchange} is not connected "
+                    f"({e}); market data comes from {others}, in Settings order"
+                )
+                logger.warning(message)
+                print(f"WARNING: {message}")
 
         self.initialized = success_count > 0
         return self.initialized

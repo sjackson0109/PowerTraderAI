@@ -1,133 +1,96 @@
 #!/usr/bin/env python3
-"""
-Multi-Exchange System Test
-Quick test to verify all exchanges are working
+"""Live exchange check, for developers: the checks behind Settings > Check
+Exchanges (``exchange_check``), run from a terminal or under pytest.
+
+    python test_exchanges.py
+
+checks the exchanges enabled in Settings, primary first, for the coins in Settings,
+and exits with 1 if any check fails. Nothing here places, previews or cancels an
+order. Users run the same checks from Settings > Check Exchanges.
+
+Under pytest these tests call the real exchanges only when
+``POWERTRADER_LIVE_EXCHANGES=1`` is set, and are skipped otherwise (and in CI). They
+check every connector that reads market data, without credentials, for the default
+coins in Settings.
 """
 
 import os
 import sys
+import time
 
-from pt_multi_exchange import MultiExchangeManager
+import requests
 
+from exchange_check import (
+    check,
+    check_exchange,
+    market_data_exchanges,
+    settings_coins,
+    settings_exchanges,
+)
+from pt_settings_manager import DEFAULT_MAX_QUOTE_AGE_S, DEFAULT_SETTINGS
 
-def test_multi_exchange():
-    """Test the multi-exchange system"""
-    print("🧪 Testing PowerTraderAI+ Multi-Exchange System")
-    print("=" * 50)
+try:
+    import pytest
+except ImportError:  # the script needs no pytest
+    pytest = None
 
-    # Initialize manager
-    manager = MultiExchangeManager()
-
-    # Try to initialize with environment region or default to GLOBAL
-    user_region = os.environ.get("POWERTRADER_USER_REGION", "GLOBAL")
-    print(f"\n🌍 Testing for region: {user_region}")
-
-    # Initialize
-    if manager.initialize(user_region):
-        print("✅ Multi-exchange manager initialized successfully")
-
-        # List available exchanges
-        exchanges = manager.get_available_exchanges()
-        print(f"\n📊 Connected exchanges: {', '.join(exchanges)}")
-
-        # Test price retrieval
-        test_symbols = ["BTC-USD", "ETH-USD"]
-
-        for symbol in test_symbols:
-            print(f"\n💰 Testing {symbol} prices:")
-
-            try:
-                # Get prices from all exchanges
-                prices = manager.compare_prices(symbol)
-
-                if prices:
-                    for exchange, price in prices.items():
-                        print(f"  {exchange.title():12} ${price:,.2f}")
-
-                    # Get best price
-                    try:
-                        best_price, best_exchange = manager.get_best_price(
-                            symbol, "buy"
-                        )
-                        print(
-                            f"  🎯 Best buy:   ${best_price:,.2f} on {best_exchange.title()}"
-                        )
-                    except Exception as e:
-                        print(f"  ⚠️  Best price: {e}")
-                else:
-                    print(f"  ❌ No prices available for {symbol}")
-
-            except Exception as e:
-                print(f"  ❌ Price test failed for {symbol}: {e}")
-
-        # Test single exchange call
-        try:
-            print(f"\n🔍 Testing primary exchange call...")
-            primary_price = manager.get_current_price("BTC-USD")
-            print(f"  Primary exchange BTC-USD: ${primary_price:,.2f}")
-        except Exception as e:
-            print(f"  ❌ Primary exchange test failed: {e}")
-
-        print(f"\n✅ Multi-exchange test completed successfully")
-        return True
-
-    else:
-        print("❌ Failed to initialize multi-exchange manager")
-        print("\n💡 To fix this issue:")
-        print("1. Run: python exchange_setup.py")
-        print("2. Configure at least one exchange")
-        print("3. Or set environment variables:")
-        print("   POWERTRADER_KRAKEN_API_KEY=your_key")
-        print("   POWERTRADER_KRAKEN_API_SECRET=your_secret")
-        return False
+LIVE_ENV = "POWERTRADER_LIVE_EXCHANGES"
+# Session.request before the test guard replaces it for each test (tests/isolation.py)
+_REAL_REQUEST = requests.sessions.Session.request
 
 
-def test_legacy_fallback():
-    """Test legacy Robinhood fallback"""
-    print("\n🔄 Testing legacy Robinhood fallback...")
+def main() -> int:
+    names, coins = settings_exchanges(), settings_coins()
+    if not names:
+        print("No exchanges are enabled in Settings.")
+        return 1
+    print(f"Exchanges: {', '.join(names)}    Coins: {', '.join(coins)}")
 
-    try:
-        # Import the updated thinker module
-        from pt_thinker import current_ask
+    def show(r):
+        mark = {True: "PASS", False: "FAIL", None: " -- "}[r.ok]
+        print(f"{r.exchange:10} {r.check:14} {mark}  {r.detail}")
 
-        # The exchanges in Settings, primary first (no Robinhood fallback)
-        price = current_ask("BTC-USD")
-        print(f"✅ Legacy function returned: ${price:,.2f}")
-        return True
-
-    except Exception as e:
-        print(f"❌ Legacy test failed: {e}")
-        return False
+    results = check(names, coins, report=show)
+    failed = sum(r.ok is False for r in results)
+    passed = sum(r.ok is True for r in results)
+    print(f"\n{passed} passed, {failed} failed")
+    return 1 if failed else 0
 
 
-def main():
-    """Run all tests"""
-    print("🚀 PowerTraderAI+ Multi-Exchange Test Suite")
-    print("=" * 60)
+# --- pytest: opt-in, against the real exchanges ----------------------------------------
 
-    # Test 1: Multi-exchange system
-    success1 = test_multi_exchange()
+if pytest is not None:
+    live = pytest.mark.skipif(
+        os.environ.get(LIVE_ENV) != "1",
+        reason=f"calls the real exchanges: set {LIVE_ENV}=1 to run",
+    )
 
-    # Test 2: Legacy fallback
-    success2 = test_legacy_fallback()
+    @pytest.fixture
+    def real_network(isolated_user_dirs, monkeypatch):
+        """The real network, in place of the test guard's refusal."""
+        monkeypatch.setattr(requests.sessions.Session, "request", _REAL_REQUEST)
 
-    print("\n" + "=" * 60)
-    print("📊 Test Results:")
-    print(f"Multi-exchange system: {'✅ PASS' if success1 else '❌ FAIL'}")
-    print(f"Legacy fallback:       {'✅ PASS' if success2 else '❌ FAIL'}")
+    def _assert_passed(results):
+        failed = [r for r in results if r.ok is False]
+        assert not failed, "\n".join(f"{r.check}: {r.detail}" for r in failed)
 
-    if success1 or success2:
-        print("\n🎉 At least one system is working!")
-        if success1:
-            print("💡 Multi-exchange system is operational")
-        if success2 and not success1:
-            print("💡 Legacy system is working as fallback")
-    else:
-        print("\n⚠️  No systems are working. Please configure credentials.")
-        print("Run: python exchange_setup.py")
+    @live
+    @pytest.mark.parametrize("name", market_data_exchanges())
+    def test_live_market_data(name, real_network):
+        results = check_exchange(name, DEFAULT_SETTINGS["coins"])
+        assert any(r.check == "BTC quote" and r.ok for r in results), results
+        _assert_passed(results)
 
-    print("\n" + "=" * 60)
+    @live
+    def test_live_quote_through_the_exchange_layer(real_network):
+        from pt_multi_exchange import market_exchanges
+
+        manager = market_exchanges()
+        sourced = manager.quote("BTC")
+        assert sourced is not None
+        assert sourced.exchange in manager.exchange_manager.exchange_names()
+        assert time.time() - sourced.value.quote_ts <= DEFAULT_MAX_QUOTE_AGE_S
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

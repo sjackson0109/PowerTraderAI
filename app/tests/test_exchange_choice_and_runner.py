@@ -161,6 +161,23 @@ def test_the_exchange_status_is_a_real_price_check():
     assert status == "❌ COINBASE" and "No price from coinbase: dns" in details
 
 
+def test_the_exchange_status_check_reads_no_saved_credential(monkeypatch):
+    # a public price needs no key; given none, the factory would read the saved ones
+    import pt_exchanges  # noqa: F401
+    import pt_secrets
+
+    def no_reads(exchange):
+        raise AssertionError(f"read the saved {exchange} credentials")
+
+    monkeypatch.setattr(pt_secrets, "get_credentials", no_reads)
+    with mock.patch("pt_exchanges.CoinbaseExchange.get_current_price") as price:
+        price.return_value = 81000.0
+        hub = types.SimpleNamespace()
+        status, _ = pt_hub.PowerTraderHub._exchange_status_once(hub, "coinbase")
+    assert status == "✅ COINBASE (prices only)"
+    assert hub._status_exchanges["coinbase"].api_key == ""
+
+
 def test_only_binance_claims_live_orders():
     import pt_exchanges  # noqa: F401
     from pt_exchange_abstraction import ExchangeFactory

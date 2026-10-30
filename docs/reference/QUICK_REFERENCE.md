@@ -97,6 +97,7 @@ python exchange_setup.py
 ```
 
 ### Quick Test
+In PowerTrader: **Settings → Check Exchanges...**. From `app/`:
 ```bash
 python test_exchanges.py
 ```
@@ -211,8 +212,9 @@ python pt_hub.py
 ```
 
 ### Test All Exchanges
+In PowerTrader: **Settings → Check Exchanges...** (every enabled exchange is ticked). From `app/`:
 ```bash
-python test_exchanges.py --all
+python test_exchanges.py
 ```
 
 ### Validate Configuration

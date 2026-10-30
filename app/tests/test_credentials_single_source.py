@@ -212,7 +212,7 @@ def test_env_and_keyring_both_set_no_longer_drop_the_exchange(
     monkeypatch.setenv("POWERTRADER_COINBASE_API_SECRET", env_pem)
     multi = MultiExchangeManager(manager)
     with caplog.at_level(logging.WARNING, logger="pt_secrets"), recorded_http() as http:
-        assert multi.initialize()
+        assert multi.initialize(with_credentials=True)
     assert http.calls == []
     assert "coinbase" in multi.get_available_exchanges()
     built = multi.exchange_manager.exchanges[ExchangeType.COINBASE]

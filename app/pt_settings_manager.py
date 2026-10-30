@@ -73,7 +73,6 @@ DEFAULT_SETTINGS = {
         "max_daily_loss": 0.02,
     },
     "exchange_config": {
-        "default_exchange": "binance",
         "api_timeout": 30,
         "retry_attempts": 3,
         "rate_limit_buffer": 0.9,

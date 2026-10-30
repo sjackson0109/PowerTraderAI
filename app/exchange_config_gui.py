@@ -635,6 +635,16 @@ class ExchangeConfigGUI:
             )
             return
 
+        # The primary exchange stays enabled: it is the user's choice in Settings
+        config = self.config_manager.config
+        if config is not None and config.primary_exchange == exchange_name:
+            messagebox.showwarning(
+                "Primary Exchange",
+                f"{display_name} is your primary exchange. Choose another primary "
+                "exchange in Settings first.",
+            )
+            return
+
         self.config_manager.enable_exchange(exchange_name, False)
         self.refresh_exchange_list()
         self.status_var.set(f"{exchange_name.title()} disabled")

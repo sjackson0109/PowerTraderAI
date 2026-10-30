@@ -171,7 +171,9 @@ program folder:
 - `gui_settings.json`: User interface preferences
 - `pt_config.json`: Trading mode, strategy and risk settings
 - `trading_config.json`: Exchange selection (enabled exchanges, region, primary exchange). It is
-  copied from the shipped `trading_config.example.json` on first start. It holds **no** API keys:
+  copied from the shipped `trading_config.example.json` on first start: Coinbase as the primary
+  exchange, with Kraken, KuCoin and Binance enabled as fallbacks, until you choose your own in
+  Settings. It holds **no** API keys:
   keys entered in **Configure exchange APIs** go to the operating system's credential store.
 
 ## Monitoring Performance

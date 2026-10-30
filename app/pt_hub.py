@@ -7379,6 +7379,38 @@ Platform: {sys.platform}
             )
             return None
 
+    def open_exchange_check(self, parent=None):
+        """Settings > Check Exchanges: the live exchange check for the exchanges
+        enabled in Settings (primary first) and the hub's coins."""
+        win = getattr(self, "_exchange_check_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.deiconify()
+                win.lift()
+                win.focus_set()
+                return win
+        except tk.TclError:
+            pass
+        try:
+            import exchange_check
+            from exchange_check_gui import ExchangeCheckWindow
+
+            exchanges, primary = exchange_check.enabled_exchanges()
+            win = ExchangeCheckWindow(
+                parent or self,
+                exchanges=exchanges,
+                coins=getattr(self, "coins", ()) or exchange_check.settings_coins(),
+                primary=primary,
+                palette=ui_theme.active_palette(),
+            )
+        except Exception as e:
+            messagebox.showerror(
+                "Check Exchanges", f"Could not open the exchange check: {e}"
+            )
+            return None
+        self._exchange_check_win = win
+        return win
+
     # ---- settings dialog ----
 
     # ---- Chart settings pop-out (FDS-CHART-001 section 8) ----
@@ -7804,6 +7836,16 @@ Platform: {sys.platform}
             frm, text="Configure Exchange APIs...", command=open_exchange_setup
         ).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
         ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
+        r += 1
+
+        ttk.Button(
+            frm,
+            text="Check Exchanges...",
+            command=lambda: self.open_exchange_check(win),
+        ).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
+        ttk.Label(
+            frm, text="prices, candles and minimum orders from each enabled exchange"
+        ).grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
         r += 1
 
         # Paper account: the paper trader's book (balances and positions)

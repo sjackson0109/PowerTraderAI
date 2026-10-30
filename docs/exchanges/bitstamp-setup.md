@@ -134,50 +134,15 @@ export BITSTAMP_CUSTOMER_ID="your_customer_id"
 
 ## 🔧 Step 4: Testing Connection
 
-### Manual Test
-```bash
-cd app
-python test_exchanges.py --exchange=bitstamp
-```
+In PowerTrader, open **Settings → Check Exchanges...**:
 
-### Expected Output
-```
-Testing Bitstamp connection...
-✅ API authentication successful
-✅ Account balance retrieved
-✅ Trading permissions verified
-✅ Market data available
-Current BTC price: €39,750.25
-```
+1. Tick **bitstamp** and the coins to check. The list shows the exchanges enabled in Settings, your primary exchange first.
+2. Tick **Also check the saved API keys (read-only)** to test the keys you entered.
+3. Press **Run check**.
 
-### Programmatic Test
-```python
-from pt_exchanges import BitstampExchange
-import asyncio
+Each row is one check: each coin's market status and best bid and ask (a price older than 30 seconds fails), the last day of hourly BTC candles, the minimum order and, when ticked, the API key. Nothing is ordered.
 
-async def test_bitstamp():
-    exchange = BitstampExchange({
-        "api_key": "your_api_key",
-        "api_secret": "your_api_secret",
-        "customer_id": "your_customer_id"
-    })
-
-    if await exchange.initialize():
-        # Test account access
-        balance = await exchange.get_balance()
-        print(f"Account balance: {balance}")
-
-        # Test market data
-        market_data = await exchange.get_market_data("btceur")
-        print(f"BTC price: €{market_data.price}")
-
-        print("✅ Bitstamp connection successful")
-    else:
-        print("❌ Connection failed")
-
-asyncio.run(test_bitstamp())
-```
-
+This version of PowerTrader has no connector for Bitstamp, so the check reports that instead of running.
 ## 💰 Step 5: Funding Your Account
 
 ### Deposit Methods

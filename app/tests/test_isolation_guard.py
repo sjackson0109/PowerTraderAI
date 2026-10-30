@@ -120,3 +120,37 @@ def test_the_guard_is_in_force_wherever_pytest_is_started(start):
         if line.split()[:3] == ["SETUP", "F", "isolated_user_dirs"]
     ]
     assert tests and len(setups) == len(tests), out.stdout
+
+
+def test_a_market_data_feed_left_running_is_stopped_after_the_test():
+    """A whole hub starts the Market Data tab's process-wide feed; left running, it
+    asked for quotes during later tests (a Coinbase test recorded Binance requests
+    it never made)."""
+    import threading
+
+    import real_time_market_data as rtmd
+    from pt_exchange_abstraction import ExchangeType, PriceQuote
+
+    asked = threading.Event()
+
+    class Connector:
+        def quote(self, market):
+            asked.set()
+            return PriceQuote(bid=1.0, ask=2.0, quote_ts=None)
+
+    class Layer:
+        exchanges = {ExchangeType.KRAKEN: Connector()}
+
+        def exchange_names(self):
+            return ["kraken"]
+
+    manager = rtmd.get_market_data_manager()
+    manager.aggregator._layer = Layer()
+    manager.aggregator.poll_seconds = 0.01
+    manager.subscribe_symbol("BTC", ["kraken"])
+    assert asked.wait(5)
+    (thread,) = manager.aggregator.feed_threads.values()
+
+    sys.modules["powertrader_test_isolation"]._stop_market_data_feeds()
+    assert not thread.is_alive()
+    assert rtmd._market_data_manager is None

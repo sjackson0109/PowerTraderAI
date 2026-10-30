@@ -16,8 +16,6 @@ import threading
 import time
 import tkinter as tk
 import tkinter.font as tkfont
-import urllib.error
-import urllib.request
 import warnings
 from dataclasses import dataclass
 from decimal import Decimal
@@ -69,7 +67,7 @@ from trading_mode_ui import TradingModeDialog, TradingModeIndicator, pack_at_top
 
 # Multi-exchange imports
 try:
-    from pt_exchange_abstraction import ExchangeType
+    from pt_exchange_abstraction import ExchangeFactory, ExchangeType
     from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
 
     EXCHANGE_SUPPORT_AVAILABLE = True
@@ -5771,17 +5769,6 @@ Platform: {sys.platform}
             dot.configure(text=state[0], fg=state[1])
             age.configure(text=state[2])
 
-    def _fetch_binance_icon(self, coin_symbol: str) -> Optional[str]:
-        """Fetch SVG icon from Binance CDN"""
-        try:
-            url = f"https://cdn.jsdelivr.net/gh/vadimmalykhin/binance-icons/crypto/{coin_symbol.lower()}.svg"
-            with urllib.request.urlopen(url, timeout=5) as response:
-                if response.status == 200:
-                    return response.read().decode("utf-8")
-        except Exception as e:
-            print(f"Failed to fetch icon for {coin_symbol}: {e}")
-        return None
-
     def _get_status_border_color(self, status: str, coin: str = None) -> str:
         """Status colour of a coin: trained green, training amber, untrained grey."""
         p = ui_theme.active_palette()
@@ -7765,39 +7752,15 @@ Platform: {sys.platform}
         ttk.Label(frm, text="Primary exchange:").grid(
             row=r, column=0, sticky="w", padx=(0, 10), pady=6
         )
-        primary_exchange_var = tk.StringVar(
-            value=self.settings.get("primary_exchange", "")
-        )
-
-        # Exchange options based on region
-        def update_exchange_options(*args):
-            region = region_var.get()
-            if region == "US":
-                exchanges = ["binance", "coinbase", "kraken", "robinhood", "kucoin"]
-            elif region in ["EU", "UK"]:
-                exchanges = ["kraken", "coinbase", "binance", "bitstamp", "kucoin"]
-            else:  # GLOBAL
-                exchanges = [
-                    "binance",
-                    "kraken",
-                    "kucoin",
-                    "coinbase",
-                    "robinhood",
-                    "bybit",
-                    "okx",
-                ]
-
-            exchange_combo.configure(values=exchanges)
-            # Set default if current selection not in new list
-            if primary_exchange_var.get() not in exchanges:
-                primary_exchange_var.set(exchanges[0])
-
+        # The user's choice is shown and kept as it is: the window never fills one in
+        primary_exchange_var = tk.StringVar(value=self._primary_exchange())
         exchange_combo = ttk.Combobox(
-            frm, textvariable=primary_exchange_var, state="readonly"
+            frm,
+            textvariable=primary_exchange_var,
+            values=self._primary_exchange_choices(primary_exchange_var.get()),
+            state="readonly",
         )
         exchange_combo.grid(row=r, column=1, sticky="ew", pady=6)
-        region_var.trace("w", update_exchange_options)
-        update_exchange_options()  # Initialize
         ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
         r += 1
 
@@ -8338,7 +8301,7 @@ Platform: {sys.platform}
                     time.sleep(5)
                     continue
 
-                primary_exchange = self.settings.get("primary_exchange", "")
+                primary_exchange = self._primary_exchange()
                 region = self.settings.get("region", "us")
 
                 # Skip if no primary exchange is configured
@@ -8403,13 +8366,39 @@ Platform: {sys.platform}
             if region and config.user_region != region:
                 config.user_region = region
                 changed = True
-            if primary and config.primary_exchange != primary:
-                config.primary_exchange = primary
+            # the chosen primary is also enabled there, or it would not be connected
+            if primary and manager.set_primary_exchange(primary):
                 changed = True
             if changed:
                 manager.save_config(config)
         except Exception as e:
             print(f"Could not save the exchange choice for the runner and trader: {e}")
+
+    def _primary_exchange(self) -> str:
+        """The primary exchange: the one chosen in Settings, else the one the runner,
+        trainers and trader use (``trading_config.json``: a new install's default),
+        else ""."""
+        chosen = str(self.settings.get("primary_exchange", "") or "").strip().lower()
+        if chosen or not EXCHANGE_SUPPORT_AVAILABLE:
+            return chosen
+        try:
+            config = ExchangeConfigManager().load_config()
+        except Exception:
+            return ""
+        return str(config.primary_exchange or "").strip().lower() if config else ""
+
+    @staticmethod
+    def _primary_exchange_choices(current: str) -> List[str]:
+        """The exchanges Settings offers as the primary: every exchange that serves
+        prices, alphabetically, and the current choice even when it does not."""
+        names = (
+            ExchangeFactory.market_data_exchanges()
+            if EXCHANGE_SUPPORT_AVAILABLE
+            else []
+        )
+        if current and current not in names:
+            names.append(current)
+        return names
 
     def refresh_exchange_settings(self):
         """Refresh exchange system with new settings - called when settings are saved"""

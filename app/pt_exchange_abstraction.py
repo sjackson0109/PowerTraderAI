@@ -441,6 +441,18 @@ class ExchangeFactory:
         return cls._registered().get(exchange_type)
 
     @classmethod
+    def market_data_exchanges(cls) -> List[str]:
+        """The exchanges whose connector reads public market data (prices and
+        candles), in alphabetical order: the ones that can be the primary exchange."""
+        names = [
+            exchange_type.value
+            for exchange_type, exchange_class in cls._registered().items()
+            if exchange_class.candle_timeframes
+            is not AbstractExchange.candle_timeframes
+        ]
+        return sorted(names)
+
+    @classmethod
     def load_credentials(cls, config_path: str = None):
         """Load per-exchange constructor options (e.g. ``sandbox``) from
         ``exchange_config.json``. Credentials are NOT read from it: they come
@@ -558,7 +570,9 @@ class ExchangeManager:
             exchange = ExchangeFactory.get_exchange(exchange_type, **kwargs)
             self.exchanges[exchange_type] = exchange
 
-            # Set as primary if first exchange
+            # The first exchange is the primary until one is chosen. A chosen primary
+            # that cannot connect is not replaced by another: MultiExchangeManager
+            # then leaves the primary unset (the others serve, in Settings order).
             if self.primary_exchange is None:
                 self.primary_exchange = exchange_type
 
@@ -583,9 +597,15 @@ class ExchangeManager:
     def get_current_price(
         self, symbol: str, exchange_type: ExchangeType = None
     ) -> float:
-        """Get current price from specified exchange or primary"""
+        """Current price from ``exchange_type``, else the primary exchange; with no
+        primary connected, from the first connected exchange in Settings order."""
         if exchange_type is None:
             exchange_type = self.primary_exchange
+        if exchange_type is None:
+            ordered = self._ordered()
+            if not ordered:
+                raise ValueError("No exchange connected")
+            exchange_type = ordered[0][0]
 
         if exchange_type not in self.exchanges:
             raise ValueError(f"Exchange {exchange_type.value} not connected")
@@ -777,6 +797,8 @@ class ExchangeManager:
         """Place order on specified exchange or primary"""
         if exchange_type is None:
             exchange_type = self.primary_exchange
+        if exchange_type is None:  # never on another exchange than the one chosen
+            raise ValueError("No primary exchange connected")
 
         if exchange_type not in self.exchanges:
             raise ValueError(f"Exchange {exchange_type.value} not connected")

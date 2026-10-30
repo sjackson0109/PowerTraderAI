@@ -4,25 +4,25 @@
   "exchanges": [
     {
       "enabled": true,
-      "exchange_type": "binance",
+      "exchange_type": "coinbase",
       "region_preference": 1,
       "sandbox": false
     },
     {
-      "enabled": false,
+      "enabled": true,
       "exchange_type": "kraken",
       "region_preference": 2,
       "sandbox": false
     },
     {
-      "enabled": false,
+      "enabled": true,
       "exchange_type": "kucoin",
       "region_preference": 3,
       "sandbox": false
     },
     {
-      "enabled": false,
-      "exchange_type": "coinbase",
+      "enabled": true,
+      "exchange_type": "binance",
       "region_preference": 4,
       "sandbox": false
     },
@@ -34,6 +34,6 @@
     }
   ],
   "price_comparison_enabled": true,
-  "primary_exchange": "binance",
+  "primary_exchange": "coinbase",
   "user_region": "GLOBAL"
 }

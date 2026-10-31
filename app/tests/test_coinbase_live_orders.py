@@ -69,10 +69,13 @@ class Coinbase:
         self.rec = rec
         self.product = product or PRODUCT
         self.posts = posts or {}
+        self.ticker_reads = 0
         rec.respond(self.answer)
 
     def answer(self, method, url):
+        method = method.upper()  # requests.get sends "get"
         if method == "GET" and url == TICKER:
+            self.ticker_reads += 1
             return make_response(200, TICKER_BODY)
         if method == "GET" and url == f"{BROKERAGE}/products/BTC-USD":
             return make_response(200, self.product)
@@ -118,7 +121,7 @@ class PlaceOrderTests(unittest.TestCase):
         with recorded_http() as rec:
             cb = Coinbase(rec, posts={"/orders": CREATED})
             result = connector().place_order(
-                "BTC-USD", "buy", 0.0002, client_order_id="trader-uuid-1"
+                "BTC-USD", "buy", 0.01, client_order_id="trader-uuid-1"
             )
         ((path, body),) = cb.posted()
         self.assertEqual(path, "/orders")
@@ -128,10 +131,11 @@ class PlaceOrderTests(unittest.TestCase):
                 "client_order_id": "trader-uuid-1",
                 "product_id": "BTC-USD",
                 "side": "BUY",
-                # 0.0002 BTC x the 70010 ask, to the cent
-                "order_configuration": {"market_market_ioc": {"quote_size": "14.00"}},
+                # 0.01 BTC x the 70010 ask (not the 70000 last price), to the cent
+                "order_configuration": {"market_market_ioc": {"quote_size": "700.10"}},
             },
         )
+        self.assertEqual(cb.ticker_reads, 1)
         self.assertEqual(cb.claims(), ["POST api.coinbase.com/api/v3/brokerage/orders"])
         self.assertEqual(
             (result.status, result.order_id, result.side, result.exchange),

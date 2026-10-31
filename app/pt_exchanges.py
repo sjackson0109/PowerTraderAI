@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timezone
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import coinbase_auth
 import requests
@@ -131,6 +131,44 @@ _COINBASE_GRANULARITY = {
     "1d": 86400,
 }
 _COINBASE_CANDLES_PAGE = 300
+# Product flags under which Coinbase takes no market order
+_COINBASE_NO_MARKET_FLAGS = (
+    "trading_disabled",
+    "is_disabled",
+    "cancel_only",
+    "limit_only",
+)
+
+
+def _coinbase_number(value) -> Optional[float]:
+    """A Coinbase number (sent as a string, often empty) as a float, or None."""
+    try:
+        if value is None or str(value).strip() == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coinbase_decimal(value) -> Decimal:
+    """A Coinbase size or increment as a Decimal; 0 when absent or unreadable."""
+    try:
+        return Decimal(str(value).strip()) if value not in (None, "") else Decimal(0)
+    except InvalidOperation:
+        return Decimal(0)
+
+
+def _partly_filled(order: dict, filled: float) -> str:
+    """ "partly filled: X of Y" for an order that stopped part-way."""
+    config = (order.get("order_configuration") or {}).get("market_market_ioc") or {}
+    ordered = _coinbase_number(config.get("base_size"))
+    if ordered:
+        return f"partly filled: {filled:g} of {ordered:g}"
+    percent = _coinbase_number(order.get("completion_percentage"))
+    if percent is not None:
+        return f"partly filled: {filled:g} ({percent:g}% of the order)"
+    return f"partly filled: {filled:g}"
+
 
 _KUCOIN_TYPE = {
     "1m": "1min",
@@ -1250,20 +1288,39 @@ class CoinbaseExchange(AbstractExchange):
     ``api_secret`` is the *private key*: an Ed25519 key (one line of base64) or an
     ECDSA P-256 key (PEM). Authenticated requests go to the Advanced Trade API at
     ``AUTH_BASE_URL`` with a per-request EdDSA or ES256 JWT (see
-    ``coinbase_auth``). Today the only authenticated call implemented is the
-    read-only ``check_connection``; order placement, balances and order status
-    are not implemented. Price methods use Coinbase's unauthenticated public
-    ticker and send no credentials.
+    ``coinbase_auth``): the key check, balances, product rules and order status.
+    Price methods use Coinbase's unauthenticated public ticker and send no
+    credentials.
     """
 
     AUTH_HOST = "api.coinbase.com"
     AUTH_BASE_URL = "https://api.coinbase.com"
-    KEY_PERMISSIONS_PATH = "/api/v3/brokerage/key_permissions"
+    BROKERAGE = "/api/v3/brokerage"
+    KEY_PERMISSIONS_PATH = BROKERAGE + "/key_permissions"
+    ACCOUNTS_PAGE = 250  # the most accounts Coinbase returns per page
+    PRODUCT_RULES_SECONDS = 3600.0  # product increments and flags are cached this long
+    BACKOFF_SECONDS = (1.0, 2.0, 4.0)  # waits after HTTP 429 (read-only calls only)
+    # Coinbase order states -> the trader's lower-case states (a cancelled or
+    # expired order that filled in part is handled in _order_result)
+    ORDER_STATES = {
+        "FILLED": "filled",
+        "CANCELLED": "cancelled",
+        "EXPIRED": "expired",
+        "FAILED": "failed",
+        "PENDING": "pending",
+        "OPEN": "pending",
+        "QUEUED": "pending",
+        "CANCEL_QUEUED": "pending",
+        "EDIT_QUEUED": "pending",
+        # the trader's wait times out and the order is reconciled later
+        "UNKNOWN_ORDER_STATUS": "pending",
+    }
 
-    def __init__(self, api_key: str, api_secret: str, **kwargs):
+    def __init__(self, api_key: str = "", api_secret: str = "", **kwargs):
         super().__init__(api_key, api_secret, **kwargs)
         # Public ticker host (unauthenticated market data only).
         self.base_url = "https://api.exchange.coinbase.com"
+        self._product_rules: Dict[str, Tuple[float, dict]] = {}
 
     def get_exchange_name(self) -> str:
         return "coinbase"
@@ -1501,11 +1558,169 @@ class CoinbaseExchange(AbstractExchange):
     ) -> OrderResult:
         raise NotImplementedError("Coinbase order placement to be implemented")
 
+    # -- authenticated Advanced Trade calls ------------------------------------------
+
+    def _brokerage_request(
+        self,
+        method: str,
+        path: str,
+        params: Optional[dict] = None,
+        body: Optional[dict] = None,
+        timeout: float = 10.0,
+    ):
+        """One authenticated Advanced Trade call; the decoded JSON answer.
+
+        ``path`` is relative to ``BROKERAGE`` and has no query: ``params`` are sent
+        in the request and are not part of the signed claim. A read (GET) answered
+        with HTTP 429 is tried again after a pause; anything else, and every POST,
+        is sent once. Raises RuntimeError for missing credentials, an HTTP error or
+        an answer that is not JSON; a network error is raised as it is."""
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError(
+                "Coinbase API credentials are needed for this; save them in "
+                "Configure Exchange APIs"
+            )
+        full_path = self.BROKERAGE + path
+        verb = method.upper()
+        waits = self.BACKOFF_SECONDS if verb == "GET" else ()
+        for attempt in range(len(waits) + 1):
+            headers = self._auth_headers(verb, full_path)  # a token lasts 2 minutes
+            if body is not None:
+                headers["Content-Type"] = "application/json"
+            response = requests.request(
+                verb,
+                self.AUTH_BASE_URL + full_path,
+                params=params,
+                data=json.dumps(body) if body is not None else None,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=False,
+            )
+            if response.status_code != 429 or attempt == len(waits):
+                break
+            time.sleep(_retry_after(response) or waits[attempt])
+        if response.status_code != 200:
+            raise RuntimeError(self._http_error(verb, path, response))
+        try:
+            return response.json()
+        except ValueError:
+            raise RuntimeError(
+                f"Coinbase {verb} {path}: HTTP 200 but the answer was not JSON"
+            ) from None
+
+    @staticmethod
+    def _http_error(method: str, path: str, response) -> str:
+        code = response.status_code
+        try:
+            data = response.json()
+            detail = (
+                data.get("message") or data.get("error_details") or data.get("error")
+            )
+        except (ValueError, AttributeError):
+            detail = getattr(response, "text", "")
+        text = f"Coinbase {method} {path}: HTTP {code}"
+        if detail:
+            text += f" ({str(detail)[:200]})"
+        if code == 401:
+            text += (
+                ". Coinbase rejected the key: check the key name and private key in "
+                "Configure Exchange APIs, and that this computer's clock is right"
+            )
+        elif code == 403:
+            text += (
+                ". The key does not have the permission this needs (View to read the "
+                "account, Trade to place orders)"
+            )
+        return text
+
     def get_balance(self) -> Dict[str, float]:
-        raise NotImplementedError("Coinbase balance retrieval to be implemented")
+        """The available balance of each currency, from every page of ``GET
+        /accounts``. Funds on hold are not included (like Binance's free balances)
+        and zero balances are left out."""
+        balances: Dict[str, float] = {}
+        params = {"limit": self.ACCOUNTS_PAGE}
+        for _ in range(1000):
+            data = self._brokerage_request("GET", "/accounts", params=dict(params))
+            for account in data.get("accounts") or []:
+                currency = str(account.get("currency") or "").strip().upper()
+                value = _coinbase_number(
+                    (account.get("available_balance") or {}).get("value")
+                )
+                if currency and value is not None and value > 0:
+                    balances[currency] = balances.get(currency, 0.0) + value
+            cursor = data.get("cursor")
+            if not data.get("has_next") or not cursor:
+                return balances
+            params["cursor"] = cursor
+        raise RuntimeError("Coinbase accounts: the list did not end after 1000 pages")
+
+    def product_rules(self, symbol: str) -> dict:
+        """Coinbase's rules for ``symbol``'s product (``GET /products/{id}``),
+        cached for ``PRODUCT_RULES_SECONDS``: the size increments and minimums (as
+        Decimals), the flags that stop market orders, and the last price."""
+        product = self._convert_symbol(symbol)
+        now = time.time()
+        cached = self._product_rules.get(product)
+        if cached is not None and now - cached[0] < self.PRODUCT_RULES_SECONDS:
+            return cached[1]
+        data = self._brokerage_request("GET", f"/products/{product}")
+        rules = {
+            "product_id": product,
+            "base_increment": _coinbase_decimal(data.get("base_increment")),
+            "quote_increment": _coinbase_decimal(data.get("quote_increment")),
+            "base_min_size": _coinbase_decimal(data.get("base_min_size")),
+            "quote_min_size": _coinbase_decimal(data.get("quote_min_size")),
+            "price": _coinbase_number(data.get("price")),
+            "flags": tuple(f for f in _COINBASE_NO_MARKET_FLAGS if data.get(f)),
+        }
+        self._product_rules[product] = (now, rules)
+        return rules
+
+    @staticmethod
+    def market_order_refusal(rules: dict) -> Optional[str]:
+        """Why Coinbase would refuse a market order on this product, or None."""
+        if not rules["flags"]:
+            return None
+        flag = rules["flags"][0]
+        return f"{flag.upper()}: Coinbase {rules['product_id']} is {flag.replace('_', ' ')}"
 
     def get_order_status(self, order_id: str) -> OrderResult:
-        raise NotImplementedError("Coinbase order status to be implemented")
+        """``GET /orders/historical/{order_id}``, in the trader's terms (see
+        ``ORDER_STATES``): an order that was cancelled or expired after filling in
+        part is ``filled`` for the part that filled."""
+        data = self._brokerage_request("GET", f"/orders/historical/{order_id}")
+        order = data.get("order") if isinstance(data, dict) else None
+        if not isinstance(order, dict):
+            raise RuntimeError(f"Coinbase order {order_id}: the answer has no order")
+        return self._order_result(order)
+
+    def _order_result(self, order: dict) -> OrderResult:
+        state = str(order.get("status") or "UNKNOWN_ORDER_STATUS").upper()
+        status = self.ORDER_STATES.get(state, "pending")
+        filled = _coinbase_number(order.get("filled_size")) or 0.0
+        reason = ""
+        if state in ("CANCELLED", "EXPIRED") and filled > 0:
+            status = "filled"
+            reason = _partly_filled(order, filled)
+        elif state == "FAILED":
+            reason = str(
+                order.get("reject_message") or order.get("reject_reason") or ""
+            )
+        elif state == "CANCELLED":
+            reason = str(order.get("cancel_message") or "")
+        return OrderResult(
+            order_id=str(order.get("order_id") or ""),
+            symbol=str(order.get("product_id") or ""),
+            side=str(order.get("side") or "").lower(),
+            amount=filled,
+            price=_coinbase_number(order.get("average_filled_price")) or 0.0,
+            status=status,
+            exchange="coinbase",
+            timestamp=_iso_seconds(order.get("created_time")) or time.time(),
+            reason=reason,
+            fee=_coinbase_number(order.get("total_fees")),
+            filled_value=_coinbase_number(order.get("filled_value")),
+        )
 
     def cancel_order(self, order_id: str) -> bool:
         raise NotImplementedError("Coinbase order cancellation to be implemented")

@@ -7888,7 +7888,9 @@ Platform: {sys.platform}
             variable=paper_mode_var,
         ).grid(row=1, column=0, sticky="w")
         paper_coin_frame = ttk.Frame(paper_box)
-        paper_coin_frame.grid(row=2, column=0, sticky="w", padx=(22, 0), pady=(2, 0))
+        paper_coin_frame.grid(
+            row=2, column=0, sticky="w", padx=(ui_tokens.SPACE["xxl"], 0), pady=(2, 0)
+        )
         ttk.Label(
             paper_box,
             wraplength=520,

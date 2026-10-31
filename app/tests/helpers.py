@@ -157,6 +157,13 @@ class PaperTraderCase(unittest.TestCase):
         os.chdir(self.tmp.name)  # the trader drops <SYM>_current_price.txt in cwd
         self.addCleanup(os.chdir, self.cwd)
 
+    def one_coin(self, coin: str = "BTC") -> None:
+        """Only ``coin`` in Settings, for a test that follows one coin through the
+        trader (the strategy trades every coin in Settings)."""
+        patch = mock.patch.object(self.pt_trader, "crypto_symbols", [coin])
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def trader(self, settings: Optional[dict] = None, candle_provider=None):
         """A trader whose signal engine never touches the network: by default it
         has no candles (so the strategy sits on HOLD)."""

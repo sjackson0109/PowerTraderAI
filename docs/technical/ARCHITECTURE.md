@@ -147,8 +147,11 @@ Those signals are noise from an untrained mock, so they are **not** a basis for 
 | `strategy.engine = legacy_neural` | The old neural-signal logic, unchanged. The hub strip shows `SIGNALS: LEGACY (UNTRAINED)`. |
 | anything else, or an unknown `strategy.active_id` | **No orders** are placed and an ERROR is logged (fail closed). |
 
-Other settings: `strategy.active_id` (default `STRAT-000`, a trivial EMA 20/50 cross), `strategy.symbols`
-(default `["BTCUSDT"]`), `strategy.timeframe` (default `1h`), `strategy.overlays` (`[{id, params}]`).
+Other settings: `strategy.active_id` (default `STRAT-001`), `strategy.timeframe` (default `1h`),
+`strategy.overlays` (`[{id, params}]`). The coins traded are not a strategy setting: the trader opens new trades
+in the coins in Settings, and in paper mode in the paper-trading coins (Settings > Paper trading: inherit the
+coins, the default, or a chosen set of them; `paper_coins.py`). Held positions are managed whatever that list
+says. The old `strategy.symbols` (default BTC only) is ignored.
 Entry size is the trader's existing start allocation; a strategy exit sells only the quantity the trader's own
 ledger says it bought (never the user's other holdings), and a holding without a ledger cost basis is never sold.
 If the last closed candle is older than 2x the timeframe the engine returns `HOLD` with reason `STALE_CANDLES`.

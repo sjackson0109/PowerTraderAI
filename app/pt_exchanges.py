@@ -8,8 +8,9 @@ import hashlib
 import hmac
 import json
 import time
+import uuid
 from datetime import datetime, timezone
-from decimal import ROUND_DOWN, Decimal, InvalidOperation
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -148,6 +149,13 @@ def _coinbase_number(value) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _round_to_increment(value: Decimal, increment: Decimal, rounding) -> Decimal:
+    """``value`` as a whole number of ``increment`` (unchanged when there is none)."""
+    if increment <= 0:
+        return value
+    return (value / increment).to_integral_value(rounding=rounding) * increment
 
 
 def _coinbase_decimal(value) -> Decimal:
@@ -1553,10 +1561,203 @@ class CoinbaseExchange(AbstractExchange):
         except Exception:
             return None
 
-    def place_order(
-        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+    # -- orders -------------------------------------------------------------------------
+
+    # The connector can show what an order would do without placing it (POST
+    # /orders/preview, which needs only the View permission)
+    SUPPORTS_ORDER_PREVIEW = True
+
+    def _market_order(self, symbol: str, side: str, amount: float):
+        """The body of a market (IOC) order for ``amount`` coins, or ``(None,
+        reason)`` when Coinbase would refuse it, so that nothing is sent.
+
+        A sell is sized in coins: ``base_size``, rounded down to the product's
+        ``base_increment``. A buy is sized in dollars, as Coinbase's documentation
+        asks of a market buy: ``quote_size`` = coins x the current ask, rounded to
+        the ``quote_increment``. Below ``base_min_size`` or ``quote_min_size`` the
+        order is refused here."""
+        verb = str(side).strip().upper()
+        if verb not in ("BUY", "SELL"):
+            raise ValueError(f"Coinbase order side must be buy or sell, not {side!r}")
+        rules = self.product_rules(symbol)
+        product = rules["product_id"]
+        refusal = self.market_order_refusal(rules)
+        if refusal:
+            return None, refusal
+
+        coins = Decimal(str(amount))
+        if verb == "SELL":
+            coins = _round_to_increment(coins, rules["base_increment"], ROUND_DOWN)
+        coin = product.split("-")[0]
+        if coins <= 0 or coins < rules["base_min_size"]:
+            return None, (
+                f"BELOW_MINIMUM: {format(coins, 'f')} {coin} is below Coinbase's "
+                f"minimum order of {format(rules['base_min_size'], 'f')} {coin}"
+            )
+
+        quote = self.quote(symbol)
+        price = (quote.ask if verb == "BUY" else quote.bid) if quote else None
+        price = price if price and price > 0 else rules["price"]
+        if not price or price <= 0:
+            return None, f"PRICE_UNAVAILABLE: no Coinbase price for {product}"
+        value = coins * Decimal(str(price))
+        if verb == "BUY":
+            value = _round_to_increment(value, rules["quote_increment"], ROUND_HALF_UP)
+        if value < rules["quote_min_size"]:
+            return None, (
+                f"BELOW_MINIMUM: about {format(value, 'f')} is below Coinbase's "
+                f"minimum order of {format(rules['quote_min_size'], 'f')} for {product}"
+            )
+
+        size = (
+            {"quote_size": format(value, "f")}
+            if verb == "BUY"
+            else {"base_size": format(coins, "f")}
+        )
+        body = {
+            "product_id": product,
+            "side": verb,
+            "order_configuration": {"market_market_ioc": size},
+        }
+        return body, ""
+
+    def _refused(
+        self, symbol: str, side: str, amount: float, reason: str
     ) -> OrderResult:
-        raise NotImplementedError("Coinbase order placement to be implemented")
+        """An order that was not created: nothing was filled and nothing is pending."""
+        return OrderResult(
+            order_id="",
+            symbol=symbol,
+            side=str(side).lower(),
+            amount=0.0,
+            price=0.0,
+            status="rejected",
+            exchange="coinbase",
+            timestamp=time.time(),
+            reason=reason,
+        )
+
+    def _order_post(self, path: str, body: dict) -> dict:
+        """POST an order or a preview, once (an order is never sent twice). A 401
+        for an Ed25519 key says which key type Coinbase's trading documentation
+        asks for."""
+        try:
+            return self._brokerage_request("POST", path, body=body)
+        except RuntimeError as exc:
+            if "HTTP 401" not in str(exc) or not self._ed25519_key():
+                raise
+            raise RuntimeError(
+                f"{exc}. This is an Ed25519 key; Coinbase's Advanced Trade "
+                "documentation lists ECDSA (ES256) keys for its trading APIs. Create an "
+                "ECDSA key and save it in Configure Exchange APIs."
+            ) from None
+
+    def _ed25519_key(self) -> bool:
+        try:
+            key = coinbase_auth.load_private_key(self.api_secret)
+            return coinbase_auth.jwt_algorithm(key) == "EdDSA"
+        except Exception:
+            return False
+
+    def place_order(
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: Optional[float] = None,
+        *,
+        client_order_id: Optional[str] = None,
+    ) -> OrderResult:
+        """A market (IOC) order for ``amount`` coins (``POST /orders``).
+
+        Returns ``status="pending"`` with Coinbase's order id once Coinbase has
+        created the order (``get_order_status`` follows it), or ``"rejected"``
+        with the reason when it was not created, by this connector or by
+        Coinbase. ``client_order_id`` is sent as given (a new one otherwise):
+        Coinbase answers a repeated one with the order it already made. An HTTP
+        or network error is raised and the order is not sent again."""
+        if price is not None:
+            raise ValueError("Coinbase: this version places market orders only")
+        body, refusal = self._market_order(symbol, side, amount)
+        if body is None:
+            return self._refused(symbol, side, amount, refusal)
+        body = {"client_order_id": client_order_id or str(uuid.uuid4()), **body}
+        data = self._order_post("/orders", body)
+        if data.get("success"):
+            order_id = (data.get("success_response") or {}).get("order_id")
+            if not order_id:
+                raise RuntimeError(
+                    f"Coinbase accepted order {body['client_order_id']} but gave no "
+                    "order id"
+                )
+            return OrderResult(
+                order_id=str(order_id),
+                symbol=symbol,
+                side=str(side).lower(),
+                amount=float(amount),
+                price=0.0,
+                status="pending",
+                exchange="coinbase",
+                timestamp=time.time(),
+            )
+        error = data.get("error_response") or {}
+        reason = str(
+            error.get("new_order_failure_reason")
+            or error.get("error")
+            or data.get("failure_reason")
+            or "UNKNOWN_FAILURE_REASON"
+        )
+        message = error.get("message") or error.get("error_details")
+        return self._refused(
+            symbol, side, amount, f"{reason}: {message}" if message else reason
+        )
+
+    def preview_order(self, symbol: str, side: str, amount: float) -> OrderResult:
+        """What Coinbase would do with the market order ``place_order`` would send
+        (``POST /orders/preview``, View permission only). Nothing is placed.
+
+        Returns ``status="preview"``, its summary in ``reason`` and Coinbase's
+        estimates in ``amount`` (coins), ``price``, ``fee`` and ``filled_value``
+        (dollars before the fee); or ``"rejected"`` with Coinbase's errors."""
+        body, refusal = self._market_order(symbol, side, amount)
+        if body is None:
+            return self._refused(symbol, side, amount, refusal)
+        data = self._order_post("/orders/preview", body)
+        errors = [str(e) for e in (data.get("errs") or [])]
+        if errors:
+            return self._refused(symbol, side, amount, "PREVIEW: " + ", ".join(errors))
+        coins = _coinbase_number(data.get("base_size"))
+        dollars = _coinbase_number(data.get("quote_size"))
+        fee = _coinbase_number(data.get("commission_total"))
+        total = _coinbase_number(data.get("order_total"))
+        price = _coinbase_number(data.get("est_average_filled_price"))
+        coin = body["product_id"].split("-")[0]
+        parts = [
+            "would " + ("buy" if body["side"] == "BUY" else "sell"),
+            f"{coins:g} {coin}" if coins is not None else body["product_id"],
+        ]
+        if dollars is not None:
+            parts.append(f"for ${dollars:,.2f}")
+        if price is not None:
+            parts.append(f"at about ${price:,.2f}")
+        if fee is not None:
+            parts.append(f"fee ${fee:,.2f}")
+        if total is not None:
+            parts.append(f"total ${total:,.2f}")
+        return OrderResult(
+            order_id=str(data.get("preview_id") or ""),
+            symbol=symbol,
+            side=str(side).lower(),
+            amount=coins if coins is not None else float(amount),
+            price=price or 0.0,
+            status="preview",
+            exchange="coinbase",
+            timestamp=time.time(),
+            reason=" ".join(parts[:2])
+            + (", " + ", ".join(parts[2:]) if parts[2:] else ""),
+            fee=fee,
+            filled_value=dollars,
+        )
 
     # -- authenticated Advanced Trade calls ------------------------------------------
 
@@ -1723,7 +1924,13 @@ class CoinbaseExchange(AbstractExchange):
         )
 
     def cancel_order(self, order_id: str) -> bool:
-        raise NotImplementedError("Coinbase order cancellation to be implemented")
+        """``POST /orders/batch_cancel`` for one order: True when Coinbase cancelled
+        it."""
+        data = self._order_post("/orders/batch_cancel", {"order_ids": [str(order_id)]})
+        for result in data.get("results") or []:
+            if str(result.get("order_id")) == str(order_id):
+                return bool(result.get("success"))
+        return False
 
     def is_available_in_region(self, region: str) -> bool:
         return region.upper() in ["US", "USA", "EU", "UK", "EUROPE"]
@@ -1737,8 +1944,8 @@ class CoinbaseExchange(AbstractExchange):
 
         ``BTC-USD`` stays as it is. The compact and USDT forms the rest of the app
         uses (``BTCUSDT``, ``BTC-USDT``, ``BTC/USDT``, ``BTCUSD``, ``BTC-USDC``)
-        become ``BTC-USD``: prices only (Coinbase orders are not implemented), and
-        USDT/USDC are taken at par with USD. Other quotes (``ETH-BTC``,
+        become ``BTC-USD``: USDT/USDC are taken at par with USD, and orders go to
+        the USD product. Other quotes (``ETH-BTC``,
         ``BTC-EUR``) are kept.
         """
         text = symbol.strip().upper().replace("/", "-").replace("_", "-")

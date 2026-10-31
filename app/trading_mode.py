@@ -1110,6 +1110,16 @@ class OrderTarget:
         return self.exchange.get_market_data(symbol)
 
 
+def broker_places_orders(broker: Optional[str]) -> bool:
+    """True when this version can read balances and place live orders on
+    ``broker`` (its connector's ``SUPPORTS_LIVE_ORDERS``). Looks up no credentials."""
+    try:
+        exchange_class = ExchangeFactory.get_exchange_class(ExchangeType(broker))
+    except (TypeError, ValueError):
+        return False
+    return bool(getattr(exchange_class, "SUPPORTS_LIVE_ORDERS", False))
+
+
 def _build_live_exchange(ts: TradingSettings) -> AbstractExchange:
     assert ts.active_broker is not None
     try:
@@ -1158,9 +1168,16 @@ def resolve_order_target(settings: Any = None) -> OrderTarget:
             "is selected. Choose a broker in the hub, or switch back to paper mode."
         )
 
+    exchange = _build_live_exchange(ts)
+    if not getattr(exchange, "SUPPORTS_LIVE_ORDERS", False):
+        raise LiveTradingRefused(
+            f"Live trading refused: this version cannot place orders on "
+            f"'{ts.active_broker}'. Choose another broker in File > Trading Mode, or "
+            "switch back to paper mode."
+        )
     return OrderTarget(
         mode=TradingMode.LIVE,
         broker=ts.active_broker,
-        exchange=_build_live_exchange(ts),
+        exchange=exchange,
         key=ts.key,
     )

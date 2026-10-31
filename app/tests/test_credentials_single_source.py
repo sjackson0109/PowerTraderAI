@@ -87,7 +87,11 @@ def test_gui_saved_coinbase_key_is_what_the_live_gate_builds_with(
         memory_keyring.entries[("SJackson.PowerTraderAI", "coinbase:private_key")]
         == pem
     )
-    with recorded_http() as http:
+    # live orders on Coinbase are switched on with the rest of the live path
+    # (FDS-LIVE-001 phase C); this test is about the credentials the gate uses
+    with recorded_http() as http, mock.patch.object(
+        CoinbaseExchange, "SUPPORTS_LIVE_ORDERS", True
+    ):
         target = tm.resolve_order_target(copy.deepcopy(LIVE_COINBASE))
     assert http.calls == []
     assert target.is_live and isinstance(target.exchange, CoinbaseExchange)

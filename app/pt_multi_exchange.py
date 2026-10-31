@@ -555,25 +555,8 @@ class MultiExchangeManager:
 
         return self.exchange_manager.get_best_price(symbol, side)
 
-    def place_order(
-        self,
-        symbol: str,
-        side: str,
-        amount: float,
-        price: Optional[float] = None,
-        exchange_name: str = None,
-    ):
-        """Place order on specific exchange or primary"""
-        if not self.initialized:
-            raise RuntimeError("MultiExchangeManager not initialized")
-
-        if exchange_name:
-            exchange_type = ExchangeType(exchange_name)
-            return self.exchange_manager.place_order(
-                symbol, side, amount, price, exchange_type
-            )
-        else:
-            return self.exchange_manager.place_order(symbol, side, amount, price)
+    # No place_order here: market data only. Every order goes through the
+    # trading-mode gate (trading_mode.resolve_order_target).
 
     def test_exchange_connection(
         self,

@@ -790,24 +790,8 @@ class ExchangeManager:
         else:
             return max(prices)  # Best bid (highest price to sell)
 
-    def place_order(
-        self,
-        symbol: str,
-        side: str,
-        amount: float,
-        price: Optional[float] = None,
-        exchange_type: ExchangeType = None,
-    ) -> OrderResult:
-        """Place order on specified exchange or primary"""
-        if exchange_type is None:
-            exchange_type = self.primary_exchange
-        if exchange_type is None:  # never on another exchange than the one chosen
-            raise ValueError("No primary exchange connected")
-
-        if exchange_type not in self.exchanges:
-            raise ValueError(f"Exchange {exchange_type.value} not connected")
-
-        return self.exchanges[exchange_type].place_order(symbol, side, amount, price)
+    # No place_order here: every order goes through the trading-mode gate
+    # (trading_mode.resolve_order_target) to the broker chosen in Trading Mode.
 
     def get_total_balance(self) -> Dict[str, float]:
         """Get combined balances across all exchanges"""

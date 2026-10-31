@@ -47,6 +47,11 @@ def trading_testnet_key(broker: str) -> str:
     return f"trading.{broker}_testnet"
 
 
+def trading_preview_key(broker: str) -> str:
+    """Settings key holding the "preview orders only" flag for ``broker``."""
+    return f"trading.{broker}_preview"
+
+
 # Default settings configuration
 DEFAULT_SETTINGS = {
     "coins": ["BTC", "ETH", "XRP", "DOGE", "BNB"],
@@ -633,6 +638,11 @@ class SettingsManager:
         """Testnet flag for ``broker``; defaults to True (the safe choice)."""
         return bool(self.get(trading_testnet_key(broker), True))
 
+    def get_preview(self, broker: str) -> bool:
+        """ "Preview orders only" for ``broker``; defaults to True (the safe choice:
+        a broker that can preview starts by placing nothing)."""
+        return bool(self.get(trading_preview_key(broker), True))
+
     def get_price_fallback_policy(self) -> str:
         """ "simulate_and_flag" only when explicitly set; anything else is "pause"."""
         policy = self.get(PAPER_POLICY_KEY, DEFAULT_PRICE_FALLBACK_POLICY)
@@ -666,6 +676,14 @@ class SettingsManager:
         if not _is_valid_broker_id(broker) or broker is None:
             return False
         if not self.set(trading_testnet_key(broker), bool(enabled)):
+            return False
+        return self.save_settings() if persist else True
+
+    def set_preview(self, broker: str, enabled: bool, persist: bool = True) -> bool:
+        """Persist the "preview orders only" flag for ``broker``."""
+        if not _is_valid_broker_id(broker) or broker is None:
+            return False
+        if not self.set(trading_preview_key(broker), bool(enabled)):
             return False
         return self.save_settings() if persist else True
 

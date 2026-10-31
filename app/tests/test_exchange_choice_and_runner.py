@@ -18,6 +18,7 @@ if APP_DIR not in sys.path:
 
 import pt_data_provider  # noqa: E402
 import pt_hub  # noqa: E402
+import trading_mode as tm  # noqa: E402
 from pt_exchange_abstraction import MarketNotFound  # noqa: E402
 from pt_multi_exchange import ExchangeConfigManager  # noqa: E402
 
@@ -139,26 +140,47 @@ class FakeConnector:
         return self.price
 
 
-def status_for(connector, primary="coinbase"):
+def status_for(connector, primary="coinbase", trading=None):
     hub = types.SimpleNamespace()
     with mock.patch(
         "pt_exchange_abstraction.ExchangeFactory.get_exchange", return_value=connector
     ):
-        return pt_hub.PowerTraderHub._exchange_status_once(hub, primary)
+        return pt_hub.PowerTraderHub._exchange_status_once(hub, primary, trading)
+
+
+def live(broker, **flags):
+    return tm.read_trading_settings(
+        {"trading": {"mode": "live", "active_broker": broker, **flags}}
+    )
 
 
 def test_the_exchange_status_is_a_real_price_check():
     # the old check used a manager that was never connected: always "not available"
     status, details = status_for(FakeConnector(price=81000.0))
-    assert status == "✅ COINBASE (prices only)"
+    assert status == "✅ COINBASE (prices)"
     assert "BTC $81,000.00" in details
-    assert "cannot read balances or place live orders on coinbase" in details
-
-    status, details = status_for(FakeConnector(price=81000.0, live=True), "binance")
-    assert status == "✅ BINANCE" and "live orders supported" in details
 
     status, details = status_for(FakeConnector(error=ConnectionError("dns")))
     assert status == "❌ COINBASE" and "No price from coinbase: dns" in details
+
+
+def test_live_mode_names_the_live_broker_not_the_primary_exchange():
+    # FDS-LIVE-001 D7: paper names the primary exchange; live names the live broker
+    connector = FakeConnector(price=81000.0, live=True)
+    assert status_for(connector, "kraken", live("coinbase"))[0] == (
+        "✅ COINBASE (preview orders)"
+    )
+    assert status_for(connector, "kraken", live("coinbase", coinbase_preview=False))[
+        0
+    ] == ("✅ COINBASE (live orders)")
+    assert status_for(connector, "coinbase", live("binance"))[0] == (
+        "✅ BINANCE (testnet orders)"
+    )
+    status, details = status_for(
+        FakeConnector(price=81000.0), "binance", live("kraken")
+    )
+    assert status == "❌ KRAKEN (no live orders)"
+    assert "cannot place orders on kraken" in details
 
 
 def test_the_exchange_status_check_reads_no_saved_credential(monkeypatch):
@@ -174,11 +196,11 @@ def test_the_exchange_status_check_reads_no_saved_credential(monkeypatch):
         price.return_value = 81000.0
         hub = types.SimpleNamespace()
         status, _ = pt_hub.PowerTraderHub._exchange_status_once(hub, "coinbase")
-    assert status == "✅ COINBASE (prices only)"
+    assert status == "✅ COINBASE (prices)"
     assert hub._status_exchanges["coinbase"].api_key == ""
 
 
-def test_only_binance_claims_live_orders():
+def test_only_binance_and_coinbase_claim_live_orders():
     import pt_exchanges  # noqa: F401
     from pt_exchange_abstraction import ExchangeFactory
 
@@ -187,4 +209,4 @@ def test_only_binance_claims_live_orders():
         for e in ExchangeFactory.get_available_exchanges()
         if getattr(ExchangeFactory.get_exchange_class(e), "SUPPORTS_LIVE_ORDERS", False)
     )
-    assert live == ["binance"]
+    assert live == ["binance", "coinbase"]

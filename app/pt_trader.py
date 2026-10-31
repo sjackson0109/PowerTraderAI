@@ -20,9 +20,12 @@ from signal_engine import SignalEngine
 from strategies.base import Action
 from strategies.settings import read_strategy_settings
 from trading_mode import (
+    LiveTradingRefused,
     OrderTarget,
     TradingModeError,
+    check_live_key,
     configure_paper_exchange,
+    move_root_live_books,
     read_emergency_drawdown_pct,
     read_paper_settings,
     read_trading_settings,
@@ -33,8 +36,8 @@ from trading_mode import (
 # GUI HUB OUTPUTS
 # -----------------------------
 # Base directory shared with the hub. Each trading mode keeps its own ledger and
-# history in a sub-directory (see TradingSettings.data_subdir) so paper and
-# testnet fills never mix into the live books.
+# history in a sub-directory (see TradingSettings.data_subdir) so paper, testnet
+# and preview fills never mix into the live books, and each live broker has its own.
 HUB_DATA_DIR = os.environ.get("POWERTRADER_HUB_DIR") or pt_paths.hub_dir()
 os.makedirs(HUB_DATA_DIR, exist_ok=True)
 
@@ -47,6 +50,10 @@ BUYING_POWER_ASSETS = ("USD", "USDT")
 TERMINAL_ORDER_STATES = frozenset(
     {"filled", "canceled", "cancelled", "rejected", "failed", "error", "expired"}
 )
+
+# In preview mode the same order is previewed at most once in this long: an entry
+# signal stands for a whole bar, and nothing is bought to stop it repeating
+PREVIEW_REPEAT_SECONDS = 15 * 60
 
 
 # Initialize colorama
@@ -371,6 +378,9 @@ class CryptoAPITrading:
 
         # This mode's own ledger / history / status files
         self._settings = read_trading_settings(self._settings_source)
+        if self._settings.is_live and not self._settings.uses_testnet:
+            # books from before each live broker had its own folder move once
+            move_root_live_books(HUB_DATA_DIR, self._settings.active_broker)
         self.data_dir = os.path.join(HUB_DATA_DIR, self._settings.data_subdir)
         os.makedirs(self.data_dir, exist_ok=True)
         self.trader_status_path = os.path.join(self.data_dir, "trader_status.json")
@@ -399,6 +409,16 @@ class CryptoAPITrading:
             raise TradingModeError(
                 "Trading settings changed while the trader was starting; try again."
             )
+        if self._target.is_live:
+            # the broker's read-only key check: a key that cannot trade is refused
+            key = check_live_key(self._target.exchange, preview=self._target.preview)
+            if not key.ok:
+                raise LiveTradingRefused(f"Live trading refused: {key.message}")
+            print(f"[PowerTrader] API key: {key.message}")
+            if key.warning:
+                print(f"{Fore.YELLOW}WARNING: {key.warning}{Style.RESET_ALL}")
+                logger.warning(key.warning)
+        self._previewed: Dict[tuple, float] = {}  # (symbol, side) -> last preview
 
         print(f"[PowerTrader] Trading target: {self._settings.label}")
         logger.info(f"Trader pinned to target '{self._target.key}'")
@@ -570,6 +590,19 @@ class CryptoAPITrading:
             return 0.0, None
         return (qty if qty > 0.0 else 0.0), (price if price > 0.0 else None)
 
+    @staticmethod
+    def _order_cash_change(order: OrderResult, side: str) -> Optional[float]:
+        """The cash an order moved, from the exchange's own numbers: minus (value +
+        fee) for a buy, plus (value - fee) for a sell. None when the exchange does
+        not report the filled value (the change in buying power is used then)."""
+        if order.filled_value is None:
+            return None
+        try:
+            value, fee = float(order.filled_value), float(order.fee or 0.0)
+        except (TypeError, ValueError):
+            return None
+        return -(value + fee) if str(side).lower() == "buy" else value - fee
+
     def _wait_for_order_terminal(
         self,
         target: OrderTarget,
@@ -657,7 +690,9 @@ class CryptoAPITrading:
 
                         filled_qty, avg_price = self._extract_fill_from_order(order)
                         bp_after = self._get_buying_power()
-                        bp_delta = float(bp_after) - float(bp_before)
+                        bp_delta = self._order_cash_change(order, side)
+                        if bp_delta is None:
+                            bp_delta = float(bp_after) - float(bp_before)
 
                         self._record_trade(
                             side=side,
@@ -668,7 +703,7 @@ class CryptoAPITrading:
                             pnl_pct=info.get("pnl_pct", None),
                             tag=info.get("tag", None),
                             order_id=order_id,
-                            fees_usd=None,
+                            fees_usd=order.fee,
                             buying_power_before=bp_before,
                             buying_power_after=bp_after,
                             buying_power_delta=bp_delta,
@@ -1473,18 +1508,28 @@ class CryptoAPITrading:
         avg_cost_basis: Optional[float],
         pnl_pct: Optional[float],
         tag: Optional[str],
+        client_order_id: Optional[str] = None,
     ) -> Any:
         """
         Place one market order on ``target`` (obtained from the trading-mode
         gate) and do the accounting once it is filled. Returns a small order
-        dict on a fill, None when the order was rejected, not filled or
-        unconfirmed.
+        dict on a fill, None when the order was rejected, not filled,
+        unconfirmed or only previewed. ``client_order_id`` makes the order
+        idempotent on a broker that takes one.
         """
+        if target.preview:
+            last = self._previewed.get((symbol, side), 0.0)
+            if time.time() - last < PREVIEW_REPEAT_SECONDS:
+                return None
+            self._previewed[(symbol, side)] = time.time()
+
         # --- exact profit tracking snapshot (BEFORE placing order) ---
         buying_power_before = self._get_buying_power()
 
         try:
-            result = target.place_order(symbol, side, asset_quantity)
+            result = target.place_order(
+                symbol, side, asset_quantity, client_order_id=client_order_id
+            )
         except Exception as exc:
             msg = self._describe_exchange_error(exc, "order placement", target.key)
             print(f"{Fore.RED}ORDER FAILED ({symbol} {side}): {msg}{Style.RESET_ALL}")
@@ -1492,6 +1537,17 @@ class CryptoAPITrading:
             return None
 
         order_id = result.order_id
+
+        if str(result.status).lower().strip() == "preview":
+            # nothing was placed: the log says what would have been, nothing is recorded
+            print(
+                f"{Fore.CYAN}ORDER PREVIEW ({symbol} {side}, {tag or 'order'}): "
+                f"{result.reason}{Style.RESET_ALL}"
+            )
+            logger.info(
+                f"Order preview ({symbol} {side} via {target.key}): {result.reason}"
+            )
+            return None
 
         if str(result.status).lower().strip() == "rejected" and result.reason:
             # e.g. PRICE_UNAVAILABLE: nothing was filled, nothing is pending; the
@@ -1553,9 +1609,16 @@ class CryptoAPITrading:
             except Exception:
                 pass
 
+        if final.reason:
+            print(f"  Order {order_id} ({symbol} {side}): {final.reason}")
+
         # --- exact profit tracking snapshot (AFTER the order is complete) ---
         buying_power_after = self._get_buying_power()
-        buying_power_delta = float(buying_power_after) - float(buying_power_before)
+        # the exchange's own value and fee when it reports them, else the change in
+        # buying power
+        buying_power_delta = self._order_cash_change(final, side)
+        if buying_power_delta is None:
+            buying_power_delta = float(buying_power_after) - float(buying_power_before)
 
         self._record_trade(
             side=side,
@@ -1568,7 +1631,7 @@ class CryptoAPITrading:
             pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
             tag=tag,
             order_id=order_id,
-            fees_usd=None,
+            fees_usd=final.fee,
             buying_power_before=buying_power_before,
             buying_power_after=buying_power_after,
             buying_power_delta=buying_power_delta,
@@ -1722,6 +1785,7 @@ class CryptoAPITrading:
             avg_cost_basis=avg_cost_basis,
             pnl_pct=pnl_pct,
             tag=tag,
+            client_order_id=client_order_id,
         )
 
     def place_sell_order(
@@ -1763,6 +1827,7 @@ class CryptoAPITrading:
             avg_cost_basis=avg_cost_basis,
             pnl_pct=pnl_pct,
             tag=tag,
+            client_order_id=client_order_id,
         )
 
     def manage_trades(self):

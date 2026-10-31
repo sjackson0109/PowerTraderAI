@@ -22,7 +22,13 @@ import requests
 
 import pt_settings_manager
 import trading_mode as tm
-from pt_exchange_abstraction import ExchangeType, MarketData, OrderResult
+from pt_exchange_abstraction import (
+    ConnectionStatus,
+    ConnectionTestResult,
+    ExchangeType,
+    MarketData,
+    OrderResult,
+)
 from pt_settings_manager import SettingsManager
 
 PAPER = {"trading": {"mode": "paper", "active_broker": None}}
@@ -189,7 +195,8 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(paper.data_subdir, "paper")
         live = tm.read_trading_settings(LIVE_KRAKEN)
         self.assertEqual(live.label, "MODE: LIVE — kraken")
-        self.assertEqual(live.data_subdir, "")
+        # each live broker has its own books (FDS-LIVE-001 D5)
+        self.assertEqual(live.data_subdir, os.path.join("live", "kraken"))
         testnet = tm.read_trading_settings(
             {"trading": {"mode": "live", "active_broker": "binance"}}
         )
@@ -287,10 +294,21 @@ class ApplyModeTests(unittest.TestCase):
         self.assertFalse(tm.can_apply("live", "bogus", True))
         self.assertTrue(tm.can_apply("live", "kraken", True))
 
+    def test_live_on_a_broker_that_cannot_place_orders_is_refused(self):
+        self.assertFalse(tm.broker_places_orders("kraken"))
+        with self.assertRaises(tm.TradingModeError) as caught:
+            tm.apply_trading_mode(
+                "live", broker="kraken", live_confirmed=True, manager=self.manager
+            )
+        self.assertIn("cannot place orders on 'kraken'", str(caught.exception))
+        self.assertEqual(
+            tm.read_trading_settings(self.manager.settings_path).key, "paper"
+        )
+
     def test_live_without_confirmation_is_refused_and_changes_nothing(self):
         with self.assertRaises(tm.TradingModeError):
             tm.apply_trading_mode(
-                "live", broker="kraken", live_confirmed=False, manager=self.manager
+                "live", broker="binance", live_confirmed=False, manager=self.manager
             )
         self.assertEqual(
             tm.read_trading_settings(self.manager.settings_path).key, "paper"
@@ -303,18 +321,19 @@ class ApplyModeTests(unittest.TestCase):
     def test_confirmed_live_is_persisted_and_returned(self):
         result = tm.apply_trading_mode(
             "live",
-            broker="kraken",
+            broker="binance",
+            testnet=False,
             live_confirmed=True,
             manager=self.manager,
         )
-        self.assertEqual(result.label, "MODE: LIVE — kraken")
+        self.assertEqual(result.label, "MODE: LIVE — binance")
         self.assertEqual(
-            tm.read_trading_settings(self.manager.settings_path).key, "live:kraken"
+            tm.read_trading_settings(self.manager.settings_path).key, "live:binance"
         )
 
     def test_going_back_to_paper_needs_no_confirmation(self):
         tm.apply_trading_mode(
-            "live", broker="kraken", live_confirmed=True, manager=self.manager
+            "live", broker="binance", live_confirmed=True, manager=self.manager
         )
         result = tm.apply_trading_mode("paper", manager=self.manager)
         self.assertFalse(result.is_live)
@@ -562,6 +581,9 @@ class TraderGateTests(unittest.TestCase):
     def fake_kraken(self):
         balances = {"USD": 10000.0}  # keeps a $50 order inside the 1% risk limit
         exchange = mock.MagicMock(name="kraken")
+        exchange.check_connection.return_value = ConnectionTestResult(
+            "kraken", ConnectionStatus.UNSUPPORTED, "no key check"
+        )
         exchange.get_balance.side_effect = lambda: dict(balances)
         exchange.get_market_data.return_value = MarketData(
             symbol="BTC-USD",
@@ -605,9 +627,11 @@ class TraderGateTests(unittest.TestCase):
         args = exchange.place_order.call_args[0]
         self.assertEqual(args[:2], ("BTC-USD", "buy"))
         self.assertEqual(response["mode"], "live:kraken")
-        # live books are in the base directory, not paper/
+        # live books are in live/<broker>/, not paper/ (FDS-LIVE-001 D5)
         self.assertTrue(
-            os.path.isfile(os.path.join(self.tmp.name, "trade_history.jsonl"))
+            os.path.isfile(
+                os.path.join(self.tmp.name, "live", "kraken", "trade_history.jsonl")
+            )
         )
         self.assertFalse(os.path.isdir(os.path.join(self.tmp.name, "paper")))
 
@@ -621,7 +645,9 @@ class TraderGateTests(unittest.TestCase):
             result = trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
         self.assertIsNone(result)
         self.assertFalse(
-            os.path.exists(os.path.join(self.tmp.name, "trade_history.jsonl"))
+            os.path.exists(
+                os.path.join(self.tmp.name, "live", "kraken", "trade_history.jsonl")
+            )
         )
 
     def test_unconfirmed_order_stays_pending_for_reconciliation(self):
@@ -709,12 +735,19 @@ class UiHelperTests(unittest.TestCase):
             applied.append((mode, broker, live_confirmed))
             return tm.read_trading_settings(LIVE_KRAKEN)
 
+        key_checks = []
+
+        def fake_key_check(broker, preview):
+            key_checks.append((broker, preview))
+            return tm.KeyCheck(True, "key ok")
+
         dialog = TradingModeDialog(
             root,
             current=tm.read_trading_settings(PAPER),
             brokers=["kraken", "binance"],
             on_applied=lambda s: applied.append(("applied", s.label)),
             apply_fn=fake_apply,
+            key_check_fn=fake_key_check,
         )
         self.assertEqual(str(dialog.apply_btn.cget("state")), "normal")  # paper
 
@@ -731,6 +764,7 @@ class UiHelperTests(unittest.TestCase):
         dialog._refresh()
         self.assertEqual(str(dialog.apply_btn.cget("state")), "normal")
         dialog._apply()
+        self.assertEqual(key_checks, [("kraken", False)])  # the key is checked first
         self.assertEqual(applied[0], ("live", "kraken", True))
         self.assertEqual(applied[1], ("applied", "MODE: LIVE — kraken"))
 
@@ -741,6 +775,7 @@ class UiHelperTests(unittest.TestCase):
             brokers=["kraken"],
             on_applied=lambda s: None,
             apply_fn=fake_apply,
+            key_check_fn=fake_key_check,
         )
         self.assertFalse(dialog2.confirm_var.get())
         self.assertEqual(str(dialog2.apply_btn.cget("state")), "disabled")

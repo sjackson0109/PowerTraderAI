@@ -329,12 +329,10 @@ class CancelTests(unittest.TestCase):
             )
 
 
-class NotYetLiveTests(unittest.TestCase):
-    def test_the_connector_is_not_offered_for_live_trading_until_the_gate_is_ready(
-        self,
-    ):
+class LiveTests(unittest.TestCase):
+    def test_the_connector_is_offered_for_live_trading_and_previews(self):
         # set in phase C, with the gate, the key check and the trader's books
-        self.assertFalse(CoinbaseExchange.SUPPORTS_LIVE_ORDERS)
+        self.assertTrue(CoinbaseExchange.SUPPORTS_LIVE_ORDERS)
         self.assertTrue(CoinbaseExchange.SUPPORTS_ORDER_PREVIEW)
 
 

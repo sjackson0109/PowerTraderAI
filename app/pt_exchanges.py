@@ -1563,6 +1563,9 @@ class CoinbaseExchange(AbstractExchange):
 
     # -- orders -------------------------------------------------------------------------
 
+    # Balances, market orders and order status are implemented, and the gate, the
+    # key check and the trader's books are in place (FDS-LIVE-001 phase C)
+    SUPPORTS_LIVE_ORDERS = True
     # The connector can show what an order would do without placing it (POST
     # /orders/preview, which needs only the View permission)
     SUPPORTS_ORDER_PREVIEW = True

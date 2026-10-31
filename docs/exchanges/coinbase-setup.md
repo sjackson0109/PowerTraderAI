@@ -60,10 +60,12 @@ HMAC key/secret scheme is not accepted by the current API, so they cannot be use
 3. **Signature algorithm:** leave it on **Ed25519** (Coinbase's default and
    recommendation). **ECDSA**, shown as legacy, also works.
 4. Set permissions:
-   - ✅ **View**: required (this is what *Test Connection* needs)
-   - ✅ **Trade**: only if you intend live trading; not needed for paper mode
-   - ❌ **Transfer**: leave off. PowerTraderAI+ never needs to move funds, and
-     *Test Connection* warns if a key has it.
+   - ✅ **View**: required. It is enough for *Test Connection*, paper trading and
+     **Preview orders only** (see Step 6).
+   - ✅ **Trade**: needed to place real orders. Live trading with a key that cannot
+     trade is refused.
+   - ❌ **Transfer**: leave off. PowerTraderAI+ never moves funds. *Test Connection*
+     and the Trading Mode window warn when a key has it.
 5. Add your IP address to the **IP allowlist** (recommended).
 6. Click **Create API key**, then copy or download the two values. You cannot
    retrieve the private key again.
@@ -125,10 +127,7 @@ an order, and what you typed is tested without being saved.
 | 🌐❌ network error | Could not reach Coinbase (DNS, TLS, timeout) |
 | ⚠️ unexpected response | 404 / 429 / 5xx / non-API reply; not a verdict on your key |
 
-> **Current scope:** the Coinbase connector authenticates and can test the key.
-> Order placement, balances and order status are **not implemented yet**, so
-> selecting Coinbase as a live broker cannot trade. Paper mode never contacts
-> Coinbase for orders.
+Paper mode never contacts Coinbase for orders: it reads public prices only.
 
 ## 💰 Step 5: Funding Your Account
 
@@ -164,6 +163,79 @@ an order, and what you typed is tested without being saved.
    - Ethereum: 35 confirmations
    - Others: varies by coin
 
+## 🟢 Step 6: Live Trading on Coinbase
+
+> **Real money.** No strategy in PowerTraderAI+ has shown that it makes money: every
+> out-of-sample backtest so far lost money. Live trading sends the same decisions to
+> Coinbase with your funds.
+
+Coinbase has **no test network**: a live order on Coinbase is a real order.
+
+### Switching to live
+1. **File → Trading Mode...** and choose **Live trading**.
+2. **Broker:** `coinbase`. The list shows only the exchanges this version can place
+   orders on.
+3. **Preview orders only** is ticked to start with. Leave it ticked for your first run
+   (see below).
+4. Press **Check API key** to see the saved key's permissions (view, trade, transfer).
+5. Tick **Yes, I understand real money is at risk**, press **Apply**, then restart
+   the trader.
+
+Apply runs the same key check. It is refused when Coinbase rejects the key, or when
+the key cannot trade and **Preview orders only** is not ticked. A key that can
+transfer funds is accepted with a warning. The trader runs the check again when it
+starts.
+
+### Preview orders only
+The trader runs exactly as in live trading: it reads your Coinbase balances, follows
+the strategy and decides each order. Each order then goes to Coinbase's **preview**
+(`POST /api/v3/brokerage/orders/preview`) instead of being placed. The trader's log
+shows what Coinbase would have done, for example:
+
+```
+ORDER PREVIEW (BTC-USD buy, ENTRY): would buy 0.00002857 BTC, for $2.00, at about $70,010.20, fee $0.01, total $2.01
+```
+
+Nothing is bought or sold, nothing is recorded as a trade, and a preview needs only
+the **View** permission, so it works with a view-only key. The same order is
+previewed at most once every 15 minutes.
+
+The hub's **Exchange** line shows `COINBASE (preview orders)` in this mode, and
+`COINBASE (live orders)` once preview is turned off. In paper mode it names the
+primary exchange: `COINBASE (prices)`.
+
+### What PowerTraderAI+ sends to Coinbase
+- **Market orders only**, as immediate-or-cancel (`market_market_ioc`). No limit,
+  stop or bracket orders.
+- **A buy is sized in dollars** (`quote_size`): the coins the trader decided on, times
+  the current ask, to the cent. Coinbase's documentation asks for this on a market
+  buy. **A sell is sized in coins** (`base_size`), rounded down to Coinbase's
+  increment for the product.
+- An order below Coinbase's minimum size, or on a product Coinbase has marked trading
+  disabled, cancel-only or limit-only, is refused by PowerTraderAI+ and not sent.
+- Every order carries the trader's own order id (`client_order_id`). Coinbase answers
+  a repeated id with the order it already made.
+- An order is never sent twice: after a network error the trader reports the error
+  and does not retry it.
+
+### Your books
+- Live Coinbase trades are kept in `hub_data/live/coinbase/` in the data folder;
+  preview runs use `hub_data/live/coinbase/preview/`.
+- Each trade is recorded with Coinbase's own filled quantity, average price and fee.
+  The cost and the profit include the fee.
+- An immediate-or-cancel order can fill in part. It is recorded at the part that
+  filled, and the log says, for example, `partly filled: 0.0001 of 0.0002`.
+- **USDC** is shown as cash but is not spent: the trader buys with **USD**.
+- Live books from an older version, kept in the `hub_data` folder itself, are moved
+  once into `hub_data/live/<broker>/`, after a copy is made in
+  `hub_data/live_books_backup_<date>/`.
+
+### Ed25519 or ECDSA
+Both key types work for reading the account. Coinbase's documentation disagrees on
+whether Ed25519 keys can place orders. If Coinbase answers an order with
+**HTTP 401** and your key is Ed25519, the error says so: create a key with the
+**ECDSA** signature algorithm and save it in **Configure exchange APIs**.
+
 ## 📊 Trading Features
 
 ### Supported Trading Pairs
@@ -174,10 +246,8 @@ Major cryptocurrencies available:
 - **Stablecoins**: USDC-USD (1:1 conversion)
 
 ### Order Types
-- **Market Orders**: Execute immediately at current price
-- **Limit Orders**: Execute at specified price or better
-- **Stop Orders**: Trigger market order when price reached
-- **Stop-Limit Orders**: Trigger limit order when price reached
+Coinbase offers market, limit, stop-limit and bracket orders. PowerTraderAI+ places
+**market (immediate-or-cancel) orders only** (Step 6).
 
 ### Fee Structure
 **Coinbase Advanced Trade Fees**:
@@ -190,25 +260,6 @@ Major cryptocurrencies available:
 - **Coinbase fee**: 1.49% to 3.99%
 
 ## ⚙️ Advanced Configuration
-
-### Trading Parameters
-```json
-{
-  "api_key": "organizations/<org-id>/apiKeys/<key-id>",
-  "api_secret": "<Ed25519 base64 line, or -----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----\n>",
-  "trading_config": {
-    "default_order_type": "limit",
-    "time_in_force": "GTC",
-    "post_only": false,
-    "stp": "dc"
-  },
-  "risk_management": {
-    "max_position_size_usd": 10000,
-    "enable_stop_losses": true,
-    "max_slippage_pct": 0.1
-  }
-}
-```
 
 ### Symbol Formats
 Coinbase uses dash-separated symbols. For prices, PowerTraderAI+ also maps the
@@ -227,10 +278,9 @@ symbols = ["BTC-USD", "ETH-USD", "ADA-USD"]
 ```
 
 ### Rate Limits
-- **Private endpoints**: 10 requests per second
-- **Public endpoints**: 10 requests per second
-- **Orders**: 5 orders per second
-- **Bursts**: Short bursts allowed up to limits
+When Coinbase answers a read (balances, product rules, order status) with
+**HTTP 429**, PowerTraderAI+ waits and asks again, up to three times. An order is
+never sent again. The trader places at most a few orders an hour.
 
 ## 🚨 Troubleshooting
 

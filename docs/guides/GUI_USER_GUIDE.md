@@ -25,14 +25,32 @@ The PowerTraderAI+ desktop application (`pt_hub.py`) provides a comprehensive gr
 #### System Status
 - **Neural: running/stopped** - Neural network analysis engine
 - **Trader: running/stopped** - Automated trading engine
-- **Exchange: Connected KRAKEN** - Primary exchange connection status
+- **Exchange: ✅ COINBASE (prices)** - In paper mode: the primary exchange, which gives the prices
 - **Last status: [timestamp]** - Most recent system update
 
-#### Exchange Status Icons
-- **Connected EXCHANGE_NAME** - Connected and operational
-- **Limited EXCHANGE_NAME** - Connected but limited functionality
-- **Failed EXCHANGE_NAME** - Connection failed or unavailable
+#### Exchange line
+- **Paper mode** names the primary exchange: `✅ COINBASE (prices)`.
+- **Live mode** names the broker orders go to:
+  - `✅ COINBASE (live orders)`: real orders.
+  - `✅ COINBASE (preview orders)`: **Preview orders only** is ticked; nothing is bought or sold.
+  - `✅ BINANCE (testnet orders)`: Binance's test network.
+  - `❌ KRAKEN (no live orders)`: this version cannot place orders on that exchange.
+- `❌ NAME` - no price from that exchange; click the line for the error.
 - **Checking...** - Status verification in progress
+
+### Trading Mode
+**File → Trading Mode...** chooses paper or live trading and the broker:
+- **Broker** lists only the exchanges this version can place orders on (Binance and Coinbase).
+- **Use testnet / sandbox** is offered for Binance only.
+- **Preview orders only** is offered for Coinbase and is ticked to start with. The trader then
+  runs the live path, but each order is only previewed by Coinbase: nothing is bought or sold
+  and nothing is recorded.
+- **Check API key** shows what the saved key may do (view, trade, transfer).
+- **Apply** needs **Yes, I understand real money is at risk**. It is refused when the key check
+  refuses the key: a key that cannot trade is refused unless **Preview orders only** is ticked.
+  A key that can transfer funds is accepted with a warning.
+- Restart the trader after applying. Each live broker keeps its own trade history and
+  profit-and-loss ledger.
 
 ### Control Buttons
 - **Start All** - Launch neural analysis and trading systems

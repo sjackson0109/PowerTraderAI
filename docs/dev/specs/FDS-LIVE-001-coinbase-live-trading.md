@@ -5,7 +5,7 @@
 **Branch:** this spec is on `docs/fds-live-001-coinbase-live-trading`, cut from `main` at `efc2106`. Each phase is built on its own `feat/live-<letter>-…` branch, cut from `main` after the previous phase is merged.
 **Recommended model:** Claude Opus 5.5, effort high, for every phase: this is real money.
 **Run log:** `docs/dev/RUN-LOG-live-1.md`.
-**Status:** draft for the owner, 2026-10-28. Nothing here is built.
+**Status:** D1-D10 accepted as recommended by the owner on 2026-10-31 ("happy to go and build D1-D10"). Phases A, B, C and E are built (§10). Phase 0 has not been run: it needs the owner's go-ahead for each run (D9). Phase D is the owner's.
 **Related:** FDS-MX-001 (market data through the exchange layer); PR #155 (Coinbase Ed25519 keys); PR #177 (minimum order sizes). Three local branches, not yet merged, come first (§6, Prerequisites).
 
 > **Read this first.** This spec adds the ability to trade real money on Coinbase. It does not make any strategy profitable. No strategy in this repo has shown an edge. In `docs/dev/BACKTEST-REPORT-batch-1.md`, all 16 out-of-sample runs lost money and every 1-hour run did worse than buy-and-hold. The FDS-MDL Test A found no evidence of an edge. Live trading is plumbing, not a reason to expect a profit.
@@ -231,3 +231,24 @@ Update these:
 - transfers and withdrawals (never);
 - OAuth;
 - live orders on Kraken, KuCoin or other exchanges (they can implement §5.1 later, without trader changes).
+
+## 10. As built (2026-10-31)
+
+One branch per phase, each cut from the one before: `feat/live-a-coinbase-connector`, `feat/live-b-coinbase-orders`, `feat/live-c-live-path`, `feat/live-e-docs`. The run log is `docs/dev/RUN-LOG-live-1.md`.
+
+Where the build differs from §5 and §6, and why:
+
+| # | Change | Why |
+|---|---|---|
+| 1 | The gate's `SUPPORTS_LIVE_ORDERS` check is in phase B, not C. | Phase B adds `place_order`. Without the check, merging B alone would let a confirmed live-Coinbase setting send real orders through the old trader. |
+| 2 | A market buy is always sent in dollars (`quote_size`), without first trying coins. | Coinbase's Advanced Trade order guide and its Python SDK both say a market buy takes `quote_size` and a market sell `base_size`. D2's condition ("only if Coinbase refuses coins") is met by the documentation. The trader still sizes every order in coins. |
+| 3 | The buy's dollar amount is rounded to the nearest cent, not down. | The trader sizes a minimum entry as `round(usd / ask, 8)` coins; rounding that back down would put a $1 order at $0.99, below Coinbase's minimum. |
+| 4 | **Preview orders only** is a per-broker setting (`trading.<broker>_preview`) that is on until turned off. A preview run keeps its books in `live/<broker>/preview/`. | Like the testnet flag, the safe value is the default. Phase D starts with a day of preview. Keeping a preview run's status and account history apart from the real books keeps those books clean. |
+| 5 | A repeated `client_order_id` is handled as Coinbase's reference says: Coinbase returns the order it already made. `DUPLICATE_CLIENT_ORDER_ID` is reported as a refusal. | Phase 0 has not been run, so this follows the documentation. The trader makes a new id for every order and never resends one. |
+| 6 | Check Exchanges is unchanged. | Coinbase's key check already reports "trade: yes/no" on the API key row. |
+| 7 | `apply_trading_mode` refuses a broker that cannot place orders, as well as the Trading Mode window not offering one. | The window is not the only caller. |
+| 8 | The one-time move of the books takes the five book files (`trade_history.jsonl`, `pnl_ledger.json`, `account_value_history.jsonl`, `trader_status.json`, `strategy_state.json`) for the active broker. It runs when a live trader starts and when the hub starts in live mode, and never merges into a folder that already has books. | Each live broker's books stay separate (D5). |
+
+Still open:
+- **Phase 0** (D9): the four view-only calls with the owner's key, with a go-ahead for each run. It confirms items 2 and 5, the query-string rule (§5.3) and Ed25519 on a POST (D8). Until then, a 401 on an order with an Ed25519 key says that Coinbase's trading documentation lists ECDSA keys.
+- **Phase D:** the owner's day in preview mode, then one real buy and sell of about $2.

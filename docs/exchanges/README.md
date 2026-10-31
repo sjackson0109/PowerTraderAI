@@ -633,7 +633,8 @@ After setup, verify:
 
 ### Future Integrations
 PowerTraderAI+ is designed to support additional exchanges:
-- **Coinbase (Advanced Trade)**: connection test implemented; order placement planned
+- **Coinbase (Advanced Trade)**: live trading: balances, market orders, order status
+  and **Preview orders only** (see [Coinbase Setup, Step 6](coinbase-setup.md#-step-6-live-trading-on-coinbase))
 - **Binance US**: Under development
 - **Kraken**: Research phase
 

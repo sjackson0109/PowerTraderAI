@@ -56,8 +56,8 @@ class SettingsReaderTests(unittest.TestCase):
     def test_defaults(self):
         s = read_strategy_settings({})
         self.assertEqual(
-            (s.engine, s.active_id, s.symbols, s.timeframe),
-            ("catalogue", "STRAT-001", ("BTC-USD",), "1h"),
+            (s.engine, s.active_id, s.timeframe),
+            ("catalogue", "STRAT-001", "1h"),
         )
         self.assertIsNone(s.problem)
         self.assertEqual(s.note, "SIGNALS: STRAT-001 1h")
@@ -73,16 +73,10 @@ class SettingsReaderTests(unittest.TestCase):
             s = read_strategy_settings({"strategy": {"active_id": bad}})
             self.assertIn("unknown strategy.active_id", s.problem, bad)
 
-    def test_bad_timeframe_symbols_and_overlays_are_problems(self):
+    def test_bad_timeframe_and_overlays_are_problems(self):
         self.assertIn(
             "timeframe",
             read_strategy_settings({"strategy": {"timeframe": "7m"}}).problem,
-        )
-        self.assertIn(
-            "symbols", read_strategy_settings({"strategy": {"symbols": []}}).problem
-        )
-        self.assertIn(
-            "symbols", read_strategy_settings({"strategy": {"symbols": [1]}}).problem
         )
         self.assertIn(
             "overlay",
@@ -111,12 +105,14 @@ class SettingsReaderTests(unittest.TestCase):
         self.assertIsNone(s.problem)
         self.assertEqual(s.note, "SIGNALS: LEGACY (UNTRAINED)")
 
-    def test_symbols_are_normalised(self):
-        s = read_strategy_settings(
-            {"strategy": {"symbols": [" btcusdt ", "ETH", "sol-usd"]}}
-        )
-        # markets, whatever form was saved (FDS-MX-001 phase E)
-        self.assertEqual(s.symbols, ("BTC-USD", "ETH-USD", "SOL-USD"))
+    def test_a_strategy_symbols_left_in_an_older_file_is_ignored(self):
+        # the coins traded are the coins in Settings (paper: the paper-trading
+        # coins), not a strategy setting; an old BTC-only list must not block or
+        # limit anything
+        for old in (["BTC"], [], [1], "BTC"):
+            s = read_strategy_settings({"strategy": {"symbols": old}})
+            self.assertIsNone(s.problem, old)
+            self.assertFalse(hasattr(s, "symbols"))
 
     def test_signature_changes_with_strategy_overlays_and_timeframe(self):
         a = read_strategy_settings({}).signature
@@ -135,7 +131,7 @@ class SettingsManagerTests(unittest.TestCase):
             m = SettingsManager("pt_config.json", d)
             self.assertEqual(m.get("strategy.engine"), "catalogue")
             self.assertEqual(m.get("strategy.active_id"), "STRAT-001")
-            self.assertEqual(m.get("strategy.symbols"), ["BTC"])
+            self.assertIsNone(m.get("strategy.symbols"))  # no longer a setting
             self.assertEqual(m.get("strategy.timeframe"), "1h")
             self.assertEqual(m.get("strategy.overlays"), [])
             self.assertTrue(m.set("strategy.engine", "legacy_neural"))
@@ -153,7 +149,6 @@ class SettingsManagerTests(unittest.TestCase):
             m = SettingsManager("pt_config.json", d)
             self.assertFalse(m.set("strategy.engine", "magic"))
             self.assertFalse(m.set("strategy.timeframe", "7m"))
-            self.assertFalse(m.set("strategy.symbols", []))
             self.assertEqual(m.get("strategy.engine"), "catalogue")
 
     def test_a_bad_value_on_disk_is_kept_and_blocks_trading_rather_than_being_fixed(
@@ -254,10 +249,15 @@ class EngineTests(unittest.TestCase):
         self.engine.decide("BTC")
         self.assertEqual(self.feed.calls, 1)
 
-    def test_symbols_outside_strategy_symbols_get_no_decision(self):
+    def test_every_coin_gets_a_decision_whatever_an_old_strategy_symbols_says(self):
+        engine = SignalEngine(
+            {**PAPER, "strategy": {"active_id": "STRAT-000", "symbols": ["BTC"]}},
+            self.feed.provider,
+            self.feed.clock,
+        )
         self.feed.set_after_bar(200)
-        self.assertIsNone(self.engine.decide("ETH"))
-        self.assertEqual(self.feed.calls, 0)
+        self.assertIsNotNone(engine.decide("ETH"))
+        self.assertEqual(self.feed.calls, 1)
 
     def test_legacy_engine_makes_no_decisions(self):
         engine = SignalEngine(
@@ -334,6 +334,10 @@ class TraderIntegrationTests(PaperTraderCase):
         sleep = mock.patch.object(self.pt_trader.time, "sleep")
         sleep.start()
         self.addCleanup(sleep.stop)
+        # one coin in Settings: these tests follow one coin through the trader
+        coins = mock.patch.object(self.pt_trader, "crypto_symbols", ["BTC"])
+        coins.start()
+        self.addCleanup(coins.stop)
 
     def catalogue_trader(self, settings=None):
         settings = settings if settings is not None else copy.deepcopy(PAPER)

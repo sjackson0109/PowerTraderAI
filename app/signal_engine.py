@@ -61,7 +61,7 @@ def default_candle_provider(
 
 def market_for(base: str) -> str:
     """Trader coin ``BTC`` -> its market ``BTC-USD`` (USD, USDT and USDC count as the
-    same dollar), as ``strategy.symbols`` holds them."""
+    same dollar)."""
     from pt_exchange_abstraction import dollar_symbol
 
     return dollar_symbol(base)
@@ -248,8 +248,9 @@ class SignalEngine:
     ) -> Optional[Decision]:
         """
         Decision for the latest closed bar of ``base``'s pair. ``position`` defaults
-        to the engine's own record. Returns None when blocked, when the engine is
-        not ``catalogue``, or when ``base`` is not one of ``strategy.symbols``.
+        to the engine's own record. Returns None when blocked or when the engine is
+        not ``catalogue``. Which coins may open a trade is the trader's choice (the
+        coins in Settings; in paper mode, the paper-trading coins).
         """
         s = self.settings
         if s.problem:
@@ -262,8 +263,6 @@ class SignalEngine:
         if not s.is_catalogue:
             return None
         pair = market_for(base)
-        if pair not in s.symbols:
-            return None
 
         runner = self._runner_for(s)
         if runner is None:

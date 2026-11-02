@@ -617,6 +617,7 @@ class PaperTraderTests(PaperTraderCase):
     """Acceptance 6: the paper trader runs STRAT-002 on a scripted fixture end to end (no network)."""
 
     def test_trader_follows_strat_002_through_several_round_trips(self):
+        self.one_coin("BTC")
         frame = make_candles(waves(n=170))
         settings = {
             "trading": {"mode": "paper"},

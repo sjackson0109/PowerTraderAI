@@ -60,6 +60,8 @@ from trading_mode import (
     PaperBookError,
     PaperBookInvalid,
     TradingSettings,
+    broker_places_orders,
+    move_root_live_books,
     paper_book_path,
     read_paper_book,
     read_trading_settings,
@@ -2118,9 +2120,15 @@ class PowerTraderHub(tk.Tk):
         self.hub_dir = pt_paths.hub_dir_for(self.settings.get("hub_data_dir"))
 
         # file paths written by pt_trader.py. The trader keeps each trading mode's
-        # books in its own sub-directory (paper / testnet / live), so show the ones
-        # for the mode this hub started in.
+        # books in its own sub-directory (paper / testnet / live/<broker>), so show
+        # the ones for the mode this hub started in.
+        if self._trading.is_live and not self._trading.uses_testnet:
+            try:  # books from before each live broker had its own folder move once
+                move_root_live_books(self.hub_dir, self._trading.active_broker)
+            except (OSError, ValueError) as exc:
+                print(f"Live books not moved: {exc}")
         trader_dir = os.path.join(self.hub_dir, self._trading.data_subdir)
+        self._books_dir = trader_dir  # the public API serves the same books
         self.trader_status_path = os.path.join(trader_dir, "trader_status.json")
         self.trade_history_path = os.path.join(trader_dir, "trade_history.jsonl")
         self.pnl_ledger_path = os.path.join(trader_dir, "pnl_ledger.json")
@@ -2333,16 +2341,17 @@ class PowerTraderHub(tk.Tk):
             self._paper_section_label = None
 
     def _brokers_for_selector(self) -> List[str]:
-        """Broker ids offered in the Trading Mode dialog: the exchanges that have
-        an implementation registered, else every known exchange id."""
+        """Broker ids offered in the Trading Mode dialog: the exchanges this version
+        can place live orders on (their connector's ``SUPPORTS_LIVE_ORDERS``)."""
         try:
             import pt_exchanges  # noqa: F401  (registers exchange classes)
-            from pt_exchange_abstraction import ExchangeFactory, ExchangeType
+            from pt_exchange_abstraction import ExchangeFactory
 
-            registered = [e.value for e in ExchangeFactory.get_available_exchanges()]
-            if registered:
-                return registered
-            return [e.value for e in ExchangeType]
+            return [
+                e.value
+                for e in ExchangeFactory.get_available_exchanges()
+                if broker_places_orders(e.value)
+            ]
         except Exception:
             return []
 
@@ -8350,6 +8359,7 @@ Platform: {sys.platform}
                 hub_data_dir=self.hub_dir,
                 port=self._api_server_port,
                 host=self._api_server_host,
+                books_dir=self._books_dir,
             )
 
             if self._api_server_enabled:
@@ -8395,14 +8405,17 @@ Platform: {sys.platform}
         else:
             return {"status": "stopped", "message": "API server is stopped"}
 
-    def _exchange_status_once(self, primary_exchange: str) -> Tuple[str, str]:
-        """One status check of the primary exchange: ``(status, details)``.
+    def _exchange_status_once(
+        self, primary_exchange: str, trading: Optional[TradingSettings] = None
+    ) -> Tuple[str, str]:
+        """One status check for the Exchange line: ``(status, details)``.
 
-        It asks the exchange's own connector for a public BTC price (no key
-        needed). The hub's MultiExchangeManager is never connected, so the old
-        check always reported "Exchange not available". The details also say
-        whether this version can trade live on that exchange: most connectors
-        serve prices only (no balances or orders)."""
+        In live mode it names the live broker, "(live orders)", "(preview orders)"
+        or "(testnet orders)"; in paper mode the primary exchange, "(prices)". It
+        asks the exchange's own connector for a public BTC price (no key needed)."""
+        live = trading is not None and trading.is_live and trading.active_broker
+        if live:
+            primary_exchange = trading.active_broker
         name = primary_exchange.upper()
         try:
             import pt_exchanges  # noqa: F401  (registers the connectors)
@@ -8423,16 +8436,23 @@ Platform: {sys.platform}
             return f"❌ {name}", f"No price from {primary_exchange}: {str(exc)[:160]}"
         if price <= 0:
             return f"⚠️ {name}", f"{primary_exchange} answered but gave no price"
-        if getattr(exchange, "SUPPORTS_LIVE_ORDERS", False):
+        if not live:
             return (
-                f"✅ {name}",
-                f"Prices OK | BTC ${price:,.2f} | live orders supported",
+                f"✅ {name} (prices)",
+                f"Prices OK | BTC ${price:,.2f} | the primary exchange for prices",
             )
-        return (
-            f"✅ {name} (prices only)",
-            f"Prices OK | BTC ${price:,.2f} | this version cannot read balances or "
-            f"place live orders on {primary_exchange}; paper trading works",
+        if not getattr(exchange, "SUPPORTS_LIVE_ORDERS", False):
+            return (
+                f"❌ {name} (no live orders)",
+                f"Prices OK | BTC ${price:,.2f} | this version cannot place orders on "
+                f"{primary_exchange}",
+            )
+        orders = (
+            "testnet orders"
+            if trading.uses_testnet
+            else "preview orders" if trading.uses_preview else "live orders"
         )
+        return f"✅ {name} ({orders})", f"Prices OK | BTC ${price:,.2f} | {orders}"
 
     def _check_exchange_status_worker(self):
         """Background worker to check exchange connectivity. It only sets
@@ -8446,9 +8466,13 @@ Platform: {sys.platform}
 
                 primary_exchange = self._primary_exchange()
                 region = self.settings.get("region", "us")
+                trading = getattr(self, "_trading", None)
+                live_broker = (
+                    trading.active_broker if trading and trading.is_live else None
+                )
 
-                # Skip if no primary exchange is configured
-                if not primary_exchange:
+                # Skip if no primary exchange (or, live, no broker) is configured
+                if not primary_exchange and not live_broker:
                     self._exchange_status = {
                         "status": "No exchange configured",
                         "details": "Configure API credentials in Settings to enable trading",
@@ -8456,7 +8480,9 @@ Platform: {sys.platform}
                     time.sleep(30)
                     continue
 
-                status, details = self._exchange_status_once(primary_exchange)
+                status, details = self._exchange_status_once(
+                    primary_exchange or live_broker, trading
+                )
 
                 # Update status
                 self._exchange_status = {"status": status, "details": details}

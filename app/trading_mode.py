@@ -20,9 +20,11 @@ call shape so the trader talks to one interface whichever target it gets.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -33,6 +35,7 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
 from pt_exchange_abstraction import (
     AbstractExchange,
+    ConnectionStatus,
     ExchangeFactory,
     ExchangeType,
     MarketData,
@@ -59,6 +62,7 @@ from pt_settings_manager import (
     SETTINGS_FILE,
     TRADING_ACTIVE_BROKER_KEY,
     TRADING_MODE_KEY,
+    trading_preview_key,
     trading_testnet_key,
 )
 
@@ -69,6 +73,20 @@ PRICE_UNAVAILABLE = "PRICE_UNAVAILABLE"
 # Brokers whose exchange class accepts a ``testnet`` constructor flag. The
 # ``trading.<broker>_testnet`` setting is only forwarded to these.
 TESTNET_BROKERS = frozenset({ExchangeType.BINANCE.value})
+
+# Each live broker's books are in <hub>/live/<broker>/ (TradingSettings.data_subdir)
+LIVE_DATA_SUBDIR = "live"
+# The trader's books for one mode: the files the one-time move takes out of the hub
+# folder, where every live broker shared them before
+LIVE_BOOK_FILES = (
+    "trade_history.jsonl",
+    "pnl_ledger.json",
+    "account_value_history.jsonl",
+    "trader_status.json",
+    "strategy_state.json",
+)
+# Written in live/<broker>/ while that move runs; lists the files still to move
+LIVE_BOOKS_MOVE_MARKER = "moving_live_books.json"
 
 PAPER_BALANCE_ASSET = "USD"
 
@@ -156,6 +174,9 @@ class TradingSettings:
     mode: TradingMode
     active_broker: Optional[str]  # validated ExchangeType value, or None
     testnet: bool
+    # "Preview orders only": the broker can preview orders and the setting is on
+    # (read_trading_settings resolves both); a testnet run is never a preview
+    preview: bool = False
 
     @property
     def is_live(self) -> bool:
@@ -166,13 +187,27 @@ class TradingSettings:
         return self.is_live and self.active_broker in TESTNET_BROKERS and self.testnet
 
     @property
+    def uses_preview(self) -> bool:
+        """Live orders are previewed by the broker and nothing is placed."""
+        return (
+            self.is_live
+            and self.active_broker is not None
+            and not self.uses_testnet
+            and self.preview
+        )
+
+    @property
     def label(self) -> str:
         """Text for the always-visible hub indicator."""
         if not self.is_live:
             return "MODE: PAPER"
         if self.active_broker is None:
             return "MODE: LIVE — NO BROKER (orders blocked)"
-        suffix = " (testnet)" if self.uses_testnet else ""
+        suffix = (
+            " (testnet)"
+            if self.uses_testnet
+            else " (preview orders)" if self.uses_preview else ""
+        )
         return f"MODE: LIVE — {self.active_broker}{suffix}"
 
     @property
@@ -182,14 +217,21 @@ class TradingSettings:
             return "paper"
         if self.active_broker is None:
             return "live:blocked"
-        return f"live:{self.active_broker}" + (":testnet" if self.uses_testnet else "")
+        suffix = (
+            ":testnet" if self.uses_testnet else ":preview" if self.uses_preview else ""
+        )
+        return f"live:{self.active_broker}{suffix}"
 
     @property
     def data_subdir(self) -> str:
-        """Sub-directory of the hub data dir holding this mode's ledger/history,
-        so paper and testnet fills never mix into the live books."""
+        """Sub-directory of the hub data dir holding this mode's ledger/history, so
+        paper, testnet and preview runs never mix into the live books, and one live
+        broker's order ids are never looked up on another: ``live/<broker>``."""
         if self.is_live and self.active_broker is not None:
-            return "testnet" if self.uses_testnet else ""
+            if self.uses_testnet:
+                return "testnet"
+            live = os.path.join(LIVE_DATA_SUBDIR, self.active_broker)
+            return os.path.join(live, "preview") if self.uses_preview else live
         return "paper"
 
 
@@ -218,7 +260,13 @@ def read_trading_settings(settings: Any = None) -> TradingSettings:
         if broker
         else True
     )
-    return TradingSettings(mode=mode, active_broker=broker, testnet=testnet)
+    # defaults to on, like testnet: a broker that can preview starts by placing nothing
+    preview = bool(broker) and broker_previews_orders(broker)
+    if preview:
+        preview = _coerce_bool(_lookup(settings, trading_preview_key(broker)), True)
+    return TradingSettings(
+        mode=mode, active_broker=broker, testnet=testnet, preview=preview
+    )
 
 
 # --- Paper price-integrity settings (FDS-096b) -------------------------------
@@ -1042,11 +1090,13 @@ def apply_trading_mode(
     testnet: Optional[bool] = None,
     live_confirmed: bool = False,
     manager: Any = None,
+    preview: Optional[bool] = None,
 ) -> TradingSettings:
     """
     Persist a mode change through the settings manager and return the new
     effective settings. Raises TradingModeError (and changes nothing) when
-    switching to live without a broker or without the explicit confirmation.
+    switching to live without a broker, on a broker this version cannot place
+    orders on, or without the explicit confirmation.
     """
     from pt_settings_manager import SettingsManager
 
@@ -1059,6 +1109,11 @@ def apply_trading_mode(
     if mode_l == "live":
         if broker_id is None:
             raise TradingModeError("Select a broker before switching to live trading.")
+        if not broker_places_orders(broker_id):
+            raise TradingModeError(
+                f"This version cannot place orders on '{broker_id}'. Choose another "
+                "broker, or stay in paper mode."
+            )
         if not live_confirmed:
             raise TradingModeError(
                 f"Live trading needs explicit confirmation: '{LIVE_CONFIRM_TEXT}'."
@@ -1070,6 +1125,9 @@ def apply_trading_mode(
     if testnet is not None and broker_id is not None:
         if not manager.set_testnet(broker_id, bool(testnet), persist=False):
             raise TradingModeError("Could not apply the testnet setting.")
+    if preview is not None and broker_id is not None:
+        if not manager.set_preview(broker_id, bool(preview), persist=False):
+            raise TradingModeError("Could not apply the preview setting.")
     if not manager.save_settings():
         raise TradingModeError("Could not save the trading mode to disk.")
     return read_trading_settings(manager)
@@ -1086,6 +1144,8 @@ class OrderTarget:
     broker: Optional[str]  # None for paper
     exchange: AbstractExchange
     key: str  # TradingSettings.key at resolution time
+    # orders are previewed by the broker (``preview_order``) and none is placed
+    preview: bool = False
 
     @property
     def is_live(self) -> bool:
@@ -1093,8 +1153,26 @@ class OrderTarget:
 
     # The AbstractExchange calls the trader uses, delegated.
     def place_order(
-        self, symbol: str, side: str, amount: float, price: Optional[float] = None
+        self,
+        symbol: str,
+        side: str,
+        amount: float,
+        price: Optional[float] = None,
+        *,
+        client_order_id: Optional[str] = None,
     ) -> OrderResult:
+        """The order, or in preview mode the broker's preview of it (an OrderResult
+        with status "preview"). ``client_order_id`` goes unchanged to a connector
+        that takes one (it makes the order idempotent); one that does not still
+        works."""
+        if self.preview:
+            return self.exchange.preview_order(symbol, side, amount)
+        if client_order_id is not None and _takes_client_order_id(
+            self.exchange.place_order
+        ):
+            return self.exchange.place_order(
+                symbol, side, amount, price, client_order_id=client_order_id
+            )
         return self.exchange.place_order(symbol, side, amount, price)
 
     def get_balance(self) -> Dict[str, float]:
@@ -1118,6 +1196,160 @@ def broker_places_orders(broker: Optional[str]) -> bool:
     except (TypeError, ValueError):
         return False
     return bool(getattr(exchange_class, "SUPPORTS_LIVE_ORDERS", False))
+
+
+def broker_previews_orders(broker: Optional[str]) -> bool:
+    """True when ``broker``'s connector can preview an order without placing it
+    (``SUPPORTS_ORDER_PREVIEW``). Looks up no credentials."""
+    try:
+        exchange_class = ExchangeFactory.get_exchange_class(ExchangeType(broker))
+    except (TypeError, ValueError):
+        return False
+    return bool(getattr(exchange_class, "SUPPORTS_ORDER_PREVIEW", False))
+
+
+def _takes_client_order_id(place_order: Callable) -> bool:
+    """The connector's ``place_order`` names a ``client_order_id`` parameter."""
+    try:
+        return "client_order_id" in inspect.signature(place_order).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+KEY_CANNOT_TRADE = (
+    "This API key cannot place orders. Create a key with Trade permission, then save "
+    "it in Configure Exchange APIs."
+)
+KEY_CAN_TRANSFER = (
+    "This API key can also transfer funds out of the account. PowerTrader does not "
+    "need Transfer: a key without it is safer."
+)
+
+
+@dataclass(frozen=True)
+class KeyCheck:
+    """What the broker's read-only key check said about live trading."""
+
+    ok: bool  # False: live trading is refused with this key
+    message: str  # the check's own answer (permissions, or why it failed)
+    warning: str = ""  # allowed, but the user should know (e.g. Transfer)
+
+
+def check_live_key(exchange: Any, preview: bool = False) -> KeyCheck:
+    """The broker's read-only key check (``check_connection``) before live trading.
+
+    A key the broker rejects, or that cannot trade, is refused (a preview needs no
+    Trade permission). A key that can transfer funds is allowed with a warning. A
+    connector without a key check is allowed: there is nothing to check."""
+    try:
+        result = exchange.check_connection()
+    except Exception as exc:
+        return KeyCheck(False, f"The API key could not be checked: {exc}")
+    if result.status is ConnectionStatus.UNSUPPORTED:
+        return KeyCheck(True, result.message)
+    if result.status is not ConnectionStatus.OK:
+        return KeyCheck(False, result.message)
+    details = result.details or {}
+    if not preview and details.get("can_trade") is False:
+        return KeyCheck(False, f"{result.message} {KEY_CANNOT_TRADE}")
+    warning = KEY_CAN_TRANSFER if details.get("can_transfer") else ""
+    return KeyCheck(True, result.message, warning)
+
+
+def check_broker_key(broker: str, preview: bool = False) -> KeyCheck:
+    """``check_live_key`` for ``broker`` with its saved key (Trading Mode window)."""
+    settings = TradingSettings(TradingMode.LIVE, _valid_broker(broker), False, preview)
+    if settings.active_broker is None:
+        return KeyCheck(False, f"Unknown broker: {broker!r}")
+    try:
+        exchange = _build_live_exchange(settings)
+    except LiveTradingRefused as exc:
+        return KeyCheck(False, str(exc))
+    return check_live_key(exchange, preview)
+
+
+def move_root_live_books(hub_dir: str, broker: Optional[str]) -> Optional[str]:
+    """Once: move live books kept in the hub folder itself (where every live broker
+    shared them) into ``live/<broker>/``, after copying them to a backup folder.
+
+    Returns the folder they moved to, or None when nothing moved. Books are never
+    merged: when ``live/<broker>/`` already has books, nothing moves.
+
+    The files to move are written to a marker in ``live/<broker>/`` first. A move
+    that stopped part-way is finished on the next call, into the broker folder it
+    started for (whichever broker is chosen now), before anything else moves or
+    any book is read. Raises OSError (ValueError for an unreadable marker) while
+    it cannot be finished; the trader does not start on a half-moved set of books."""
+    if not broker:
+        return None
+    dest = os.path.join(hub_dir, LIVE_DATA_SUBDIR, broker)
+    finished = None
+    for folder in _unfinished_live_book_moves(hub_dir):
+        logger.warning(f"Finishing an earlier move of the live books into {folder}")
+        done = _finish_live_books_move(hub_dir, folder)
+        if os.path.normcase(folder) == os.path.normcase(dest):
+            finished = done
+    if finished is not None:
+        return finished
+    present = [n for n in LIVE_BOOK_FILES if os.path.isfile(os.path.join(hub_dir, n))]
+    if not present:
+        return None
+    if any(os.path.exists(os.path.join(dest, n)) for n in LIVE_BOOK_FILES):
+        logger.warning(
+            f"Live books found in {hub_dir} and in {dest}; left as they are (books "
+            "are never merged)"
+        )
+        return None
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = os.path.join(hub_dir, f"live_books_backup_{stamp}")
+    os.makedirs(backup, exist_ok=True)
+    for name in present:
+        shutil.copy2(os.path.join(hub_dir, name), os.path.join(backup, name))
+    os.makedirs(dest, exist_ok=True)
+    with open(os.path.join(dest, LIVE_BOOKS_MOVE_MARKER), "w", encoding="utf-8") as f:
+        json.dump({"files": present, "backup": backup}, f)
+    return _finish_live_books_move(hub_dir, dest)
+
+
+def _unfinished_live_book_moves(hub_dir: str) -> list:
+    """The ``live/<broker>/`` folders whose move from the hub folder has a marker."""
+    live = os.path.join(hub_dir, LIVE_DATA_SUBDIR)
+    try:
+        names = sorted(os.listdir(live))
+    except OSError:
+        return []
+    return [
+        os.path.join(live, n)
+        for n in names
+        if os.path.isfile(os.path.join(live, n, LIVE_BOOKS_MOVE_MARKER))
+    ]
+
+
+def _finish_live_books_move(hub_dir: str, dest: str) -> str:
+    """Move the books the marker in ``dest`` lists from the hub folder into
+    ``dest``, then remove the marker. A book already in ``dest`` was moved."""
+    marker = os.path.join(dest, LIVE_BOOKS_MOVE_MARKER)
+    with open(marker, encoding="utf-8") as f:
+        started = json.load(f)
+    present = [n for n in started.get("files", []) if n in LIVE_BOOK_FILES]
+    backup = str(started.get("backup", ""))
+    for name in present:
+        source, target = os.path.join(hub_dir, name), os.path.join(dest, name)
+        if os.path.isfile(source) and os.path.exists(target):
+            raise OSError(
+                f"Live book {name} is in both {hub_dir} and {dest}; the move was not "
+                f"finished (a copy from before the move is in {backup})"
+            )
+        if os.path.isfile(source):
+            os.replace(source, target)
+        elif not os.path.exists(target):
+            raise OSError(
+                f"Live book {name} is in neither {hub_dir} nor {dest}; the move was "
+                f"not finished (a copy from before the move is in {backup})"
+            )
+    os.remove(marker)
+    logger.info(f"Moved the live books {present} to {dest} (backup in {backup})")
+    return dest
 
 
 def _build_live_exchange(ts: TradingSettings) -> AbstractExchange:
@@ -1175,9 +1407,14 @@ def resolve_order_target(settings: Any = None) -> OrderTarget:
             f"'{ts.active_broker}'. Choose another broker in File > Trading Mode, or "
             "switch back to paper mode."
         )
+    if ts.uses_preview and not callable(getattr(exchange, "preview_order", None)):
+        raise LiveTradingRefused(
+            f"Live trading refused: '{ts.active_broker}' cannot preview orders"
+        )
     return OrderTarget(
         mode=TradingMode.LIVE,
         broker=ts.active_broker,
         exchange=exchange,
         key=ts.key,
+        preview=ts.uses_preview,
     )

@@ -23,7 +23,12 @@ if APP_DIR not in sys.path:
 sys.path.insert(0, os.path.dirname(__file__))
 
 import trading_mode as tm  # noqa: E402
-from helpers_coinbase import KEY_NAME, make_ec_pem, recorded_http  # noqa: E402
+from helpers_coinbase import (  # noqa: E402
+    KEY_NAME,
+    make_ec_pem,
+    make_response,
+    recorded_http,
+)
 from pt_exchange_abstraction import ExchangeFactory, ExchangeType  # noqa: E402
 from pt_exchanges import CoinbaseExchange  # noqa: E402
 from pt_multi_exchange import (  # noqa: E402
@@ -280,8 +285,18 @@ class TestLiveModeStillNeedsBrokerAndConfirmation(CoinbaseGateBase):
         # nothing above changed the effective mode
         self.assertEqual(tm.read_trading_settings(manager.settings_path).key, "paper")
 
+        # live Coinbase previews its orders until "Preview orders only" is turned off
         applied = tm.apply_trading_mode(
             "live", broker="coinbase", live_confirmed=True, manager=manager
+        )
+        self.assertEqual(applied.key, "live:coinbase:preview")
+        self.assertEqual(applied.label, "MODE: LIVE — coinbase (preview orders)")
+        applied = tm.apply_trading_mode(
+            "live",
+            broker="coinbase",
+            live_confirmed=True,
+            preview=False,
+            manager=manager,
         )
         self.assertEqual(applied.key, "live:coinbase")
         self.assertEqual(applied.label, "MODE: LIVE — coinbase")
@@ -293,33 +308,50 @@ class TestLiveModeStillNeedsBrokerAndConfirmation(CoinbaseGateBase):
         self.assertFalse(tm.read_trading_settings(LIVE_COINBASE).uses_testnet)
         self.assertNotIn("testnet", tm.read_trading_settings(LIVE_COINBASE).label)
 
-    def test_the_gate_refuses_live_coinbase_until_it_is_marked_for_live_orders(self):
-        # The connector can place orders (FDS-LIVE-001 phase B), but live trading
-        # on it waits for the gate, the key check and the trader's books (phase C)
-        self.assertFalse(CoinbaseExchange.SUPPORTS_LIVE_ORDERS)
-        self.assertFalse(tm.broker_places_orders("coinbase"))
+    def test_live_coinbase_previews_orders_until_preview_is_turned_off(self):
+        self.assertTrue(tm.broker_places_orders("coinbase"))
+        self.assertTrue(tm.broker_previews_orders("coinbase"))
         with recorded_http() as http:
-            with self.assertRaises(tm.LiveTradingRefused) as caught:
-                tm.resolve_order_target(copy.deepcopy(LIVE_COINBASE))
-        self.assertIn("cannot place orders on 'coinbase'", str(caught.exception))
+            target = tm.resolve_order_target(copy.deepcopy(LIVE_COINBASE))
+            self.assertTrue(target.is_live and target.preview)
+            self.assertIsInstance(target.exchange, CoinbaseExchange)
+            real = copy.deepcopy(LIVE_COINBASE)
+            real["trading"]["coinbase_preview"] = False
+            self.assertFalse(tm.resolve_order_target(real).preview)
         self.assertNoHttp(http)
+        settings = tm.read_trading_settings(LIVE_COINBASE)
+        self.assertEqual(
+            settings.data_subdir, os.path.join("live", "coinbase", "preview")
+        )
+        self.assertEqual(
+            tm.read_trading_settings(real).data_subdir, os.path.join("live", "coinbase")
+        )
 
-    def test_live_coinbase_through_the_trader_places_no_order_and_records_nothing(self):
+    def test_a_live_coinbase_trader_checks_the_key_before_it_starts(self):
+        # FDS-LIVE-001 D4: a key that cannot trade is refused for real orders, and
+        # is enough for a preview (Coinbase's preview needs only View)
+        view_only = {"can_view": True, "can_trade": False, "can_transfer": False}
+        real = {"trading": {**LIVE_COINBASE["trading"], "coinbase_preview": False}}
         with recorded_http() as http:
-            try:
-                trader = self.trader(copy.deepcopy(LIVE_COINBASE))
-            except (
-                Exception
-            ) as exc:  # trader may refuse to start on a broker without balances
-                self.assertNoHttp(http)
-                self.skipTest(
-                    f"trader does not start on live coinbase: {type(exc).__name__}"
+            http.respond_with(200, view_only)
+            with self.assertRaises(tm.LiveTradingRefused) as caught:
+                self.trader(copy.deepcopy(real))
+        self.assertIn(tm.KEY_CANNOT_TRADE, str(caught.exception))
+        self.assertEqual(
+            http.urls, ["https://api.coinbase.com/api/v3/brokerage/key_permissions"]
+        )
+
+        with recorded_http() as http:
+            http.respond(
+                lambda m, u: make_response(
+                    200, view_only if u.endswith("/key_permissions") else {}
                 )
-            result = trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
-        self.assertIsNone(result)
-        self.assertEqual(http.order_like(), [])
-        self.assertFalse(
-            os.path.exists(os.path.join(self.tmp.name, "trade_history.jsonl"))
+            )
+            trader = self.trader(copy.deepcopy(LIVE_COINBASE))
+        self.assertTrue(trader._target.preview)
+        self.assertEqual(http.order_like(), [])  # nothing order-like was sent
+        self.assertTrue(
+            trader.data_dir.endswith(os.path.join("live", "coinbase", "preview"))
         )
 
 

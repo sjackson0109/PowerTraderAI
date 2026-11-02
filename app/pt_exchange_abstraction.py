@@ -254,6 +254,9 @@ class OrderResult:
     # them (None otherwise): the fee charged and the value filled before fees.
     fee: Optional[float] = None
     filled_value: Optional[float] = None
+    # True when a "filled" order stopped part-way (a market IOC order can): only
+    # ``amount`` filled and the rest of the order was cancelled.
+    partial: bool = False
 
 
 class ConnectionStatus(str, Enum):

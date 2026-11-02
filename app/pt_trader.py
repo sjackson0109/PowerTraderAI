@@ -21,9 +21,12 @@ from signal_engine import SignalEngine
 from strategies.base import Action
 from strategies.settings import read_strategy_settings
 from trading_mode import (
+    LiveTradingRefused,
     OrderTarget,
     TradingModeError,
+    check_live_key,
     configure_paper_exchange,
+    move_root_live_books,
     read_emergency_drawdown_pct,
     read_paper_settings,
     read_trading_settings,
@@ -34,8 +37,8 @@ from trading_mode import (
 # GUI HUB OUTPUTS
 # -----------------------------
 # Base directory shared with the hub. Each trading mode keeps its own ledger and
-# history in a sub-directory (see TradingSettings.data_subdir) so paper and
-# testnet fills never mix into the live books.
+# history in a sub-directory (see TradingSettings.data_subdir) so paper, testnet
+# and preview fills never mix into the live books, and each live broker has its own.
 HUB_DATA_DIR = os.environ.get("POWERTRADER_HUB_DIR") or pt_paths.hub_dir()
 os.makedirs(HUB_DATA_DIR, exist_ok=True)
 
@@ -48,6 +51,12 @@ BUYING_POWER_ASSETS = ("USD", "USDT")
 TERMINAL_ORDER_STATES = frozenset(
     {"filled", "canceled", "cancelled", "rejected", "failed", "error", "expired"}
 )
+
+# In preview mode the same order is previewed at most once in this long: an entry
+# signal stands for a whole bar, and nothing is bought to stop it repeating
+PREVIEW_REPEAT_SECONDS = 15 * 60
+# How long a coin's minimum order is kept for telling dust from a position
+DUST_MINIMUM_SECONDS = 60 * 60
 
 
 # Initialize colorama
@@ -372,6 +381,15 @@ class CryptoAPITrading:
 
         # This mode's own ledger / history / status files
         self._settings = read_trading_settings(self._settings_source)
+        if self._settings.is_live and not self._settings.uses_testnet:
+            # books from before each live broker had its own folder move once; a
+            # move that cannot be finished stops the trader before it reads them
+            try:
+                move_root_live_books(HUB_DATA_DIR, self._settings.active_broker)
+            except (OSError, ValueError) as exc:
+                raise LiveTradingRefused(
+                    f"Live trading refused: the live books could not be moved: {exc}"
+                ) from exc
         self.data_dir = os.path.join(HUB_DATA_DIR, self._settings.data_subdir)
         os.makedirs(self.data_dir, exist_ok=True)
         self.trader_status_path = os.path.join(self.data_dir, "trader_status.json")
@@ -400,6 +418,18 @@ class CryptoAPITrading:
             raise TradingModeError(
                 "Trading settings changed while the trader was starting; try again."
             )
+        if self._target.is_live:
+            # the broker's read-only key check: a key that cannot trade is refused
+            key = check_live_key(self._target.exchange, preview=self._target.preview)
+            if not key.ok:
+                raise LiveTradingRefused(f"Live trading refused: {key.message}")
+            print(f"[PowerTrader] API key: {key.message}")
+            if key.warning:
+                print(f"{Fore.YELLOW}WARNING: {key.warning}{Style.RESET_ALL}")
+                logger.warning(key.warning)
+        self._previewed: Dict[tuple, float] = {}  # (symbol, side) -> last preview
+        # <COIN>-USD -> (when read, the exchange's minimum order) for _is_dust
+        self._dust_minimums: Dict[str, tuple] = {}
 
         print(f"[PowerTrader] Trading target: {self._settings.label}")
         logger.info(f"Trader pinned to target '{self._target.key}'")
@@ -571,6 +601,19 @@ class CryptoAPITrading:
             return 0.0, None
         return (qty if qty > 0.0 else 0.0), (price if price > 0.0 else None)
 
+    @staticmethod
+    def _order_cash_change(order: OrderResult, side: str) -> Optional[float]:
+        """The cash an order moved, from the exchange's own numbers: minus (value +
+        fee) for a buy, plus (value - fee) for a sell. None when the exchange does
+        not report the filled value (the change in buying power is used then)."""
+        if order.filled_value is None:
+            return None
+        try:
+            value, fee = float(order.filled_value), float(order.fee or 0.0)
+        except (TypeError, ValueError):
+            return None
+        return -(value + fee) if str(side).lower() == "buy" else value - fee
+
     def _wait_for_order_terminal(
         self,
         target: OrderTarget,
@@ -658,7 +701,9 @@ class CryptoAPITrading:
 
                         filled_qty, avg_price = self._extract_fill_from_order(order)
                         bp_after = self._get_buying_power()
-                        bp_delta = float(bp_after) - float(bp_before)
+                        bp_delta = self._order_cash_change(order, side)
+                        if bp_delta is None:
+                            bp_delta = float(bp_after) - float(bp_before)
 
                         self._record_trade(
                             side=side,
@@ -669,10 +714,11 @@ class CryptoAPITrading:
                             pnl_pct=info.get("pnl_pct", None),
                             tag=info.get("tag", None),
                             order_id=order_id,
-                            fees_usd=None,
+                            fees_usd=order.fee,
                             buying_power_before=bp_before,
                             buying_power_after=bp_after,
                             buying_power_delta=bp_delta,
+                            closes_position=not getattr(order, "partial", False),
                             **self._provenance(order, self._target),
                         )
 
@@ -708,12 +754,17 @@ class CryptoAPITrading:
         quote_ts: Optional[float] = None,
         age_s: Optional[float] = None,
         price_exchange: Optional[str] = None,
+        closes_position: bool = True,
     ) -> None:
         """
         Minimal local ledger for GUI:
         - append trade_history.jsonl
         - update pnl_ledger.json on sells (now using buying power delta when available)
         - persist per-coin open position cost (USD) so realized profit is exact
+
+        A sell row says whether it ended the trade (``closes_position``): a sell
+        that stopped part-way did not, so the DCA stages and the 24h DCA window
+        rebuilt from the history carry on past it.
         """
         ts = time.time()
 
@@ -859,7 +910,15 @@ class CryptoAPITrading:
             entry["age_s"] = age_s
             entry["price_exchange"] = price_exchange or ""
             self._note_price_event(price_source, ts)
+        if side_l == "sell":
+            entry["closes_position"] = bool(closes_position)
         self._append_jsonl(self.trade_history_path, entry)
+
+    @staticmethod
+    def _sell_ends_trade(entry: dict) -> bool:
+        """A sell row ends the trade unless it says it did not (rows written before
+        ``closes_position`` existed end it, as they always did)."""
+        return entry.get("closes_position") is not False
 
     def _write_trader_status(self, status: dict) -> None:
         self._atomic_write_json(self.trader_status_path, status)
@@ -1137,7 +1196,9 @@ class CryptoAPITrading:
                     if str(entry.get("symbol", "")).upper().strip() != full_symbol:
                         continue
                     side = str(entry.get("side", "")).lower().strip()
-                    if side in ("buy", "sell"):
+                    if side == "buy" or (
+                        side == "sell" and self._sell_ends_trade(entry)
+                    ):
                         fills.append((float(entry.get("ts")), side))
                 except (TypeError, ValueError):
                     continue
@@ -1146,7 +1207,8 @@ class CryptoAPITrading:
                 print(f"No recorded trades for {full_symbol}. Skipping.")
                 continue
 
-            # Buys after the most recent sell belong to the current trade
+            # Buys after the most recent sell that ended a trade belong to the
+            # current trade (a sell that stopped part-way did not end it)
             last_sell_ts = max(
                 (ts for ts, side in fills if side == "sell"), default=None
             )
@@ -1208,7 +1270,7 @@ class CryptoAPITrading:
                     except Exception:
                         continue
 
-                    if side == "sell":
+                    if side == "sell" and self._sell_ends_trade(obj):
                         prev = float(self._dca_last_sell_ts.get(base, 0.0) or 0.0)
                         if ts_f > prev:
                             self._dca_last_sell_ts[base] = ts_f
@@ -1489,18 +1551,28 @@ class CryptoAPITrading:
         avg_cost_basis: Optional[float],
         pnl_pct: Optional[float],
         tag: Optional[str],
+        client_order_id: Optional[str] = None,
     ) -> Any:
         """
         Place one market order on ``target`` (obtained from the trading-mode
         gate) and do the accounting once it is filled. Returns a small order
-        dict on a fill, None when the order was rejected, not filled or
-        unconfirmed.
+        dict on a fill, None when the order was rejected, not filled,
+        unconfirmed or only previewed. ``client_order_id`` makes the order
+        idempotent on a broker that takes one.
         """
+        if target.preview:
+            last = self._previewed.get((symbol, side), 0.0)
+            if time.time() - last < PREVIEW_REPEAT_SECONDS:
+                return None
+            self._previewed[(symbol, side)] = time.time()
+
         # --- exact profit tracking snapshot (BEFORE placing order) ---
         buying_power_before = self._get_buying_power()
 
         try:
-            result = target.place_order(symbol, side, asset_quantity)
+            result = target.place_order(
+                symbol, side, asset_quantity, client_order_id=client_order_id
+            )
         except Exception as exc:
             msg = self._describe_exchange_error(exc, "order placement", target.key)
             print(f"{Fore.RED}ORDER FAILED ({symbol} {side}): {msg}{Style.RESET_ALL}")
@@ -1508,6 +1580,17 @@ class CryptoAPITrading:
             return None
 
         order_id = result.order_id
+
+        if str(result.status).lower().strip() == "preview":
+            # nothing was placed: the log says what would have been, nothing is recorded
+            print(
+                f"{Fore.CYAN}ORDER PREVIEW ({symbol} {side}, {tag or 'order'}): "
+                f"{result.reason}{Style.RESET_ALL}"
+            )
+            logger.info(
+                f"Order preview ({symbol} {side} via {target.key}): {result.reason}"
+            )
+            return None
 
         if str(result.status).lower().strip() == "rejected" and result.reason:
             # e.g. PRICE_UNAVAILABLE: nothing was filled, nothing is pending; the
@@ -1519,6 +1602,18 @@ class CryptoAPITrading:
             logger.warning(
                 f"Order rejected ({symbol} {side} via {target.key}): {result.reason}; "
                 "will retry next cycle"
+            )
+            return None
+
+        if order_id and self._trade_history_has_order_id(order_id):
+            # The broker answered with an order already in the books (a repeated
+            # client order id gets the order it already made): one exchange fill is
+            # recorded once, never again.
+            self._clear_pending(order_id)
+            print(f"  Order {order_id} ({symbol} {side}) is already recorded.")
+            logger.warning(
+                f"Order {order_id} ({symbol} {side} via {target.key}) is already in "
+                "the trade history; not recorded again"
             )
             return None
 
@@ -1569,9 +1664,16 @@ class CryptoAPITrading:
             except Exception:
                 pass
 
+        if final.reason:
+            print(f"  Order {order_id} ({symbol} {side}): {final.reason}")
+
         # --- exact profit tracking snapshot (AFTER the order is complete) ---
         buying_power_after = self._get_buying_power()
-        buying_power_delta = float(buying_power_after) - float(buying_power_before)
+        # the exchange's own value and fee when it reports them, else the change in
+        # buying power
+        buying_power_delta = self._order_cash_change(final, side)
+        if buying_power_delta is None:
+            buying_power_delta = float(buying_power_after) - float(buying_power_before)
 
         self._record_trade(
             side=side,
@@ -1584,10 +1686,11 @@ class CryptoAPITrading:
             pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
             tag=tag,
             order_id=order_id,
-            fees_usd=None,
+            fees_usd=final.fee,
             buying_power_before=buying_power_before,
             buying_power_after=buying_power_after,
             buying_power_delta=buying_power_delta,
+            closes_position=not getattr(final, "partial", False),
             **self._provenance(final, target),
         )
         self._clear_pending(order_id)
@@ -1600,6 +1703,8 @@ class CryptoAPITrading:
             "quantity": float(filled_qty),
             "price": float(fill_price) if fill_price is not None else None,
             "mode": target.key,
+            # the order stopped part-way: the rest of the position is still held
+            "partial": bool(getattr(final, "partial", False)),
         }
 
     @staticmethod
@@ -1701,6 +1806,39 @@ class CryptoAPITrading:
             return None
         return usable_minimum(minimum)
 
+    def _is_dust(self, full_symbol: str, quantity: Any, sell_price: Any) -> bool:
+        """A holding worth less than the smallest order the exchange takes (what a
+        sell rounded down to the exchange's step can leave) cannot be sold, so it
+        is not a position: it does not stop a new entry, and no exit or DCA is
+        tried on it. False when the price or the minimum is not known."""
+        try:
+            value = float(quantity) * float(sell_price)
+        except (TypeError, ValueError):
+            return False
+        if value <= 0.0:
+            return False
+        read = self._dust_minimums.get(full_symbol)
+        if read is None or time.time() - read[0] > DUST_MINIMUM_SECONDS:
+            read = (time.time(), self._minimum_order_usd(full_symbol))
+            self._dust_minimums[full_symbol] = read
+        minimum = read[1]
+        return bool(minimum) and value < float(minimum)
+
+    def _held_symbols(self, holdings: Any, sell_prices: Dict[str, Any]) -> list:
+        """``<COIN>-USD`` for each holding that is a position (dust left out)."""
+        held = []
+        for holding in (
+            holdings.get("results", []) if isinstance(holdings, dict) else []
+        ):
+            full_symbol = f"{holding['asset_code']}-USD"
+            if not self._is_dust(
+                full_symbol,
+                holding.get("total_quantity", 0.0),
+                sell_prices.get(full_symbol, 0.0),
+            ):
+                held.append(full_symbol)
+        return held
+
     def place_buy_order(
         self,
         client_order_id: str,
@@ -1738,6 +1876,7 @@ class CryptoAPITrading:
             avg_cost_basis=avg_cost_basis,
             pnl_pct=pnl_pct,
             tag=tag,
+            client_order_id=client_order_id,
         )
 
     def place_sell_order(
@@ -1779,6 +1918,7 @@ class CryptoAPITrading:
             avg_cost_basis=avg_cost_basis,
             pnl_pct=pnl_pct,
             tag=tag,
+            client_order_id=client_order_id,
         )
 
     def manage_trades(self):
@@ -2141,6 +2281,17 @@ class CryptoAPITrading:
             else:
                 print("  PM/Trail: N/A (avg_cost_basis is 0)")
 
+            # A remainder too small to sell is shown above but left alone: no exit
+            # or DCA on it (the exchange would refuse the order every cycle).
+            if self._is_dust(full_symbol, quantity, current_sell_price):
+                self._warn_throttled(
+                    f"dust:{symbol}",
+                    f"{quantity:g} {symbol} is worth less than the smallest order the "
+                    "exchange takes; it is left alone and does not stop a new trade.",
+                    every=3600.0,
+                )
+                continue
+
             # --- Catalogue engine: the strategy (+ overlays) own the exit ---------------
             # Legacy trailing-PM sells and DCA buys below are skipped in this mode.
             # Only positions this trader opened (they have a ledger cost basis) are
@@ -2173,14 +2324,22 @@ class CryptoAPITrading:
                             and "errors" not in response
                         ):
                             trades_made = True
-                            self.signal_engine.record_exit(
-                                symbol,
-                                response.get("price") or current_sell_price,
-                                decision.bar_time,
-                            )
-                            self.trailing_pm.pop(symbol, None)
-                            self._reset_dca_window_for_trade(symbol, sold=True)
-                            print(f"  Successfully sold {exit_qty} {symbol}.")
+                            if response.get("partial"):
+                                # Part of the position is still held: its strategy
+                                # position and stops stay, so the exit sells the rest.
+                                print(
+                                    f"  Sold {response.get('quantity')} of {exit_qty} "
+                                    f"{symbol}; the rest is still held."
+                                )
+                            else:
+                                self.signal_engine.record_exit(
+                                    symbol,
+                                    response.get("price") or current_sell_price,
+                                    decision.bar_time,
+                                )
+                                self.trailing_pm.pop(symbol, None)
+                                self._reset_dca_window_for_trade(symbol, sold=True)
+                                print(f"  Successfully sold {exit_qty} {symbol}.")
                             time.sleep(5)
                             holdings = self.get_holdings()
                 elif avg_cost_basis <= 0:
@@ -2279,14 +2438,23 @@ class CryptoAPITrading:
                             and "errors" not in response
                         ):
                             trades_made = True
-                            self.trailing_pm.pop(
-                                symbol, None
-                            )  # clear per-coin trailing state on exit
+                            if response.get("partial"):
+                                # Part of the position is still held: the trailing
+                                # line (still crossed) and the DCA window stay, so the
+                                # next cycle sells the rest.
+                                print(
+                                    f"  Sold {response.get('quantity')} of {quantity} "
+                                    f"{symbol}; the rest is still held."
+                                )
+                            else:
+                                self.trailing_pm.pop(
+                                    symbol, None
+                                )  # clear per-coin trailing state on exit
 
-                            # Trade ended -> reset rolling 24h DCA window for this coin
-                            self._reset_dca_window_for_trade(symbol, sold=True)
+                                # Trade ended -> reset rolling 24h DCA window for this coin
+                                self._reset_dca_window_for_trade(symbol, sold=True)
 
-                            print(f"  Successfully sold {quantity} {symbol}.")
+                                print(f"  Successfully sold {quantity} {symbol}.")
                             time.sleep(5)
                             holdings = self.get_holdings()
                             continue
@@ -2447,9 +2615,7 @@ class CryptoAPITrading:
         if not trading_pairs:
             return
 
-        holding_full_symbols = [
-            f"{h['asset_code']}-USD" for h in holdings.get("results", [])
-        ]
+        holding_full_symbols = self._held_symbols(holdings, current_sell_prices)
 
         entry_coins = set(self._entry_coins())
         start_index = 0
@@ -2544,9 +2710,7 @@ class CryptoAPITrading:
                     )
                 time.sleep(5)
                 holdings = self.get_holdings()
-                holding_full_symbols = [
-                    f"{h['asset_code']}-USD" for h in holdings.get("results", [])
-                ]
+                holding_full_symbols = self._held_symbols(holdings, current_sell_prices)
 
             start_index += 1
 

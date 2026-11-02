@@ -131,8 +131,8 @@ def test_a_primary_that_cannot_connect_is_not_replaced_by_another_exchange(
     answer = multi.quote("BTC")
     assert (answer.exchange, answer.primary) == ("binance", False)
     assert multi.get_current_price("BTC") == 100.0  # from the next, in Settings order
-    with pytest.raises(ValueError, match="No primary exchange"):
-        layer.place_order("BTC-USD", "buy", 1.0)  # never on another exchange
+    # the market-data layer places no order at all: orders go through the gate
+    assert not hasattr(layer, "place_order") and not hasattr(multi, "place_order")
     out = capsys.readouterr().out
     assert "Primary exchange coinbase is not connected" in out
     assert "binance, kraken" in out

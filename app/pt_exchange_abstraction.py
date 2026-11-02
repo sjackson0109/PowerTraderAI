@@ -250,6 +250,10 @@ class OrderResult:
     quote_ts: Optional[float] = None  # exchange timestamp of the quote (epoch s, UTC)
     age_s: Optional[float] = None  # fetched_ts - quote_ts
     price_exchange: str = ""  # the exchange whose quote priced the fill (paper)
+    # The exchange's own numbers for a fill, in the quote currency, when it reports
+    # them (None otherwise): the fee charged and the value filled before fees.
+    fee: Optional[float] = None
+    filled_value: Optional[float] = None
 
 
 class ConnectionStatus(str, Enum):

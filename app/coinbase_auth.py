@@ -219,13 +219,12 @@ def load_private_key(raw_key: str) -> CoinbasePrivateKey:
 def build_uri_claim(method: str, host: str, path: str) -> str:
     """``"GET api.coinbase.com/api/v3/brokerage/accounts"`` - no scheme.
 
-    Paths with a query string are refused: the CDP docs show the claim as
-    ``METHOD host path`` and do not say how a query is treated, so signing one
-    would be a guess. Every call this app makes has a plain path.
+    The claim never contains a query string: a path given with one is signed
+    without it, and the request sends the parameters separately. The CDP docs show
+    the claim as ``METHOD host path``, and Coinbase's own Python SDK signs list
+    calls (``/accounts?limit=...``) the same way.
     """
-    if "?" in path:
-        raise ValueError("uri claim paths must not contain a query string")
-    return f"{method.upper()} {host}{path}"
+    return f"{method.upper()} {host}{path.split('?', 1)[0]}"
 
 
 def jwt_algorithm(private_key: CoinbasePrivateKey) -> str:

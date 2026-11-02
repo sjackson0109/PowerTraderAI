@@ -91,9 +91,16 @@ class TestJwt(unittest.TestCase):
         )
         self.assertEqual(payload["uri"], "POST api.coinbase.com/x/y")
 
-    def test_query_strings_are_refused_not_guessed(self):
-        with self.assertRaises(ValueError):
-            coinbase_auth.build_uri_claim("GET", HOST, PATH + "?limit=5")
+    def test_the_claim_never_contains_a_query_string(self):
+        # the parameters travel in the request, not in the signed claim
+        self.assertEqual(
+            coinbase_auth.build_uri_claim("GET", HOST, PATH + "?limit=5&cursor=x"),
+            f"GET {HOST}{PATH}",
+        )
+        _, payload, _, _ = split(
+            coinbase_auth.build_jwt(KEY_NAME, self.key, "GET", HOST, PATH + "?a=1")
+        )
+        self.assertNotIn("?", payload["uri"])
 
     def test_signature_is_raw_r_s_and_verifies(self):
         token = self.token()

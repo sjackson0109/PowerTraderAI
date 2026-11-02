@@ -293,17 +293,15 @@ class TestLiveModeStillNeedsBrokerAndConfirmation(CoinbaseGateBase):
         self.assertFalse(tm.read_trading_settings(LIVE_COINBASE).uses_testnet)
         self.assertNotIn("testnet", tm.read_trading_settings(LIVE_COINBASE).label)
 
-    def test_live_coinbase_cannot_send_an_order_today(self):
-        # The gate lets a confirmed live+coinbase target through, but the connector
-        # has no order placement: it raises before any request is built.
+    def test_the_gate_refuses_live_coinbase_until_it_is_marked_for_live_orders(self):
+        # The connector can place orders (FDS-LIVE-001 phase B), but live trading
+        # on it waits for the gate, the key check and the trader's books (phase C)
+        self.assertFalse(CoinbaseExchange.SUPPORTS_LIVE_ORDERS)
+        self.assertFalse(tm.broker_places_orders("coinbase"))
         with recorded_http() as http:
-            target = tm.resolve_order_target(copy.deepcopy(LIVE_COINBASE))
-            self.assertTrue(target.is_live)
-            self.assertIsInstance(target.exchange, CoinbaseExchange)
-            with self.assertRaises(NotImplementedError):
-                target.place_order("BTC-USD", "buy", 0.001)
-            with self.assertRaises(NotImplementedError):
-                target.cancel_order("x")
+            with self.assertRaises(tm.LiveTradingRefused) as caught:
+                tm.resolve_order_target(copy.deepcopy(LIVE_COINBASE))
+        self.assertIn("cannot place orders on 'coinbase'", str(caught.exception))
         self.assertNoHttp(http)
 
     def test_live_coinbase_through_the_trader_places_no_order_and_records_nothing(self):

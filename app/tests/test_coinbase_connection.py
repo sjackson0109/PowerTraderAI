@@ -158,12 +158,14 @@ class TestReadOnlyAndSingleCall(unittest.TestCase):
                 self.assertEqual(len(http.calls), 1)
                 self.assertEqual(http.order_like(), [])
 
-    def test_order_methods_stay_unimplemented(self):
-        ex = _exchange()
+    def test_order_methods_send_nothing_without_saved_credentials(self):
+        ex = CoinbaseExchange()
         with recorded_http() as http:
-            with self.assertRaises(NotImplementedError):
+            with self.assertRaises(RuntimeError):
                 ex.place_order("BTC-USD", "buy", 0.001)
-            with self.assertRaises(NotImplementedError):
+            with self.assertRaises(RuntimeError):
+                ex.preview_order("BTC-USD", "buy", 0.001)
+            with self.assertRaises(RuntimeError):
                 ex.cancel_order("abc")
         self.assertEqual(http.calls, [])
 

@@ -24,16 +24,20 @@ PowerTraderAI+ now supports **global cryptocurrency trading** across 65+ major e
 
 ### Exchange Capabilities
 
-| Exchange | Regions | API Trading | 2FA Support | Crypto Variety |
-|----------|---------|-------------|-------------|----------------|
-| **Robinhood** | US | Yes | Yes | Basic |
-| **Kraken** | Global | Yes | Yes | High |
-| **Binance** | Global¹ | Yes | Yes | Very High |
-| **Coinbase** | US/EU | Yes | Yes | High |
-| **KuCoin** | Global | Yes | Yes | Very High |
-| **Bitstamp** | EU | Yes | Yes | Medium |
-| **Bybit** | Global² | Yes | Yes | High |
-| **OKX** | Global² | Yes | Yes | Very High |
+"Prices" and "Live orders" say what this version of PowerTraderAI+ does with each
+exchange: read its prices and candles (it can be the primary exchange), and place live
+orders on it (it can be the broker in **File → Trading Mode**).
+
+| Exchange | Regions | Prices | Live orders | 2FA Support | Crypto Variety |
+|----------|---------|--------|-------------|-------------|----------------|
+| **Robinhood** | US | No | No | Yes | Basic |
+| **Kraken** | Global | Yes | No | Yes | High |
+| **Binance** | Global¹ | Yes | Yes (with testnet) | Yes | Very High |
+| **Coinbase** | US/EU | Yes | Yes (with Preview orders only; no testnet) | Yes | High |
+| **KuCoin** | Global | Yes | No | Yes | Very High |
+| **Bitstamp** | EU | No | No | Yes | Medium |
+| **Bybit** | Global² | No | No | Yes | High |
+| **OKX** | Global² | No | No | Yes | Very High |
 
 ¹ Binance.US for US users
 ² Check local regulations

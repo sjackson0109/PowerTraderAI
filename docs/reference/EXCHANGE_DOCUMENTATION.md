@@ -60,66 +60,30 @@ Run the interactive setup wizard:
 python exchange_setup.py
 ```
 
-### Manual Configuration
+### Where credentials are kept
+API keys are entered in **Settings → Configure Exchange APIs** and saved in your
+operating system's credential store (Windows Credential Manager, macOS Keychain or
+the Linux Secret Service). PowerTraderAI+ writes no credentials file:
+`trading_config.json` only records which exchanges are enabled.
 
-#### 1. Create Credentials Directory
+What each exchange asks for:
+
+| Exchange | Fields |
+|---|---|
+| **Coinbase** | CDP **key name** (`organizations/<org-id>/apiKeys/<key-id>`) and **private key** (Ed25519: one line of base64; ECDSA: PEM). There is no passphrase. See [Coinbase Setup](../exchanges/coinbase-setup.md). |
+| **Binance**, **Kraken** | API key and API secret |
+| **KuCoin** | API key, API secret and passphrase |
+| **Robinhood** | API key and private key |
+
+### Environment Variables (CI/CD)
+For automated runs, the same values can come from environment variables
+(`POWERTRADER_<EXCHANGE>_API_KEY`, `POWERTRADER_<EXCHANGE>_API_SECRET`, and
+`POWERTRADER_<EXCHANGE>_PASSPHRASE` where an exchange has one):
 ```bash
-mkdir credentials
-```
-
-#### 2. Create Exchange-Specific Config Files
-
-**Robinhood** (`credentials/robinhood_config.json`):
-```json
-{
-  "username": "your_username",
-  "password": "your_password",
-  "mfa_code": "optional_2fa_device_id"
-}
-```
-
-**Kraken** (`credentials/kraken_config.json`):
-```json
-{
-  "api_key": "your_api_key",
-  "api_secret": "your_api_secret"
-}
-```
-
-**Binance** (`credentials/binance_config.json`):
-```json
-{
-  "api_key": "your_api_key",
-  "api_secret": "your_api_secret"
-}
-```
-
-**Coinbase** (`credentials/coinbase_config.json`):
-```json
-{
-  "api_key": "your_api_key",
-  "api_secret": "your_api_secret",
-  "passphrase": "your_passphrase"
-}
-```
-
-**KuCoin** (`credentials/kucoin_config.json`):
-```json
-{
-  "api_key": "your_api_key",
-  "api_secret": "your_api_secret",
-  "passphrase": "your_passphrase"
-}
-```
-
-### 3. Environment Variables (CI/CD)
-For automated deployments, use environment variables:
-```bash
-export ROBINHOOD_USERNAME="username"
-export ROBINHOOD_PASSWORD="password"
-export KRAKEN_API_KEY="key"
-export KRAKEN_API_SECRET="secret"
-# ... etc for other exchanges
+export POWERTRADER_COINBASE_API_KEY="organizations/<org-id>/apiKeys/<key-id>"
+export POWERTRADER_COINBASE_API_SECRET="<the Ed25519 base64 line>"
+export POWERTRADER_KRAKEN_API_KEY="key"
+export POWERTRADER_KRAKEN_API_SECRET="secret"
 ```
 
 ## 🔧 Configuration Options

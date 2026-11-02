@@ -349,6 +349,24 @@ class InputValidator:
                 validated_levels, reverse=True
             )  # Sort from highest to lowest
 
+        # Paper trading coins (Settings > Paper trading; paper_coins.py)
+        if "paper_coins_mode" in config_data:
+            paper_mode = str(config_data["paper_coins_mode"] or "").strip().lower()
+            validated["paper_coins_mode"] = (
+                paper_mode if paper_mode in ("inherit", "override") else "inherit"
+            )
+        if "paper_coins" in config_data:
+            paper_coins = config_data["paper_coins"]
+            if not isinstance(paper_coins, list):
+                raise ValidationError("Paper coins must be a list")
+            validated_paper = []
+            for coin in paper_coins:
+                try:
+                    validated_paper.append(InputValidator.validate_crypto_symbol(coin))
+                except ValidationError:
+                    continue  # Skip invalid coins
+            validated["paper_coins"] = validated_paper
+
         # Validate directory path
         if "main_neural_dir" in config_data:
             dir_path = config_data["main_neural_dir"]

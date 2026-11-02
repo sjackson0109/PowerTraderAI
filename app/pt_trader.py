@@ -7,6 +7,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 import colorama
+import paper_coins
 import position_sizing
 import pt_paths
 from colorama import Fore, Style
@@ -1132,6 +1133,21 @@ class CryptoAPITrading:
         if now - self._warn_ts.get(key, 0.0) >= every:
             self._warn_ts[key] = now
             logger.warning(message)
+
+    def _entry_coins(self) -> list:
+        """The coins this trader may open new trades in: the coins in Settings, or in
+        paper mode the paper-trading coins chosen in Settings (paper_coins.py). Held
+        positions are managed whatever this returns."""
+        coins = paper_coins.normalise(crypto_symbols)
+        if not self._settings.is_live:
+            coins = paper_coins.entry_coins(_load_gui_settings(), coins)
+        if coins != getattr(self, "_last_entry_coins", None):
+            self._last_entry_coins = coins
+            print(
+                "[PowerTrader] New trades open in: "
+                + (", ".join(coins) if coins else "no coins")
+            )
+        return coins
 
     def initialize_dca_levels(self):
         """
@@ -2500,6 +2516,7 @@ class CryptoAPITrading:
             f"{h['asset_code']}-USD" for h in holdings.get("results", [])
         ]
 
+        entry_coins = set(self._entry_coins())
         start_index = 0
         while start_index < len(crypto_symbols):
             base_symbol = crypto_symbols[start_index].upper().strip()
@@ -2507,6 +2524,11 @@ class CryptoAPITrading:
 
             # Skip if already held
             if full_symbol in holding_full_symbols:
+                start_index += 1
+                continue
+
+            # Paper trading may be limited to some of the coins (Settings)
+            if base_symbol not in entry_coins:
                 start_index += 1
                 continue
 

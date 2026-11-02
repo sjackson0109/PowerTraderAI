@@ -2,10 +2,12 @@
 Strategy settings reader (FDS-121 section 7), fail-closed.
 
 Keys (all under ``strategy.``): ``engine`` (``catalogue`` | ``legacy_neural``,
-default ``catalogue``), ``active_id`` (default ``STRAT-000``; ``STRAT-001`` once
-that strategy exists), ``symbols`` (default ``["BTC"]``; read as markets, so a
-saved ``BTC``, ``BTC-USD`` or ``BTCUSDT`` is ``BTC-USD``), ``timeframe`` (default
-``1h``) and ``overlays`` (``[{"id", "params"}]``, default none).
+default ``catalogue``), ``active_id`` (default ``STRAT-001``), ``timeframe``
+(default ``1h``) and ``overlays`` (``[{"id", "params"}]``, default none).
+
+The coins traded are not a strategy setting: they are the coins in Settings, and in
+paper mode the paper-trading coins (``paper_coins.py``). A ``strategy.symbols`` left
+in an older settings file is ignored.
 
 Missing keys take their defaults. A value that is present but wrong (unknown
 engine, unknown strategy id, bad timeframe, bad overlay spec) is *not* replaced:
@@ -18,14 +20,12 @@ from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
 from market_data.timeframes import TIMEFRAME_SECONDS
-from pt_exchange_abstraction import dollar_symbol
 from strategies.catalogue import CATALOGUE
 from trading_mode import lookup_setting, settings_mapping
 
 ENGINES = ("catalogue", "legacy_neural")
 DEFAULT_ENGINE = "catalogue"
 DEFAULT_ACTIVE_ID = "STRAT-001"
-DEFAULT_SYMBOLS = ("BTC",)
 DEFAULT_TIMEFRAME = "1h"
 
 
@@ -33,7 +33,6 @@ DEFAULT_TIMEFRAME = "1h"
 class StrategySettings:
     engine: Any
     active_id: Any
-    symbols: Tuple[str, ...]
     timeframe: Any
     overlays: Tuple[dict, ...]
     problem: Optional[str]  # None when the configuration is usable
@@ -55,9 +54,6 @@ class StrategySettings:
             self.timeframe,
             tuple(repr(sorted(o.items(), key=lambda kv: kv[0])) for o in self.overlays),
         )
-
-    def traded_pairs(self) -> Tuple[str, ...]:
-        return self.symbols
 
     @property
     def note(self) -> str:
@@ -90,18 +86,6 @@ def read_strategy_settings(settings: Any = None) -> StrategySettings:
                 "signal engine runs it with its default parameters, which name none"
             )
 
-    raw_symbols = lookup_setting(src, "strategy.symbols", list(DEFAULT_SYMBOLS))
-    if (
-        isinstance(raw_symbols, (list, tuple))
-        and raw_symbols
-        and all(isinstance(s, str) and s.strip() for s in raw_symbols)
-    ):
-        # markets, whatever form was saved: BTC, BTC-USD and BTCUSDT are BTC-USD
-        symbols = tuple(dollar_symbol(s) for s in raw_symbols)
-    else:
-        symbols = ()
-        problems.append(f"invalid strategy.symbols {raw_symbols!r}")
-
     timeframe = lookup_setting(src, "strategy.timeframe", DEFAULT_TIMEFRAME)
     if timeframe not in TIMEFRAME_SECONDS:
         problems.append(f"unsupported strategy.timeframe {timeframe!r}")
@@ -127,7 +111,6 @@ def read_strategy_settings(settings: Any = None) -> StrategySettings:
     return StrategySettings(
         engine=engine,
         active_id=active_id,
-        symbols=symbols,
         timeframe=timeframe,
         overlays=overlays,
         problem="; ".join(problems) if problems else None,

@@ -420,6 +420,7 @@ class PaperTraderTests(PaperTraderCase):
     """Acceptance 7: the paper trader runs STRAT-001 on a scripted fixture end to end."""
 
     def test_trader_enters_and_exits_on_strat_001_with_no_runtime_errors(self):
+        self.one_coin("BTC")
         frame = make_candles(wave_series())
         settings = {
             "trading": {"mode": "paper"},

@@ -249,6 +249,19 @@ Where the build differs from §5 and §6, and why:
 | 7 | `apply_trading_mode` refuses a broker that cannot place orders, as well as the Trading Mode window not offering one. | The window is not the only caller. |
 | 8 | The one-time move of the books takes the five book files (`trade_history.jsonl`, `pnl_ledger.json`, `account_value_history.jsonl`, `trader_status.json`, `strategy_state.json`) for the active broker. It runs when a live trader starts and when the hub starts in live mode, and never merges into a folder that already has books. | Each live broker's books stay separate (D5). |
 
+Changed after the code reviews of #195 and #196 (2026-11-02):
+
+| # | Change | Why |
+|---|---|---|
+| 9 | The ungated `ExchangeManager.place_order` and `MultiExchangeManager.place_order` were removed in phase B, with the gate check, not in C (D10). | Once phase B could place Coinbase orders, those two paths would have sent one past the gate. |
+| 10 | A new `client_order_id` is made only when none is given; a blank one is refused before anything is sent. The gate passes the trader's id on unchanged. | A caller's id must never be swapped for another, or the order loses its idempotency. |
+| 11 | An order the broker answers with that is already in the trade history is not recorded again. | Coinbase answers a repeated `client_order_id` with the order it already made (item 5); one fill must be recorded once. |
+| 12 | A sell that stops part-way is marked (`OrderResult.partial`). Both exits keep the strategy position, the trailing line and the DCA window, and each sell row records `closes_position`, so the DCA stages and 24h window rebuilt from the history carry on past it. | A market IOC sell can end part-filled; the coins still held must stay managed until they are sold. |
+| 13 | The move of the books writes a marker first. A move that stopped part-way is finished on the next start, into the broker folder it began for, and the trader does not start until it is. | A half-moved set of books (history without its ledger) would lose position costs and pending orders. |
+| 14 | The public REST API reads the books of the trading mode in use (`paper/`, `testnet/` or `live/<broker>/`). | It read the hub folder itself, which no longer holds any books. |
+| 15 | The Trading Mode window runs the key check on a worker thread, with every choice and both buttons disabled until it answers. | A slow broker would freeze the hub, and Apply must save the choice whose key was checked. |
+| 16 | A holding worth less than the coin's minimum order is dust: it is shown, but it does not stop a new entry and no exit or DCA is tried on it. | A sell rounded down to Coinbase's step can leave such a remainder; it cannot be sold, and counting it as held would block the coin for good. |
+
 Still open:
 - **Phase 0** (D9): the four view-only calls with the owner's key, with a go-ahead for each run. It confirms items 2 and 5, the query-string rule (§5.3) and Ed25519 on a POST (D8). Until then, a 401 on an order with an Ed25519 key says that Coinbase's trading documentation lists ECDSA keys.
 - **Phase D:** the owner's day in preview mode, then one real buy and sell of about $2.

@@ -214,7 +214,7 @@ primary exchange: `COINBASE (prices)`.
 - An order below Coinbase's minimum size, or on a product Coinbase has marked trading
   disabled, cancel-only or limit-only, is refused by PowerTraderAI+ and not sent.
 - Every order carries the trader's own order id (`client_order_id`). Coinbase answers
-  a repeated id with the order it already made.
+  a repeated id with the order it already made, and that order is recorded once.
 - An order is never sent twice: after a network error the trader reports the error
   and does not retry it.
 
@@ -225,10 +225,18 @@ primary exchange: `COINBASE (prices)`.
   The cost and the profit include the fee.
 - An immediate-or-cancel order can fill in part. It is recorded at the part that
   filled, and the log says, for example, `partly filled: 0.0001 of 0.0002`.
+- After a sell that filled in part, the rest of the coin is still held and still
+  managed: its stop, trailing line and DCA stages stay (also after a restart), and
+  the next cycle sells the rest.
+- A sell is rounded down to Coinbase's step, so a tiny remainder can be left. A
+  remainder worth less than Coinbase's smallest order cannot be sold: it is shown,
+  left alone, and does not stop a new trade in that coin.
 - **USDC** is shown as cash but is not spent: the trader buys with **USD**.
 - Live books from an older version, kept in the `hub_data` folder itself, are moved
   once into `hub_data/live/<broker>/`, after a copy is made in
-  `hub_data/live_books_backup_<date>/`.
+  `hub_data/live_books_backup_<date>/`. If the move cannot finish (for example, a
+  file is in use), the trader does not start; the move is finished the next time,
+  into the same broker's folder.
 
 ### Ed25519 or ECDSA
 Both key types work for reading the account. Coinbase's documentation disagrees on

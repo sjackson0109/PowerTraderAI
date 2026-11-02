@@ -55,6 +55,8 @@ TERMINAL_ORDER_STATES = frozenset(
 # In preview mode the same order is previewed at most once in this long: an entry
 # signal stands for a whole bar, and nothing is bought to stop it repeating
 PREVIEW_REPEAT_SECONDS = 15 * 60
+# How long a coin's minimum order is kept for telling dust from a position
+DUST_MINIMUM_SECONDS = 60 * 60
 
 
 # Initialize colorama
@@ -426,6 +428,8 @@ class CryptoAPITrading:
                 print(f"{Fore.YELLOW}WARNING: {key.warning}{Style.RESET_ALL}")
                 logger.warning(key.warning)
         self._previewed: Dict[tuple, float] = {}  # (symbol, side) -> last preview
+        # <COIN>-USD -> (when read, the exchange's minimum order) for _is_dust
+        self._dust_minimums: Dict[str, tuple] = {}
 
         print(f"[PowerTrader] Trading target: {self._settings.label}")
         logger.info(f"Trader pinned to target '{self._target.key}'")
@@ -1802,6 +1806,39 @@ class CryptoAPITrading:
             return None
         return usable_minimum(minimum)
 
+    def _is_dust(self, full_symbol: str, quantity: Any, sell_price: Any) -> bool:
+        """A holding worth less than the smallest order the exchange takes (what a
+        sell rounded down to the exchange's step can leave) cannot be sold, so it
+        is not a position: it does not stop a new entry, and no exit or DCA is
+        tried on it. False when the price or the minimum is not known."""
+        try:
+            value = float(quantity) * float(sell_price)
+        except (TypeError, ValueError):
+            return False
+        if value <= 0.0:
+            return False
+        read = self._dust_minimums.get(full_symbol)
+        if read is None or time.time() - read[0] > DUST_MINIMUM_SECONDS:
+            read = (time.time(), self._minimum_order_usd(full_symbol))
+            self._dust_minimums[full_symbol] = read
+        minimum = read[1]
+        return bool(minimum) and value < float(minimum)
+
+    def _held_symbols(self, holdings: Any, sell_prices: Dict[str, Any]) -> list:
+        """``<COIN>-USD`` for each holding that is a position (dust left out)."""
+        held = []
+        for holding in (
+            holdings.get("results", []) if isinstance(holdings, dict) else []
+        ):
+            full_symbol = f"{holding['asset_code']}-USD"
+            if not self._is_dust(
+                full_symbol,
+                holding.get("total_quantity", 0.0),
+                sell_prices.get(full_symbol, 0.0),
+            ):
+                held.append(full_symbol)
+        return held
+
     def place_buy_order(
         self,
         client_order_id: str,
@@ -2244,6 +2281,17 @@ class CryptoAPITrading:
             else:
                 print("  PM/Trail: N/A (avg_cost_basis is 0)")
 
+            # A remainder too small to sell is shown above but left alone: no exit
+            # or DCA on it (the exchange would refuse the order every cycle).
+            if self._is_dust(full_symbol, quantity, current_sell_price):
+                self._warn_throttled(
+                    f"dust:{symbol}",
+                    f"{quantity:g} {symbol} is worth less than the smallest order the "
+                    "exchange takes; it is left alone and does not stop a new trade.",
+                    every=3600.0,
+                )
+                continue
+
             # --- Catalogue engine: the strategy (+ overlays) own the exit ---------------
             # Legacy trailing-PM sells and DCA buys below are skipped in this mode.
             # Only positions this trader opened (they have a ledger cost basis) are
@@ -2567,9 +2615,7 @@ class CryptoAPITrading:
         if not trading_pairs:
             return
 
-        holding_full_symbols = [
-            f"{h['asset_code']}-USD" for h in holdings.get("results", [])
-        ]
+        holding_full_symbols = self._held_symbols(holdings, current_sell_prices)
 
         entry_coins = set(self._entry_coins())
         start_index = 0
@@ -2664,9 +2710,7 @@ class CryptoAPITrading:
                     )
                 time.sleep(5)
                 holdings = self.get_holdings()
-                holding_full_symbols = [
-                    f"{h['asset_code']}-USD" for h in holdings.get("results", [])
-                ]
+                holding_full_symbols = self._held_symbols(holdings, current_sell_prices)
 
             start_index += 1
 

@@ -5,6 +5,9 @@ restart, and the next cycle sells the rest.
 
 The paper exchange always fills in full, so here it fills the first sell in half
 and reports it as stopped part-way (``OrderResult.partial``), as Coinbase does.
+
+Also here: a remainder worth less than the smallest order (what a sell rounded down
+to the exchange's step can leave) is not a position and does not stop a new entry.
 """
 
 from __future__ import annotations
@@ -62,8 +65,8 @@ def btc_held() -> float:
     return float(tm.get_paper_exchange().get_balance().get("BTC", 0.0))
 
 
-class TrailingStopPartialSell(PaperTraderCase):
-    """Legacy mode: the trailing profit-margin line sells the position."""
+class LegacyPaperTrader(PaperTraderCase):
+    """A legacy-mode paper trader on BTC at ~100, with neural signal files."""
 
     SETTINGS = {"trading": {"mode": "paper"}, "strategy": {"engine": "legacy_neural"}}
 
@@ -90,6 +93,38 @@ class TrailingStopPartialSell(PaperTraderCase):
         ):
             with open(os.path.join(self.folder, name), "w") as f:
                 f.write(value)
+
+
+class DustLeftBySell(LegacyPaperTrader):
+    """A sell rounded down to the exchange's step can leave a remainder worth less
+    than the smallest order: it cannot be sold, so it is not a position."""
+
+    def test_a_remainder_too_small_to_sell_does_not_stop_a_new_entry(self):
+        self.markets.minimum = 1.0  # the smallest order the exchanges take: $1
+        trader = self.trader(dict(self.SETTINGS))
+        exchange = tm.get_paper_exchange()
+        exchange.place_order("BTC-USD", "buy", 0.000001)  # ~$0.0001 of BTC
+        self.signal(7)
+        with mock.patch.object(trader, "place_sell_order") as sell:
+            trader.manage_trades()
+        sell.assert_not_called()  # the remainder is left alone
+        buys = [o for o in exchange.account.orders.values() if o.side.value == "buy"]
+        self.assertEqual(len(buys), 2)  # the remainder, then the trader's entry
+        self.assertGreater(btc_held(), 0.5)  # ~1% of $10,000 at ~100
+
+    def test_a_holding_worth_an_order_still_counts_as_held(self):
+        self.markets.minimum = 1.0
+        trader = self.trader(dict(self.SETTINGS))
+        exchange = tm.get_paper_exchange()
+        exchange.place_order("BTC-USD", "buy", 0.05)  # ~$5 of BTC
+        self.signal(7)
+        trader.manage_trades()
+        buys = [o for o in exchange.account.orders.values() if o.side.value == "buy"]
+        self.assertEqual(len(buys), 1)  # held: no new entry
+
+
+class TrailingStopPartialSell(LegacyPaperTrader):
+    """Legacy mode: the trailing profit-margin line sells the position."""
 
     def test_a_trailing_stop_sell_that_filled_in_part_keeps_the_line_and_sells_the_rest(
         self,

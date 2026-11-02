@@ -380,8 +380,14 @@ class CryptoAPITrading:
         # This mode's own ledger / history / status files
         self._settings = read_trading_settings(self._settings_source)
         if self._settings.is_live and not self._settings.uses_testnet:
-            # books from before each live broker had its own folder move once
-            move_root_live_books(HUB_DATA_DIR, self._settings.active_broker)
+            # books from before each live broker had its own folder move once; a
+            # move that cannot be finished stops the trader before it reads them
+            try:
+                move_root_live_books(HUB_DATA_DIR, self._settings.active_broker)
+            except (OSError, ValueError) as exc:
+                raise LiveTradingRefused(
+                    f"Live trading refused: the live books could not be moved: {exc}"
+                ) from exc
         self.data_dir = os.path.join(HUB_DATA_DIR, self._settings.data_subdir)
         os.makedirs(self.data_dir, exist_ok=True)
         self.trader_status_path = os.path.join(self.data_dir, "trader_status.json")
@@ -1575,6 +1581,18 @@ class CryptoAPITrading:
             logger.warning(
                 f"Order rejected ({symbol} {side} via {target.key}): {result.reason}; "
                 "will retry next cycle"
+            )
+            return None
+
+        if order_id and self._trade_history_has_order_id(order_id):
+            # The broker answered with an order already in the books (a repeated
+            # client order id gets the order it already made): one exchange fill is
+            # recorded once, never again.
+            self._clear_pending(order_id)
+            print(f"  Order {order_id} ({symbol} {side}) is already recorded.")
+            logger.warning(
+                f"Order {order_id} ({symbol} {side} via {target.key}) is already in "
+                "the trade history; not recorded again"
             )
             return None
 

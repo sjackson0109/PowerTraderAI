@@ -21,8 +21,17 @@ logger = get_logger(__name__)
 class PowerTraderAPIServer:
     """Public API server for PowerTrader data access."""
 
-    def __init__(self, hub_data_dir: str, port: int = 8080, host: str = "127.0.0.1"):
+    def __init__(
+        self,
+        hub_data_dir: str,
+        port: int = 8080,
+        host: str = "127.0.0.1",
+        books_dir: Optional[str] = None,
+    ):
         self.hub_data_dir = hub_data_dir
+        # The trader keeps each trading mode's books in its own folder under the
+        # hub folder (paper/, testnet/, live/<broker>/): serve that folder.
+        self.books_dir = books_dir or hub_data_dir
         self.port = port
         self.host = host
         self.app = Flask(__name__)
@@ -113,7 +122,7 @@ class PowerTraderAPIServer:
                 hub_accessible = os.path.exists(self.hub_data_dir)
 
                 # Check for recent trader status update (within last 5 minutes)
-                status_path = os.path.join(self.hub_data_dir, "trader_status.json")
+                status_path = os.path.join(self.books_dir, "trader_status.json")
                 status_fresh = False
                 if os.path.exists(status_path):
                     mtime = os.path.getmtime(status_path)
@@ -138,7 +147,7 @@ class PowerTraderAPIServer:
         def get_status():
             """Get current trading status."""
             try:
-                status_path = os.path.join(self.hub_data_dir, "trader_status.json")
+                status_path = os.path.join(self.books_dir, "trader_status.json")
                 if not os.path.exists(status_path):
                     return (
                         jsonify(
@@ -172,7 +181,7 @@ class PowerTraderAPIServer:
         def get_positions():
             """Get current trading positions."""
             try:
-                status_path = os.path.join(self.hub_data_dir, "trader_status.json")
+                status_path = os.path.join(self.books_dir, "trader_status.json")
                 if not os.path.exists(status_path):
                     return jsonify([])
 
@@ -207,7 +216,7 @@ class PowerTraderAPIServer:
                 symbol = request.args.get("symbol", "").upper()
                 hours = request.args.get("hours")  # Time filter in hours
 
-                history_path = os.path.join(self.hub_data_dir, "trade_history.jsonl")
+                history_path = os.path.join(self.books_dir, "trade_history.jsonl")
                 if not os.path.exists(history_path):
                     return jsonify([])
 
@@ -265,9 +274,9 @@ class PowerTraderAPIServer:
             try:
                 # Read account value history
                 value_history_path = os.path.join(
-                    self.hub_data_dir, "account_value_history.jsonl"
+                    self.books_dir, "account_value_history.jsonl"
                 )
-                pnl_path = os.path.join(self.hub_data_dir, "pnl_ledger.json")
+                pnl_path = os.path.join(self.books_dir, "pnl_ledger.json")
 
                 metrics = {"error": "Performance data not available"}
 
@@ -325,7 +334,7 @@ class PowerTraderAPIServer:
         def get_account():
             """Get account value and portfolio summary."""
             try:
-                status_path = os.path.join(self.hub_data_dir, "trader_status.json")
+                status_path = os.path.join(self.books_dir, "trader_status.json")
                 if not os.path.exists(status_path):
                     return jsonify({"error": "Account data not available"}), 404
 
@@ -417,10 +426,20 @@ class PowerTraderAPIServer:
 
 # Convenience function for easy integration
 def create_api_server(
-    hub_data_dir: str, port: int = 8080, host: str = "127.0.0.1"
+    hub_data_dir: str,
+    port: int = 8080,
+    host: str = "127.0.0.1",
+    books_dir: Optional[str] = None,
 ) -> PowerTraderAPIServer:
     """Create and return a new API server instance."""
-    return PowerTraderAPIServer(hub_data_dir, port, host)
+    return PowerTraderAPIServer(hub_data_dir, port, host, books_dir)
+
+
+def books_dir_for(hub_data_dir: str, settings: Any = None) -> str:
+    """The folder of the trader's books for the trading mode in the settings."""
+    from trading_mode import read_trading_settings
+
+    return os.path.join(hub_data_dir, read_trading_settings(settings).data_subdir)
 
 
 if __name__ == "__main__":
@@ -432,7 +451,7 @@ if __name__ == "__main__":
     hub_dir = sys.argv[1] if len(sys.argv) > 1 else pt_paths.hub_dir()
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 8080
 
-    server = create_api_server(hub_dir, port)
+    server = create_api_server(hub_dir, port, books_dir=books_dir_for(hub_dir))
     server.start_server()
 
     try:

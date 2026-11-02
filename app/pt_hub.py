@@ -2125,9 +2125,10 @@ class PowerTraderHub(tk.Tk):
         if self._trading.is_live and not self._trading.uses_testnet:
             try:  # books from before each live broker had its own folder move once
                 move_root_live_books(self.hub_dir, self._trading.active_broker)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 print(f"Live books not moved: {exc}")
         trader_dir = os.path.join(self.hub_dir, self._trading.data_subdir)
+        self._books_dir = trader_dir  # the public API serves the same books
         self.trader_status_path = os.path.join(trader_dir, "trader_status.json")
         self.trade_history_path = os.path.join(trader_dir, "trade_history.jsonl")
         self.pnl_ledger_path = os.path.join(trader_dir, "pnl_ledger.json")
@@ -8358,6 +8359,7 @@ Platform: {sys.platform}
                 hub_data_dir=self.hub_dir,
                 port=self._api_server_port,
                 host=self._api_server_host,
+                books_dir=self._books_dir,
             )
 
             if self._api_server_enabled:

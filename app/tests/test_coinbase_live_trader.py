@@ -14,6 +14,7 @@ import copy
 import json
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -104,6 +105,13 @@ class FakeCoinbase:
     def create(self, kwargs):
         body = json.loads(kwargs["data"])
         self.posted.append(("order", body))
+        for made in self.orders.values():
+            if made["client_order_id"] == body["client_order_id"]:
+                # a repeated client order id gets the order Coinbase already made
+                return {
+                    "success": True,
+                    "success_response": {"order_id": made["order_id"]},
+                }
         size = body["order_configuration"]["market_market_ioc"]
         order_id = f"cb-{len(self.orders) + 1}"
         share = 0.5 if self.partial else 1.0
@@ -228,6 +236,20 @@ class LiveTraderTests(CoinbaseGateBase):
             float(order["filled_value"]) + float(order["total_fees"]),
         )
 
+    def test_an_order_coinbase_already_made_is_not_recorded_twice(self):
+        with recorded_http() as rec:
+            cb = FakeCoinbase(rec)
+            trader = self.trader(copy.deepcopy(REAL))
+            first = trader.place_buy_order("same", "buy", "market", "BTC-USD", 50.0)
+            again = trader.place_buy_order("same", "buy", "market", "BTC-USD", 50.0)
+        self.assertEqual(first["state"], "filled")
+        self.assertIsNone(again)
+        self.assertEqual(len(cb.order_calls()), 2)  # both reached Coinbase...
+        self.assertEqual(list(cb.orders), ["cb-1"])  # ...which made one order
+        (row,) = rows(self.books("trade_history.jsonl"))
+        self.assertEqual(row["order_id"], "cb-1")
+        self.assertEqual(trader._pnl_ledger.get("pending_orders", {}), {})
+
     def test_preview_mode_places_nothing_records_nothing_and_does_not_repeat(self):
         with recorded_http() as rec:
             cb = FakeCoinbase(rec, can_trade=False)  # a view-only key is enough
@@ -290,6 +312,52 @@ class BookMoveTests(CoinbaseGateBase):
         with open(os.path.join(hub, "trade_history.jsonl"), encoding="utf-8") as f:
             self.assertEqual(f.read(), "old\n")
 
+    def test_a_move_that_stopped_part_way_is_finished_next_time(self):
+        hub = self.tmp.name
+        self.write(hub, "trade_history.jsonl", '{"side": "buy"}\n')
+        self.write(hub, "pnl_ledger.json", '{"total_realized_profit_usd": 1.5}')
+        dest = os.path.join(hub, "live", "binance")
+        real_replace = os.replace
+
+        def ledger_in_use(source, target):
+            if os.path.basename(source) == "pnl_ledger.json":
+                raise PermissionError("in use")
+            return real_replace(source, target)
+
+        with mock.patch("trading_mode.os.replace", side_effect=ledger_in_use):
+            with self.assertRaises(OSError):
+                tm.move_root_live_books(hub, "binance")
+        # stopped half way: the history moved, the ledger did not
+        self.assertTrue(os.path.exists(os.path.join(dest, "trade_history.jsonl")))
+        self.assertTrue(os.path.exists(os.path.join(hub, "pnl_ledger.json")))
+
+        self.assertEqual(tm.move_root_live_books(hub, "binance"), dest)  # finished
+        self.assertEqual(
+            sorted(os.listdir(dest)), ["pnl_ledger.json", "trade_history.jsonl"]
+        )
+        self.assertFalse(os.path.exists(os.path.join(hub, "pnl_ledger.json")))
+        backups = [n for n in os.listdir(hub) if n.startswith("live_books_backup_")]
+        self.assertEqual(len(backups), 1)
+        self.assertIsNone(tm.move_root_live_books(hub, "binance"))
+
+    def test_the_trader_does_not_start_on_books_it_could_not_move(self):
+        self.write(
+            self.tmp.name, "pnl_ledger.json", '{"total_realized_profit_usd": 2.0}'
+        )
+        real_replace = os.replace
+
+        def ledger_in_use(source, target):
+            if os.path.basename(source) in tm.LIVE_BOOK_FILES:
+                raise PermissionError("in use")
+            return real_replace(source, target)
+
+        with recorded_http() as rec, mock.patch("pt_trader.time.sleep"):
+            FakeCoinbase(rec)
+            with mock.patch("trading_mode.os.replace", side_effect=ledger_in_use):
+                with self.assertRaises(tm.LiveTradingRefused) as caught:
+                    self.trader(copy.deepcopy(REAL))
+        self.assertIn("live books could not be moved", str(caught.exception))
+
     def test_the_trader_moves_them_when_it_starts_live(self):
         self.write(
             self.tmp.name, "pnl_ledger.json", '{"total_realized_profit_usd": 2.0}'
@@ -302,6 +370,53 @@ class BookMoveTests(CoinbaseGateBase):
             os.path.exists(
                 os.path.join(self.tmp.name, "live", "coinbase", "pnl_ledger.json")
             )
+        )
+
+
+class ApiBooksTests(unittest.TestCase):
+    def setUp(self):
+        try:
+            import pt_api_server
+        except ImportError as exc:  # flask is optional
+            self.skipTest(f"pt_api_server not importable: {exc}")
+        self.api = pt_api_server
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_the_api_serves_the_books_of_the_trading_mode_in_use(self):
+        hub = self.tmp.name
+        books = self.api.books_dir_for(hub, copy.deepcopy(REAL))
+        self.assertEqual(books, os.path.join(hub, "live", "coinbase"))
+        self.assertEqual(
+            self.api.books_dir_for(hub, copy.deepcopy(LIVE_COINBASE)),
+            os.path.join(hub, "live", "coinbase", "preview"),
+        )
+        os.makedirs(books)
+        with open(os.path.join(books, "trader_status.json"), "w") as f:
+            json.dump({"account_value_usd": 123.0, "positions": []}, f)
+        with open(os.path.join(books, "trade_history.jsonl"), "w") as f:
+            f.write(json.dumps({"symbol": "BTC-USD", "side": "buy"}) + "\n")
+        client = self.api.create_api_server(hub, books_dir=books).app.test_client()
+        self.assertEqual(client.get("/api/status").get_json()["total_value"], 123.0)
+        history = client.get("/api/history").get_json()
+        self.assertEqual([t["side"] for t in history], ["buy"])
+
+    def test_the_hub_gives_the_api_the_books_it_shows(self):
+        import pt_hub
+
+        hub = object.__new__(pt_hub.PowerTraderHub)
+        hub.hub_dir, hub._books_dir = "hub", os.path.join("hub", "paper")
+        hub._api_server_port, hub._api_server_host = 8080, "127.0.0.1"
+        hub._api_server_enabled = False
+        with mock.patch.object(
+            pt_hub, "create_api_server", create=True
+        ) as create, mock.patch.object(pt_hub, "API_SERVER_AVAILABLE", True):
+            pt_hub.PowerTraderHub._init_api_server(hub)
+        create.assert_called_once_with(
+            hub_data_dir="hub",
+            port=8080,
+            host="127.0.0.1",
+            books_dir=os.path.join("hub", "paper"),
         )
 
 

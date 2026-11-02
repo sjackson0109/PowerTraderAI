@@ -1160,11 +1160,14 @@ class OrderTarget:
         client_order_id: Optional[str] = None,
     ) -> OrderResult:
         """The order, or in preview mode the broker's preview of it (an OrderResult
-        with status "preview"). ``client_order_id`` goes to a connector that takes
-        one (it makes the order idempotent); one that does not still works."""
+        with status "preview"). ``client_order_id`` goes unchanged to a connector
+        that takes one (it makes the order idempotent); one that does not still
+        works."""
         if self.preview:
             return self.exchange.preview_order(symbol, side, amount)
-        if client_order_id and _takes_client_order_id(self.exchange.place_order):
+        if client_order_id is not None and _takes_client_order_id(
+            self.exchange.place_order
+        ):
             return self.exchange.place_order(
                 symbol, side, amount, price, client_order_id=client_order_id
             )

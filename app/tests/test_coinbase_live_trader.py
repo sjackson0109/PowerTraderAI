@@ -356,8 +356,11 @@ class ClientOrderIdTests(unittest.TestCase):
                 return done
 
         self.target(Takes()).place_order("BTC-USD", "buy", 1.0, client_order_id="abc")
+        # an empty id is passed on unchanged (the connector refuses it), not dropped
+        self.target(Takes()).place_order("BTC-USD", "buy", 1.0, client_order_id="")
+        self.target(Takes()).place_order("BTC-USD", "buy", 1.0)
         self.target(Ignores()).place_order("BTC-USD", "buy", 1.0, client_order_id="abc")
-        self.assertEqual(seen, ["abc", "no id"])
+        self.assertEqual(seen, ["abc", "", None, "no id"])
 
 
 class TradingModeWindowTests(unittest.TestCase):

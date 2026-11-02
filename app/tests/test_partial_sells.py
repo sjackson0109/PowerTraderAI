@@ -1,16 +1,17 @@
 """A sell that fills only in part (a market IOC order can stop part-way on a live
 broker such as Coinbase) leaves the rest of the position managed: its strategy
-position, trailing line and DCA window stay, and the next cycle sells the rest.
+position, trailing line, DCA stages and DCA window stay, before and after a
+restart, and the next cycle sells the rest.
 
-The paper exchange always fills in full, so the first sell here is sent for half
-the quantity and its result marked ``partial``, as the trader reports a live
-order that stopped part-way.
+The paper exchange always fills in full, so here it fills the first sell in half
+and reports it as stopped part-way (``OrderResult.partial``), as Coinbase does.
 """
 
 from __future__ import annotations
 
 import copy
 import os
+import uuid
 from unittest import mock
 
 from helpers import Feed, PaperTraderCase, make_candles
@@ -20,24 +21,41 @@ from signal_engine import SignalEngine
 from test_signal_engine import PAPER, expected_actions, trend_series
 
 
-def half_filled_once(trader):
-    """The trader's first sell fills half of what was asked and says so; later
-    sells fill in full. Returns the quantities the trader asked to sell."""
-    real = trader.place_sell_order
+def half_filled_once():
+    """The paper exchange fills the next sell in half and reports it as partial;
+    later sells fill in full. Returns the quantities the trader asked to sell."""
+    exchange = tm.get_paper_exchange()
+    real = exchange.place_order
     asked = []
 
-    def sell(client_order_id, side, order_type, symbol, quantity, **kwargs):
-        asked.append(quantity)
+    def place_order(symbol, side, amount, price=None):
+        if str(side).lower() != "sell":
+            return real(symbol, side, amount, price)
+        asked.append(amount)
         if len(asked) > 1:
-            return real(client_order_id, side, order_type, symbol, quantity, **kwargs)
-        response = real(
-            client_order_id, side, order_type, symbol, quantity / 2, **kwargs
-        )
-        response["partial"] = True
-        return response
+            return real(symbol, side, amount, price)
+        result = real(symbol, side, amount / 2, price)
+        result.partial = True  # the rest of the order was cancelled
+        return result
 
-    trader.place_sell_order = sell
+    exchange.place_order = place_order
     return asked
+
+
+def crossed_trailing_line(trader) -> dict:
+    """Trailing state for a price that rose to 121 and fell back to ~100: the
+    trailing line (~120) is crossed from above, so the trader sells."""
+    return {
+        "active": True,
+        "line": 120.0,
+        "peak": 121.0,
+        "was_above": True,
+        "settings_sig": (
+            float(trader.trailing_gap_pct),
+            float(trader.pm_start_pct_no_dca),
+            float(trader.pm_start_pct_with_dca),
+        ),
+    }
 
 
 def btc_held() -> float:
@@ -83,19 +101,8 @@ class TrailingStopPartialSell(PaperTraderCase):
         self.assertGreater(bought, 0.0)
         self.signal(0)
 
-        # the price rose to 121 and fell back to ~100: the trailing line is crossed
-        trader.trailing_pm["BTC"] = {
-            "active": True,
-            "line": 120.0,
-            "peak": 121.0,
-            "was_above": True,
-            "settings_sig": (
-                float(trader.trailing_gap_pct),
-                float(trader.pm_start_pct_no_dca),
-                float(trader.pm_start_pct_with_dca),
-            ),
-        }
-        asked = half_filled_once(trader)
+        trader.trailing_pm["BTC"] = crossed_trailing_line(trader)
+        asked = half_filled_once()
         with mock.patch.object(
             trader,
             "_reset_dca_window_for_trade",
@@ -114,6 +121,32 @@ class TrailingStopPartialSell(PaperTraderCase):
         self.assertAlmostEqual(btc_held(), 0.0, places=8)
         self.assertNotIn("BTC", trader.trailing_pm)
         reset_dca.assert_called_once()
+        sells = [r for r in self.ledger_rows() if r["side"] == "sell"]
+        self.assertEqual([r["closes_position"] for r in sells], [False, True])
+
+    def test_a_partial_sell_keeps_the_dca_stages_before_and_after_a_restart(self):
+        trader = self.trader(dict(self.SETTINGS))
+        self.signal(7)
+        trader.manage_trades()  # the entry
+        self.signal(0)
+        trader.place_buy_order(
+            str(uuid.uuid4()), "buy", "market", "BTC-USD", 50.0, tag="DCA"
+        )
+        trader._note_dca_buy("BTC")
+        trader.initialize_dca_levels()
+        self.assertEqual(trader.dca_levels_triggered["BTC"], [0])  # one DCA stage
+        self.assertEqual(trader._dca_window_count("BTC"), 1)
+
+        trader.trailing_pm["BTC"] = crossed_trailing_line(trader)
+        half_filled_once()
+        trader.manage_trades()  # half is sold: the trade goes on
+        self.assertGreater(btc_held(), 0.0)
+        self.assertEqual(trader.dca_levels_triggered["BTC"], [0])
+        self.assertEqual(trader._dca_window_count("BTC"), 1)
+
+        restarted = self.trader(dict(self.SETTINGS))  # rebuilt from the books
+        self.assertEqual(restarted.dca_levels_triggered["BTC"], [0])
+        self.assertEqual(restarted._dca_window_count("BTC"), 1)
 
 
 class StrategyExitPartialSell(PaperTraderCase):
@@ -145,7 +178,7 @@ class StrategyExitPartialSell(PaperTraderCase):
         bought = btc_held()
         self.assertGreater(bought, 0.0)
 
-        asked = half_filled_once(trader)
+        asked = half_filled_once()
         self.feed.set_after_bar(exit_bar)
         trader.manage_trades()
         self.assertEqual(len(asked), 1)

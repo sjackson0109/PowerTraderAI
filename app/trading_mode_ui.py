@@ -163,20 +163,22 @@ class TradingModeDialog(tk.Toplevel):
         body = ttk.Frame(self, padding=12)
         body.pack(fill="both", expand=True)
 
-        ttk.Radiobutton(
+        self.paper_rb = ttk.Radiobutton(
             body,
             text="Paper trading (simulated, no credentials, no real money)",
             variable=self.mode_var,
             value="paper",
             command=self._refresh,
-        ).grid(row=0, column=0, columnspan=2, sticky="w")
-        ttk.Radiobutton(
+        )
+        self.paper_rb.grid(row=0, column=0, columnspan=2, sticky="w")
+        self.live_rb = ttk.Radiobutton(
             body,
             text="Live trading (real orders on the selected broker)",
             variable=self.mode_var,
             value="live",
             command=self._refresh,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 10))
+        )
+        self.live_rb.grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 10))
 
         ttk.Label(body, text="Broker:").grid(row=2, column=0, sticky="w")
         self.broker_cb = ttk.Combobox(
@@ -259,6 +261,19 @@ class TradingModeDialog(tk.Toplevel):
         allowed = can_apply(self.mode_var.get(), broker, self.confirm_var.get())
         allowed = allowed and not self._checking
         self.apply_btn.configure(state="normal" if allowed else "disabled")
+
+        # While a key is checked the choice is fixed, so what Apply saves is the
+        # choice whose key was checked.
+        for radio in (self.paper_rb, self.live_rb):
+            radio.configure(state="disabled" if self._checking else "normal")
+        if self._checking:
+            for widget in (
+                self.broker_cb,
+                self.testnet_cb,
+                self.preview_cb,
+                self.confirm_cb,
+            ):
+                widget.configure(state="disabled")
 
         if not live:
             self.note_var.set("Orders go to the simulated paper account only.")

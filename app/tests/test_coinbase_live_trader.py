@@ -565,11 +565,50 @@ class TradingModeWindowTests(unittest.TestCase):
         self.assertEqual(dialog.key_var.get(), "Checking the API key...")
         self.assertEqual(str(dialog.key_btn.cget("state")), "disabled")
         self.assertEqual(str(dialog.apply_btn.cget("state")), "disabled")
+        # the choice is fixed while its key is checked
+        choices = (
+            dialog.paper_rb,
+            dialog.live_rb,
+            dialog.broker_cb,
+            dialog.preview_cb,
+            dialog.confirm_cb,
+        )
+        self.assertEqual({str(w.cget("state")) for w in choices}, {"disabled"})
         release.set()
         self.settle(dialog)
         self.assertEqual(dialog.key_var.get(), "key ok")
         self.assertEqual(str(dialog.key_btn.cget("state")), "normal")
         self.assertEqual(str(dialog.apply_btn.cget("state")), "normal")
+        self.assertEqual(str(dialog.broker_cb.cget("state")), "readonly")
+        self.assertEqual(
+            {str(w.cget("state")) for w in choices if w is not dialog.broker_cb},
+            {"normal"},
+        )
+
+    def test_a_choice_cannot_change_while_apply_waits_for_the_key_check(self):
+        started, release, applied = threading.Event(), threading.Event(), []
+
+        def slow_check(broker, preview):
+            started.set()
+            release.wait(5)
+            return tm.KeyCheck(True, "key ok")
+
+        dialog = self.dialog(slow_check, applied)
+        dialog.preview_var.set(False)  # real orders
+        dialog._refresh()
+        dialog._apply()
+        self.assertTrue(started.wait(5))
+        self.root.update()
+        # paper mode and Preview orders only cannot be picked now...
+        dialog.paper_rb.invoke()
+        dialog.preview_cb.invoke()
+        self.assertEqual(dialog.mode_var.get(), "live")
+        self.assertFalse(dialog.preview_var.get())
+        release.set()
+        with mock.patch("trading_mode_ui.messagebox"):
+            self.settle(dialog)
+        # ...so what is saved is the choice whose key was checked
+        self.assertEqual(applied, [("live", "coinbase", {"preview": False})])
 
     def test_coinbase_previews_by_default_and_says_it_has_no_test_network(self):
         applied = []

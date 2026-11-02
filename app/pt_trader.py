@@ -714,6 +714,7 @@ class CryptoAPITrading:
                             buying_power_before=bp_before,
                             buying_power_after=bp_after,
                             buying_power_delta=bp_delta,
+                            closes_position=not getattr(order, "partial", False),
                             **self._provenance(order, self._target),
                         )
 
@@ -749,12 +750,17 @@ class CryptoAPITrading:
         quote_ts: Optional[float] = None,
         age_s: Optional[float] = None,
         price_exchange: Optional[str] = None,
+        closes_position: bool = True,
     ) -> None:
         """
         Minimal local ledger for GUI:
         - append trade_history.jsonl
         - update pnl_ledger.json on sells (now using buying power delta when available)
         - persist per-coin open position cost (USD) so realized profit is exact
+
+        A sell row says whether it ended the trade (``closes_position``): a sell
+        that stopped part-way did not, so the DCA stages and the 24h DCA window
+        rebuilt from the history carry on past it.
         """
         ts = time.time()
 
@@ -900,7 +906,15 @@ class CryptoAPITrading:
             entry["age_s"] = age_s
             entry["price_exchange"] = price_exchange or ""
             self._note_price_event(price_source, ts)
+        if side_l == "sell":
+            entry["closes_position"] = bool(closes_position)
         self._append_jsonl(self.trade_history_path, entry)
+
+    @staticmethod
+    def _sell_ends_trade(entry: dict) -> bool:
+        """A sell row ends the trade unless it says it did not (rows written before
+        ``closes_position`` existed end it, as they always did)."""
+        return entry.get("closes_position") is not False
 
     def _write_trader_status(self, status: dict) -> None:
         self._atomic_write_json(self.trader_status_path, status)
@@ -1178,7 +1192,9 @@ class CryptoAPITrading:
                     if str(entry.get("symbol", "")).upper().strip() != full_symbol:
                         continue
                     side = str(entry.get("side", "")).lower().strip()
-                    if side in ("buy", "sell"):
+                    if side == "buy" or (
+                        side == "sell" and self._sell_ends_trade(entry)
+                    ):
                         fills.append((float(entry.get("ts")), side))
                 except (TypeError, ValueError):
                     continue
@@ -1187,7 +1203,8 @@ class CryptoAPITrading:
                 print(f"No recorded trades for {full_symbol}. Skipping.")
                 continue
 
-            # Buys after the most recent sell belong to the current trade
+            # Buys after the most recent sell that ended a trade belong to the
+            # current trade (a sell that stopped part-way did not end it)
             last_sell_ts = max(
                 (ts for ts, side in fills if side == "sell"), default=None
             )
@@ -1249,7 +1266,7 @@ class CryptoAPITrading:
                     except Exception:
                         continue
 
-                    if side == "sell":
+                    if side == "sell" and self._sell_ends_trade(obj):
                         prev = float(self._dca_last_sell_ts.get(base, 0.0) or 0.0)
                         if ts_f > prev:
                             self._dca_last_sell_ts[base] = ts_f
@@ -1669,6 +1686,7 @@ class CryptoAPITrading:
             buying_power_before=buying_power_before,
             buying_power_after=buying_power_after,
             buying_power_delta=buying_power_delta,
+            closes_position=not getattr(final, "partial", False),
             **self._provenance(final, target),
         )
         self._clear_pending(order_id)

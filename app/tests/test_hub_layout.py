@@ -474,6 +474,71 @@ def test_the_charts_sit_5px_from_the_panel_edges(hub):
     assert hub._chart_tabs_row.pack_info()["padx"] in (5, (5, 5))
 
 
+def test_the_left_pane_starts_402px_wide(hub):
+    """Owner, 2026-11-02: the divider 36 px further left (438 -> 402), closing the
+    strip right of the coin table. The window is never shown: the pane's width is
+    stood in and the sash position the hub sets is recorded."""
+    import time
+
+    outer = hub._pw_outer
+    placed = []
+    read = outer.sashpos
+
+    def sashpos(index, pos=None):
+        if pos is None:  # the hub also reads it back
+            return read(index)
+        placed.append((index, pos))
+
+    outer.winfo_width = lambda: 1500
+    outer.sashpos = sashpos
+    deadline = time.monotonic() + 5.0
+    while not getattr(hub, "_did_init_outer_sash", False):
+        assert time.monotonic() < deadline, "the divider was never placed"
+        hub.update()
+        time.sleep(0.01)
+    assert placed == [(0, 402)]
+
+
+def test_the_account_row_has_the_exchange_left_and_the_trader_by_its_buttons(hub):
+    """Owner, 2026-11-02: Exchange first, its key grey like "Trader:"; the trader's
+    state right-aligned beside its start and stop buttons."""
+    row = hub.lbl_trader.master
+    slaves = row.pack_slaves()
+    trader_key = slaves[3]
+    assert slaves == [
+        hub.btn_stop_trader,
+        hub.btn_start_trader,
+        hub.lbl_trader,
+        trader_key,
+        hub.lbl_exchange_key,
+        hub.lbl_exchange,
+    ]
+    assert str(trader_key.cget("text")) == "Trader:"
+    for widget in slaves[:4]:
+        assert widget.pack_info()["side"] == "right"
+    for widget in slaves[4:]:
+        assert widget.pack_info()["side"] == "left"
+    assert str(hub.lbl_exchange_key.cget("text")) == "Exchange:"
+    grey = str(trader_key.cget("foreground"))
+    assert str(hub.lbl_exchange_key.cget("foreground")) == grey
+
+
+def test_the_exchange_line_shows_its_state_by_colour_not_an_icon(hub):
+    import ui_theme
+    import ui_tokens
+
+    p = ui_theme.active_palette()
+    for status, tone, colour in (
+        ("COINBASE", "ok", p["ACCENT2"]),
+        ("COINBASE (no prices)", "warn", ui_tokens.STATUS["warn"]),
+        ("KRAKEN (no live orders)", "bad", ui_tokens.STATUS["bad"]),
+    ):
+        hub._exchange_status = {"status": status, "details": "d", "tone": tone}
+        hub._update_exchange_status_display()
+        assert str(hub.lbl_exchange.cget("text")) == status
+        assert str(hub.lbl_exchange.cget("foreground")).lower() == colour.lower()
+
+
 def test_the_coin_table_fits_three_columns_with_no_gap_after_the_last(hub):
     """Owner, 2026-10-14: the left pane is 32 px narrower (438 px), so the column
     rule counts the 8 px gap between columns only, not after the last one."""

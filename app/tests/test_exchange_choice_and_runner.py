@@ -156,30 +156,38 @@ def live(broker, **flags):
 
 def test_the_exchange_status_is_a_real_price_check():
     # the old check used a manager that was never connected: always "not available"
-    status, details = status_for(FakeConnector(price=81000.0))
-    assert status == "✅ COINBASE (prices)"
+    # paper mode: the primary exchange's name alone (owner, 2026-11-02); the state
+    # is a colour, not an icon
+    status, details, tone = status_for(FakeConnector(price=81000.0))
+    assert (status, tone) == ("COINBASE", "ok")
     assert "BTC $81,000.00" in details
 
-    status, details = status_for(FakeConnector(error=ConnectionError("dns")))
-    assert status == "❌ COINBASE" and "No price from coinbase: dns" in details
+    status, details, tone = status_for(FakeConnector(error=ConnectionError("dns")))
+    assert (status, tone) == ("COINBASE (no prices)", "bad")
+    assert "No price from coinbase: dns" in details
+
+    status, _, tone = status_for(FakeConnector(price=0.0))
+    assert (status, tone) == ("COINBASE (no prices)", "warn")
 
 
 def test_live_mode_names_the_live_broker_not_the_primary_exchange():
     # FDS-LIVE-001 D7: paper names the primary exchange; live names the live broker
     connector = FakeConnector(price=81000.0, live=True)
-    assert status_for(connector, "kraken", live("coinbase"))[0] == (
-        "✅ COINBASE (preview orders)"
+    assert status_for(connector, "kraken", live("coinbase"))[::2] == (
+        "COINBASE (preview orders)",
+        "ok",
     )
     assert status_for(connector, "kraken", live("coinbase", coinbase_preview=False))[
-        0
-    ] == ("✅ COINBASE (live orders)")
-    assert status_for(connector, "coinbase", live("binance"))[0] == (
-        "✅ BINANCE (testnet orders)"
+        ::2
+    ] == ("COINBASE (live orders)", "ok")
+    assert status_for(connector, "coinbase", live("binance"))[::2] == (
+        "BINANCE (testnet orders)",
+        "ok",
     )
-    status, details = status_for(
+    status, details, tone = status_for(
         FakeConnector(price=81000.0), "binance", live("kraken")
     )
-    assert status == "❌ KRAKEN (no live orders)"
+    assert (status, tone) == ("KRAKEN (no live orders)", "bad")
     assert "cannot place orders on kraken" in details
 
 
@@ -195,8 +203,8 @@ def test_the_exchange_status_check_reads_no_saved_credential(monkeypatch):
     with mock.patch("pt_exchanges.CoinbaseExchange.get_current_price") as price:
         price.return_value = 81000.0
         hub = types.SimpleNamespace()
-        status, _ = pt_hub.PowerTraderHub._exchange_status_once(hub, "coinbase")
-    assert status == "✅ COINBASE (prices)"
+        status, _, _ = pt_hub.PowerTraderHub._exchange_status_once(hub, "coinbase")
+    assert status == "COINBASE"
     assert hub._status_exchanges["coinbase"].api_key == ""
 
 

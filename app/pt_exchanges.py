@@ -1908,7 +1908,8 @@ class CoinbaseExchange(AbstractExchange):
         status = self.ORDER_STATES.get(state, "pending")
         filled = _coinbase_number(order.get("filled_size")) or 0.0
         reason = ""
-        if state in ("CANCELLED", "EXPIRED") and filled > 0:
+        partial = state in ("CANCELLED", "EXPIRED") and filled > 0
+        if partial:
             status = "filled"
             reason = _partly_filled(order, filled)
         elif state == "FAILED":
@@ -1929,6 +1930,7 @@ class CoinbaseExchange(AbstractExchange):
             reason=reason,
             fee=_coinbase_number(order.get("total_fees")),
             filled_value=_coinbase_number(order.get("filled_value")),
+            partial=partial,
         )
 
     def cancel_order(self, order_id: str) -> bool:

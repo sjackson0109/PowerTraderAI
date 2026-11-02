@@ -1275,40 +1275,64 @@ def move_root_live_books(hub_dir: str, broker: Optional[str]) -> Optional[str]:
     Returns the folder they moved to, or None when nothing moved. Books are never
     merged: when ``live/<broker>/`` already has books, nothing moves.
 
-    The files to move are written to a marker in ``live/<broker>/`` first, so a
-    move that stopped part-way is finished on the next call before any book is
-    read. Raises OSError while it cannot be finished; the trader does not start
-    on a half-moved set of books."""
+    The files to move are written to a marker in ``live/<broker>/`` first. A move
+    that stopped part-way is finished on the next call, into the broker folder it
+    started for (whichever broker is chosen now), before anything else moves or
+    any book is read. Raises OSError (ValueError for an unreadable marker) while
+    it cannot be finished; the trader does not start on a half-moved set of books."""
     if not broker:
         return None
     dest = os.path.join(hub_dir, LIVE_DATA_SUBDIR, broker)
+    finished = None
+    for folder in _unfinished_live_book_moves(hub_dir):
+        logger.warning(f"Finishing an earlier move of the live books into {folder}")
+        done = _finish_live_books_move(hub_dir, folder)
+        if os.path.normcase(folder) == os.path.normcase(dest):
+            finished = done
+    if finished is not None:
+        return finished
+    present = [n for n in LIVE_BOOK_FILES if os.path.isfile(os.path.join(hub_dir, n))]
+    if not present:
+        return None
+    if any(os.path.exists(os.path.join(dest, n)) for n in LIVE_BOOK_FILES):
+        logger.warning(
+            f"Live books found in {hub_dir} and in {dest}; left as they are (books "
+            "are never merged)"
+        )
+        return None
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    backup = os.path.join(hub_dir, f"live_books_backup_{stamp}")
+    os.makedirs(backup, exist_ok=True)
+    for name in present:
+        shutil.copy2(os.path.join(hub_dir, name), os.path.join(backup, name))
+    os.makedirs(dest, exist_ok=True)
+    with open(os.path.join(dest, LIVE_BOOKS_MOVE_MARKER), "w", encoding="utf-8") as f:
+        json.dump({"files": present, "backup": backup}, f)
+    return _finish_live_books_move(hub_dir, dest)
+
+
+def _unfinished_live_book_moves(hub_dir: str) -> list:
+    """The ``live/<broker>/`` folders whose move from the hub folder has a marker."""
+    live = os.path.join(hub_dir, LIVE_DATA_SUBDIR)
+    try:
+        names = sorted(os.listdir(live))
+    except OSError:
+        return []
+    return [
+        os.path.join(live, n)
+        for n in names
+        if os.path.isfile(os.path.join(live, n, LIVE_BOOKS_MOVE_MARKER))
+    ]
+
+
+def _finish_live_books_move(hub_dir: str, dest: str) -> str:
+    """Move the books the marker in ``dest`` lists from the hub folder into
+    ``dest``, then remove the marker. A book already in ``dest`` was moved."""
     marker = os.path.join(dest, LIVE_BOOKS_MOVE_MARKER)
-    if os.path.isfile(marker):
-        with open(marker, encoding="utf-8") as f:
-            started = json.load(f)
-        present = [n for n in started.get("files", []) if n in LIVE_BOOK_FILES]
-        backup = str(started.get("backup", ""))
-        logger.warning(f"Finishing the move of the live books {present} to {dest}")
-    else:
-        present = [
-            n for n in LIVE_BOOK_FILES if os.path.isfile(os.path.join(hub_dir, n))
-        ]
-        if not present:
-            return None
-        if any(os.path.exists(os.path.join(dest, n)) for n in LIVE_BOOK_FILES):
-            logger.warning(
-                f"Live books found in {hub_dir} and in {dest}; left as they are "
-                "(books are never merged)"
-            )
-            return None
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        backup = os.path.join(hub_dir, f"live_books_backup_{stamp}")
-        os.makedirs(backup, exist_ok=True)
-        for name in present:
-            shutil.copy2(os.path.join(hub_dir, name), os.path.join(backup, name))
-        os.makedirs(dest, exist_ok=True)
-        with open(marker, "w", encoding="utf-8") as f:
-            json.dump({"files": present, "backup": backup}, f)
+    with open(marker, encoding="utf-8") as f:
+        started = json.load(f)
+    present = [n for n in started.get("files", []) if n in LIVE_BOOK_FILES]
+    backup = str(started.get("backup", ""))
     for name in present:
         source, target = os.path.join(hub_dir, name), os.path.join(dest, name)
         if os.path.isfile(source) and os.path.exists(target):

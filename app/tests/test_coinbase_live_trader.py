@@ -15,6 +15,8 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -185,6 +187,7 @@ class LiveTraderTests(CoinbaseGateBase):
         self.assertEqual(cb.unknown, [])
         self.assertEqual(buy["state"], "filled")
         self.assertEqual(sell["state"], "filled")
+        self.assertFalse(buy["partial"] or sell["partial"])
 
         # the trader's client order ids reached Coinbase
         orders = cb.order_calls()
@@ -229,6 +232,7 @@ class LiveTraderTests(CoinbaseGateBase):
             result = trader.place_buy_order("c-1", "buy", "market", "BTC-USD", 50.0)
         (order,) = cb.orders.values()
         self.assertEqual(result["quantity"], float(order["filled_size"]))
+        self.assertTrue(result["partial"])  # the rest of the order was cancelled
         (row,) = rows(self.books("trade_history.jsonl"))
         self.assertAlmostEqual(row["qty"], float(order["filled_size"]))
         self.assertAlmostEqual(
@@ -339,6 +343,31 @@ class BookMoveTests(CoinbaseGateBase):
         backups = [n for n in os.listdir(hub) if n.startswith("live_books_backup_")]
         self.assertEqual(len(backups), 1)
         self.assertIsNone(tm.move_root_live_books(hub, "binance"))
+
+    def test_a_move_left_unfinished_for_one_broker_is_finished_there_not_in_another(
+        self,
+    ):
+        hub = self.tmp.name
+        self.write(hub, "trade_history.jsonl", '{"side": "buy"}\n')
+        self.write(hub, "pnl_ledger.json", '{"total_realized_profit_usd": 1.5}')
+        real_replace = os.replace
+
+        def ledger_in_use(source, target):
+            if os.path.basename(source) == "pnl_ledger.json":
+                raise PermissionError("in use")
+            return real_replace(source, target)
+
+        with mock.patch("trading_mode.os.replace", side_effect=ledger_in_use):
+            with self.assertRaises(OSError):
+                tm.move_root_live_books(hub, "binance")
+        # the broker is switched to Coinbase before the move is finished: the
+        # Binance books still go to live/binance/, none to live/coinbase/
+        self.assertIsNone(tm.move_root_live_books(hub, "coinbase"))
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(hub, "live", "binance"))),
+            ["pnl_ledger.json", "trade_history.jsonl"],
+        )
+        self.assertFalse(os.path.exists(os.path.join(hub, "live", "coinbase")))
 
     def test_the_trader_does_not_start_on_books_it_could_not_move(self):
         self.write(
@@ -511,6 +540,37 @@ class TradingModeWindowTests(unittest.TestCase):
         dialog._refresh()
         return dialog
 
+    def settle(self, dialog, timeout=5.0):
+        """Let Tk run until the key check's answer has been handled."""
+        deadline = time.monotonic() + timeout
+        while dialog._checking and time.monotonic() < deadline:
+            self.root.update()
+            time.sleep(0.005)
+        self.assertFalse(dialog._checking, "the key check did not finish")
+
+    def test_the_key_check_runs_off_the_window_thread_with_the_buttons_disabled(self):
+        started, release, on_tk_thread = threading.Event(), threading.Event(), []
+
+        def slow_check(broker, preview):
+            on_tk_thread.append(threading.current_thread() is threading.main_thread())
+            started.set()
+            release.wait(5)
+            return tm.KeyCheck(True, "key ok")
+
+        dialog = self.dialog(slow_check, [])
+        dialog.check_key()
+        self.assertTrue(started.wait(5))
+        self.root.update()  # the window still answers while the broker is asked
+        self.assertEqual(on_tk_thread, [False])
+        self.assertEqual(dialog.key_var.get(), "Checking the API key...")
+        self.assertEqual(str(dialog.key_btn.cget("state")), "disabled")
+        self.assertEqual(str(dialog.apply_btn.cget("state")), "disabled")
+        release.set()
+        self.settle(dialog)
+        self.assertEqual(dialog.key_var.get(), "key ok")
+        self.assertEqual(str(dialog.key_btn.cget("state")), "normal")
+        self.assertEqual(str(dialog.apply_btn.cget("state")), "normal")
+
     def test_coinbase_previews_by_default_and_says_it_has_no_test_network(self):
         applied = []
         dialog = self.dialog(
@@ -527,6 +587,7 @@ class TradingModeWindowTests(unittest.TestCase):
             dialog.note_var.get(),
         )
         dialog.check_key()
+        self.settle(dialog)
         self.assertEqual(dialog.key_var.get(), "view: yes, trade: no")
 
     def test_apply_is_refused_when_the_key_check_refuses_the_key(self):
@@ -537,6 +598,7 @@ class TradingModeWindowTests(unittest.TestCase):
         dialog.preview_var.set(False)
         with mock.patch("trading_mode_ui.messagebox") as box:
             dialog._apply()
+            self.settle(dialog)
         box.showerror.assert_called_once()
         self.assertIn(tm.KEY_CANNOT_TRADE, box.showerror.call_args[0][1])
         self.assertEqual(applied, [])
@@ -552,6 +614,7 @@ class TradingModeWindowTests(unittest.TestCase):
         dialog = self.dialog(key_check, applied)
         with mock.patch("trading_mode_ui.messagebox") as box:
             dialog._apply()
+            self.settle(dialog)
         box.showwarning.assert_called_once()  # the Transfer warning, then applied
         self.assertEqual(checks, [("coinbase", True)])
         self.assertEqual(applied, [("live", "coinbase", {"preview": True})])

@@ -1681,6 +1681,8 @@ class CryptoAPITrading:
             "quantity": float(filled_qty),
             "price": float(fill_price) if fill_price is not None else None,
             "mode": target.key,
+            # the order stopped part-way: the rest of the position is still held
+            "partial": bool(getattr(final, "partial", False)),
         }
 
     @staticmethod
@@ -2256,14 +2258,22 @@ class CryptoAPITrading:
                             and "errors" not in response
                         ):
                             trades_made = True
-                            self.signal_engine.record_exit(
-                                symbol,
-                                response.get("price") or current_sell_price,
-                                decision.bar_time,
-                            )
-                            self.trailing_pm.pop(symbol, None)
-                            self._reset_dca_window_for_trade(symbol, sold=True)
-                            print(f"  Successfully sold {exit_qty} {symbol}.")
+                            if response.get("partial"):
+                                # Part of the position is still held: its strategy
+                                # position and stops stay, so the exit sells the rest.
+                                print(
+                                    f"  Sold {response.get('quantity')} of {exit_qty} "
+                                    f"{symbol}; the rest is still held."
+                                )
+                            else:
+                                self.signal_engine.record_exit(
+                                    symbol,
+                                    response.get("price") or current_sell_price,
+                                    decision.bar_time,
+                                )
+                                self.trailing_pm.pop(symbol, None)
+                                self._reset_dca_window_for_trade(symbol, sold=True)
+                                print(f"  Successfully sold {exit_qty} {symbol}.")
                             time.sleep(5)
                             holdings = self.get_holdings()
                 elif avg_cost_basis <= 0:
@@ -2362,14 +2372,23 @@ class CryptoAPITrading:
                             and "errors" not in response
                         ):
                             trades_made = True
-                            self.trailing_pm.pop(
-                                symbol, None
-                            )  # clear per-coin trailing state on exit
+                            if response.get("partial"):
+                                # Part of the position is still held: the trailing
+                                # line (still crossed) and the DCA window stay, so the
+                                # next cycle sells the rest.
+                                print(
+                                    f"  Sold {response.get('quantity')} of {quantity} "
+                                    f"{symbol}; the rest is still held."
+                                )
+                            else:
+                                self.trailing_pm.pop(
+                                    symbol, None
+                                )  # clear per-coin trailing state on exit
 
-                            # Trade ended -> reset rolling 24h DCA window for this coin
-                            self._reset_dca_window_for_trade(symbol, sold=True)
+                                # Trade ended -> reset rolling 24h DCA window for this coin
+                                self._reset_dca_window_for_trade(symbol, sold=True)
 
-                            print(f"  Successfully sold {quantity} {symbol}.")
+                                print(f"  Successfully sold {quantity} {symbol}.")
                             time.sleep(5)
                             holdings = self.get_holdings()
                             continue

@@ -1673,15 +1673,20 @@ class CoinbaseExchange(AbstractExchange):
         Returns ``status="pending"`` with Coinbase's order id once Coinbase has
         created the order (``get_order_status`` follows it), or ``"rejected"``
         with the reason when it was not created, by this connector or by
-        Coinbase. ``client_order_id`` is sent as given (a new one otherwise):
-        Coinbase answers a repeated one with the order it already made. An HTTP
-        or network error is raised and the order is not sent again."""
+        Coinbase. ``client_order_id`` is sent exactly as given, and a new one is
+        made only when it is None: Coinbase answers a repeated one with the order
+        it already made. An empty one raises ValueError before anything is sent.
+        An HTTP or network error is raised and the order is not sent again."""
         if price is not None:
             raise ValueError("Coinbase: this version places market orders only")
+        if client_order_id is not None and not str(client_order_id).strip():
+            raise ValueError("Coinbase: client_order_id must not be empty")
         body, refusal = self._market_order(symbol, side, amount)
         if body is None:
             return self._refused(symbol, side, amount, refusal)
-        body = {"client_order_id": client_order_id or str(uuid.uuid4()), **body}
+        if client_order_id is None:
+            client_order_id = str(uuid.uuid4())
+        body = {"client_order_id": client_order_id, **body}
         data = self._order_post("/orders", body)
         if data.get("success"):
             order_id = (data.get("success_response") or {}).get("order_id")

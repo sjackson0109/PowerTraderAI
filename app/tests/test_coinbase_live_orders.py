@@ -244,6 +244,17 @@ class PlaceOrderTests(unittest.TestCase):
                 connector().place_order("BTC-USD", "buy", 0.001, price=60000.0)
         self.assertEqual(rec.calls, [])
 
+    def test_an_empty_client_order_id_is_refused_not_replaced(self):
+        # The caller's id is never swapped for a new one: a blank id raises
+        # before any request, and only a missing (None) id gets a new one.
+        with recorded_http() as rec:
+            for blank in ("", "   "):
+                with self.assertRaises(ValueError):
+                    connector().place_order(
+                        "BTC-USD", "buy", 0.001, client_order_id=blank
+                    )
+        self.assertEqual(rec.calls, [])
+
     def test_an_ed25519_key_refused_for_an_order_names_the_key_type_coinbase_asks_for(
         self,
     ):

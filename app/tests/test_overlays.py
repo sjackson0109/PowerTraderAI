@@ -638,6 +638,7 @@ class TraderRestartTests(PaperTraderCase):
 
     def setUp(self):
         super().setUp()
+        self.one_coin("BTC")
         self.frame = make_candles(wave())
         self.feed = Feed(self.frame)
         sleep = mock.patch.object(self.pt_trader.time, "sleep")

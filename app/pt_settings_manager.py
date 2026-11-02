@@ -105,7 +105,6 @@ DEFAULT_SETTINGS = {
     "strategy": {
         "engine": "catalogue",
         "active_id": "STRAT-001",
-        "symbols": ["BTC"],
         "timeframe": "1h",
         "overlays": [],
     },
@@ -281,13 +280,6 @@ class SettingsValidator:
             "strategy.active_id",
             lambda v: isinstance(v, str) and bool(v.strip()),
             "Active strategy id must be a non-empty string",
-        )
-        self.add_rule(
-            "strategy.symbols",
-            lambda v: isinstance(v, list)
-            and bool(v)
-            and all(isinstance(s, str) and s.strip() for s in v),
-            "Strategy symbols must be a non-empty list of symbol strings",
         )
         self.add_rule(
             "strategy.timeframe",

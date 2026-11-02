@@ -7,6 +7,7 @@ import uuid
 from typing import Any, Dict, Optional
 
 import colorama
+import paper_coins
 import position_sizing
 import pt_paths
 from colorama import Fore, Style
@@ -54,6 +55,8 @@ TERMINAL_ORDER_STATES = frozenset(
 # In preview mode the same order is previewed at most once in this long: an entry
 # signal stands for a whole bar, and nothing is bought to stop it repeating
 PREVIEW_REPEAT_SECONDS = 15 * 60
+# How long a coin's minimum order is kept for telling dust from a position
+DUST_MINIMUM_SECONDS = 60 * 60
 
 
 # Initialize colorama
@@ -379,8 +382,14 @@ class CryptoAPITrading:
         # This mode's own ledger / history / status files
         self._settings = read_trading_settings(self._settings_source)
         if self._settings.is_live and not self._settings.uses_testnet:
-            # books from before each live broker had its own folder move once
-            move_root_live_books(HUB_DATA_DIR, self._settings.active_broker)
+            # books from before each live broker had its own folder move once; a
+            # move that cannot be finished stops the trader before it reads them
+            try:
+                move_root_live_books(HUB_DATA_DIR, self._settings.active_broker)
+            except (OSError, ValueError) as exc:
+                raise LiveTradingRefused(
+                    f"Live trading refused: the live books could not be moved: {exc}"
+                ) from exc
         self.data_dir = os.path.join(HUB_DATA_DIR, self._settings.data_subdir)
         os.makedirs(self.data_dir, exist_ok=True)
         self.trader_status_path = os.path.join(self.data_dir, "trader_status.json")
@@ -419,6 +428,8 @@ class CryptoAPITrading:
                 print(f"{Fore.YELLOW}WARNING: {key.warning}{Style.RESET_ALL}")
                 logger.warning(key.warning)
         self._previewed: Dict[tuple, float] = {}  # (symbol, side) -> last preview
+        # <COIN>-USD -> (when read, the exchange's minimum order) for _is_dust
+        self._dust_minimums: Dict[str, tuple] = {}
 
         print(f"[PowerTrader] Trading target: {self._settings.label}")
         logger.info(f"Trader pinned to target '{self._target.key}'")
@@ -707,6 +718,7 @@ class CryptoAPITrading:
                             buying_power_before=bp_before,
                             buying_power_after=bp_after,
                             buying_power_delta=bp_delta,
+                            closes_position=not getattr(order, "partial", False),
                             **self._provenance(order, self._target),
                         )
 
@@ -742,12 +754,17 @@ class CryptoAPITrading:
         quote_ts: Optional[float] = None,
         age_s: Optional[float] = None,
         price_exchange: Optional[str] = None,
+        closes_position: bool = True,
     ) -> None:
         """
         Minimal local ledger for GUI:
         - append trade_history.jsonl
         - update pnl_ledger.json on sells (now using buying power delta when available)
         - persist per-coin open position cost (USD) so realized profit is exact
+
+        A sell row says whether it ended the trade (``closes_position``): a sell
+        that stopped part-way did not, so the DCA stages and the 24h DCA window
+        rebuilt from the history carry on past it.
         """
         ts = time.time()
 
@@ -893,7 +910,15 @@ class CryptoAPITrading:
             entry["age_s"] = age_s
             entry["price_exchange"] = price_exchange or ""
             self._note_price_event(price_source, ts)
+        if side_l == "sell":
+            entry["closes_position"] = bool(closes_position)
         self._append_jsonl(self.trade_history_path, entry)
+
+    @staticmethod
+    def _sell_ends_trade(entry: dict) -> bool:
+        """A sell row ends the trade unless it says it did not (rows written before
+        ``closes_position`` existed end it, as they always did)."""
+        return entry.get("closes_position") is not False
 
     def _write_trader_status(self, status: dict) -> None:
         self._atomic_write_json(self.trader_status_path, status)
@@ -1133,6 +1158,21 @@ class CryptoAPITrading:
             self._warn_ts[key] = now
             logger.warning(message)
 
+    def _entry_coins(self) -> list:
+        """The coins this trader may open new trades in: the coins in Settings, or in
+        paper mode the paper-trading coins chosen in Settings (paper_coins.py). Held
+        positions are managed whatever this returns."""
+        coins = paper_coins.normalise(crypto_symbols)
+        if not self._settings.is_live:
+            coins = paper_coins.entry_coins(_load_gui_settings(), coins)
+        if coins != getattr(self, "_last_entry_coins", None):
+            self._last_entry_coins = coins
+            print(
+                "[PowerTrader] New trades open in: "
+                + (", ".join(coins) if coins else "no coins")
+            )
+        return coins
+
     def initialize_dca_levels(self):
         """
         Initializes the DCA levels_triggered dictionary from the local trade history:
@@ -1156,7 +1196,9 @@ class CryptoAPITrading:
                     if str(entry.get("symbol", "")).upper().strip() != full_symbol:
                         continue
                     side = str(entry.get("side", "")).lower().strip()
-                    if side in ("buy", "sell"):
+                    if side == "buy" or (
+                        side == "sell" and self._sell_ends_trade(entry)
+                    ):
                         fills.append((float(entry.get("ts")), side))
                 except (TypeError, ValueError):
                     continue
@@ -1165,7 +1207,8 @@ class CryptoAPITrading:
                 print(f"No recorded trades for {full_symbol}. Skipping.")
                 continue
 
-            # Buys after the most recent sell belong to the current trade
+            # Buys after the most recent sell that ended a trade belong to the
+            # current trade (a sell that stopped part-way did not end it)
             last_sell_ts = max(
                 (ts for ts, side in fills if side == "sell"), default=None
             )
@@ -1227,7 +1270,7 @@ class CryptoAPITrading:
                     except Exception:
                         continue
 
-                    if side == "sell":
+                    if side == "sell" and self._sell_ends_trade(obj):
                         prev = float(self._dca_last_sell_ts.get(base, 0.0) or 0.0)
                         if ts_f > prev:
                             self._dca_last_sell_ts[base] = ts_f
@@ -1562,6 +1605,18 @@ class CryptoAPITrading:
             )
             return None
 
+        if order_id and self._trade_history_has_order_id(order_id):
+            # The broker answered with an order already in the books (a repeated
+            # client order id gets the order it already made): one exchange fill is
+            # recorded once, never again.
+            self._clear_pending(order_id)
+            print(f"  Order {order_id} ({symbol} {side}) is already recorded.")
+            logger.warning(
+                f"Order {order_id} ({symbol} {side} via {target.key}) is already in "
+                "the trade history; not recorded again"
+            )
+            return None
+
         # Persist the pre-order buying power so restarts can reconcile precisely
         try:
             if order_id:
@@ -1635,6 +1690,7 @@ class CryptoAPITrading:
             buying_power_before=buying_power_before,
             buying_power_after=buying_power_after,
             buying_power_delta=buying_power_delta,
+            closes_position=not getattr(final, "partial", False),
             **self._provenance(final, target),
         )
         self._clear_pending(order_id)
@@ -1647,6 +1703,8 @@ class CryptoAPITrading:
             "quantity": float(filled_qty),
             "price": float(fill_price) if fill_price is not None else None,
             "mode": target.key,
+            # the order stopped part-way: the rest of the position is still held
+            "partial": bool(getattr(final, "partial", False)),
         }
 
     @staticmethod
@@ -1747,6 +1805,39 @@ class CryptoAPITrading:
         except Exception:
             return None
         return usable_minimum(minimum)
+
+    def _is_dust(self, full_symbol: str, quantity: Any, sell_price: Any) -> bool:
+        """A holding worth less than the smallest order the exchange takes (what a
+        sell rounded down to the exchange's step can leave) cannot be sold, so it
+        is not a position: it does not stop a new entry, and no exit or DCA is
+        tried on it. False when the price or the minimum is not known."""
+        try:
+            value = float(quantity) * float(sell_price)
+        except (TypeError, ValueError):
+            return False
+        if value <= 0.0:
+            return False
+        read = self._dust_minimums.get(full_symbol)
+        if read is None or time.time() - read[0] > DUST_MINIMUM_SECONDS:
+            read = (time.time(), self._minimum_order_usd(full_symbol))
+            self._dust_minimums[full_symbol] = read
+        minimum = read[1]
+        return bool(minimum) and value < float(minimum)
+
+    def _held_symbols(self, holdings: Any, sell_prices: Dict[str, Any]) -> list:
+        """``<COIN>-USD`` for each holding that is a position (dust left out)."""
+        held = []
+        for holding in (
+            holdings.get("results", []) if isinstance(holdings, dict) else []
+        ):
+            full_symbol = f"{holding['asset_code']}-USD"
+            if not self._is_dust(
+                full_symbol,
+                holding.get("total_quantity", 0.0),
+                sell_prices.get(full_symbol, 0.0),
+            ):
+                held.append(full_symbol)
+        return held
 
     def place_buy_order(
         self,
@@ -2190,6 +2281,17 @@ class CryptoAPITrading:
             else:
                 print("  PM/Trail: N/A (avg_cost_basis is 0)")
 
+            # A remainder too small to sell is shown above but left alone: no exit
+            # or DCA on it (the exchange would refuse the order every cycle).
+            if self._is_dust(full_symbol, quantity, current_sell_price):
+                self._warn_throttled(
+                    f"dust:{symbol}",
+                    f"{quantity:g} {symbol} is worth less than the smallest order the "
+                    "exchange takes; it is left alone and does not stop a new trade.",
+                    every=3600.0,
+                )
+                continue
+
             # --- Catalogue engine: the strategy (+ overlays) own the exit ---------------
             # Legacy trailing-PM sells and DCA buys below are skipped in this mode.
             # Only positions this trader opened (they have a ledger cost basis) are
@@ -2222,14 +2324,22 @@ class CryptoAPITrading:
                             and "errors" not in response
                         ):
                             trades_made = True
-                            self.signal_engine.record_exit(
-                                symbol,
-                                response.get("price") or current_sell_price,
-                                decision.bar_time,
-                            )
-                            self.trailing_pm.pop(symbol, None)
-                            self._reset_dca_window_for_trade(symbol, sold=True)
-                            print(f"  Successfully sold {exit_qty} {symbol}.")
+                            if response.get("partial"):
+                                # Part of the position is still held: its strategy
+                                # position and stops stay, so the exit sells the rest.
+                                print(
+                                    f"  Sold {response.get('quantity')} of {exit_qty} "
+                                    f"{symbol}; the rest is still held."
+                                )
+                            else:
+                                self.signal_engine.record_exit(
+                                    symbol,
+                                    response.get("price") or current_sell_price,
+                                    decision.bar_time,
+                                )
+                                self.trailing_pm.pop(symbol, None)
+                                self._reset_dca_window_for_trade(symbol, sold=True)
+                                print(f"  Successfully sold {exit_qty} {symbol}.")
                             time.sleep(5)
                             holdings = self.get_holdings()
                 elif avg_cost_basis <= 0:
@@ -2328,14 +2438,23 @@ class CryptoAPITrading:
                             and "errors" not in response
                         ):
                             trades_made = True
-                            self.trailing_pm.pop(
-                                symbol, None
-                            )  # clear per-coin trailing state on exit
+                            if response.get("partial"):
+                                # Part of the position is still held: the trailing
+                                # line (still crossed) and the DCA window stay, so the
+                                # next cycle sells the rest.
+                                print(
+                                    f"  Sold {response.get('quantity')} of {quantity} "
+                                    f"{symbol}; the rest is still held."
+                                )
+                            else:
+                                self.trailing_pm.pop(
+                                    symbol, None
+                                )  # clear per-coin trailing state on exit
 
-                            # Trade ended -> reset rolling 24h DCA window for this coin
-                            self._reset_dca_window_for_trade(symbol, sold=True)
+                                # Trade ended -> reset rolling 24h DCA window for this coin
+                                self._reset_dca_window_for_trade(symbol, sold=True)
 
-                            print(f"  Successfully sold {quantity} {symbol}.")
+                                print(f"  Successfully sold {quantity} {symbol}.")
                             time.sleep(5)
                             holdings = self.get_holdings()
                             continue
@@ -2496,10 +2615,9 @@ class CryptoAPITrading:
         if not trading_pairs:
             return
 
-        holding_full_symbols = [
-            f"{h['asset_code']}-USD" for h in holdings.get("results", [])
-        ]
+        holding_full_symbols = self._held_symbols(holdings, current_sell_prices)
 
+        entry_coins = set(self._entry_coins())
         start_index = 0
         while start_index < len(crypto_symbols):
             base_symbol = crypto_symbols[start_index].upper().strip()
@@ -2507,6 +2625,11 @@ class CryptoAPITrading:
 
             # Skip if already held
             if full_symbol in holding_full_symbols:
+                start_index += 1
+                continue
+
+            # Paper trading may be limited to some of the coins (Settings)
+            if base_symbol not in entry_coins:
                 start_index += 1
                 continue
 
@@ -2587,9 +2710,7 @@ class CryptoAPITrading:
                     )
                 time.sleep(5)
                 holdings = self.get_holdings()
-                holding_full_symbols = [
-                    f"{h['asset_code']}-USD" for h in holdings.get("results", [])
-                ]
+                holding_full_symbols = self._held_symbols(holdings, current_sell_prices)
 
             start_index += 1
 

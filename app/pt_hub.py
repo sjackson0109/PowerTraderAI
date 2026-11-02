@@ -37,6 +37,7 @@ if __name__ == "__main__":
     sys.dont_write_bytecode = True
 
 import chart_settings
+import paper_coins
 import position_sizing
 import pt_paths
 import ui_theme
@@ -563,6 +564,10 @@ DEFAULT_SETTINGS = {
     # While paper, the hub paints blue (not black) and shows a PAPER TRADING
     # banner + label so the user cannot mistake it for live trading.
     PAPER_MODE_BALANCE_KEY: 10000.0,
+    # Paper trading opens new trades in the coins above ("inherit") or in a chosen set
+    # of them ("override"); see paper_coins.py. Live trading uses the coins above.
+    paper_coins.MODE_KEY: paper_coins.INHERIT,
+    paper_coins.COINS_KEY: [],
 }
 
 
@@ -2120,9 +2125,10 @@ class PowerTraderHub(tk.Tk):
         if self._trading.is_live and not self._trading.uses_testnet:
             try:  # books from before each live broker had its own folder move once
                 move_root_live_books(self.hub_dir, self._trading.active_broker)
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 print(f"Live books not moved: {exc}")
         trader_dir = os.path.join(self.hub_dir, self._trading.data_subdir)
+        self._books_dir = trader_dir  # the public API serves the same books
         self.trader_status_path = os.path.join(trader_dir, "trader_status.json")
         self.trade_history_path = os.path.join(trader_dir, "trade_history.jsonl")
         self.pnl_ledger_path = os.path.join(trader_dir, "pnl_ledger.json")
@@ -7856,6 +7862,86 @@ Platform: {sys.platform}
         ).grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
         r += 1
 
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        )
+        r += 1
+
+        # --- Paper trading ---
+        ttk.Label(frm, text="Paper trading", font=ui_tokens.font("body", "bold")).grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
+        )
+        r += 1
+
+        # The coins paper trading opens new trades in: the coins above, or a chosen
+        # set of them (paper_coins.py)
+        paper_mode_var = tk.StringVar(master=win, value=paper_coins.mode(self.settings))
+        saved_paper_coins = paper_coins.chosen(self.settings)
+        paper_coin_vars: Dict[str, tk.BooleanVar] = {}
+
+        ttk.Label(frm, text="Paper-trading coins:").grid(
+            row=r, column=0, sticky="nw", padx=(0, 10), pady=6
+        )
+        paper_box = ttk.Frame(frm)
+        paper_box.grid(row=r, column=1, columnspan=2, sticky="ew", pady=6)
+        ttk.Radiobutton(
+            paper_box,
+            text="Inherit coins from main settings",
+            value=paper_coins.INHERIT,
+            variable=paper_mode_var,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            paper_box,
+            text="Override paper-trading coins:",
+            value=paper_coins.OVERRIDE,
+            variable=paper_mode_var,
+        ).grid(row=1, column=0, sticky="w")
+        paper_coin_frame = ttk.Frame(paper_box)
+        paper_coin_frame.grid(
+            row=2, column=0, sticky="w", padx=(ui_tokens.SPACE["xxl"], 0), pady=(2, 0)
+        )
+        ttk.Label(
+            paper_box,
+            wraplength=520,
+            text=(
+                "New paper trades open only in these coins. A position already held "
+                "is still sold by its exit rules. Live trading uses the coins above."
+            ),
+        ).grid(row=3, column=0, sticky="w", pady=(4, 0))
+
+        def _typed_coins() -> List[str]:
+            return paper_coins.normalise(coins_var.get().split(","))
+
+        def _show_paper_coins(*_) -> None:
+            """One tick box per coin above, usable when overriding. A coin keeps its
+            tick while the list above is edited."""
+            for child in paper_coin_frame.winfo_children():
+                child.destroy()
+            override = paper_mode_var.get() == paper_coins.OVERRIDE
+            for i, coin in enumerate(_typed_coins()):
+                var = paper_coin_vars.get(coin)
+                if var is None:
+                    # nothing chosen yet: start from every coin above
+                    ticked = coin in saved_paper_coins if saved_paper_coins else True
+                    var = paper_coin_vars[coin] = tk.BooleanVar(
+                        master=win, value=ticked
+                    )
+                box = ttk.Checkbutton(paper_coin_frame, text=coin, variable=var)
+                box.grid(row=i // 8, column=i % 8, sticky="w", padx=(0, 10))
+                box.state(["!disabled"] if override else ["disabled"])
+
+        def _ticked_paper_coins() -> List[str]:
+            return [
+                c
+                for c in _typed_coins()
+                if c in paper_coin_vars and paper_coin_vars[c].get()
+            ]
+
+        _show_paper_coins()
+        coins_var.trace_add("write", _show_paper_coins)
+        paper_mode_var.trace_add("write", _show_paper_coins)
+        r += 1
+
         # Paper account: the paper trader's book (balances and positions)
         ttk.Button(
             frm,
@@ -8008,6 +8094,17 @@ Platform: {sys.platform}
         btns.columnconfigure(0, weight=1)
 
         def save():
+            # checked before anything changes, so a refused save changes nothing
+            paper_mode = paper_mode_var.get()
+            paper_ticked = _ticked_paper_coins()
+            if paper_mode == paper_coins.OVERRIDE and not paper_ticked:
+                messagebox.showerror(
+                    "Paper trading",
+                    "Tick at least one paper-trading coin, or choose "
+                    "Inherit coins from main settings.",
+                    parent=win,
+                )
+                return
             try:
                 # Track coins before changes so we can detect newly added coins
                 prev_coins = set(
@@ -8128,6 +8225,11 @@ Platform: {sys.platform}
                 self.settings["trailing_gap_pct"] = tg
 
                 self.settings["hub_data_dir"] = hub_dir_var.get().strip()
+
+                # --- Paper trading coins (an inherit keeps the chosen coins for later)
+                self.settings[paper_coins.MODE_KEY] = paper_mode
+                if paper_mode == paper_coins.OVERRIDE:
+                    self.settings[paper_coins.COINS_KEY] = paper_ticked
 
                 # --- Exchange Provider Settings ---
                 self.settings["region"] = region_var.get().strip()
@@ -8257,6 +8359,7 @@ Platform: {sys.platform}
                 hub_data_dir=self.hub_dir,
                 port=self._api_server_port,
                 host=self._api_server_host,
+                books_dir=self._books_dir,
             )
 
             if self._api_server_enabled:

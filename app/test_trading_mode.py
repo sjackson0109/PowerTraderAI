@@ -764,6 +764,9 @@ class UiHelperTests(unittest.TestCase):
         dialog._refresh()
         self.assertEqual(str(dialog.apply_btn.cget("state")), "normal")
         dialog._apply()
+        deadline = time.monotonic() + 5.0
+        while dialog._checking and time.monotonic() < deadline:
+            root.update()  # the key check runs on a worker thread
         self.assertEqual(key_checks, [("kraken", False)])  # the key is checked first
         self.assertEqual(applied[0], ("live", "kraken", True))
         self.assertEqual(applied[1], ("applied", "MODE: LIVE — kraken"))

@@ -106,6 +106,19 @@ The PowerTraderAI+ desktop application (`pt_hub.py`) provides a comprehensive gr
 - **Auto Best Price**: Automatically route orders to exchange with best prices
 - **Exchange Setup**: Launch credential configuration wizard
 
+### Paper Trading Settings
+
+#### Paper-trading coins
+**Purpose**: The coins paper trading opens new trades in.
+
+- **Inherit coins from main settings** (the default): every coin in **Coins**.
+- **Override paper-trading coins**: only the coins you tick. There is one tick box for each coin in **Coins**. The first time you override, every coin starts ticked; once an override is saved, a coin added to **Coins** starts unticked. At least one coin must be ticked.
+- A position already held is still sold by its exit rules after its coin is unticked.
+- Live trading always uses every coin in **Coins**.
+
+#### Paper Account
+**Paper Account...** sets the starting balance, the cash and the positions the paper trader starts from.
+
 ### Performance Settings
 
 #### UI Refresh Settings

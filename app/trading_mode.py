@@ -85,6 +85,8 @@ LIVE_BOOK_FILES = (
     "trader_status.json",
     "strategy_state.json",
 )
+# Written in live/<broker>/ while that move runs; lists the files still to move
+LIVE_BOOKS_MOVE_MARKER = "moving_live_books.json"
 
 PAPER_BALANCE_ASSET = "USD"
 
@@ -1160,11 +1162,14 @@ class OrderTarget:
         client_order_id: Optional[str] = None,
     ) -> OrderResult:
         """The order, or in preview mode the broker's preview of it (an OrderResult
-        with status "preview"). ``client_order_id`` goes to a connector that takes
-        one (it makes the order idempotent); one that does not still works."""
+        with status "preview"). ``client_order_id`` goes unchanged to a connector
+        that takes one (it makes the order idempotent); one that does not still
+        works."""
         if self.preview:
             return self.exchange.preview_order(symbol, side, amount)
-        if client_order_id and _takes_client_order_id(self.exchange.place_order):
+        if client_order_id is not None and _takes_client_order_id(
+            self.exchange.place_order
+        ):
             return self.exchange.place_order(
                 symbol, side, amount, price, client_order_id=client_order_id
             )
@@ -1268,13 +1273,27 @@ def move_root_live_books(hub_dir: str, broker: Optional[str]) -> Optional[str]:
     shared them) into ``live/<broker>/``, after copying them to a backup folder.
 
     Returns the folder they moved to, or None when nothing moved. Books are never
-    merged: when ``live/<broker>/`` already has books, nothing moves."""
+    merged: when ``live/<broker>/`` already has books, nothing moves.
+
+    The files to move are written to a marker in ``live/<broker>/`` first. A move
+    that stopped part-way is finished on the next call, into the broker folder it
+    started for (whichever broker is chosen now), before anything else moves or
+    any book is read. Raises OSError (ValueError for an unreadable marker) while
+    it cannot be finished; the trader does not start on a half-moved set of books."""
     if not broker:
         return None
+    dest = os.path.join(hub_dir, LIVE_DATA_SUBDIR, broker)
+    finished = None
+    for folder in _unfinished_live_book_moves(hub_dir):
+        logger.warning(f"Finishing an earlier move of the live books into {folder}")
+        done = _finish_live_books_move(hub_dir, folder)
+        if os.path.normcase(folder) == os.path.normcase(dest):
+            finished = done
+    if finished is not None:
+        return finished
     present = [n for n in LIVE_BOOK_FILES if os.path.isfile(os.path.join(hub_dir, n))]
     if not present:
         return None
-    dest = os.path.join(hub_dir, LIVE_DATA_SUBDIR, broker)
     if any(os.path.exists(os.path.join(dest, n)) for n in LIVE_BOOK_FILES):
         logger.warning(
             f"Live books found in {hub_dir} and in {dest}; left as they are (books "
@@ -1287,8 +1306,48 @@ def move_root_live_books(hub_dir: str, broker: Optional[str]) -> Optional[str]:
     for name in present:
         shutil.copy2(os.path.join(hub_dir, name), os.path.join(backup, name))
     os.makedirs(dest, exist_ok=True)
+    with open(os.path.join(dest, LIVE_BOOKS_MOVE_MARKER), "w", encoding="utf-8") as f:
+        json.dump({"files": present, "backup": backup}, f)
+    return _finish_live_books_move(hub_dir, dest)
+
+
+def _unfinished_live_book_moves(hub_dir: str) -> list:
+    """The ``live/<broker>/`` folders whose move from the hub folder has a marker."""
+    live = os.path.join(hub_dir, LIVE_DATA_SUBDIR)
+    try:
+        names = sorted(os.listdir(live))
+    except OSError:
+        return []
+    return [
+        os.path.join(live, n)
+        for n in names
+        if os.path.isfile(os.path.join(live, n, LIVE_BOOKS_MOVE_MARKER))
+    ]
+
+
+def _finish_live_books_move(hub_dir: str, dest: str) -> str:
+    """Move the books the marker in ``dest`` lists from the hub folder into
+    ``dest``, then remove the marker. A book already in ``dest`` was moved."""
+    marker = os.path.join(dest, LIVE_BOOKS_MOVE_MARKER)
+    with open(marker, encoding="utf-8") as f:
+        started = json.load(f)
+    present = [n for n in started.get("files", []) if n in LIVE_BOOK_FILES]
+    backup = str(started.get("backup", ""))
     for name in present:
-        os.replace(os.path.join(hub_dir, name), os.path.join(dest, name))
+        source, target = os.path.join(hub_dir, name), os.path.join(dest, name)
+        if os.path.isfile(source) and os.path.exists(target):
+            raise OSError(
+                f"Live book {name} is in both {hub_dir} and {dest}; the move was not "
+                f"finished (a copy from before the move is in {backup})"
+            )
+        if os.path.isfile(source):
+            os.replace(source, target)
+        elif not os.path.exists(target):
+            raise OSError(
+                f"Live book {name} is in neither {hub_dir} nor {dest}; the move was "
+                f"not finished (a copy from before the move is in {backup})"
+            )
+    os.remove(marker)
     logger.info(f"Moved the live books {present} to {dest} (backup in {backup})")
     return dest
 

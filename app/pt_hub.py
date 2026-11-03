@@ -2653,8 +2653,9 @@ class PowerTraderHub(tk.Tk):
 
                 min_left = 360
                 min_right = 520
-                # 438: the coin table's three columns with no spare strip (owner, 2026-10-14)
-                desired_left = 438
+                # 402: the coin table's three columns with no spare strip right of
+                # them (owner: 438 on 2026-10-14, 36 px less on 2026-11-02)
+                desired_left = 402
                 target = max(min_left, min(total - min_right, desired_left))
                 outer.sashpos(0, int(target))
 
@@ -2705,7 +2706,9 @@ class PowerTraderHub(tk.Tk):
 
         trader_row = ttk.Frame(acct_box)
         trader_row.grid(row=0, column=0, columnspan=4, sticky="ew", padx=4, pady=(1, 2))
-        # buttons first: a narrow pane then clips the exchange text, not them
+        # Exchange on the left; Trader on the right, next to its start/stop buttons.
+        # Packed buttons first, then Trader, then Exchange: a narrow pane clips the
+        # exchange text, never the trader or its buttons.
         self.btn_stop_trader = ttk.Button(
             trader_row,
             text="■",
@@ -2723,29 +2726,36 @@ class PowerTraderHub(tk.Tk):
         )
         self.btn_start_trader.pack(side="right", padx=(0, 0), pady=0, ipady=0)
         ToolTip(self.btn_start_trader, "Start trader")
-        ttk.Label(
-            trader_row,
-            text="Trader:",
-            font=ui_tokens.font("caption"),
-            foreground=p["MUTED"],
-        ).pack(side="left")
         self.lbl_trader = ttk.Label(
             trader_row,
             text="stopped",
             font=ui_tokens.font("caption"),
             foreground=p["ACCENT2"],
         )
-        self.lbl_trader.pack(side="left", padx=(2, 12))
+        self.lbl_trader.pack(side="right", padx=(2, 6))
+        ttk.Label(
+            trader_row,
+            text="Trader:",
+            font=ui_tokens.font("caption"),
+            foreground=p["MUTED"],
+        ).pack(side="right")
 
         # Exchange status (click for details)
+        self.lbl_exchange_key = ttk.Label(
+            trader_row,
+            text="Exchange:",
+            font=ui_tokens.font("caption"),
+            foreground=p["MUTED"],
+        )
+        self.lbl_exchange_key.pack(side="left")
         self.lbl_exchange = ttk.Label(
             trader_row,
-            text="Exchange: Checking...",
+            text="Checking...",
             font=ui_tokens.font("caption"),
-            foreground=p["ACCENT2"],
+            foreground=p["MUTED"],
             cursor="hand2",
         )
-        self.lbl_exchange.pack(side="left")
+        self.lbl_exchange.pack(side="left", padx=(2, 0))
 
         def _figure(row: int, col: int, key: str, attr: str) -> None:
             ttk.Label(
@@ -8343,8 +8353,9 @@ Platform: {sys.platform}
 
         except Exception as e:
             self._exchange_status = {
-                "status": "Error",
+                "status": "check failed",
                 "details": f"Failed to initialize: {str(e)}",
+                "tone": "bad",
             }
             print(f"Exchange system initialization error: {e}")
 
@@ -8407,12 +8418,13 @@ Platform: {sys.platform}
 
     def _exchange_status_once(
         self, primary_exchange: str, trading: Optional[TradingSettings] = None
-    ) -> Tuple[str, str]:
-        """One status check for the Exchange line: ``(status, details)``.
+    ) -> Tuple[str, str, str]:
+        """One status check for the Exchange line: ``(status, details, tone)``.
 
         In live mode it names the live broker, "(live orders)", "(preview orders)"
-        or "(testnet orders)"; in paper mode the primary exchange, "(prices)". It
-        asks the exchange's own connector for a public BTC price (no key needed)."""
+        or "(testnet orders)"; in paper mode the primary exchange's name alone. It
+        asks the exchange's own connector for a public BTC price (no key needed).
+        ``tone`` colours the line: "ok", "warn" (no price) or "bad"."""
         live = trading is not None and trading.is_live and trading.active_broker
         if live:
             primary_exchange = trading.active_broker
@@ -8433,26 +8445,36 @@ Platform: {sys.platform}
                 cache[primary_exchange] = exchange
             price = float(exchange.get_current_price("BTC-USD"))
         except Exception as exc:
-            return f"❌ {name}", f"No price from {primary_exchange}: {str(exc)[:160]}"
+            return (
+                f"{name} (no prices)",
+                f"No price from {primary_exchange}: {str(exc)[:160]}",
+                "bad",
+            )
         if price <= 0:
-            return f"⚠️ {name}", f"{primary_exchange} answered but gave no price"
+            return (
+                f"{name} (no prices)",
+                f"{primary_exchange} answered but gave no price",
+                "warn",
+            )
         if not live:
             return (
-                f"✅ {name} (prices)",
-                f"Prices OK | BTC ${price:,.2f} | the primary exchange for prices",
+                name,
+                f"Prices OK | BTC ${price:,.2f} | the primary exchange for market data",
+                "ok",
             )
         if not getattr(exchange, "SUPPORTS_LIVE_ORDERS", False):
             return (
-                f"❌ {name} (no live orders)",
+                f"{name} (no live orders)",
                 f"Prices OK | BTC ${price:,.2f} | this version cannot place orders on "
                 f"{primary_exchange}",
+                "bad",
             )
         orders = (
             "testnet orders"
             if trading.uses_testnet
             else "preview orders" if trading.uses_preview else "live orders"
         )
-        return f"✅ {name} ({orders})", f"Prices OK | BTC ${price:,.2f} | {orders}"
+        return f"{name} ({orders})", f"Prices OK | BTC ${price:,.2f} | {orders}", "ok"
 
     def _check_exchange_status_worker(self):
         """Background worker to check exchange connectivity. It only sets
@@ -8474,23 +8496,29 @@ Platform: {sys.platform}
                 # Skip if no primary exchange (or, live, no broker) is configured
                 if not primary_exchange and not live_broker:
                     self._exchange_status = {
-                        "status": "No exchange configured",
+                        "status": "none configured",
                         "details": "Configure API credentials in Settings to enable trading",
+                        "tone": "warn",
                     }
                     time.sleep(30)
                     continue
 
-                status, details = self._exchange_status_once(
+                status, details, tone = self._exchange_status_once(
                     primary_exchange or live_broker, trading
                 )
 
                 # Update status
-                self._exchange_status = {"status": status, "details": details}
+                self._exchange_status = {
+                    "status": status,
+                    "details": details,
+                    "tone": tone,
+                }
 
             except Exception as e:
                 self._exchange_status = {
-                    "status": "Error",
+                    "status": "check failed",
                     "details": f"Status check failed: {str(e)}",
+                    "tone": "bad",
                 }
 
             # Check every 30 seconds
@@ -8500,8 +8528,17 @@ Platform: {sys.platform}
         """Update the exchange status label in the GUI"""
         try:
             if hasattr(self, "lbl_exchange"):
-                status_text = f"Exchange: {self._exchange_status['status']}"
-                self.lbl_exchange.config(text=status_text)
+                # the colour says the state ("Exchange:" is the grey key beside it)
+                tone = self._exchange_status.get("tone", "wait")
+                p = ui_theme.active_palette()
+                colour = {
+                    "ok": p["ACCENT2"],
+                    "warn": ui_tokens.STATUS["warn"],
+                    "bad": ui_tokens.STATUS["bad"],
+                }.get(tone, p["MUTED"])
+                self.lbl_exchange.config(
+                    text=self._exchange_status["status"], foreground=colour
+                )
 
                 # Set tooltip with details if available
                 if self._exchange_status.get("details"):

@@ -202,7 +202,7 @@ previewed at most once every 15 minutes.
 
 The hub's **Exchange** line shows `COINBASE (preview orders)` in this mode, and
 `COINBASE (live orders)` once preview is turned off. In paper mode it names the
-primary exchange: `COINBASE (prices)`.
+primary exchange alone: `COINBASE`.
 
 ### What PowerTraderAI+ sends to Coinbase
 - **Market orders only**, as immediate-or-cancel (`market_market_ioc`). No limit,

@@ -25,7 +25,7 @@ The PowerTraderAI+ desktop application (`pt_hub.py`) provides a comprehensive gr
 #### System Status
 - **Neural: running/stopped** - Neural network analysis engine
 - **Trading: running/stopped** - Automated trading engine
-- **Exchange: COINBASE** - In paper mode: the primary exchange, which gives the prices, candles and minimum order sizes
+- **Exchange: Coinbase** - In paper mode: the primary exchange, which gives the prices, candles and minimum order sizes
 - **Last status: [timestamp]** - Most recent system update
 
 #### Exchange line
@@ -34,13 +34,13 @@ start and stop buttons. Its colour gives the state: the accent colour when the e
 answers, red when it does not (orange when it answers without a price), grey while
 checking.
 
-- **Paper mode** names the primary exchange: `COINBASE`.
+- **Paper mode** names the primary exchange: `Coinbase`.
 - **Live mode** names the broker orders go to:
-  - `COINBASE (live orders)`: real orders.
-  - `COINBASE (preview orders)`: **Preview orders only** is ticked; nothing is bought or sold.
-  - `BINANCE (testnet orders)`: Binance's test network.
-  - `KRAKEN (no live orders)`, in red: this version cannot place orders on that exchange.
-- `COINBASE (no prices)`, in red: no price from that exchange; click the line for the error.
+  - `Coinbase (live orders)`: real orders.
+  - `Coinbase (preview orders)`: **Preview orders only** is ticked; nothing is bought or sold.
+  - `Binance (testnet orders)`: Binance's test network.
+  - `Kraken (no live orders)`, in red: this version cannot place orders on that exchange.
+- `Coinbase (no prices)`, in red: no price from that exchange; click the line for the error.
 - **Checking...** - Status verification in progress
 
 ### Trading Mode

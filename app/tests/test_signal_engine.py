@@ -555,7 +555,7 @@ class HubNoteTests(unittest.TestCase):
         ind.update_settings(live)
         ind.update_signals_note("SIGNALS: LEGACY (UNTRAINED)")
         self.assertEqual(
-            ind.cget("text"), "MODE: LIVE — kraken · SIGNALS: LEGACY (UNTRAINED)"
+            ind.cget("text"), "MODE: LIVE — Kraken · SIGNALS: LEGACY (UNTRAINED)"
         )
 
 

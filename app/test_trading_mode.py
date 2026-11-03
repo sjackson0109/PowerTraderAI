@@ -194,7 +194,7 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(paper.label, "MODE: PAPER")
         self.assertEqual(paper.data_subdir, "paper")
         live = tm.read_trading_settings(LIVE_KRAKEN)
-        self.assertEqual(live.label, "MODE: LIVE — kraken")
+        self.assertEqual(live.label, "MODE: LIVE — Kraken")
         # each live broker has its own books (FDS-LIVE-001 D5)
         self.assertEqual(live.data_subdir, os.path.join("live", "kraken"))
         testnet = tm.read_trading_settings(
@@ -300,7 +300,7 @@ class ApplyModeTests(unittest.TestCase):
             tm.apply_trading_mode(
                 "live", broker="kraken", live_confirmed=True, manager=self.manager
             )
-        self.assertIn("cannot place orders on 'kraken'", str(caught.exception))
+        self.assertIn("cannot place orders on Kraken", str(caught.exception))
         self.assertEqual(
             tm.read_trading_settings(self.manager.settings_path).key, "paper"
         )
@@ -326,7 +326,7 @@ class ApplyModeTests(unittest.TestCase):
             live_confirmed=True,
             manager=self.manager,
         )
-        self.assertEqual(result.label, "MODE: LIVE — binance")
+        self.assertEqual(result.label, "MODE: LIVE — Binance")
         self.assertEqual(
             tm.read_trading_settings(self.manager.settings_path).key, "live:binance"
         )
@@ -755,7 +755,9 @@ class UiHelperTests(unittest.TestCase):
         dialog._refresh()
         self.assertEqual(str(dialog.apply_btn.cget("state")), "disabled")  # no broker
 
-        dialog.broker_var.set("kraken")
+        # the brokers are listed by name; the id is what is applied
+        self.assertEqual(list(dialog.broker_cb.cget("values")), ["Binance", "Kraken"])
+        dialog.broker_var.set("Kraken")
         dialog._refresh()
         self.assertEqual(str(dialog.apply_btn.cget("state")), "disabled")  # unconfirmed
         self.assertEqual(dialog.confirm_cb.cget("text"), tm.LIVE_CONFIRM_TEXT)
@@ -769,7 +771,7 @@ class UiHelperTests(unittest.TestCase):
             root.update()  # the key check runs on a worker thread
         self.assertEqual(key_checks, [("kraken", False)])  # the key is checked first
         self.assertEqual(applied[0], ("live", "kraken", True))
-        self.assertEqual(applied[1], ("applied", "MODE: LIVE — kraken"))
+        self.assertEqual(applied[1], ("applied", "MODE: LIVE — Kraken"))
 
         # flipping back to paper clears the confirmation again
         dialog2 = TradingModeDialog(
@@ -799,7 +801,7 @@ class UiHelperTests(unittest.TestCase):
         # paper: the banner's PAPER TRADING title says the mode; nothing reported yet
         self.assertEqual(indicator.cget("text"), "")
         indicator.update_settings(tm.read_trading_settings(LIVE_KRAKEN))
-        self.assertEqual(indicator.cget("text"), "MODE: LIVE — kraken")
+        self.assertEqual(indicator.cget("text"), "MODE: LIVE — Kraken")
 
 
 class PaperBookFileTests(unittest.TestCase):

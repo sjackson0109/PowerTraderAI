@@ -531,9 +531,9 @@ def test_the_exchange_line_shows_its_state_by_colour_not_an_icon(hub):
 
     p = ui_theme.active_palette()
     for status, tone, colour in (
-        ("COINBASE", "ok", p["ACCENT2"]),
-        ("COINBASE (no prices)", "warn", ui_tokens.STATUS["warn"]),
-        ("KRAKEN (no live orders)", "bad", ui_tokens.STATUS["bad"]),
+        ("Coinbase", "ok", p["ACCENT2"]),
+        ("Coinbase (no prices)", "warn", ui_tokens.STATUS["warn"]),
+        ("Kraken (no live orders)", "bad", ui_tokens.STATUS["bad"]),
     ):
         hub._exchange_status = {"status": status, "details": "d", "tone": tone}
         hub._update_exchange_status_display()
@@ -706,7 +706,7 @@ def test_switching_to_live_and_back_moves_the_mode_strip(hub):
     )
     assert hub._paper_banner is None
     assert hub.pack_slaves()[0] is strip
-    assert str(strip.cget("text")).startswith("MODE: LIVE — kraken")
+    assert str(strip.cget("text")).startswith("MODE: LIVE — Kraken")
     hub._on_trading_mode_applied(
         tm.read_trading_settings({"trading": {"mode": "paper"}})
     )

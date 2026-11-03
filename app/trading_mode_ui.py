@@ -20,6 +20,7 @@ from tkinter import messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional
 
 import ui_tokens
+from pt_exchange_abstraction import exchange_id, exchange_name
 from trading_mode import (
     LIVE_CONFIRM_TEXT,
     TESTNET_BROKERS,
@@ -147,7 +148,8 @@ class TradingModeDialog(tk.Toplevel):
         self._previews_fn = previews_fn
 
         self.mode_var = tk.StringVar(value="live" if current.is_live else "paper")
-        self.broker_var = tk.StringVar(value=current.active_broker or "")
+        # the broker by name ("Coinbase"); _selected_broker gives its id
+        self.broker_var = tk.StringVar(value=exchange_name(current.active_broker))
         self.testnet_var = tk.BooleanVar(value=current.testnet)
         # on unless the saved setting for this broker is off (the safe choice)
         self.preview_var = tk.BooleanVar(
@@ -184,7 +186,7 @@ class TradingModeDialog(tk.Toplevel):
         self.broker_cb = ttk.Combobox(
             body,
             textvariable=self.broker_var,
-            values=sorted(brokers),
+            values=sorted((exchange_name(b) for b in brokers), key=str.lower),
             state="readonly",
             width=24,
         )
@@ -240,7 +242,7 @@ class TradingModeDialog(tk.Toplevel):
         self.grab_set()
 
     def _selected_broker(self) -> Optional[str]:
-        return self.broker_var.get().strip() or None
+        return exchange_id(self.broker_var.get()) or None
 
     def _refresh(self) -> None:
         live = self.mode_var.get() == "live"
@@ -283,13 +285,13 @@ class TradingModeDialog(tk.Toplevel):
             self.note_var.set("Tick the confirmation box to enable Apply.")
         elif previews and self.preview_var.get():
             self.note_var.set(
-                f"Restart the trader after applying. {broker.title()} shows each "
-                "order the trader would place; nothing is bought or sold."
+                f"Restart the trader after applying. {exchange_name(broker)} shows "
+                "each order the trader would place; nothing is bought or sold."
             )
         elif broker not in TESTNET_BROKERS:
             self.note_var.set(
-                f"{broker.title()} has no test network: live orders use real money. "
-                "Restart the trader after applying."
+                f"{exchange_name(broker)} has no test network: live orders use real "
+                "money. Restart the trader after applying."
             )
         else:
             self.note_var.set(

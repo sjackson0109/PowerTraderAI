@@ -17,6 +17,7 @@ from typing import Callable, Dict, Iterable, List, Optional
 
 import exchange_check
 import ui_tokens
+from pt_exchange_abstraction import exchange_name
 
 TITLE = "Check Exchanges"
 MARKS = {True: "PASS", False: "FAIL", None: "n/a"}
@@ -88,7 +89,7 @@ class ExchangeCheckWindow(tk.Toplevel):
         for i, name in enumerate(exchanges):
             var = tk.BooleanVar(master=self, value=True)
             self.exchange_vars[name] = var
-            label = f"{name} (primary)" if name == primary else name
+            label = exchange_name(name) + (" (primary)" if name == primary else "")
             ttk.Checkbutton(ex_frame, text=label, variable=var).grid(
                 row=0, column=i, sticky="w", padx=(0, 14)
             )
@@ -168,7 +169,7 @@ class ExchangeCheckWindow(tk.Toplevel):
         self.results = []
         self._stop.clear()
         auth = bool(self.auth_var.get())
-        self.status_var.set(f"Checking {', '.join(names)}...")
+        self.status_var.set(f"Checking {', '.join(map(exchange_name, names))}...")
         self.run_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
 
@@ -228,7 +229,12 @@ class ExchangeCheckWindow(tk.Toplevel):
         row = self.tree.insert(
             "",
             "end",
-            values=(result.exchange, result.check, MARKS[result.ok], result.detail),
+            values=(
+                exchange_name(result.exchange),
+                result.check,
+                MARKS[result.ok],
+                result.detail,
+            ),
             tags=(tag,),
         )
         self.tree.see(row)

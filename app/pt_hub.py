@@ -68,6 +68,8 @@ from trading_mode import (
 )
 from trading_mode_ui import TradingModeDialog, TradingModeIndicator, pack_at_top
 
+from pt_exchange_abstraction import exchange_id, exchange_name
+
 # Multi-exchange imports
 try:
     from pt_exchange_abstraction import ExchangeFactory, ExchangeType
@@ -7809,12 +7811,20 @@ Platform: {sys.platform}
         ttk.Label(frm, text="Primary exchange:").grid(
             row=r, column=0, sticky="w", padx=(0, 10), pady=6
         )
-        # The user's choice is shown and kept as it is: the window never fills one in
-        primary_exchange_var = tk.StringVar(value=self._primary_exchange())
+        # The user's choice is shown and kept as it is: the window never fills one
+        # in. It lists each exchange by name ("KuCoin") and saves its id ("kucoin").
+        primary_exchange = self._primary_exchange()
+        primary_exchange_var = tk.StringVar(value=exchange_name(primary_exchange))
         exchange_combo = ttk.Combobox(
             frm,
             textvariable=primary_exchange_var,
-            values=self._primary_exchange_choices(primary_exchange_var.get()),
+            values=sorted(
+                (
+                    exchange_name(e)
+                    for e in self._primary_exchange_choices(primary_exchange)
+                ),
+                key=str.lower,
+            ),
             state="readonly",
         )
         exchange_combo.grid(row=r, column=1, sticky="ew", pady=6)
@@ -8244,7 +8254,9 @@ Platform: {sys.platform}
 
                 # --- Exchange Provider Settings ---
                 self.settings["region"] = region_var.get().strip()
-                self.settings["primary_exchange"] = primary_exchange_var.get().strip()
+                self.settings["primary_exchange"] = exchange_id(
+                    primary_exchange_var.get()
+                )
                 self.settings["price_comparison_enabled"] = bool(
                     price_comparison_var.get()
                 )
@@ -8429,7 +8441,7 @@ Platform: {sys.platform}
         live = trading is not None and trading.is_live and trading.active_broker
         if live:
             primary_exchange = trading.active_broker
-        name = primary_exchange.upper()
+        name = exchange_name(primary_exchange)
         try:
             import pt_exchanges  # noqa: F401  (registers the connectors)
             from pt_exchange_abstraction import ExchangeFactory, ExchangeType
@@ -8448,13 +8460,13 @@ Platform: {sys.platform}
         except Exception as exc:
             return (
                 f"{name} (no prices)",
-                f"No price from {primary_exchange}: {str(exc)[:160]}",
+                f"No price from {name}: {str(exc)[:160]}",
                 "bad",
             )
         if price <= 0:
             return (
                 f"{name} (no prices)",
-                f"{primary_exchange} answered but gave no price",
+                f"{name} answered but gave no price",
                 "warn",
             )
         if not live:
@@ -8467,7 +8479,7 @@ Platform: {sys.platform}
             return (
                 f"{name} (no live orders)",
                 f"Prices OK | BTC ${price:,.2f} | this version cannot place orders on "
-                f"{primary_exchange}",
+                f"{name}",
                 "bad",
             )
         orders = (

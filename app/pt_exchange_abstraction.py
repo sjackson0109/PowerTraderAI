@@ -217,6 +217,54 @@ class ExchangeType(Enum):
     MARINADE_FINANCE = "marinade_finance"
 
 
+# The name an exchange goes by on screen, where it is not its id with each word
+# capitalised ("yellow_card" -> "Yellow Card"): the setup guides' spelling
+EXCHANGE_NAMES: Dict[str, str] = {
+    "bingx": "BingX",
+    "btcturk": "BtcTurk",
+    "cex_io": "CEX.IO",
+    "coindcx": "CoinDCX",
+    "crypto_com": "Crypto.com",
+    "dydx": "dYdX",
+    "etoro": "eToro",
+    "exmo": "EXMO",
+    "gate": "Gate.io",
+    "gmx": "GMX",
+    "kucoin": "KuCoin",
+    "li_fi": "LI.FI",
+    "localcoinswap": "LocalCoinSwap",
+    "makerdao": "MakerDAO",
+    "mexc": "MEXC",
+    "okx": "OKX",
+    "oneinch": "1inch",
+    "pancakeswap": "PancakeSwap",
+    "quickswap": "QuickSwap",
+    "satoshitango": "SatoshiTango",
+    "spookyswap": "SpookySwap",
+    "sushiswap": "SushiSwap",
+    "traderjoe": "Trader Joe",
+    "valr": "VALR",
+    "wazirx": "WazirX",
+}
+
+
+def exchange_name(exchange: Any) -> str:
+    """The name an exchange goes by on screen ("kucoin" -> "KuCoin"), from its id
+    or its ``ExchangeType``; "" for none."""
+    key = str(getattr(exchange, "value", exchange) or "").strip().lower()
+    return EXCHANGE_NAMES.get(key) or key.replace("_", " ").title()
+
+
+def exchange_id(name: str) -> str:
+    """The id behind a name ``exchange_name`` gives ("KuCoin" -> "kucoin"); an id
+    comes back as it is."""
+    text = str(name or "").strip().lower()
+    for key, shown in EXCHANGE_NAMES.items():
+        if shown.lower() == text:
+            return key
+    return text.replace(" ", "_")
+
+
 @dataclass
 class MarketData:
     """Standardized market data structure"""

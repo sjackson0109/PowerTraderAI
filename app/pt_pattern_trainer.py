@@ -30,8 +30,6 @@ purpose, FDS-MDL owner decision; see docs/dev/RUN-LOG-model-1.md):
 * the close-weight test multiplies a move that is already a percentage by 100;
 * each step matches against the memories last flushed to disk (every 200 steps);
 * pass 0 of every timeframe trains on 1-hour bars;
-* intraday timeframes, and pass 0 of every timeframe, train on the older half of the
-  history (see deviation 2 for the exact count);
 * a step whose predicted close is 0 (a last close of 0, or a predicted move of exactly
   -100%) learns nothing, because upstream's division by it raises inside its learning
   ``try`` (counted as ``unlearned_steps``).
@@ -54,13 +52,13 @@ Deviations from upstream, each with its reason:
    has asked the exchange: the cache records that it has no bars before the listing
    (``<PAIR>_<TF>.start.json``); without that record, a short cache and an exchange
    that has no bars there look the same.
-2. Row selection: upstream kept the older ``L - int(L/2)`` of the ``L`` rows it fetched,
-   which included KuCoin's still-forming bar, so the port keeps the oldest
-   ``(n+1) - (n+1)//2`` of the ``n`` closed bars. For passes 1-2 of ``1day``/``1week``
-   upstream dropped only the forming bar, so the port keeps all ``n``. Each count is
-   printed and recorded in the summary (never a silent subsample, FDS-MDL 4.7).
-   Upstream also counted a malformed row produced when its last page came back empty;
-   the port has no pages.
+2. Row selection (with ``--upstream-rows`` only; see deviation 11): upstream kept the
+   older ``L - int(L/2)`` of the ``L`` rows it fetched, which included KuCoin's
+   still-forming bar, so the port keeps the oldest ``(n+1) - (n+1)//2`` of the ``n``
+   closed bars. For passes 1-2 of ``1day``/``1week`` upstream dropped only the forming
+   bar, so the port keeps all ``n``. Each count is printed and recorded in the summary
+   (never a silent subsample, FDS-MDL 4.7). Upstream also counted a malformed row
+   produced when its last page came back empty; the port has no pages.
 3. Upstream re-fetched its data for every pass; the port loads each timeframe once.
 4. A pass upstream could never finish (fewer than 10 bars in passes 0-1, fewer than 4 in
    pass 2: upstream loops for ever) is skipped and recorded.
@@ -83,11 +81,31 @@ Deviations from upstream, each with its reason:
     weight), so it is no longer multiplied by 100. Upstream's
     ``var3 = moves[indy] * 100`` treated it like ``high_moves`` and ``low_moves``,
     which are divided by 100 when read.
+11. Every bar, newest included (owner, 2026-11-03). Upstream trained on the older half
+    of the history (deviation 2), walked passes 0-1 to its first quarter (pass 1 of the
+    1-hour timeframe replaying pass 0's bars against the memories pass 0 had just
+    stored) and pass 2 from its middle, so the newest half was never learned and the
+    second quarter only seen. No reason for this is recorded upstream. Now every pass
+    walks every bar of the window, from the 10th to the newest: pass 0 the 1-hour bars,
+    then one pass the timeframe's own bars; the 1-hour timeframe walks its bars once.
+    ``--upstream-rows`` (testing only) keeps upstream's rows and passes, so the oracle
+    test can still compare the files with upstream's.
+12. The same numbers, faster. Pass 0 is the same walk in every timeframe (no memories,
+    the same 1-hour bars), so it is walked once and copied into each. A flush or
+    threshold write keeps the file's text in memory, which matching reads (upstream
+    re-read the files every step), and the files are written once each timeframe is
+    trained. Each step uses its own bar rather than rebuilding the changes of every bar
+    seen so far, and a memory's text is split once. The oracle test checks the files
+    are byte-identical to upstream's with ``--upstream-rows``.
 
 Inputs (command line, else environment, else default):
 
 * ``coin`` (positional, default BTC);
-* ``--train-start`` / ``POWERTRADER_TRAIN_START`` (default: ``train_end`` minus 1,095 days);
+* ``--window`` / ``POWERTRADER_TRAIN_WINDOW``: ``30d``, ``3m`` (90 days), ``6m`` (180),
+  ``12m`` (365), ``3y`` (1,095, the default) or ``all`` (the coin's whole history on its
+  exchange: from ``HISTORY_START``);
+* ``--train-start`` / ``POWERTRADER_TRAIN_START`` (default: ``train_end`` minus the window;
+  given, it overrides the window);
 * ``--train-end`` / ``POWERTRADER_TRAIN_END`` (default: the last full hour, UTC);
 * ``--seed`` / ``POWERTRADER_TRAIN_SEED`` (default 0);
 * ``--offline`` / ``POWERTRADER_CANDLES_OFFLINE=1``: read the candle cache only, never the
@@ -129,7 +147,22 @@ CANDLE_TF = {
     "1week": "1w",
 }
 MODEL_FILE_PREFIXES = ("memories_", "memory_weights_", "neural_perfect_threshold_")
-DEFAULT_WINDOW = timedelta(days=1095)
+# the files of one timeframe's model, by prefix (``<prefix>_<timeframe>.txt``)
+TIMEFRAME_FILES = (
+    "memories",
+    "memory_weights",
+    "memory_weights_high",
+    "memory_weights_low",
+    "neural_perfect_threshold",
+)
+# The training windows (``--window``; Settings > Training), in days. "all" is the coin's
+# whole history on the exchange its candles come from: from HISTORY_START, and the
+# candle cache records where the exchange's bars begin.
+WINDOWS = {"30d": 30, "3m": 90, "6m": 180, "12m": 365, "3y": 1095}
+ALL_HISTORY = "all"
+DEFAULT_WINDOW_NAME = "3y"
+DEFAULT_WINDOW = timedelta(days=WINDOWS[DEFAULT_WINDOW_NAME])
+HISTORY_START = datetime(2010, 7, 17, tzinfo=timezone.utc)  # bitcoin's first exchange
 FLUSH_EVERY = (
     200  # upstream: flush memories/weights and write the threshold every 200 steps
 )
@@ -139,7 +172,14 @@ ENV_TRAIN_START = "POWERTRADER_TRAIN_START"
 ENV_TRAIN_END = "POWERTRADER_TRAIN_END"
 ENV_TRAIN_SEED = "POWERTRADER_TRAIN_SEED"
 ENV_CANDLES_OFFLINE = "POWERTRADER_CANDLES_OFFLINE"
-TRAINER_ENV = (ENV_TRAIN_START, ENV_TRAIN_END, ENV_TRAIN_SEED, ENV_CANDLES_OFFLINE)
+ENV_TRAIN_WINDOW = "POWERTRADER_TRAIN_WINDOW"
+TRAINER_ENV = (
+    ENV_TRAIN_START,
+    ENV_TRAIN_END,
+    ENV_TRAIN_SEED,
+    ENV_CANDLES_OFFLINE,
+    ENV_TRAIN_WINDOW,
+)
 
 
 class TrainerError(Exception):
@@ -205,6 +245,11 @@ def parse_args(argv=None, environ=None, now=None):
     parser.add_argument("coin", nargs="?", default="BTC")
     parser.add_argument("--train-start")
     parser.add_argument("--train-end")
+    parser.add_argument(
+        "--window",
+        help=f"the window before train_end: one of {', '.join(WINDOWS)} or "
+        f"{ALL_HISTORY} (default {DEFAULT_WINDOW_NAME}; --train-start overrides it)",
+    )
     parser.add_argument("--seed")
     parser.add_argument("--offline", action="store_true")
     parser.add_argument(
@@ -217,6 +262,13 @@ def parse_args(argv=None, environ=None, now=None):
         action="store_true",
         help="testing only: flush and write the threshold exactly as upstream did "
         "(every 200 steps, losing the rest), to compare output with upstream",
+    )
+    parser.add_argument(
+        "--upstream-rows",
+        action="store_true",
+        help="testing only: upstream's rows and passes (the older half of the window, "
+        "passes 0-1 to its first quarter, pass 2 from its middle), to compare output "
+        "with upstream",
     )
     args = parser.parse_args(argv)
 
@@ -233,11 +285,20 @@ def parse_args(argv=None, environ=None, now=None):
         train_end = now.replace(minute=0, second=0, microsecond=0)
     else:
         train_end = _parse_time(end_raw, "train_end")
+    window_raw, window_src = pick(args.window, ENV_TRAIN_WINDOW)
+    window = str(window_raw or DEFAULT_WINDOW_NAME).strip().lower()
+    if window != ALL_HISTORY and window not in WINDOWS:
+        raise UsageError(
+            f"window: {window_raw!r} is not one of {', '.join(WINDOWS)}, {ALL_HISTORY}"
+        )
     start_raw, start_src = pick(args.train_start, ENV_TRAIN_START)
-    if start_raw is None:
-        train_start = train_end - DEFAULT_WINDOW
-    else:
+    if start_raw is not None:
         train_start = _parse_time(start_raw, "train_start")
+    elif window == ALL_HISTORY:
+        train_start, start_src = HISTORY_START, f"window {ALL_HISTORY}"
+    else:
+        train_start = train_end - timedelta(days=WINDOWS[window])
+        start_src = f"window {window}" if window_raw is not None else "default"
     seed_raw, seed_src = pick(args.seed, ENV_TRAIN_SEED)
     try:
         seed = 0 if seed_raw is None else int(seed_raw)
@@ -264,9 +325,12 @@ def parse_args(argv=None, environ=None, now=None):
         "offline": offline,
         "exchanges": [str(args.exchange).strip().lower()] if args.exchange else None,
         "upstream_flush_only": bool(args.upstream_flush_only),
+        "upstream_rows": bool(args.upstream_rows),
+        "window": window,
         "sources": {
             "train_start": start_src,
             "train_end": end_src,
+            "window": window_src,
             "seed": seed_src,
             "offline": offline_src,
         },
@@ -574,12 +638,21 @@ def _write_text(path: str, text: str) -> None:
 
 
 class ModelFiles:
-    """Upstream's in-RAM memory cache per timeframe and its file writes, in one folder."""
+    """Upstream's in-RAM memory cache per timeframe and its file writes, in one folder.
+
+    Upstream wrote the files at every flush and threshold write, and re-read them on
+    every step. Here a flush or threshold write sets the file's text in ``written``,
+    and ``read_list`` reads that text: what matching sees is the same (the memories
+    last flushed, not the newer ones in RAM), without the disk. ``persist`` writes a
+    timeframe's files once it is trained. A file this run has not written is read
+    from the folder, as upstream read it (a run's folder starts empty: deviation 6)."""
 
     def __init__(self, folder: str):
         self.folder = folder
         self.cache = {}
         self.threshold_written = {}
+        self.written = {}  # file name -> its text, as the last flush or write left it
+        self._split = {}  # (file name, separator) -> its cleaned-up, split text
 
     def path(self, name: str) -> str:
         return os.path.join(self.folder, name)
@@ -596,14 +669,19 @@ class ModelFiles:
             }
         return self.cache[tf_choice]
 
+    def _put(self, name: str, text: str) -> None:
+        self.written[name] = text
+        for key in [k for k in self._split if k[0] == name]:
+            del self._split[key]
+
     def flush(self, tf_choice, force=False):
         data = self.cache.get(tf_choice)
         if not data:
             return
         if (not data.get("dirty")) and (not force):
             return
-        _write_text(
-            self.path(f"memories_{tf_choice}.txt"),
+        self._put(
+            f"memories_{tf_choice}.txt",
             "~".join([x for x in data["memory_list"] if str(x).strip() != ""]),
         )
         for name, key in (
@@ -611,8 +689,8 @@ class ModelFiles:
             ("memory_weights_high", "high_weight_list"),
             ("memory_weights_low", "low_weight_list"),
         ):
-            _write_text(
-                self.path(f"{name}_{tf_choice}.txt"),
+            self._put(
+                f"{name}_{tf_choice}.txt",
                 " ".join([str(x) for x in data[key] if str(x).strip() != ""]),
             )
         data["dirty"] = False
@@ -628,16 +706,41 @@ class ModelFiles:
         self.write_threshold(tf_choice, perfect_threshold)
 
     def write_threshold(self, tf_choice, perfect_threshold):
-        _write_text(
-            self.path(f"neural_perfect_threshold_{tf_choice}.txt"),
-            str(perfect_threshold),
-        )
+        self._put(f"neural_perfect_threshold_{tf_choice}.txt", str(perfect_threshold))
         self.threshold_written[tf_choice] = perfect_threshold
 
     def read_list(self, name: str, separator: str):
-        """Upstream re-reads the flushed files on every step; so does the port."""
-        with open(self.path(name), "r", encoding="utf-8") as f:
-            return _strip(f.read()).split(separator)
+        """The flushed file's cleaned-up text split at ``separator`` (a new list:
+        callers change it). FileNotFoundError when there is no such file yet."""
+        if name not in self.written:
+            with open(self.path(name), "r", encoding="utf-8") as f:
+                return _strip(f.read()).split(separator)
+        key = (name, separator)
+        if key not in self._split:
+            self._split[key] = _strip(self.written[name]).split(separator)
+        return list(self._split[key])
+
+    def copy_timeframe(self, source_tf: str, target_tf: str) -> None:
+        """Give ``target_tf`` everything ``source_tf`` has: its RAM cache, the text of
+        its files and its last threshold. (Pass 0 is the same walk over 1-hour bars in
+        every timeframe: it is walked once and copied.)"""
+        self.cache[target_tf] = {
+            k: list(v) if isinstance(v, list) else v
+            for k, v in self.cache[source_tf].items()
+        }
+        for prefix in TIMEFRAME_FILES:
+            name = f"{prefix}_{source_tf}.txt"
+            if name in self.written:
+                self._put(f"{prefix}_{target_tf}.txt", self.written[name])
+        if source_tf in self.threshold_written:
+            self.threshold_written[target_tf] = self.threshold_written[source_tf]
+
+    def persist(self, tf_choice) -> None:
+        """Write ``tf_choice``'s files as the run left them."""
+        for prefix in TIMEFRAME_FILES:
+            name = f"{prefix}_{tf_choice}.txt"
+            if name in self.written:
+                _write_text(self.path(name), self.written[name])
 
 
 # --- training -------------------------------------------------------------------------
@@ -658,8 +761,17 @@ def _close_weight_update(predicted_move, realised_move, weight):
     return weight
 
 
-def run_pass(files, tf_choice, restarted_yet, bars, log):
+def run_pass(files, tf_choice, restarted_yet, bars, log, upstream_rows=False):
     """One pass of one timeframe: upstream ``ba62130:pt_trainer.py:503-1625``.
+
+    Each step learns from one bar the move of the bar after it. Every pass walks the
+    bars from the 10th to the last (deviation 11); with ``upstream_rows``, as upstream
+    did, passes 0-1 stop at the first quarter and pass 2 starts in the middle.
+
+    The steps are upstream's, computed without its per-step copies: upstream rebuilt
+    the candle changes of every bar seen so far to use the last one, and re-split
+    every memory's text. The same numbers come out (the oracle test compares the
+    files); a bar opening at 0, which upstream divided by, still raises.
 
     Returns the pass statistics and the final threshold (None if skipped)."""
     open_price_list, price_list, high_price_list, low_price_list = bars
@@ -671,29 +783,39 @@ def run_pass(files, tf_choice, restarted_yet, bars, log):
         "matched_steps": 0,
         "unlearned_steps": 0,
     }
-    if restarted_yet < 2 and n < 10:
-        stats["skipped"] = "fewer than 10 bars (upstream would loop for ever)"
-        return stats, None
-    if restarted_yet == 2 and n < 4:
-        stats["skipped"] = "fewer than 4 bars (upstream would loop for ever)"
+    if upstream_rows:
+        if restarted_yet < 2 and n < 10:
+            stats["skipped"] = "fewer than 10 bars (upstream would loop for ever)"
+            return stats, None
+        if restarted_yet == 2 and n < 4:
+            stats["skipped"] = "fewer than 4 bars (upstream would loop for ever)"
+            return stats, None
+    elif n < 10:
+        stats["skipped"] = "fewer than 10 bars"
         return stats, None
 
+    # upstream computed every bar's change up to the current one each step, so a bar
+    # opening at 0 raised once the walk reached it
+    first_zero_open = next((i for i, o in enumerate(open_price_list) if o == 0), None)
+    pattern_of = {}  # memory text -> its pattern part, split (upstream re-split it)
     perfect_threshold = 1.0
     loop_i = 0
-    price_list_length = 10 if restarted_yet < 2 else int(len(price_list) * 0.5)
+    if upstream_rows and restarted_yet == 2:
+        price_list_length = int(len(price_list) * 0.5)
+    else:
+        price_list_length = 10
+    stats["first_bar"] = price_list_length - 1
     while True:
         loop_i += 1
-        open_price_list2 = open_price_list[:price_list_length]
-        price_list2 = price_list[:price_list_length]
-        high_price_list2 = high_price_list[:price_list_length]
-        low_price_list2 = low_price_list[:price_list_length]
-        price_change_list = [
-            100 * ((price_list2[i] - open_price_list2[i]) / open_price_list2[i])
-            for i in range(len(price_list2))
-        ]
-
+        # upstream's price_list2: the first price_list_length bars
+        seen = price_list_length
+        if first_zero_open is not None and seen > first_zero_open:
+            raise ZeroDivisionError("float division by zero")
+        last = seen - 1
         # the pattern: the last candle's body % (number_of_candles = [2])
-        current_pattern = [price_change_list[len(price_change_list) - 1]]
+        current_pattern = [
+            100 * ((price_list[last] - open_price_list[last]) / open_price_list[last])
+        ]
 
         # match against the memories last flushed to disk
         moves, high_moves, low_moves = [], [], []
@@ -711,7 +833,11 @@ def run_pass(files, tf_choice, restarted_yet, bars, log):
                 f"memory_weights_low_{tf_choice}.txt", " "
             )
             for mem_ind in range(len(memory_list)):
-                memory_pattern = _strip(memory_list[mem_ind].split("{}")[0]).split(" ")
+                text = memory_list[mem_ind]
+                memory_pattern = pattern_of.get(text)
+                if memory_pattern is None:
+                    memory_pattern = _strip(text.split("{}")[0]).split(" ")
+                    pattern_of[text] = memory_pattern
                 checks = []
                 for check_dex in range(len(current_pattern)):
                     current_candle = float(current_pattern[check_dex])
@@ -775,17 +901,9 @@ def run_pass(files, tf_choice, restarted_yet, bars, log):
                 perfect_threshold = 100.0
         files.write_threshold_sometimes(tf_choice, perfect_threshold, loop_i)
 
-        # predict the next close, high and low from the matched memories
-        index = len(price_list2) - 2
-        last_closes = []
-        while True:
-            last_closes.append(price_list2[index])
-            if len(last_closes) >= 2:
-                break
-            index += 1
-            if index >= len(price_list2):
-                break
-        start_price = last_closes[len(last_closes) - 1]
+        # predict the next close, high and low from the matched memories (upstream
+        # took the last of the last two closes seen: the current bar's close)
+        start_price = price_list[last]
         c_diff = final_moves / 100
         new_price = start_price + (start_price * c_diff)
         high_new_price = start_price + (start_price * high_final_moves)
@@ -797,9 +915,11 @@ def run_pass(files, tf_choice, restarted_yet, bars, log):
         # reveal the next candle
         price_list_length += 1
         stats["steps"] += 1
-        if len(price_list2) >= int(len(price_list) * 0.25) and restarted_yet < 2:
+        if upstream_rows and seen >= int(len(price_list) * 0.25) and restarted_yet < 2:
+            stats["last_bar"] = last
             return stats, perfect_threshold  # next pass (no learning on this step)
-        if len(price_list2) == len(price_list):
+        if seen == len(price_list):
+            stats["last_bar"] = last
             return stats, perfect_threshold  # timeframe done (no learning on this step)
         if new_y[1] == 0:
             # Upstream divides by the predicted close here (``this_differ``, a statistic
@@ -809,12 +929,10 @@ def run_pass(files, tf_choice, restarted_yet, bars, log):
             stats["unlearned_steps"] += 1
             continue
 
-        price_list2 = price_list[:price_list_length]
-        high_price_list2 = high_price_list[:price_list_length]
-        low_price_list2 = low_price_list[:price_list_length]
-        price2 = price_list2[len(price_list2) - 1]
-        high_price2 = high_price_list2[len(high_price_list2) - 1]
-        low_price2 = low_price_list2[len(low_price_list2) - 1]
+        # the bar just revealed
+        price2 = price_list[seen]
+        high_price2 = high_price_list[seen]
+        low_price2 = low_price_list[seen]
         this_diff = ((price2 - new_y[0]) / abs(new_y[0])) * 100
         high_this_diff = ((high_price2 - new_y[0]) / abs(new_y[0])) * 100
         low_this_diff = ((low_price2 - new_y[0]) / abs(new_y[0])) * 100
@@ -873,9 +991,35 @@ def run_pass(files, tf_choice, restarted_yet, bars, log):
         if loop_i % PROGRESS_EVERY == 0:
             log(
                 f"  {tf_choice} pass {restarted_yet}: step {loop_i}, window "
-                f"{len(price_list2)}/{n}, memories {len(mem['memory_list'])}, "
+                f"{price_list_length}/{n}, memories {len(mem['memory_list'])}, "
                 f"threshold {perfect_threshold:.3f}"
             )
+
+
+def passes_for(tf_choice, upstream_rows=False):
+    """``[(pass, bars it walks)]`` for one timeframe. Pass 0 walks the 1-hour bars in
+    every timeframe (upstream's ``tf_list``); then the timeframe's own bars are
+    walked once. The 1-hour timeframe walks its bars once: a second walk over the
+    same bars would only replay them against the memories the first just stored
+    (deviation 11). ``upstream_rows``: upstream's three passes."""
+    if upstream_rows:
+        return [(0, "1hour"), (1, tf_choice), (2, tf_choice)]
+    if tf_choice == "1hour":
+        return [(0, "1hour")]
+    return [(0, "1hour"), (1, tf_choice)]
+
+
+def describe_bars(pair, tf, report):
+    """One line per timeframe of the bars a run trains on."""
+    missing = report.get("missing_at_start") or 0
+    note = f"; the window opens {missing} bar(s) earlier" if missing else ""
+    return (
+        f"{pair} {tf}: {report['bars']} bars, {report['first_open']} .. "
+        f"{report['last_open']}{note}"
+    )
+
+
+SHARED_PASS_0 = "_pass0"  # where the one walk of pass 0 is kept for every timeframe
 
 
 def train(
@@ -889,28 +1033,53 @@ def train(
     upstream_flush_only=False,
     log=print,
     exchanges=None,
+    upstream_rows=False,
 ):
     """Train every timeframe into ``folder``; return the run summary, with the
-    exchange and market its candles came from."""
+    exchange and market its candles came from. Every pass walks every bar of the
+    window (deviation 11), unless ``upstream_rows`` (testing only)."""
     random.seed(seed)
     loader = BarLoader(
         coin, train_start, train_end, offline, cache_dir, exchanges=exchanges
     )
     files = ModelFiles(folder)
     summary_tfs = {}
+    described = set()
+    shared = None  # pass 0's statistics and threshold, once it has been walked
     for tf_choice in TF_CHOICES:
         passes = []
         final_threshold = None
-        for restarted_yet in (0, 1, 2):
-            data_tf = "1hour" if restarted_yet == 0 else tf_choice
+        for restarted_yet, data_tf in passes_for(tf_choice, upstream_rows):
             all_bars = loader.bars(data_tf)
-            bars = select_rows(all_bars, data_tf, restarted_yet)
-            log(
-                f"{tf_choice} pass {restarted_yet}: {data_tf} bars, using the oldest "
-                f"{len(bars[1])} of {len(all_bars[1])}"
-            )
+            if data_tf not in described:
+                described.add(data_tf)
+                tf = CANDLE_TF[data_tf]
+                log(describe_bars(loader.pair, tf, loader.reports[tf]))
+            if upstream_rows:
+                bars = select_rows(all_bars, data_tf, restarted_yet)
+                log(
+                    f"{tf_choice} pass {restarted_yet}: {data_tf} bars, using the "
+                    f"oldest {len(bars[1])} of {len(all_bars[1])}"
+                )
+            else:
+                bars = all_bars
+                log(
+                    f"{tf_choice} pass {restarted_yet}: {data_tf} bars, all "
+                    f"{len(bars[1])}"
+                )
             files.load(tf_choice)
-            stats, threshold = run_pass(files, tf_choice, restarted_yet, bars, log)
+            if restarted_yet == 0 and shared is not None:
+                # pass 0 starts from no memories on the same bars in every timeframe:
+                # the same walk, so it is copied rather than walked again
+                files.copy_timeframe(SHARED_PASS_0, tf_choice)
+                stats, threshold = dict(shared[0]), shared[1]
+            else:
+                stats, threshold = run_pass(
+                    files, tf_choice, restarted_yet, bars, log, upstream_rows
+                )
+                if restarted_yet == 0:
+                    files.copy_timeframe(tf_choice, SHARED_PASS_0)
+                    shared = (dict(stats), threshold)
             stats.update(
                 {
                     "pass": restarted_yet,
@@ -928,6 +1097,8 @@ def train(
             files.flush(tf_choice, force=True)
             if final_threshold is not None:
                 files.write_threshold(tf_choice, final_threshold)
+        files.persist(tf_choice)
+        if not upstream_flush_only:
             for name in (
                 f"neural_perfect_threshold_{tf_choice}.txt",
                 f"memories_{tf_choice}.txt",
@@ -965,9 +1136,9 @@ CODE_FILES = ("pt_pattern_trainer.py", "pattern_model.py", "model_store.py")
 # The trainer's fixed settings (it has no tunable parameters; FDS-MDL 7: nothing tuned).
 TRAINER_PARAMS = {
     "flush_every_steps": FLUSH_EVERY,
-    "row_selection": "older half for intraday timeframes and every pass 0; all bars for "
-    "1day/1week passes 1-2",
-    "passes": 3,
+    "row_selection": "every bar of the window, in every pass",
+    "passes": "pass 0 on the 1-hour bars, then one on the timeframe's own bars (the "
+    "1hour timeframe walks its bars once)",
     "pass_0_data": "1hour",
     "number_of_candles": 2,
     "validation_fraction": VALIDATION_FRACTION,
@@ -1288,6 +1459,7 @@ def main(argv=None) -> int:
     print(f"Coin: {coin}   Working folder: {folder}")
     for key in ("train_start", "train_end"):
         print(f"{key}: {_iso(cfg[key])} ({cfg['sources'][key]})")
+    print(f"window: {cfg['window']} ({cfg['sources']['window']})")
     print(f"seed: {cfg['seed']} ({cfg['sources']['seed']})")
     print(f"offline: {cfg['offline']} ({cfg['sources']['offline']})")
     existing = _existing_model_files(folder)
@@ -1310,8 +1482,9 @@ def main(argv=None) -> int:
             offline=cfg["offline"],
             upstream_flush_only=cfg["upstream_flush_only"],
             exchanges=cfg.get("exchanges"),
+            upstream_rows=cfg.get("upstream_rows", False),
         )
-        if cfg["upstream_flush_only"]:
+        if cfg["upstream_flush_only"] or cfg.get("upstream_rows"):
             # test mode: the incomplete upstream files are not published
             model_id = None
         else:
@@ -1363,6 +1536,7 @@ def main(argv=None) -> int:
         },
         "train_start": _iso(cfg["train_start"]),
         "train_end": _iso(cfg["train_end"]),
+        "window": cfg["window"],
         "seed": cfg["seed"],
         "offline": cfg["offline"],
         "sources": cfg["sources"],

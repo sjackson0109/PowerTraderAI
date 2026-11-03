@@ -2736,7 +2736,7 @@ class PowerTraderHub(tk.Tk):
         self.lbl_trader.pack(side="right", padx=(2, 6))
         ttk.Label(
             trader_row,
-            text="Trader:",
+            text="Trading:",
             font=ui_tokens.font("caption"),
             foreground=p["MUTED"],
         ).pack(side="right")
@@ -6072,7 +6072,7 @@ Platform: {sys.platform}
                 txt.see("end")
 
     def _trader_is_running(self) -> bool:
-        """The trader this hub started is alive (the "Trader:" label's rule)."""
+        """The trader this hub started is alive (the "Trading:" label's rule)."""
         proc = getattr(getattr(self, "proc_trader", None), "proc", None)
         return bool(proc and proc.poll() is None)
 

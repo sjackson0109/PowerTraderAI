@@ -501,8 +501,9 @@ def test_the_left_pane_starts_394px_wide(hub):
 
 
 def test_the_account_row_has_the_exchange_left_and_the_trader_by_its_buttons(hub):
-    """Owner, 2026-11-02: Exchange first, its key grey like "Trader:"; the trader's
-    state right-aligned beside its start and stop buttons."""
+    """Owner, 2026-11-02: Exchange first, its key grey like "Trading:" (owner,
+    2026-11-03: "Trading" like the Training, Thinking and Trading tabs); the
+    trader's state right-aligned beside its start and stop buttons."""
     row = hub.lbl_trader.master
     slaves = row.pack_slaves()
     trader_key = slaves[3]
@@ -514,7 +515,7 @@ def test_the_account_row_has_the_exchange_left_and_the_trader_by_its_buttons(hub
         hub.lbl_exchange_key,
         hub.lbl_exchange,
     ]
-    assert str(trader_key.cget("text")) == "Trader:"
+    assert str(trader_key.cget("text")) == "Trading:"
     for widget in slaves[:4]:
         assert widget.pack_info()["side"] == "right"
     for widget in slaves[4:]:
@@ -582,7 +583,7 @@ def test_the_chart_settings_cog_has_no_visible_border(hub):
 
 def test_coin_charts_learn_whether_the_trader_is_running(hub, monkeypatch):
     """ASK/BID are drawn dotted while the trader is stopped, so every coin-chart
-    refresh says whether it runs, by the same rule as the "Trader:" label."""
+    refresh says whether it runs, by the same rule as the "Trading:" label."""
     import time
 
     assert hub._trader_is_running() is False  # no trader started in tests

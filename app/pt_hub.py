@@ -2073,6 +2073,8 @@ def _left_split_target(requested: int, total: int) -> int:
 class PowerTraderHub(tk.Tk):
     def __init__(self):
         super().__init__()
+        # set when the hub is destroyed: its background exchange check then ends
+        self._stop_background = threading.Event()
         self.title("PowerTraderAI+ (https://github.com/sjackson0109/PowerTraderAI)")
         self.geometry("1400x820")
 
@@ -8559,11 +8561,13 @@ Platform: {sys.platform}
     def _check_exchange_status_worker(self):
         """Background worker to check exchange connectivity. It only sets
         ``_exchange_status``: Tk may be touched from the main thread alone, and
-        ``_tick`` shows the status there on every tick."""
-        while True:
+        ``_tick`` shows the status there on every tick. It ends when the hub is
+        destroyed."""
+        stop = self._stop_background
+        while not stop.is_set():
             try:
                 if not self._multi_exchange:
-                    time.sleep(5)
+                    stop.wait(5)
                     continue
 
                 primary_exchange = self._primary_exchange()
@@ -8580,7 +8584,7 @@ Platform: {sys.platform}
                         "details": "Configure API credentials in Settings to enable trading",
                         "tone": "warn",
                     }
-                    time.sleep(30)
+                    stop.wait(30)
                     continue
 
                 status, details, tone = self._exchange_status_once(
@@ -8602,7 +8606,7 @@ Platform: {sys.platform}
                 }
 
             # Check every 30 seconds
-            time.sleep(30)
+            stop.wait(30)
 
     def _update_exchange_status_display(self):
         """Update the exchange status label in the GUI"""
@@ -8696,6 +8700,13 @@ Platform: {sys.platform}
                 print(f"Error refreshing exchange settings: {e}")
 
     # ---- close ----
+
+    def destroy(self) -> None:
+        """Closing the hub also ends its background exchange status check."""
+        stop = getattr(self, "_stop_background", None)
+        if stop is not None:
+            stop.set()
+        super().destroy()
 
     def _on_close(self) -> None:
         # Don’t force kill; just stop if running (you can change this later)

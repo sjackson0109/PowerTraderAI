@@ -32,16 +32,30 @@ from market_data.timeframes import candle_timeframe_seconds
 # --- public market data helpers (FDS-MX-001 phase A) ----------------------------
 
 
-def _public_get(url: str, params: Optional[dict] = None, timeout: float = 10.0):
+def _public_get(
+    url: str,
+    params: Optional[dict] = None,
+    timeout: float = 10.0,
+    exchange: Optional[AbstractExchange] = None,
+):
     """GET a public market-data endpoint. A rate-limit (429, 418) or server-error
     (5xx) answer is tried again, up to three times, after a pause (the exchange's
-    Retry-After when it sends one); the last answer is returned whatever it is."""
+    Retry-After when it sends one); the last answer is returned whatever it is.
+    With ``exchange``, every attempt first waits for a slot within that exchange's
+    request limit (``AbstractExchange.wait_for_request_slot``)."""
     for attempt in range(4):
+        if exchange is not None:
+            exchange.wait_for_request_slot()
         response = requests.get(url, params=params, timeout=timeout)
         status = getattr(response, "status_code", 200)
         if (status not in (418, 429) and status < 500) or attempt == 3:
             return response
         time.sleep(_retry_after(response) or min(2**attempt, 30))
+
+
+def _public_get_for(exchange: AbstractExchange, url: str, **kwargs):
+    """``_public_get`` within ``exchange``'s request limit."""
+    return _public_get(url, exchange=exchange, **kwargs)
 
 
 def _retry_after(response) -> Optional[float]:
@@ -268,6 +282,10 @@ class RobinhoodExchange(AbstractExchange):
 class KrakenExchange(AbstractExchange):
     """Kraken API implementation"""
 
+    # Kraken: public calls at 1 a second or less stay within its limits
+    # (support.kraken.com, "What are the API rate limits?")
+    requests_per_second = 1.0
+
     def __init__(self, api_key: str, api_secret: str, **kwargs):
         super().__init__(api_key, api_secret, **kwargs)
         self.base_url = "https://api.kraken.com"
@@ -279,6 +297,7 @@ class KrakenExchange(AbstractExchange):
         # Convert symbol format (BTC-USD -> XBTUSD)
         kraken_symbol = self._convert_symbol(symbol)
 
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/0/public/Ticker?pair={kraken_symbol}")
         data = response.json()
 
@@ -291,6 +310,7 @@ class KrakenExchange(AbstractExchange):
     def get_market_data(self, symbol: str) -> MarketData:
         kraken_symbol = self._convert_symbol(symbol)
 
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/0/public/Ticker?pair={kraken_symbol}")
         data = response.json()
 
@@ -314,6 +334,7 @@ class KrakenExchange(AbstractExchange):
         ``costmin``, or its ``ordermin`` (in the coin) at the current ask when that is
         more. None if it cannot be read."""
         try:
+            self.wait_for_request_slot()
             response = requests.get(
                 f"{self.base_url}/0/public/AssetPairs?pair={self._convert_symbol(symbol)}",
                 timeout=10,
@@ -346,7 +367,8 @@ class KrakenExchange(AbstractExchange):
 
     def candles(self, symbol: str, tf: str, start_ms: int, end_ms: int) -> List[list]:
         pair = self._convert_symbol(symbol)
-        data = _public_get(
+        data = _public_get_for(
+            self,
             f"{self.base_url}/0/public/OHLC",
             params={
                 "pair": pair,
@@ -366,8 +388,8 @@ class KrakenExchange(AbstractExchange):
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         pair = self._convert_symbol(symbol)
         try:
-            data = _public_get(
-                f"{self.base_url}/0/public/AssetPairs", params={"pair": pair}
+            data = _public_get_for(
+                self, f"{self.base_url}/0/public/AssetPairs", params={"pair": pair}
             ).json()
             info = list(self._kraken_result(data, pair).values())[0]
         except MarketNotFound as exc:
@@ -384,8 +406,8 @@ class KrakenExchange(AbstractExchange):
     def quote(self, symbol: str) -> Optional[PriceQuote]:
         pair = self._convert_symbol(symbol)
         try:
-            response = _public_get(
-                f"{self.base_url}/0/public/Ticker", params={"pair": pair}
+            response = _public_get_for(
+                self, f"{self.base_url}/0/public/Ticker", params={"pair": pair}
             )
             ticker = list(self._kraken_result(response.json(), pair).values())[0]
             return PriceQuote(
@@ -477,6 +499,11 @@ class BinanceExchange(AbstractExchange):
     multi-broker selector (#96) can flip the toggle per user preference.
     """
 
+    # Binance: 6,000 request weight a minute per IP; a candles or ticker call
+    # weighs 2, exchange information 20 (developers.binance.com, market data
+    # endpoints). 10 a second leaves room for the heavier calls.
+    requests_per_second = 10.0
+
     SUPPORTS_LIVE_ORDERS = True
 
     def __init__(
@@ -535,6 +562,7 @@ class BinanceExchange(AbstractExchange):
     def get_current_price(self, symbol: str) -> float:
         binance_symbol = self._convert_symbol(symbol)
 
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/api/v3/ticker/price?symbol={binance_symbol}"
         )
@@ -549,12 +577,14 @@ class BinanceExchange(AbstractExchange):
         binance_symbol = self._convert_symbol(symbol)
 
         # Get ticker data
+        self.wait_for_request_slot()
         ticker_response = requests.get(
             f"{self.base_url}/api/v3/ticker/24hr?symbol={binance_symbol}"
         )
         ticker_data = ticker_response.json()
 
         # Get order book for bid/ask
+        self.wait_for_request_slot()
         book_response = requests.get(
             f"{self.base_url}/api/v3/ticker/bookTicker?symbol={binance_symbol}"
         )
@@ -581,6 +611,7 @@ class BinanceExchange(AbstractExchange):
         ("timestamp for this request was 1000ms ahead of the server's time")
         retry. Returns the offset for tests/diagnostics.
         """
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/api/v3/time", timeout=10)
         data = response.json()
         if "serverTime" not in data:
@@ -758,7 +789,8 @@ class BinanceExchange(AbstractExchange):
         rows: List[list] = []
         cursor = int(start_ms)
         while cursor <= end_ms:
-            data = _public_get(
+            data = _public_get_for(
+                self,
                 f"{self.base_url}/api/v3/klines",
                 params={
                     "symbol": pair,
@@ -783,8 +815,8 @@ class BinanceExchange(AbstractExchange):
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         pair = self._convert_symbol(symbol)
         try:
-            data = _public_get(
-                f"{self.base_url}/api/v3/exchangeInfo", params={"symbol": pair}
+            data = _public_get_for(
+                self, f"{self.base_url}/api/v3/exchangeInfo", params={"symbol": pair}
             ).json()
         except Exception:
             return None
@@ -803,8 +835,10 @@ class BinanceExchange(AbstractExchange):
     def quote(self, symbol: str) -> Optional[PriceQuote]:
         pair = self._convert_symbol(symbol)
         try:
-            response = _public_get(
-                f"{self.base_url}/api/v3/ticker/bookTicker", params={"symbol": pair}
+            response = _public_get_for(
+                self,
+                f"{self.base_url}/api/v3/ticker/bookTicker",
+                params={"symbol": pair},
             )
             data = response.json()
             return PriceQuote(
@@ -827,6 +861,7 @@ class BinanceExchange(AbstractExchange):
             return self._symbol_filters[binance_symbol]
 
         url = f"{self.base_url}/api/v3/exchangeInfo?symbol={binance_symbol}"
+        self.wait_for_request_slot()
         response = requests.get(url, timeout=10)
         info = response.json()
         if "symbols" not in info or not info["symbols"]:
@@ -1301,6 +1336,10 @@ class CoinbaseExchange(AbstractExchange):
     credentials.
     """
 
+    # Coinbase Exchange: 10 public requests a second per IP, bursts to 15
+    # (docs.cdp.coinbase.com, Exchange REST rate limits)
+    requests_per_second = 10.0
+
     AUTH_HOST = "api.coinbase.com"
     AUTH_BASE_URL = "https://api.coinbase.com"
     BROKERAGE = "/api/v3/brokerage"
@@ -1364,6 +1403,7 @@ class CoinbaseExchange(AbstractExchange):
             )
 
         try:
+            self.wait_for_request_slot()
             response = requests.get(
                 self.AUTH_BASE_URL + self.KEY_PERMISSIONS_PATH,
                 headers=headers,
@@ -1457,6 +1497,7 @@ class CoinbaseExchange(AbstractExchange):
 
     def _public_ticker_response(self, coinbase_symbol: str):
         """The ticker and the HTTP response it came in (for its Date header)."""
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/products/{coinbase_symbol}/ticker", timeout=10
         )
@@ -1493,6 +1534,7 @@ class CoinbaseExchange(AbstractExchange):
         ``min_market_funds``), from the unauthenticated product endpoint. None if it
         cannot be read."""
         try:
+            self.wait_for_request_slot()
             response = requests.get(
                 f"{self.base_url}/products/{self._convert_symbol(symbol)}", timeout=10
             )
@@ -1511,7 +1553,8 @@ class CoinbaseExchange(AbstractExchange):
         for first, last in _paged_windows(
             start_ms, end_ms, seconds, _COINBASE_CANDLES_PAGE
         ):
-            data = _public_get(
+            data = _public_get_for(
+                self,
                 f"{self.base_url}/products/{product}/candles",
                 params={
                     "granularity": seconds,
@@ -1534,7 +1577,7 @@ class CoinbaseExchange(AbstractExchange):
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         product = self._convert_symbol(symbol)
         try:
-            data = _public_get(f"{self.base_url}/products/{product}").json()
+            data = _public_get_for(self, f"{self.base_url}/products/{product}").json()
         except Exception:
             return None
         if str(data.get("message", "")).lower() == "notfound":
@@ -1796,6 +1839,7 @@ class CoinbaseExchange(AbstractExchange):
             headers = self._auth_headers(verb, full_path)  # a token lasts 2 minutes
             if body is not None:
                 headers["Content-Type"] = "application/json"
+            self.wait_for_request_slot()
             response = requests.request(
                 verb,
                 self.AUTH_BASE_URL + full_path,
@@ -1976,6 +2020,10 @@ class CoinbaseExchange(AbstractExchange):
 class KuCoinExchange(AbstractExchange):
     """KuCoin API implementation"""
 
+    # KuCoin: 2,000 public requests per 30 seconds per IP, every VIP level
+    # (kucoin.com/docs-new, rate limit rule), i.e. 66 a second
+    requests_per_second = 66.0
+
     def __init__(self, api_key: str, api_secret: str, **kwargs):
         super().__init__(api_key, api_secret, **kwargs)
         self.base_url = "https://api.kucoin.com"
@@ -1987,6 +2035,7 @@ class KuCoinExchange(AbstractExchange):
     def get_current_price(self, symbol: str) -> float:
         kucoin_symbol = self._convert_symbol(symbol)
 
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/api/v1/market/orderbook/level1?symbol={kucoin_symbol}"
         )
@@ -2001,12 +2050,14 @@ class KuCoinExchange(AbstractExchange):
         kucoin_symbol = self._convert_symbol(symbol)
 
         # Get ticker data
+        self.wait_for_request_slot()
         ticker_response = requests.get(
             f"{self.base_url}/api/v1/market/stats?symbol={kucoin_symbol}"
         )
         ticker_data = ticker_response.json()["data"]
 
         # Get order book
+        self.wait_for_request_slot()
         book_response = requests.get(
             f"{self.base_url}/api/v1/market/orderbook/level1?symbol={kucoin_symbol}"
         )
@@ -2027,6 +2078,7 @@ class KuCoinExchange(AbstractExchange):
         the symbol's ``minFunds``, ``quoteMinSize``, and ``baseMinSize`` (in the coin)
         at the current ask. None if it cannot be read."""
         try:
+            self.wait_for_request_slot()
             response = requests.get(
                 f"{self.base_url}/api/v2/symbols/{self._convert_symbol(symbol)}",
                 timeout=10,
@@ -2055,7 +2107,8 @@ class KuCoinExchange(AbstractExchange):
         for first, last in _paged_windows(
             start_ms, end_ms, seconds, _KUCOIN_CANDLES_PAGE
         ):
-            data = _public_get(
+            data = _public_get_for(
+                self,
                 f"{self.base_url}/api/v1/market/candles",
                 params={
                     "type": _KUCOIN_TYPE[tf],
@@ -2081,7 +2134,9 @@ class KuCoinExchange(AbstractExchange):
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         pair = self._convert_symbol(symbol)
         try:
-            data = _public_get(f"{self.base_url}/api/v2/symbols/{pair}").json()
+            data = _public_get_for(
+                self, f"{self.base_url}/api/v2/symbols/{pair}"
+            ).json()
         except Exception:
             return None
         code = str(data.get("code"))
@@ -2099,7 +2154,8 @@ class KuCoinExchange(AbstractExchange):
     def quote(self, symbol: str) -> Optional[PriceQuote]:
         pair = self._convert_symbol(symbol)
         try:
-            response = _public_get(
+            response = _public_get_for(
+                self,
                 f"{self.base_url}/api/v1/market/orderbook/level1",
                 params={"symbol": pair},
             )
@@ -2160,6 +2216,7 @@ class HuobiExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         huobi_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/market/detail/merged?symbol={huobi_symbol}"
         )
@@ -2174,6 +2231,7 @@ class HuobiExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         huobi_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/market/detail/merged?symbol={huobi_symbol}"
         )
@@ -2223,6 +2281,7 @@ class GateExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         gate_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/spot/tickers?currency_pair={gate_symbol}"
         )
@@ -2235,6 +2294,7 @@ class GateExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         gate_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/spot/tickers?currency_pair={gate_symbol}"
         )
@@ -2285,6 +2345,7 @@ class BitgetExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         bitget_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/api/spot/v1/market/ticker?symbol={bitget_symbol}"
         )
@@ -2297,6 +2358,7 @@ class BitgetExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         bitget_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/api/spot/v1/market/ticker?symbol={bitget_symbol}"
         )
@@ -2346,6 +2408,7 @@ class MexcExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         mexc_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/api/v3/ticker/price?symbol={mexc_symbol}"
         )
@@ -2358,11 +2421,13 @@ class MexcExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         mexc_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         ticker_response = requests.get(
             f"{self.base_url}/api/v3/ticker/24hr?symbol={mexc_symbol}"
         )
         ticker_data = ticker_response.json()
 
+        self.wait_for_request_slot()
         book_response = requests.get(
             f"{self.base_url}/api/v3/ticker/bookTicker?symbol={mexc_symbol}"
         )
@@ -2412,6 +2477,7 @@ class BitfinexExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         bitfinex_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/ticker/t{bitfinex_symbol}")
         data = response.json()
 
@@ -2422,6 +2488,7 @@ class BitfinexExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         bitfinex_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/ticker/t{bitfinex_symbol}")
         data = response.json()
 
@@ -2471,6 +2538,7 @@ class OneInchExchange(AbstractExchange):
     def get_current_price(self, symbol: str) -> float:
         # 1inch doesn't have traditional tickers, uses swap quotes
         token_address = self._get_token_address(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/quote?fromTokenAddress={token_address}&toTokenAddress=0xA0b86a33E6bF6BC15Ac361e8C37f3E3B7AC3E80f&amount=1000000000000000000"
         )
@@ -2547,6 +2615,7 @@ class UniswapExchange(AbstractExchange):
         }}
         """
 
+        self.wait_for_request_slot()
         response = requests.post(self.base_url, json={"query": query})
         data = response.json()
 
@@ -2616,6 +2685,7 @@ class CryptoComExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         cdc_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/public/get-ticker?instrument_name={cdc_symbol}"
         )
@@ -2628,6 +2698,7 @@ class CryptoComExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         cdc_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/public/get-ticker?instrument_name={cdc_symbol}"
         )
@@ -2678,6 +2749,7 @@ class EtoroExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         etoro_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/instruments/{etoro_symbol}")
         data = response.json()
 
@@ -2685,6 +2757,7 @@ class EtoroExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         etoro_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/instruments/{etoro_symbol}")
         data = response.json()
 
@@ -2732,6 +2805,7 @@ class UpbitExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         upbit_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/ticker?markets={upbit_symbol}")
         data = response.json()
 
@@ -2742,6 +2816,7 @@ class UpbitExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         upbit_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/ticker?markets={upbit_symbol}")
         data = response.json()[0]
 
@@ -2791,6 +2866,7 @@ class DydxExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         dydx_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/v3/markets/{dydx_symbol}")
         data = response.json()
 
@@ -2798,6 +2874,7 @@ class DydxExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         dydx_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/v3/markets/{dydx_symbol}")
         data = response.json()["market"]
 
@@ -2853,6 +2930,7 @@ class CurveExchange(AbstractExchange):
         if "USD" in symbol:
             return 1.0  # Stablecoin to stablecoin approximation
 
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/getPools")
         data = response.json()
 
@@ -2909,6 +2987,7 @@ class PhemexExchange(AbstractExchange):
 
     def get_current_price(self, symbol: str) -> float:
         phemex_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/md/ticker/24hr?symbol={phemex_symbol}"
         )
@@ -2921,6 +3000,7 @@ class PhemexExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         phemex_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/md/ticker/24hr?symbol={phemex_symbol}"
         )
@@ -2983,6 +3063,7 @@ class BitsoExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         bitso_symbol = self._convert_symbol(symbol)
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/ticker?book={bitso_symbol}")
         data = response.json()["payload"]
 
@@ -3034,6 +3115,7 @@ class AaveExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         # Get lending/borrowing rates for asset
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/reserves/{symbol}")
         data = response.json()
 
@@ -3093,6 +3175,7 @@ class YearnFinanceExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         # Get vault information
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/vaults/{symbol}")
         data = response.json()
 
@@ -3151,6 +3234,7 @@ class DeribitExchange(AbstractExchange):
         return market_data.price
 
     def get_market_data(self, symbol: str) -> MarketData:
+        self.wait_for_request_slot()
         response = requests.get(
             f"{self.base_url}/public/get_book_summary_by_instrument?instrument_name={symbol}"
         )
@@ -3202,10 +3286,12 @@ class LidoFinanceExchange(AbstractExchange):
 
     def get_market_data(self, symbol: str) -> MarketData:
         # Get stETH information
+        self.wait_for_request_slot()
         response = requests.get(f"{self.base_url}/protocol/steth/apr")
         apr_data = response.json()
 
         # Get stETH price
+        self.wait_for_request_slot()
         price_response = requests.get(f"{self.base_url}/protocol/steth/price")
         price_data = price_response.json()
 

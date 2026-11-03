@@ -34,3 +34,16 @@ RealLocationTouched = _isolation.RealLocationTouched
 real_platform_dirs = _isolation.real_platform_dirs
 isolated_user_dirs = _isolation.isolated_user_dirs
 memory_keyring = _isolation.memory_keyring
+
+
+def _no_request_pacing():
+    """Connectors pace their requests to each exchange's limit (rate_limits.py);
+    tests that stand in for the network would only wait. Off for the whole
+    session (a thread left running between tests never waits either);
+    test_rate_limits.py switches it on where it tests it."""
+    import rate_limits
+
+    rate_limits.ENABLED = False
+
+
+_no_request_pacing()

@@ -199,6 +199,24 @@ gate. Everything is evaluated on closed bars and exits fill at the next open. Th
 overlay state (stops, cooldown timers) to `strategy_state.json` next to its ledger, so a restart mid-position keeps its
 stop; each cycle prints and logs the effective stop, its owning overlay and each overlay's state, and the hub's
 trail-line column shows the stop and its owner with the active overlay ids in the heading.
+### Exchange Requests and the Candle Cache
+
+**Request limits (`rate_limits.py`).** Every connector declares `requests_per_second`, the public limit from its
+exchange's documentation (Coinbase 10, Kraken 1, KuCoin 66, Binance 10; 5 for a connector that gives none), and every
+HTTP call it makes waits for a slot first (`AbstractExchange.wait_for_request_slot`; `_public_get` waits before each
+attempt, retries included). The limits are per IP address, so the count is shared by every process on the computer:
+each exchange has a state file under `<cache folder>/rate_limits/` (the times of its latest requests, under a file
+lock); without a usable folder a process paces its own requests. `trading_config.json` can set another figure per
+exchange (`requests_per_second`, from Configure Exchange APIs). Tests switch pacing off (`app/conftest.py`) except in
+`tests/test_rate_limits.py`, which also checks that every HTTP call in `pt_exchanges.py` waits.
+
+**Candle cache.** `get_candles` asks only for bars outside the cached range. A size the exchange does not serve
+(`market_data/resample.py`) is built in `ExchangeFetcher` from the smaller size read through the same cache, so the
+smaller bars are downloaded once, not once per size built from them. When a request that starts before the cached
+first bar finds no bars there, `<PAIR>_<TF>.start.json` records it, and that stretch is not asked for again until the
+record is 30 days old (`NO_BARS_BEFORE_MAX_AGE`) or the cache's first bar changes. Offline reads use the record too,
+so a pair listed after a window's start can be read offline once an online run has asked.
+
 ### UI/UX Enhancement
 
 #### Design tokens and theme (`ui_tokens.py`, `ui_theme.py`)

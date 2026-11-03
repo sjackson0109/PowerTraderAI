@@ -50,12 +50,22 @@ class ExchangeConfig:
     api_secret: str = field(default="", repr=False)
     passphrase: str = field(default="", repr=False)  # For KuCoin
     sandbox: bool = False
+    # Requests a second to keep this exchange to, set in Configure Exchange APIs;
+    # None: the exchange's own published figure (its connector's
+    # ``requests_per_second``). Read by every process through ``rate_limits``.
+    requests_per_second: Optional[float] = None
     # Where the credentials above came from ("environment", "keyring" or "").
     credential_source: str = field(default="", repr=False, compare=False)
 
 
 # The ExchangeConfig attributes written to trading_config.json.
-_FILE_FIELDS = ("exchange_type", "enabled", "region_preference", "sandbox")
+_FILE_FIELDS = (
+    "exchange_type",
+    "enabled",
+    "region_preference",
+    "sandbox",
+    "requests_per_second",
+)
 
 
 def _fill_credentials(ex: ExchangeConfig) -> None:
@@ -204,7 +214,14 @@ class ExchangeConfigManager:
             "user_region": config.user_region,
             "primary_exchange": config.primary_exchange,
             "exchanges": [
-                {key: getattr(ex, key) for key in _FILE_FIELDS}
+                {
+                    key: getattr(ex, key)
+                    for key in _FILE_FIELDS
+                    # an unset limit is the exchange's own figure: not written
+                    if not (
+                        key == "requests_per_second" and ex.requests_per_second is None
+                    )
+                }
                 for ex in config.exchanges
             ],
             "price_comparison_enabled": config.price_comparison_enabled,
@@ -373,6 +390,32 @@ class ExchangeConfigManager:
             self.config.exchanges.append(ex)
         _fill_credentials(ex)
         self.save_config(self.config)
+
+    def set_requests_per_second(
+        self, exchange_name: str, value: Optional[float]
+    ) -> bool:
+        """Keep ``exchange_name``'s requests to ``value`` a second (None: the
+        exchange's own published figure). Saved in ``trading_config.json``, which
+        every PowerTrader process reads (``rate_limits``). False, and nothing
+        changed, when that file exists but cannot be read."""
+        config = self.load_config()
+        if config is None:
+            if os.path.exists(self.config_file):
+                return False
+            config = self.create_default_config(save=False)
+        name = str(exchange_name).strip().lower()
+        for ex in config.exchanges:
+            if str(ex.exchange_type).lower() == name:
+                ex.requests_per_second = value
+                break
+        else:
+            config.exchanges.append(
+                ExchangeConfig(
+                    name, False, len(config.exchanges) + 1, requests_per_second=value
+                )
+            )
+        self.save_config(config)
+        return True
 
     def enable_exchange(self, exchange_name: str, enabled: bool = True):
         """Enable or disable an exchange"""

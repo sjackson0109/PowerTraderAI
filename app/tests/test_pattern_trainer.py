@@ -14,6 +14,7 @@ All candles are synthetic (helpers_candles) and read from the cache offline; the
 network is blocked in this process and in every child (helpers_trainer)."""
 
 import ast
+import glob
 import json
 import os
 import subprocess
@@ -351,9 +352,13 @@ def test_an_older_window_after_a_newer_one_leaves_no_hole_in_the_cache(exchange)
         assert report["gaps"] == [] and report["missing_at_start"] == 0, tf
 
 
-def test_a_pair_listed_after_train_start_is_reported_online_and_refused_offline(
+def test_a_pair_listed_after_train_start_is_reported_online_then_read_offline(
     exchange, capsys
 ):
+    """Online, the bars missing before the listing are reported, and the cache
+    records that the exchange has none there; offline then reads the same bars.
+    Without that record, offline cannot tell a pair listed later from a short
+    cache, and refuses."""
     listed = START + timedelta(weeks=4)
     hourly = hc.synthetic_hourly(HOURS - 4 * 168, listed, seed=3)
     exchange({"NEWUSDT": hc.all_timeframes(hourly)})
@@ -369,6 +374,13 @@ def test_a_pair_listed_after_train_start_is_reported_online_and_refused_offline(
         in capsys.readouterr().out
     )
 
+    assert load_all(ppt.BarLoader("NEWUSDT", START, END, offline=True)) == reports
+
+    for path in glob.glob(
+        os.path.join(candles.cache_dir_default(), "**", "NEWUSDT_*.start.json"),
+        recursive=True,
+    ):
+        os.remove(path)
     with pytest.raises(ppt.TrainerError, match="does not cover"):
         ppt.BarLoader("NEWUSDT", START, END, offline=True).bars("1hour")
 

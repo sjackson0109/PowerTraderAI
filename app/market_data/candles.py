@@ -10,7 +10,9 @@ Candle data layer (FDS-121 section 8): real candles + an on-disk cache.
   ``<cache>/candles`` and hold Binance bars; they move once into ``binance/``
   (``move_flat_cache``). CSV: parquet needs pyarrow, which is not a project
   dependency. Only missing ranges are fetched, and a forming (not yet closed) bar
-  is never written to the cache.
+  is never written to the cache. When the exchange has no bars before a series'
+  first one (a pair listed later), ``<PAIR>_<TF>.start.json`` says so, and that
+  stretch is not asked for again for ``NO_BARS_BEFORE_MAX_AGE``.
 * Validation: timestamps must be strictly increasing with no duplicates (raises);
   gaps are *reported* in ``df.attrs["report"]``, never filled silently.
 
@@ -21,6 +23,7 @@ Candle frames have exactly the columns the strategy interface expects::
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import threading
@@ -36,6 +39,11 @@ from market_data.timeframes import candle_timeframe_seconds
 FLAT_CACHE_EXCHANGE = "binance"
 CANDLE_COLUMNS = ["open_time", "open", "high", "low", "close", "volume"]
 _NUMERIC = ["open", "high", "low", "close", "volume"]
+
+
+# How long "the exchange has no bars before the cached first one" is trusted before
+# that stretch is asked for again (an exchange can add older history).
+NO_BARS_BEFORE_MAX_AGE = pd.Timedelta(days=30)
 
 
 class CandleDataError(RuntimeError):
@@ -78,6 +86,51 @@ def cache_path(
     if exchange:
         folder = os.path.join(folder, str(exchange).lower())
     return os.path.join(folder, f"{symbol.upper()}_{tf}.csv")
+
+
+def start_record_path(path: str) -> str:
+    """``BTC-USD_1h.csv`` -> ``BTC-USD_1h.start.json``: where the exchange's bars of
+    that series begin."""
+    return os.path.splitext(path)[0] + ".start.json"
+
+
+def _known_empty_from(
+    path: str, first_open: pd.Timestamp, now: pd.Timestamp
+) -> Optional[pd.Timestamp]:
+    """The time from which the exchange was asked and had no bars until the cached
+    first bar ``first_open``, or None: never asked, asked about another first bar,
+    or asked longer than ``NO_BARS_BEFORE_MAX_AGE`` ago."""
+    try:
+        with open(start_record_path(path), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if to_utc(data["first_open"]) != first_open:
+            return None
+        if now - to_utc(data["checked_at"]) > NO_BARS_BEFORE_MAX_AGE:
+            return None
+        return to_utc(data["empty_from"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _record_empty_from(
+    path: str, empty_from: pd.Timestamp, first_open: pd.Timestamp
+) -> None:
+    """Record that the exchange has no bars from ``empty_from`` until ``first_open``.
+    A record that cannot be written only costs the requests next time."""
+    record = {
+        "empty_from": empty_from.isoformat(),
+        "first_open": first_open.isoformat(),
+        "checked_at": pd.Timestamp.now(tz="UTC").isoformat(),
+    }
+    target = start_record_path(path)
+    tmp = f"{target}.tmp"
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(record, f)
+        os.replace(tmp, target)
+    except OSError:
+        pass
 
 
 # --- validation ----------------------------------------------------------------
@@ -239,7 +292,13 @@ def get_candles(
     else:
         first_c, last_c = cached["open_time"].iloc[0], cached["open_time"].iloc[-1]
         if start_ts < first_c:
-            want.append((start_ts, first_c - step))
+            # a stretch the exchange was asked for and had no bars in is not asked
+            # for again
+            empty_from = _known_empty_from(path, first_c, now_ts)
+            if empty_from is None:
+                want.append((start_ts, first_c - step))
+            elif start_ts < empty_from:
+                want.append((start_ts, empty_from - step))
         if last_wanted >= last_c + step:
             want.append((last_c + step, last_wanted))
     want = [(a, b) for a, b in want if b >= a]
@@ -272,6 +331,13 @@ def get_candles(
         )
         if not merged.equals(cached):
             _write_cache(path, merged)
+        if not merged.empty:
+            # every range asked for that starts before the first bar now held: the
+            # exchange has no bars between its start and that bar
+            first_now = merged["open_time"].iloc[0]
+            asked_from = [a for a, _ in want if a < first_now]
+            if asked_from:
+                _record_empty_from(path, min(asked_from), first_now)
         cached = merged
 
     df = cached[(cached["open_time"] >= start_ts) & (cached["open_time"] < end_ts)]
@@ -295,21 +361,76 @@ def _exchange_manager():
 
 class ExchangeFetcher:
     """Reads one exchange's candles through the exchange layer, for ``get_candles``:
-    a cached series is only ever topped up from the exchange it came from."""
+    a cached series is only ever topped up from the exchange it came from.
 
-    def __init__(self, manager, exchange: str, symbol: str) -> None:
+    A size the exchange does not serve (Coinbase's 2h, 4h, 8h, 12h and weekly bars)
+    is built from the smaller size it does serve, read through the same cache
+    (``cache_dir``): only the smaller bars missing there are fetched, so building
+    four sizes from 1h bars downloads the 1h bars once."""
+
+    def __init__(
+        self, manager, exchange: str, symbol: str, cache_dir: Optional[str] = None
+    ) -> None:
         self.manager = manager
         self.exchange = exchange
         self.symbol = symbol  # the coin's market as the layer takes it, e.g. BTC-USD
+        self.cache_dir = cache_dir
 
     def fetch(
         self, symbol: str, tf: str, start_ms: int, end_ms: Optional[int] = None
     ) -> List[list]:
         now_ms = int(time.time() * 1000)
         end = now_ms if end_ms is None else int(end_ms)
+        base = self._built_from(tf)
+        if base is not None:
+            return self._build(symbol, tf, base, int(start_ms), end)
         return self.manager.candles(
             self.symbol, tf, int(start_ms), end, now_ms, only=self.exchange
         ).value
+
+    def _built_from(self, tf: str) -> Optional[str]:
+        """The cached size ``tf`` is built from, or None when the exchange serves
+        ``tf`` itself (or serves nothing to build it from: the layer says so)."""
+        from market_data.resample import build_from
+
+        connector = _connector(self.manager, self.exchange)
+        if connector is None:
+            return None
+        native = connector.candle_timeframes()
+        return None if tf in native else build_from(tf, native)
+
+    def _build(
+        self, symbol: str, tf: str, base: str, start_ms: int, end_ms: int
+    ) -> List[list]:
+        """``tf`` bars opening from ``start_ms`` to ``end_ms`` (inclusive), built from
+        the cached closed ``base`` bars (a group still forming is not built)."""
+        from market_data.resample import build_candles
+        from market_data.timeframes import bar_open_floor
+
+        step_ms = candle_timeframe_seconds(tf) * 1000
+        # every base bar of the last tf bar opening by end_ms (end exclusive)
+        last_open_ms = bar_open_floor(end_ms // 1000, tf) * 1000
+        df = get_candles(
+            symbol,
+            base,
+            pd.Timestamp(start_ms, unit="ms", tz="UTC"),
+            pd.Timestamp(last_open_ms + step_ms, unit="ms", tz="UTC"),
+            cache_dir=self.cache_dir,
+            fetcher=self,
+            exchange=self.exchange,
+        )
+        rows = [
+            [_ms(t), o, h, lo, c, v]
+            for t, o, h, lo, c, v in zip(
+                df["open_time"],
+                df["open"],
+                df["high"],
+                df["low"],
+                df["close"],
+                df["volume"],
+            )
+        ]
+        return [r for r in build_candles(rows, base, tf) if start_ms <= r[0] <= end_ms]
 
 
 def exchange_candles(
@@ -362,7 +483,7 @@ def exchange_candles(
                 end,
                 closed_only=closed_only,
                 cache_dir=cache_dir,
-                fetcher=ExchangeFetcher(manager, name, market),
+                fetcher=ExchangeFetcher(manager, name, market, cache_dir),
                 offline=offline,
                 now=now,
                 exchange=name,

@@ -89,19 +89,30 @@ def test_a_range_before_the_listing_is_an_empty_page_not_a_crash(tmp_path):
     first = candles.get_candles(
         "NEWUSDT", "1h", start, end, cache_dir=str(tmp_path), fetcher=fake
     )
-    # the cache now starts at the listing: the next call asks for the months before it
+    # the cache now starts at the listing, and records that there are no bars before
+    # it: the next call asks for nothing
+    asked = len(fake.calls)
     second = candles.get_candles(
         "NEWUSDT", "1h", start, end, cache_dir=str(tmp_path), fetcher=fake
     )
+    assert len(fake.calls) == asked
+    pd.testing.assert_frame_equal(first, second)
 
+    # without that record, the months before the listing are asked for: an empty page
+    os.remove(
+        candles.start_record_path(candles.cache_path("NEWUSDT", "1h", str(tmp_path)))
+    )
+    third = candles.get_candles(
+        "NEWUSDT", "1h", start, end, cache_dir=str(tmp_path), fetcher=fake
+    )
     assert fake.calls[-1][2] == (pd.Timestamp(start) - EPOCH) // pd.Timedelta(
         milliseconds=1
     )
     assert (
         binance_rows(hourly, fake.calls[-1][2], fake.calls[-1][3]) == []
     )  # empty page
-    pd.testing.assert_frame_equal(first, second)
-    assert len(second) == 400 and second["open_time"].iloc[0] == pd.Timestamp(LISTED)
+    pd.testing.assert_frame_equal(first, third)
+    assert len(third) == 400 and third["open_time"].iloc[0] == pd.Timestamp(LISTED)
 
 
 def test_a_range_after_the_last_bar_is_an_empty_page_not_a_crash(tmp_path):

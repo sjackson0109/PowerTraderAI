@@ -482,7 +482,9 @@ def run_both(tmp_path, hourly):
         tail = f.read()[-3000:]
     assert code == 0 and record and "error" not in record, (record, tail)
     port_dir = tmp_path / "port"
-    summary = train_into(port_dir, end=end, upstream_flush_only=True)
+    summary = train_into(
+        port_dir, end=end, upstream_flush_only=True, upstream_rows=True
+    )
     return record, model_bytes(upstream_dir), model_bytes(port_dir), summary
 
 
@@ -528,8 +530,9 @@ ORACLE_DATA = {
 @pytest.mark.parametrize("data", sorted(ORACLE_DATA))
 def test_the_port_writes_the_same_model_files_as_upstream(tmp_path, data):
     """Same bars in, byte-identical memories, weights and thresholds out (in
-    ``--upstream-flush-only`` mode, which keeps upstream's flush schedule). The
-    data is chosen so no KuCoin page comes back empty (see the next test)."""
+    ``--upstream-flush-only --upstream-rows`` mode, which keeps upstream's flush
+    schedule, rows and passes). The data is chosen so no KuCoin page comes back
+    empty (see the next test)."""
     make, exercised = ORACLE_DATA[data]
     record, upstream, port, summary = run_both(tmp_path, make())
     pages = [c for c in record["calls"] if c[0] == "kline"]
@@ -563,10 +566,11 @@ def test_the_only_difference_from_upstream_is_its_empty_page_row(tmp_path, monke
     assert port == upstream
 
 
-def test_default_mode_keeps_upstreams_output_and_adds_the_unflushed_tail(tmp_path):
+def test_the_default_flush_keeps_upstreams_output_and_adds_the_unflushed_tail(tmp_path):
+    """Upstream's rows both times: only the flush differs."""
     seed_cache()
-    train_into(tmp_path / "upstream_mode", upstream_flush_only=True)
-    summary = train_into(tmp_path / "default")
+    train_into(tmp_path / "upstream_mode", upstream_flush_only=True, upstream_rows=True)
+    summary = train_into(tmp_path / "default", upstream_rows=True)
     flushed = model_bytes(tmp_path / "upstream_mode")
     full = model_bytes(tmp_path / "default")
     assert sorted(full) == ht.expected_model_file_names()
@@ -620,6 +624,7 @@ def test_the_close_weight_update_keeps_the_units_of_its_inputs(monkeypatch, tmp_
         0,
         (opens, closes, highs, lows),
         lambda *a: None,
+        upstream_rows=True,
     )
 
     assert stats["matched_steps"] == 1 and stats["steps"] == 2
@@ -741,14 +746,17 @@ def test_a_run_writes_status_summary_and_the_stamp_last(tmp_path, monkeypatch):
     assert summary["sources"]["offline"] == "command line"
     assert summary["candles"]["1h"]["bars"] == HOURS
     assert summary["candles"]["1w"]["bars"] == 10
+    assert summary["window"] == "3y" and summary["sources"]["window"] == "default"
     passes = summary["timeframes"]["1hour"]["passes"]
-    # the older-half rule, recorded: 1,680 closed bars -> the oldest 841
-    assert [p["bars_used"] for p in passes] == [841, 841, 841]
+    # every bar, recorded: the 1-hour timeframe walks its 1,680 bars once, from the
+    # 10th to the newest
+    assert [(p["bars_used"], p["first_bar"], p["last_bar"]) for p in passes] == [
+        (1680, 9, 1679)
+    ]
     day = summary["timeframes"]["1day"]["passes"]
-    assert [(p["data_tf"], p["bars_used"]) for p in day] == [
-        ("1hour", 841),
-        ("1day", 70),
-        ("1day", 70),
+    assert [(p["data_tf"], p["bars_used"], p["last_bar"]) for p in day] == [
+        ("1hour", 1680, 1679),
+        ("1day", 70, 69),
     ]
 
 

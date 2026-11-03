@@ -290,7 +290,7 @@ class TestLiveModeStillNeedsBrokerAndConfirmation(CoinbaseGateBase):
             "live", broker="coinbase", live_confirmed=True, manager=manager
         )
         self.assertEqual(applied.key, "live:coinbase:preview")
-        self.assertEqual(applied.label, "MODE: LIVE — coinbase (preview orders)")
+        self.assertEqual(applied.label, "MODE: LIVE — Coinbase (preview orders)")
         applied = tm.apply_trading_mode(
             "live",
             broker="coinbase",
@@ -299,7 +299,7 @@ class TestLiveModeStillNeedsBrokerAndConfirmation(CoinbaseGateBase):
             manager=manager,
         )
         self.assertEqual(applied.key, "live:coinbase")
-        self.assertEqual(applied.label, "MODE: LIVE — coinbase")
+        self.assertEqual(applied.label, "MODE: LIVE — Coinbase")
 
     def test_there_is_no_coinbase_testnet_so_live_coinbase_is_real_money(self):
         # pt_config.json carries a "coinbase_testnet" flag; the gate only honours

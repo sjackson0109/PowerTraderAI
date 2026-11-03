@@ -457,7 +457,7 @@ class VisibilityTests(PaperTraderCase):
         )
         indicator.update_settings(live)
         indicator.update_price_integrity({"state": "live", "degraded_last_hour": 0})
-        self.assertEqual(indicator.cget("text"), "MODE: LIVE — kraken")
+        self.assertEqual(indicator.cget("text"), "MODE: LIVE — Kraken")
 
 
 class EmergencyDrawdownTests(PaperTraderCase):

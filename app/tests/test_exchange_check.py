@@ -212,7 +212,7 @@ def test_the_window_lists_the_choices_and_labels_the_primary(root):
         for w in frame.winfo_children()
         if isinstance(w, ttk.Checkbutton)
     ]
-    assert texts[:4] == ["coinbase (primary)", "kraken", "BTC", "ETH"]
+    assert texts[:4] == ["Coinbase (primary)", "Kraken", "BTC", "ETH"]
     assert win.title() == "Check Exchanges"
     win.destroy()
 

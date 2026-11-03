@@ -40,6 +40,7 @@ from pt_exchange_abstraction import (
     ExchangeType,
     MarketData,
     OrderResult,
+    exchange_name,
 )
 from pt_paper_trading import (
     MarketDataSimulator,
@@ -208,7 +209,7 @@ class TradingSettings:
             if self.uses_testnet
             else " (preview orders)" if self.uses_preview else ""
         )
-        return f"MODE: LIVE — {self.active_broker}{suffix}"
+        return f"MODE: LIVE — {exchange_name(self.active_broker)}{suffix}"
 
     @property
     def key(self) -> str:
@@ -1111,8 +1112,8 @@ def apply_trading_mode(
             raise TradingModeError("Select a broker before switching to live trading.")
         if not broker_places_orders(broker_id):
             raise TradingModeError(
-                f"This version cannot place orders on '{broker_id}'. Choose another "
-                "broker, or stay in paper mode."
+                f"This version cannot place orders on {exchange_name(broker_id)}. "
+                "Choose another broker, or stay in paper mode."
             )
         if not live_confirmed:
             raise TradingModeError(
@@ -1370,7 +1371,7 @@ def _build_live_exchange(ts: TradingSettings) -> AbstractExchange:
     except Exception as exc:
         raise LiveTradingRefused(
             f"Live trading refused: could not set up broker "
-            f"'{ts.active_broker}': {exc}"
+            f"{exchange_name(ts.active_broker)}: {exc}"
         ) from exc
 
 

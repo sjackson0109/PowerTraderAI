@@ -31,6 +31,7 @@ from pt_exchange_abstraction import (  # noqa: E402
     ExchangeFactory,
     ExchangeType,
     PriceQuote,
+    exchange_name,
 )
 from pt_multi_exchange import (  # noqa: E402
     DEFAULT_PRIMARY_EXCHANGE,
@@ -226,8 +227,12 @@ def test_the_settings_window_shows_the_users_primary_and_saves_it_unchanged(
     hub.settings["primary_exchange"] = "kraken"
     win = open_settings(hub)
     combo = primary_combo(win)
-    assert combo.get() == "kraken"
-    assert list(combo.cget("values")) == ExchangeFactory.market_data_exchanges()
+    # listed by name, saved by id (owner, 2026-11-03)
+    assert combo.get() == "Kraken"
+    assert list(combo.cget("values")) == sorted(
+        (exchange_name(e) for e in ExchangeFactory.market_data_exchanges()),
+        key=str.lower,
+    )
     press(win, "Save")
     assert hub.settings["primary_exchange"] == "kraken"
     manager = ExchangeConfigManager()

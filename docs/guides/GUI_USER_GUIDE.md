@@ -12,7 +12,7 @@ The PowerTraderAI+ desktop application (`pt_hub.py`) provides a comprehensive gr
 │ Controls/Health     │ Price Charts & Analysis      │
 │                     │                              │
 │ • Neural: Status    │ • BTC Price Chart            │
-│ • Trader: Status    │ • ETH Price Chart            │
+│ • Trading: Status   │ • ETH Price Chart            │
 │ • Exchange: Status  │ • Portfolio Performance      │
 │ • Account Info      │ • Trade History              │
 │ • Training Panel    │ • Neural Levels Overlay      │
@@ -24,23 +24,23 @@ The PowerTraderAI+ desktop application (`pt_hub.py`) provides a comprehensive gr
 
 #### System Status
 - **Neural: running/stopped** - Neural network analysis engine
-- **Trader: running/stopped** - Automated trading engine
-- **Exchange: COINBASE** - In paper mode: the primary exchange, which gives the prices, candles and minimum order sizes
+- **Trading: running/stopped** - Automated trading engine
+- **Exchange: Coinbase** - In paper mode: the primary exchange, which gives the prices, candles and minimum order sizes
 - **Last status: [timestamp]** - Most recent system update
 
 #### Exchange line
-The line sits on the left of the Account box, with **Trader** on the right beside its
+The line sits on the left of the Account box, with **Trading** on the right beside its
 start and stop buttons. Its colour gives the state: the accent colour when the exchange
 answers, red when it does not (orange when it answers without a price), grey while
 checking.
 
-- **Paper mode** names the primary exchange: `COINBASE`.
+- **Paper mode** names the primary exchange: `Coinbase`.
 - **Live mode** names the broker orders go to:
-  - `COINBASE (live orders)`: real orders.
-  - `COINBASE (preview orders)`: **Preview orders only** is ticked; nothing is bought or sold.
-  - `BINANCE (testnet orders)`: Binance's test network.
-  - `KRAKEN (no live orders)`, in red: this version cannot place orders on that exchange.
-- `COINBASE (no prices)`, in red: no price from that exchange; click the line for the error.
+  - `Coinbase (live orders)`: real orders.
+  - `Coinbase (preview orders)`: **Preview orders only** is ticked; nothing is bought or sold.
+  - `Binance (testnet orders)`: Binance's test network.
+  - `Kraken (no live orders)`, in red: this version cannot place orders on that exchange.
+- `Coinbase (no prices)`, in red: no price from that exchange; click the line for the error.
 - **Checking...** - Status verification in progress
 
 ### Trading Mode
@@ -200,7 +200,7 @@ Test connection? (y/n): y
 2. Click **Start All** to begin operations
 3. **Monitor status indicators**:
    - Neural: running ✅
-   - Trader: running ✅
+   - Trading: running ✅
    - Exchange: ✅ CONNECTED
 4. **View real-time data** in charts and trade history
 
@@ -232,7 +232,7 @@ Test connection? (y/n): y
 
 #### Trading System Issues
 - **Neural: stopped** → Training incomplete or system error
-- **Trader: stopped** → Exchange issues or insufficient funds
+- **Trading: stopped** → Exchange issues or insufficient funds
 - **Training: REQUIRED** → Must train neural networks before trading
 - **Flow: Train All required** → Complete training before starting operations
 

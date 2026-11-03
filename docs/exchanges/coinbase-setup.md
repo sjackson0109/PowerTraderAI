@@ -200,9 +200,9 @@ Nothing is bought or sold, nothing is recorded as a trade, and a preview needs o
 the **View** permission, so it works with a view-only key. The same order is
 previewed at most once every 15 minutes.
 
-The hub's **Exchange** line shows `COINBASE (preview orders)` in this mode, and
-`COINBASE (live orders)` once preview is turned off. In paper mode it names the
-primary exchange alone: `COINBASE`.
+The hub's **Exchange** line shows `Coinbase (preview orders)` in this mode, and
+`Coinbase (live orders)` once preview is turned off. In paper mode it names the
+primary exchange alone: `Coinbase`.
 
 ### What PowerTraderAI+ sends to Coinbase
 - **Market orders only**, as immediate-or-cancel (`market_market_ioc`). No limit,

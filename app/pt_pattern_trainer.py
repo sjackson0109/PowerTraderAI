@@ -50,9 +50,10 @@ Deviations from upstream, each with its reason:
    does not have at either end of the window (a pair listed later, a missing bar) are
    counted in the summary (``missing_at_start``, ``missing_at_end``) and printed; gaps
    inside the window are listed. Offline, the cache must reach both ends of the window,
-   or the run fails: offline, a short cache and an exchange that has no bars there look
-   the same, so a pair listed after ``train_start`` is trained online, or offline
-   from a later ``train_start``.
+   or the run fails. A pair listed after ``train_start`` reaches it once an online run
+   has asked the exchange: the cache records that it has no bars before the listing
+   (``<PAIR>_<TF>.start.json``); without that record, a short cache and an exchange
+   that has no bars there look the same.
 2. Row selection: upstream kept the older ``L - int(L/2)`` of the ``L`` rows it fetched,
    which included KuCoin's still-forming bar, so the port keeps the oldest
    ``(n+1) - (n+1)//2`` of the ``n`` closed bars. For passes 1-2 of ``1day``/``1week``
@@ -487,7 +488,9 @@ class BarLoader:
         only (one model, one exchange)."""
         from market_data.candles import ExchangeFetcher, get_candles
 
-        fetcher = ExchangeFetcher(self._manager_for_fetch(), self.exchange, self.market)
+        fetcher = ExchangeFetcher(
+            self._manager_for_fetch(), self.exchange, self.market, self.cache_dir
+        )
         get_candles(
             self.pair,
             tf,

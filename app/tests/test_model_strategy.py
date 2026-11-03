@@ -913,8 +913,9 @@ def test_the_signal_engine_logs_each_unusable_model_and_repeats_it(monkeypatch, 
         )
 
 
-def test_other_strategy_build_errors_still_surface(caplog):
-    """Only an unusable model fails closed quietly; bad parameters propagate as before."""
+def test_other_strategy_build_errors_are_settings_problems(caplog):
+    """Bad parameters (Settings > Strategy saves them) fail closed too: no signals,
+    the reason in the settings problem, an ERROR logged."""
     settings = {
         "strategy": {
             "active_id": "STRAT-001",
@@ -924,8 +925,11 @@ def test_other_strategy_build_errors_still_surface(caplog):
         }
     }
     engine = SignalEngine(settings_source=settings)
-    with pytest.raises((StrategyError, catalogue.ParamError, catalogue.CatalogueError)):
-        engine.decide("BTC")
+    with caplog.at_level(logging.ERROR):
+        assert engine.decide("BTC") is None
+    assert "overlay OVL-RATCHET" in engine.block_reason()
+    assert "lock_pct must be below trigger_pct" in engine.block_reason()
+    assert any("no signals" in r.getMessage() for r in caplog.records)
 
 
 def test_without_given_bars_it_reads_the_default_cache_once_outside_on_bar(

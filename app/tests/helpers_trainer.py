@@ -113,6 +113,7 @@ if os.environ.get("PT_TEST_TRAINER_CHILD") == "1":
             "POWERTRADER_TRAIN_END",
             "POWERTRADER_TRAIN_SEED",
             "POWERTRADER_CANDLES_OFFLINE",
+            "POWERTRADER_TRAIN_WINDOW",
         )
 
         def _no_network(*args, **kwargs):

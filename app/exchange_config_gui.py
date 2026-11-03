@@ -14,6 +14,7 @@ from typing import Dict, Optional
 
 import coinbase_auth
 import pt_secrets
+import rate_limits
 import ui_theme
 import ui_tokens
 from pt_exchange_abstraction import (
@@ -21,6 +22,7 @@ from pt_exchange_abstraction import (
     ConnectionTestResult,
     ExchangeType,
 )
+from pt_exchange_abstraction import exchange_name as exchange_name_of
 from pt_multi_exchange import ExchangeConfigManager, MultiExchangeManager
 
 # Exchanges whose credentials are not a plain "API key + secret" pair. Anything not
@@ -448,6 +450,34 @@ class ExchangeConfigGUI:
 
         creds_frame.columnconfigure(1, weight=1)
 
+        # Requests per second: the exchange's published limit, or the user's own
+        # figure. Public prices and candles need no key, so it is saved on its own.
+        limit_frame = tk.Frame(self.config_frame, bg=self.p["BG"])
+        limit_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+        ttk.Label(limit_frame, text="Requests per second:").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.rate_var = tk.StringVar()
+        self.rate_entry = ttk.Spinbox(
+            limit_frame,
+            textvariable=self.rate_var,
+            from_=0.1,
+            to=1000,
+            increment=1,
+            width=8,
+        )
+        self.rate_entry.grid(row=0, column=1, padx=(10, 0))
+        ttk.Button(limit_frame, text="Save limit", command=self.save_rate_limit).grid(
+            row=0, column=2, padx=(10, 0)
+        )
+        ttk.Button(
+            limit_frame, text="Use published limit", command=self.reset_rate_limit
+        ).grid(row=0, column=3, padx=(10, 0))
+        self.rate_hint_var = tk.StringVar()
+        ttk.Label(limit_frame, textvariable=self.rate_hint_var, wraplength=480).grid(
+            row=1, column=0, columnspan=4, sticky="w", pady=(4, 0)
+        )
+
         # Save button
         save_button_frame = tk.Frame(self.config_frame, bg=self.p["BG"])
         save_button_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
@@ -725,6 +755,70 @@ class ExchangeConfigGUI:
         self._apply_field_layout(
             exchange_name, has_saved_secret=bool(api_secret), source=source
         )
+        self._show_rate_limit(exchange_name, config)
+
+    def _show_rate_limit(self, exchange_name: str, config=None) -> None:
+        """The Requests per second row for ``exchange_name``: its saved figure, else
+        its published one, and where the figure comes from."""
+        published, documented = rate_limits.published_rate(exchange_name)
+        saved = None
+        for ex in getattr(config, "exchanges", None) or []:
+            if str(getattr(ex, "exchange_type", "")).lower() == exchange_name:
+                saved = getattr(ex, "requests_per_second", None)
+                break
+        rate = saved if saved is not None else published
+        self.rate_var.set(f"{rate:g}")
+        where = (
+            f"{exchange_name_of(exchange_name)}'s published limit: {published:g} a second."
+            if documented
+            else f"PowerTrader's default for {exchange_name_of(exchange_name)}: "
+            f"{published:g} a second."
+        )
+        own = "" if saved is None else f" Saved here: {saved:g} a second."
+        self.rate_hint_var.set(
+            f"{where}{own} Every PowerTrader window and process on this computer "
+            "counts towards it."
+        )
+
+    def save_rate_limit(self) -> bool:
+        """Save the Requests per second figure for the selected exchange."""
+        exchange_name = self.exchange_var.get()
+        if not exchange_name:
+            messagebox.showwarning("No Exchange", "Please select an exchange first")
+            return False
+        rate = rate_limits.valid_rate(self.rate_var.get().strip())
+        if rate is None:
+            messagebox.showerror(
+                "Requests per second",
+                "Requests per second must be a number above 0, up to 1,000.",
+            )
+            return False
+        return self._store_rate_limit(exchange_name, rate)
+
+    def reset_rate_limit(self) -> bool:
+        """Go back to the selected exchange's published figure."""
+        exchange_name = self.exchange_var.get()
+        if not exchange_name:
+            messagebox.showwarning("No Exchange", "Please select an exchange first")
+            return False
+        return self._store_rate_limit(exchange_name, None)
+
+    def _store_rate_limit(self, exchange_name: str, rate) -> bool:
+        if not self.config_manager.set_requests_per_second(exchange_name, rate):
+            messagebox.showerror(
+                "Requests per second",
+                self.config_manager.load_error
+                or "The exchange settings could not be read.",
+            )
+            return False
+        self._show_rate_limit(exchange_name, self.config_manager.load_config())
+        shown = exchange_name_of(exchange_name)
+        self.status_var.set(
+            f"{shown}: {self.rate_var.get()} requests per second"
+            if rate is not None
+            else f"{shown}: its published limit"
+        )
+        return True
 
     def get_exchange_instructions(self, exchange_name: str) -> str:
         """Get setup instructions for an exchange"""

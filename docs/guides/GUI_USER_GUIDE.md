@@ -219,6 +219,28 @@ Test connection? (y/n): y
 - **Balance Check**: Validates account access
 - **Trading Permissions**: Checks order placement capabilities
 
+#### Requests per second
+Each exchange limits how many requests it takes from one internet address. PowerTrader keeps every request it
+sends to an exchange (prices, candles, orders) within that limit, counting every PowerTrader window and process on
+your computer together, because they share your address.
+
+| Exchange | Published limit used |
+|---|---|
+| Coinbase | 10 a second |
+| Kraken | 1 a second |
+| KuCoin | 66 a second (2,000 per 30 seconds) |
+| Binance | 10 a second (6,000 request weight a minute) |
+| any other | 5 a second (PowerTrader's default) |
+
+**Setup Exchange** shows the figure for the exchange you select. Type another figure and press **Save limit** to use
+it instead, or **Use published limit** to go back. No API key is needed for this.
+
+#### Candles kept on your computer
+Candles are saved per exchange in PowerTrader's cache folder. Only bars that are not there yet are asked
+for. Sizes an exchange does not serve itself (Coinbase has no 2-, 4-, 8- or 12-hour or weekly candles) are built from
+the smaller bars already saved. When an exchange has no bars before a coin's first one (a coin listed later), that is
+saved too, and the months before the listing are not asked for again for 30 days.
+
 ## 📈 Trading Operations
 
 ### Starting Trading Systems

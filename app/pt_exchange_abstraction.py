@@ -358,10 +358,24 @@ class AbstractExchange(abc.ABC):
     # connectors raise NotImplementedError for both and can serve prices only.
     SUPPORTS_LIVE_ORDERS = False
 
+    # Requests a second the exchange allows from one IP address, from its own
+    # documentation. Every PowerTrader process on the computer counts against it
+    # (``rate_limits``); trading_config.json can set another figure per exchange
+    # (Configure Exchange APIs). This default is for an exchange whose connector
+    # gives no figure.
+    requests_per_second: float = 5.0
+
     def __init__(self, api_key: str = "", api_secret: str = "", **kwargs):
         self.api_key = api_key
         self.api_secret = api_secret
         self.exchange_name = self.get_exchange_name()
+
+    def wait_for_request_slot(self) -> None:
+        """Return once one more request to this exchange keeps every PowerTrader
+        process on this computer within the exchange's limit."""
+        import rate_limits
+
+        rate_limits.wait(self.get_exchange_name(), self.requests_per_second)
 
     def min_order_usd(self, symbol: str) -> Optional[float]:
         """The exchange's minimum order value for ``symbol``, in its quote currency

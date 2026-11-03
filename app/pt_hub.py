@@ -2653,9 +2653,10 @@ class PowerTraderHub(tk.Tk):
 
                 min_left = 360
                 min_right = 520
-                # 402: the coin table's three columns with no spare strip right of
-                # them (owner: 438 on 2026-10-14, 36 px less on 2026-11-02)
-                desired_left = 402
+                # 394: the coin table's three columns with no spare strip right of
+                # them (owner: 438 on 2026-10-14, 402 on 2026-11-02, 394 on
+                # 2026-11-03)
+                desired_left = 394
                 target = max(min_left, min(total - min_right, desired_left))
                 outer.sashpos(0, int(target))
 
@@ -5745,7 +5746,7 @@ Platform: {sys.platform}
         width = self.training_status_frame.winfo_width()
         if width <= 1:
             width = 300
-        gap = 8  # between columns; none after the last, so three fit at 438 px
+        gap = 8  # between columns; none after the last, so three fit at 394 px
         try:
             cell_w = max(c[0].winfo_reqwidth() for c in cells.values())
         except Exception:

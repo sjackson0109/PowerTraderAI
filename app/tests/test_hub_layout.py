@@ -474,10 +474,11 @@ def test_the_charts_sit_5px_from_the_panel_edges(hub):
     assert hub._chart_tabs_row.pack_info()["padx"] in (5, (5, 5))
 
 
-def test_the_left_pane_starts_402px_wide(hub):
-    """Owner, 2026-11-02: the divider 36 px further left (438 -> 402), closing the
-    strip right of the coin table. The window is never shown: the pane's width is
-    stood in and the sash position the hub sets is recorded."""
+def test_the_left_pane_starts_394px_wide(hub):
+    """Owner: the divider 36 px further left (438 -> 402) on 2026-11-02, then 8 px
+    more (394) on 2026-11-03, closing the strip right of the coin table. The window
+    is never shown: the pane's width is stood in and the sash position the hub sets
+    is recorded."""
     import time
 
     outer = hub._pw_outer
@@ -496,7 +497,7 @@ def test_the_left_pane_starts_402px_wide(hub):
         assert time.monotonic() < deadline, "the divider was never placed"
         hub.update()
         time.sleep(0.01)
-    assert placed == [(0, 402)]
+    assert placed == [(0, 394)]
 
 
 def test_the_account_row_has_the_exchange_left_and_the_trader_by_its_buttons(hub):

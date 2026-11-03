@@ -84,11 +84,51 @@ checking.
 - **Profit Margin (With DCA)**: Target profit percentage when using DCA
 - **Trailing Gap**: Percentage gap for trailing stop losses
 
+Trade Start Level, the DCA settings and the profit margins are used only when **Strategy** → **Signals from** is
+**Neural levels, DCA and trailing profit margin**. With a rule-based strategy (the default), the strategy decides
+each buy and sale, and each buy is the **Start Allocation %**.
+
 #### 📁 **File Paths**
 - **Hub Data Directory**: Location for trade history and logs
 - **Neural Runner Script**: Path to neural analysis engine
 - **Trainer Script**: Path to neural network trainer
 - **Trader Script**: Path to automated trader
+
+### Strategy Settings
+The **Strategy** row shows what decides each buy and sale, e.g. *Trend crossover (DEMA/TEMA) on 1-hour candles;
+stops and filters: none*. **Strategy...** opens the Strategy window. Its **Save** applies at the trader's next
+decision: no restart is needed. A value outside its range, or a pair of values that does not fit (a slow average no
+longer than the fast one), is refused with the reason, and nothing is saved.
+
+#### Signals from
+- **Rule-based strategy** (the default): the strategy below decides each buy and sale from closed candles.
+- **Neural levels, DCA and trailing profit margin**: the thinker's levels, with Trade Start Level, DCA and the
+  trailing profit margin from the main Settings window.
+
+#### Strategy
+| Strategy | Buys | Sells |
+|---|---|---|
+| **EMA crossover** | the fast EMA crosses above the slow EMA | a candle closes with the fast EMA below the slow EMA |
+| **Trend crossover (DEMA/TEMA)** (the default) | the fast average crosses above the slow one and stays above for the confirmation candles; with the ADX filter on, ADX is at least the minimum | a candle closes with the fast average below the slow one |
+| **Supertrend** | the trend turns up and stays up for the confirmation candles | a candle closes below the Supertrend line |
+
+Each parameter shows its range and default, with a description under it. **Reset to defaults** puts back the
+selected strategy's defaults. Each strategy keeps its own values.
+
+#### Candles
+The strategy decides once each candle closes: on 1-hour candles, once an hour for each coin, shortly after the
+hour. Prices, values and the Current Trades table still update live. The chart's own timeframe only changes the
+chart. Choices: 1, 3, 5, 15 and 30 minutes; 1, 2, 4, 6, 8 and 12 hours; 1 day.
+
+#### Stops and filters
+Tick any of them. Stops are checked when each candle closes: a candle that closes below the stop sells the coin at
+the market price. With more than one stop ticked, the highest one applies, and a stop never moves down.
+- **Ratchet stop**: from the start gain, a stop at the first stop % above the buy price, raised one step for each
+  further step of gain.
+- **ATR trailing stop**: the highest close since the buy, minus a multiple of the ATR.
+- **Profit lock stages**: stages of gain %:lock %, e.g. `3:1, 6:3, 10:6`.
+- **Pause after a sale**: no new buy in the coin (or in every coin) for a number of candles after a sale, and for
+  longer after a sale at a loss.
 
 ### Exchange Provider Settings
 

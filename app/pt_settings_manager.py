@@ -106,6 +106,8 @@ DEFAULT_SETTINGS = {
         "engine": "catalogue",
         "active_id": "STRAT-001",
         "timeframe": "1h",
+        # each strategy's parameters that differ from its defaults (Settings > Strategy)
+        "params": {},
         "overlays": [],
     },
     "neural_config": {
@@ -285,6 +287,12 @@ class SettingsValidator:
             "strategy.timeframe",
             _is_valid_timeframe,
             "Strategy timeframe must be a supported candle timeframe",
+        )
+        self.add_rule(
+            "strategy.params",
+            lambda v: isinstance(v, dict)
+            and all(isinstance(k, str) and isinstance(p, dict) for k, p in v.items()),
+            "Strategy parameters must be an object of {strategy id: {name: value}}",
         )
         self.add_rule(
             "strategy.overlays",
@@ -605,6 +613,29 @@ class SettingsManager:
                     print(f"Settings validation issues during update: {errors}")
 
             return True
+
+    def set_strategy(self, values: Dict[str, Any], persist: bool = True) -> bool:
+        """Replace the ``strategy`` keys given in ``values`` (engine, active_id,
+        timeframe, params, overlays), as Settings > Strategy saves them. Nothing
+        changes when a strategy rule refuses one of them; a problem elsewhere in the
+        file does not stop it."""
+        with self._lock:
+            strategy = copy.deepcopy(self._settings.get("strategy") or {})
+            strategy.update(copy.deepcopy(dict(values)))
+            candidate = copy.deepcopy(self._settings)
+            candidate["strategy"] = strategy
+            _, errors = self.validator.validate(candidate, auto_fix=False)
+            refused = [e for e in errors if e.startswith("strategy.")]
+            if refused:
+                try:
+                    from pt_logging_system import log_error
+
+                    log_error(f"Invalid strategy settings: {refused}")
+                except ImportError:
+                    print(f"Invalid strategy settings: {refused}")
+                return False
+            self._settings["strategy"] = strategy
+            return self.save_settings() if persist else True
 
     def reset_to_defaults(self) -> bool:
         """Reset all settings to defaults."""

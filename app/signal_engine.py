@@ -33,7 +33,8 @@ from market_data.candles import CandleDataError, exchange_candles
 from market_data.timeframes import timeframe_seconds
 from pt_logging import get_logger
 from model_store import ModelStoreError
-from strategies.base import Action
+from strategies.base import Action, StrategyError
+from strategies.catalogue import CatalogueError, ParamError
 from strategies.factory import build_runner
 from strategies.runner import Decision, PositionState, StrategyRunner
 from strategies.settings import StrategySettings, read_strategy_settings
@@ -109,10 +110,11 @@ class SignalEngine:
         return None
 
     def _runner_for(self, s: StrategySettings) -> Optional[StrategyRunner]:
-        """The runner for settings ``s``, or None when the strategy's model cannot be
-        used (no published model whose manifest matches it): no signals, the reason
-        logged as an ERROR (every few minutes) and returned by ``block_reason``. Other
-        build errors (bad parameters) propagate as before."""
+        """The runner for settings ``s`` (its strategy built with the parameters in
+        Settings > Strategy), or None when it cannot be built: the strategy's model
+        cannot be used (no published model whose manifest matches it), or the
+        parameters are refused. Then there are no signals, the reason is logged as an
+        ERROR (every few minutes) and returned by ``block_reason``."""
         if self._runner is None or self._runner_signature != s.signature:
             if self._build_error is not None and self._build_error[0] == s.signature:
                 self._warn_once(
@@ -120,14 +122,16 @@ class SignalEngine:
                 )
                 return None
             try:
-                runner = build_runner(s.active_id, {}, list(s.overlays))
+                runner = build_runner(s.active_id, s.params, list(s.overlays))
                 runner.set_timeframe(timeframe_seconds(s.timeframe))
-            except ModelStoreError as exc:
+            except (ModelStoreError, CatalogueError, ParamError, StrategyError) as exc:
+                self._keep_overlay_state()
                 self._runner, self._runner_signature = None, None
                 reason = f"{s.active_id} cannot be used: {exc}"
                 self._build_error = (s.signature, reason)
                 self._warn_once(f"build:{s.signature}", f"No signals: {reason}", True)
                 return None
+            self._keep_overlay_state()
             self._build_error = None
             self._runner = runner
             self._runner.import_state(self._restored_overlays)
@@ -135,9 +139,20 @@ class SignalEngine:
             self._candles.clear()
             logger.info(
                 f"SignalEngine using {s.active_id} on {s.timeframe} "
+                f"params={s.params or 'defaults'} "
                 f"overlays={[o['id'] for o in s.overlays] or 'none'}"
             )
         return self._runner
+
+    def _keep_overlay_state(self) -> None:
+        """Before the runner is replaced: keep its overlays' timers (e.g. a running
+        cooldown), so a settings change does not reset them. An overlay that is
+        unticked keeps its last state, for when it is ticked again."""
+        if self._runner is not None:
+            self._restored_overlays = {
+                **self._restored_overlays,
+                **self._runner.export_state(),
+            }
 
     # -- positions (the strategy's view of what the trader holds) -------------------------
 

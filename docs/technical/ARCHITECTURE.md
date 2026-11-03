@@ -148,7 +148,12 @@ Those signals are noise from an untrained mock, so they are **not** a basis for 
 | anything else, or an unknown `strategy.active_id` | **No orders** are placed and an ERROR is logged (fail closed). |
 
 Other settings: `strategy.active_id` (default `STRAT-001`), `strategy.timeframe` (default `1h`),
-`strategy.overlays` (`[{id, params}]`). The coins traded are not a strategy setting: the trader opens new trades
+`strategy.params` (`{strategy_id: {name: value}}`: each strategy's parameters that differ from its catalogue
+defaults; only the active strategy's are read, and a wrong one is a settings problem: no orders) and
+`strategy.overlays` (`[{id, params}]`). **Settings > Strategy** (`strategy_settings_ui.py`, words in
+`strategies/descriptions.py`) edits all of them and saves through `SettingsManager.set_strategy`; the trader re-reads
+them every cycle, so a change applies at the next decision, and the overlays' timers (cooldowns) carry over when
+the runner is rebuilt. The coins traded are not a strategy setting: the trader opens new trades
 in the coins in Settings, and in paper mode in the paper-trading coins (Settings > Paper trading: inherit the
 coins, the default, or a chosen set of them; `paper_coins.py`). Held positions are managed whatever that list
 says. The old `strategy.symbols` (default BTC only) is ignored.
@@ -170,8 +175,9 @@ SHORT on the run's own timeframe (so a SHORT there never enters), and otherwise 
 (default 3) LONG timeframes and no SHORT one among the counted ones (see the entry in `strategies/catalogue.json` and
 `strategies/model_strategy.py`). The backtest CLI loads the seven timeframes from the run's own candle source
 (with `--candles-file`, it refuses a cache whose bars are not the file's), and reports decisions held for missing bars.
-It is not the default strategy. The signal engine builds strategies with their default parameters, which name no
-model, so `strategy.active_id = STRAT-003` is a settings problem, handled like an unknown id: no orders, the problem
+It is not the default strategy, and Settings > Strategy does not offer it. The signal engine does not read
+`strategy.params` for a model strategy (it would run one coin's model for every coin), and STRAT-003's defaults
+name no model, so `strategy.active_id = STRAT-003` is a settings problem, handled like an unknown id: no orders, the problem
 logged, and `SIGNALS: BLOCKED` on the hub strip. (A model the engine could not load would also fail closed: no
 signals, and an ERROR.)
 

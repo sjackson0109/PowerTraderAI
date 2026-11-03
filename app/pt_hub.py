@@ -55,6 +55,7 @@ from pt_paper_mode import (
 )
 import trainer_guard
 import trainer_status
+from strategies import descriptions as strategy_words
 from strategies.settings import read_strategy_settings
 from trading_mode import (
     PaperBookError,
@@ -7438,6 +7439,48 @@ Platform: {sys.platform}
         self._exchange_check_win = win
         return win
 
+    def open_strategy_settings(self, parent=None, on_saved=None):
+        """Settings > Strategy: the signal source, the strategy, its candles and
+        parameters, and the stops and filters (``strategy_settings_ui``). Saved to
+        pt_config.json, which the trader reads before every decision."""
+        win = getattr(self, "_strategy_settings_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.deiconify()
+                win.lift()
+                win.focus_set()
+                return win
+        except tk.TclError:
+            pass
+
+        def saved() -> None:
+            self._signals_note_mtime = object()  # re-read the strip's SIGNALS note
+            self._refresh_signals_note()
+            if on_saved is not None:
+                on_saved()
+
+        try:
+            from strategy_settings_ui import StrategySettingsWindow
+
+            win = StrategySettingsWindow(
+                parent or self, on_saved=saved, palette=ui_theme.active_palette()
+            )
+        except Exception as e:
+            messagebox.showerror(
+                "Strategy", f"Could not open the strategy settings: {e}"
+            )
+            return None
+        self._strategy_settings_win = win
+        return win
+
+    @staticmethod
+    def _strategy_summary() -> str:
+        """Settings' Strategy line: what decides each buy and sale."""
+        try:
+            return strategy_words.summary_line(read_strategy_settings())
+        except Exception as e:
+            return f"Could not read the strategy settings: {e}"
+
     # ---- settings dialog ----
 
     # ---- Chart settings pop-out (FDS-CHART-001 section 8) ----
@@ -7777,6 +7820,30 @@ Platform: {sys.platform}
         r += 1
 
         add_row(r, "Hub data dir (optional):", hub_dir_var, browse="dir")
+        r += 1
+
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        )
+        r += 1
+
+        # --- Strategy: what decides each buy and sale (its own window, saved there)
+        ttk.Label(frm, text="Strategy", font=ui_tokens.font("body", "bold")).grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
+        )
+        r += 1
+        strategy_summary_var = tk.StringVar(master=win, value=self._strategy_summary())
+        ttk.Button(
+            frm,
+            text="Strategy...",
+            command=lambda: self.open_strategy_settings(
+                win,
+                on_saved=lambda: strategy_summary_var.set(self._strategy_summary()),
+            ),
+        ).grid(row=r, column=0, sticky="w", pady=6)
+        ttk.Label(frm, textvariable=strategy_summary_var, wraplength=520).grid(
+            row=r, column=1, columnspan=2, sticky="w", pady=6
+        )
         r += 1
 
         ttk.Separator(frm, orient="horizontal").grid(

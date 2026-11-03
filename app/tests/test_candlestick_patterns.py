@@ -551,17 +551,90 @@ def test_price_action_shows_where_no_classical_pattern_matched():
     assert [lb.detection.pattern_id for lb in lay.labels] == ["pin_bar_bullish"]
 
 
-def test_the_cap_keeps_longer_patterns_then_recent():
-    dets = [det("doji", k, k) for k in range(0, 30, 2)] + [
+def ids_of(labels):
+    return [lb.detection.pattern_id for lb in labels]
+
+
+def dojis_and_soldiers():
+    """Dojis on every other candle to 28, and three white soldiers on candles 0-2."""
+    return [det("doji", k, k) for k in range(0, 30, 2)] + [
         det("three_white_soldiers", 0, 2)
     ]
+
+
+def test_the_cap_keeps_the_newest_patterns_by_default():
+    """Owner, 2026-11-04: rank, then cap. With no trade, the newest come first: the
+    soldiers, three candles long but 26 candles back, are hidden."""
+    dets = dojis_and_soldiers()
     lay = cp.layout(dets, every, 4)
-    ids = [lb.detection.pattern_id for lb in lay.labels]
-    assert "three_white_soldiers" in ids and len(ids) == 4
+    assert [lb.detection.last_index for lb in lay.labels] == [22, 24, 26, 28]
     assert lay.hidden_by_cap == len(dets) - 4 - 1  # the doji at index 2 is a "+1"
-    assert [lb.detection.last_index for lb in lay.labels] == sorted(
-        lb.detection.last_index for lb in lay.labels
+    # the hidden ones stay, ranked: the next newest first, the oldest last; candles
+    # 2 and 4 are equally recent (within 3 candles), so the soldiers go before the doji
+    assert [lb.detection.last_index for lb in lay.hidden][:3] == [20, 18, 16]
+    tail = [(lb.detection.pattern_id, lb.detection.last_index) for lb in lay.hidden]
+    assert tail[-3:] == [("three_white_soldiers", 2), ("doji", 4), ("doji", 0)]
+
+
+def test_a_pattern_at_a_trade_ranks_first():
+    """A trade on a pattern's candles, or the candle after its last, puts it first,
+    however old it is."""
+    lay = cp.layout(dojis_and_soldiers(), every, 4, trade_ts=[3 * HOUR], step=HOUR)
+    assert "three_white_soldiers" in ids_of(lay.labels)
+    later = cp.layout(dojis_and_soldiers(), every, 4, trade_ts=[4 * HOUR], step=HOUR)
+    assert "three_white_soldiers" not in ids_of(later.labels)  # two candles after
+
+
+def test_equally_recent_patterns_go_longest_first():
+    """Within the same recency (by default, ending within 3 candles of each other)
+    three candles before two before one."""
+    dets = [
+        det("doji", 28, 28),
+        det("bullish_engulfing", 25, 26),
+        det("three_white_soldiers", 25, 27),
+    ]
+    assert ids_of(cp.layout(dets, every, 1).labels) == ["three_white_soldiers"]
+    assert ids_of(cp.layout(dets, every, 2).labels) == [
+        "bullish_engulfing",
+        "three_white_soldiers",
+    ]
+    # recency counted in single candles: the newest wins
+    single = cp.layout(dets, every, 1, recent_candles=1)
+    assert ids_of(single.labels) == ["doji"]
+
+
+def test_with_the_trend_before_against_it():
+    dets = [det("hammer", 28, 28), det("shooting_star", 27, 27)]
+    falling = cp.layout(dets, every, 1, trend="down")
+    rising = cp.layout(dets, every, 1, trend="up")
+    assert ids_of(falling.labels) == ["shooting_star"]  # bearish, with the trend
+    assert ids_of(rising.labels) == ["hammer"]
+    assert ids_of(cp.layout(dets, every, 1).labels) == ["hammer"]  # no trend: newest
+
+
+def test_the_weights_set_the_order_and_0_leaves_a_criterion_out():
+    dets = dojis_and_soldiers()
+    longest = cp.layout(
+        dets, every, 1, rank={"trade": 0, "recent": 1, "bars": 9, "trend": 0}
     )
+    assert ids_of(longest.labels) == ["three_white_soldiers"]
+    assert cp.ranked_criteria({"trade": 0, "recent": 1, "bars": 9, "trend": 0}) == [
+        "bars",
+        "recent",
+    ]
+    assert cp.ranked_criteria(cp.DEFAULT_RANK) == ["trade", "recent", "bars", "trend"]
+    none = cp.layout(dets, every, 1, rank={k: 0 for k in cp.RANK_CRITERIA})
+    assert [lb.detection.last_index for lb in none.labels] == [28]  # then the newest
+
+
+def test_the_current_trend_uses_the_patterns_trend_rule():
+    rising = [cp.Bar(k * HOUR, 100 + k, 101 + k, 99 + k, 100.5 + k) for k in range(20)]
+    falling = [
+        cp.Bar(k * HOUR, 120 - k, 121 - k, 119 - k, 119.5 - k) for k in range(20)
+    ]
+    assert cp.trend_now(rising, HOUR) == "up"
+    assert cp.trend_now(falling, HOUR) == "down"
+    assert cp.trend_now(rising[:5], HOUR) is None  # too few bars to say
 
 
 def test_hidden_patterns_take_no_label_slot():

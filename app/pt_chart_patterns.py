@@ -133,6 +133,9 @@ class PatternLayer:
         self.records: List[dict] = []  # drawn labels
         self.undrawn: List[cp.Detection] = []
         self.hidden_by_cap = 0
+        self.hidden: List[cp.Label] = []  # below the cap, ranked: shown on hover
+        self.trade_ts: List[int] = []  # the candles of this chart's trades (ranking)
+        self._hidden_hover = None  # the candle whose hidden labels are shown
         self._overlay: List[Any] = []
         self._hover: Optional[dict] = None
         self._selected: Optional[int] = None
@@ -207,8 +210,18 @@ class PatternLayer:
                 pass
             return
         self._pending = None
+        self._arrived(result)
+
+    def _arrived(self, result) -> None:
+        """A detection finished: keep it if it is for the chart's coin and timeframe,
+        and let the chart draw it (``patterns_ready``: the whole chart at once when
+        it was waiting for these labels, else the labels alone)."""
         if result.key == self._current_key():
             self.result = result
+        ready = getattr(self.chart, "patterns_ready", None)
+        if ready is not None:
+            ready()
+        elif result.key == self._current_key():
             self.redraw()
 
     def wait(self, timeout: float = 5.0) -> None:
@@ -221,9 +234,37 @@ class PatternLayer:
             except queue.Empty:
                 continue
             self._pending = None
-            if result.key == self._current_key():
-                self.result = result
-                self.redraw()
+            self._arrived(result)
+
+    def enabled(self, cfg: Dict[str, Any]) -> bool:
+        """Whether Chart settings show any candlestick pattern at all."""
+        return bool(cfg["patterns"]["enabled"]) and any(
+            cs.pattern_visible(cfg, p) for p in cp.PATTERNS
+        )
+
+    def waiting_for(
+        self, candles: Sequence[dict], tf: str, coin_folder: str, cfg: Dict[str, Any]
+    ) -> bool:
+        """True while this coin and timeframe's patterns are being detected for the
+        first time (their detection is started here). The chart then waits for them,
+        so it can set its price range once with room for their labels. Not when the
+        layer shows none, cannot detect any, or already has a result (a newer one is
+        then fetched while the old labels stay)."""
+        self._tf = tf
+        if not candles or not self.enabled(cfg):
+            return False
+        if coin_folder and not_trading_reason(coin_folder):
+            return False
+        step = self._step()
+        if step is None:
+            return False
+        key = self._current_key()
+        if self.result is not None and self.result.key == key:
+            return False
+        if self._pending is None:
+            start = int(candles[0]["ts"]) - (cp.WARMUP_BARS + 2) * step
+            self._start_fetch(key, self.chart.coin, cp.HUB_TO_CANDLE[tf], start, step)
+        return True
 
     def _current_key(self):
         return (self.chart.coin, self._tf)
@@ -363,12 +404,22 @@ class PatternLayer:
         first_ts, last_ts = int(candles[0]["ts"]), int(candles[-1]["ts"])
         in_window = [d for d in r.detections if first_ts <= d.last_ts <= last_ts]
         cfg = self._cfg
+        step = self._step() or 0
         lay = cp.layout(
             in_window,
             lambda p: cs.pattern_visible(cfg, p),
             cfg["patterns"]["max_labels"],
+            rank=cfg["patterns"].get("rank"),
+            trade_ts=self.trade_ts,
+            step=step,
+            trend=cp.trend_now(r.bars, step) if step else None,
+            newest=len(r.bars) - 1,
+            recent_candles=cfg["patterns"].get(
+                "recent_candles", cp.DEFAULT_RECENT_CANDLES
+            ),
         )
         self.hidden_by_cap = lay.hidden_by_cap
+        self.hidden = list(lay.hidden)
         placed: List[tuple] = []  # (x, side, level) of labels already drawn
         for lb in lay.labels:
             d = lb.detection
@@ -389,7 +440,10 @@ class PatternLayer:
         n = len(self.records)
         bits = [f"Patterns: {n} shown"]
         if self.hidden_by_cap:
-            bits.append(f"{self.hidden_by_cap} hidden by the label cap")
+            bits.append(
+                f"{self.hidden_by_cap} hidden by the label cap (point at a candle "
+                "to show its own)"
+            )
         if self.undrawn:
             bits.append(f"{len(self.undrawn)} not on this chart")
         self._note = " · ".join(bits)
@@ -467,7 +521,63 @@ class PatternLayer:
     def _on_motion(self, event):
         if self._selected is not None:
             return  # keyboard selection holds the highlight
-        self._set_hover(self._hit(event))
+        rec = self._hit(event)
+        if rec is None:
+            x, hidden = self._hidden_at(event)
+            if hidden:
+                self._show_hidden(x, hidden)
+                return
+        self._set_hover(rec)
+
+    def _hidden_at(self, event):
+        """``(candle, labels)``: the labels the cap hid on the candle under the
+        pointer (none off the plot)."""
+        if not self.hidden or event.inaxes is not self.ax or event.xdata is None:
+            return None, []
+        x = int(round(float(event.xdata)))
+        if not 0 <= x < len(self._candles):
+            return None, []
+        ts = int(self._candles[x]["ts"])
+        return x, [lb for lb in self.hidden if lb.detection.last_ts == ts]
+
+    def _show_hidden(self, x: int, labels) -> None:
+        """Show the hidden labels of candle ``x`` while the pointer is on it, drawn
+        like the others with a dashed edge, inside the chart's frame."""
+        if self._hidden_hover == x:
+            return
+        self._set_hover(None)
+        self._hidden_hover = x
+        c = self._candles[x]
+        for level, lb in enumerate(labels[:LABEL_LEVELS]):
+            p = lb.pattern
+            up = p.direction == "bullish" or p.direction == "none"
+            offset = LABEL_OFFSET_PT + level * LABEL_STEP_PT
+            text = f"{p.glyph} {p.name}" + (f" +{len(lb.others)}" if lb.others else "")
+            art = self.ax.annotate(
+                text,
+                (x, float(c["high"]) if up else float(c["low"])),
+                xytext=(0, offset if up else -offset),
+                textcoords="offset points",
+                ha="center",
+                va="bottom" if up else "top",
+                fontsize=LABEL_FONT_PT,
+                color=LABEL_FG,
+                bbox=dict(
+                    boxstyle=f"round,pad={LABEL_BOX_PAD}",
+                    facecolor=LABEL_BG,
+                    edgecolor=LABEL_EDGE,
+                    linestyle="--",
+                    alpha=0.92,
+                ),
+                zorder=26,
+                annotation_clip=True,
+            )
+            art.set_in_layout(False)  # hovering never moves the margins
+            self._overlay.append(art)
+        try:
+            self.canvas.draw_idle()
+        except Exception:
+            pass
 
     def _on_click(self, event):
         try:
@@ -503,8 +613,9 @@ class PatternLayer:
             self.close_detail()
 
     def _set_hover(self, rec: Optional[dict], force: bool = False):
-        if rec is self._hover and not force:
+        if rec is self._hover and not force and self._hidden_hover is None:
             return
+        self._hidden_hover = None
         for art in self._overlay:
             try:
                 art.remove()
@@ -761,6 +872,15 @@ class PatternLayer:
 # --- the Chart settings pop-out (FDS-CHART-001 section 8) ---------------------------
 
 
+# The Label ranking weights, as Chart settings names them
+RANK_LABELS = (
+    ("trade", "At a trade"),
+    ("recent", "Newest"),
+    ("bars", "Longer patterns"),
+    ("trend", "With the trend"),
+)
+
+
 class ChartSettingsWindow(tk.Toplevel):
     """Toggles for every chart overlay and candlestick pattern. Each change is passed to
     ``on_change(new_chart_settings)`` at once (the hub saves it and redraws)."""
@@ -793,6 +913,8 @@ class ChartSettingsWindow(tk.Toplevel):
         }
         self.max_labels_var = tk.IntVar(value=pats["max_labels"])
         self.next_arrows_var = tk.BooleanVar(value=pats["next_arrows"])
+        self.rank_vars = {k: tk.IntVar(value=pats["rank"][k]) for k in cp.RANK_CRITERIA}
+        self.recent_candles_var = tk.IntVar(value=pats["recent_candles"])
         self.palette_var = tk.StringVar(value=cfg["palette"])
         self.style_var = tk.StringVar(value=cfg["candle_style"])
 
@@ -825,6 +947,8 @@ class ChartSettingsWindow(tk.Toplevel):
             ]
             + list(self.filter_vars.values())
             + list(self.item_vars.values())
+            + list(self.rank_vars.values())
+            + [self.recent_candles_var]
         )
 
     def _overlays_tab(self, nb):
@@ -869,6 +993,42 @@ class ChartSettingsWindow(tk.Toplevel):
         ttk.Checkbutton(
             opts, text="Show what happened next", variable=self.next_arrows_var
         ).pack(side="left")
+        ranking = ttk.Frame(top)
+        ranking.pack(fill="x", pady=(4, 2))
+        ttk.Label(ranking, text="Label ranking:").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        lo, hi = cp.RANK_RANGE
+        for col, (key, text) in enumerate(RANK_LABELS, start=1):
+            ttk.Label(ranking, text=text).grid(
+                row=0, column=2 * col - 1, sticky="w", padx=(0, 4)
+            )
+            ttk.Spinbox(
+                ranking, from_=lo, to=hi, width=3, textvariable=self.rank_vars[key]
+            ).grid(row=0, column=2 * col, sticky="w", padx=(0, 12))
+        ttk.Label(ranking, text="Equally recent: within").grid(
+            row=1, column=1, columnspan=3, sticky="w", pady=(4, 0)
+        )
+        lo, hi = cp.RECENT_CANDLES_RANGE
+        ttk.Spinbox(
+            ranking, from_=lo, to=hi, width=3, textvariable=self.recent_candles_var
+        ).grid(row=1, column=4, sticky="w", pady=(4, 0))
+        ttk.Label(ranking, text="candles").grid(
+            row=1, column=5, sticky="w", padx=(4, 0), pady=(4, 0)
+        )
+        ttk.Label(
+            top,
+            text=(
+                "When more patterns are found than the labels allowed, the labels "
+                "shown are chosen by these, the highest weight first; 0 leaves one "
+                "out. At a trade: an entry, DCA buy or exit on the pattern's candles "
+                "or the candle after them. Newest: patterns ending within the "
+                "candles set above count as equally recent. Longer patterns: three "
+                "or more candles, then two, then one. With the trend: bullish in a "
+                "rising trend, bearish in a falling one."
+            ),
+            wraplength=560,
+        ).pack(anchor="w", pady=(2, 2))
         ttk.Label(
             top,
             text="A pattern shows only when its own box and every filter it belongs to are on.",
@@ -959,6 +1119,16 @@ class ChartSettingsWindow(tk.Toplevel):
             cap = int(self.max_labels_var.get())
         except (tk.TclError, ValueError):
             cap = 12
+        rank = {}
+        for key, var in self.rank_vars.items():
+            try:
+                rank[key] = int(var.get())
+            except (tk.TclError, ValueError):
+                rank[key] = cp.DEFAULT_RANK[key]
+        try:
+            within = int(self.recent_candles_var.get())
+        except (tk.TclError, ValueError):
+            within = cp.DEFAULT_RECENT_CANDLES
         out.update(
             {
                 "overlays": {k: bool(v.get()) for k, v in self.overlay_vars.items()},
@@ -968,6 +1138,8 @@ class ChartSettingsWindow(tk.Toplevel):
                     "items": {k: bool(v.get()) for k, v in self.item_vars.items()},
                     "max_labels": cap,
                     "next_arrows": bool(self.next_arrows_var.get()),
+                    "rank": rank,
+                    "recent_candles": within,
                 },
                 "palette": self.palette_var.get(),
                 "candle_style": self.style_var.get(),
@@ -992,6 +1164,9 @@ class ChartSettingsWindow(tk.Toplevel):
             v.set(base["patterns"]["items"][k])
         self.max_labels_var.set(base["patterns"]["max_labels"])
         self.next_arrows_var.set(base["patterns"]["next_arrows"])
+        for k, v in self.rank_vars.items():
+            v.set(base["patterns"]["rank"][k])
+        self.recent_candles_var.set(base["patterns"]["recent_candles"])
         self.palette_var.set(base["palette"])
         self.style_var.set(base["candle_style"])
         self._building = False

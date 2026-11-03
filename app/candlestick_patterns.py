@@ -1166,6 +1166,70 @@ class Layout:
     labels: List[Label]
     hidden_by_cap: int
     shown_detections: int
+    hidden: List[Label] = field(default_factory=list)  # ranked below the cap
+
+
+# Which labels the cap keeps when more are found (Chart settings > Candlestick
+# patterns > Label ranking): each criterion has a weight; the highest weight is
+# compared first, then the next, and a weight of 0 leaves the criterion out.
+RANK_CRITERIA = ("trade", "recent", "bars", "trend")
+DEFAULT_RANK = {"trade": 4, "recent": 3, "bars": 2, "trend": 1}
+RANK_RANGE = (0, 9)
+# patterns whose last candles lie within this many candles of each other count as
+# equally recent (one label per candle, so a recency of single candles never ties)
+DEFAULT_RECENT_CANDLES = 3
+RECENT_CANDLES_RANGE = (1, 20)
+
+
+def trend_now(bars: Sequence[Bar], step: int) -> Optional[str]:
+    """The trend at the newest bar ("up", "down" or None), by the rule the patterns'
+    own trend context uses (section 5.3)."""
+    if not bars:
+        return None
+    ctx = _Ctx(bars, step)
+    return ctx.trend(ctx.n)
+
+
+def rank_values(
+    label: Label,
+    trade_ts: Sequence[int],
+    step: int,
+    trend: Optional[str],
+    newest: int,
+    recent_candles: int = DEFAULT_RECENT_CANDLES,
+) -> Dict[str, int]:
+    """Each criterion's value for one label (the higher, the earlier it is kept):
+
+    * ``trade``: 1 when a trade (entry, DCA or exit) on this chart was on one of the
+      pattern's candles or the candle after its last, else 0;
+    * ``recent``: how recent its last candle is, in groups of ``recent_candles``
+      counted back from the ``newest`` candle (the newest group first);
+    * ``bars``: 3 for a pattern of three or more candles, 2 for two, 1 for one;
+    * ``trend``: 2 when its direction is the current trend's, 1 when it has no
+      direction or there is no trend, 0 when it is against the trend."""
+    d, p = label.detection, label.pattern
+    at_trade = any(d.first_ts <= int(t) <= d.last_ts + step for t in trade_ts)
+    if p.direction == "none" or trend is None:
+        with_trend = 1
+    elif (p.direction == "bullish") == (trend == "up"):
+        with_trend = 2
+    else:
+        with_trend = 0
+    age = max(0, int(newest) - d.last_index)
+    return {
+        "trade": 1 if at_trade else 0,
+        "recent": -(age // max(1, int(recent_candles))),
+        "bars": min(p.bars, 3),
+        "trend": with_trend,
+    }
+
+
+def ranked_criteria(rank: Optional[Dict[str, int]]) -> List[str]:
+    """The criteria in the order they are compared: by weight, highest first (a tie
+    keeps RANK_CRITERIA's order); a weight of 0 is left out."""
+    weights = dict(DEFAULT_RANK if rank is None else rank)
+    used = [k for k in RANK_CRITERIA if int(weights.get(k, 0) or 0) > 0]
+    return sorted(used, key=lambda k: (-int(weights[k]), RANK_CRITERIA.index(k)))
 
 
 def merge_runs(detections: Sequence[Detection]) -> List[Detection]:
@@ -1199,11 +1263,20 @@ def layout(
     detections: Sequence[Detection],
     visible: Callable[[PatternDef], bool],
     max_labels: int,
+    rank: Optional[Dict[str, int]] = None,
+    trade_ts: Sequence[int] = (),
+    step: int = 0,
+    trend: Optional[str] = None,
+    newest: Optional[int] = None,
+    recent_candles: int = DEFAULT_RECENT_CANDLES,
 ) -> Layout:
-    """One label per candle: merge runs, keep the visible patterns, pick a winner per
-    last candle (most bars, then classical, then library order; price action only
-    where no classical pattern ends on that candle), then cap the label count
-    (by bar count, then the most recent)."""
+    """One label per candle: merge runs, keep the visible patterns (the filters come
+    first), pick a winner per last candle (most bars, then classical, then library
+    order; price action only where no classical pattern ends on that candle), then
+    rank the labels (``ranked_criteria(rank)`` over ``rank_values``, recency counted
+    back from ``newest``, the last bar given, by default the newest label; ties: the
+    newer, then the longer span) and keep the first ``max_labels``. The rest are
+    returned in ``hidden``, ranked."""
     kept = [d for d in merge_runs(detections) if visible(BY_ID[d.pattern_id])]
     by_candle: Dict[int, List[Detection]] = {}
     for d in kept:
@@ -1215,15 +1288,23 @@ def layout(
         group.sort(key=_precedence)
         labels.append(Label(group[0], group[1:]))
 
+    order = ranked_criteria(rank)
+    if newest is None:
+        newest = max((lb.detection.last_index for lb in labels), default=0)
+
     def priority(lb: Label):
         d = lb.detection
-        return (-(d.last_index - d.first_index + 1), -d.last_index)
+        values = rank_values(lb, trade_ts, step, trend, newest, recent_candles)
+        return tuple(-values[k] for k in order) + (
+            -d.last_index,
+            -(d.last_index - d.first_index + 1),
+        )
 
     labels.sort(key=priority)
     cap = max(1, int(max_labels))
     shown, hidden = labels[:cap], labels[cap:]
     shown.sort(key=lambda lb: lb.detection.last_index)
-    return Layout(shown, len(hidden), sum(1 + len(lb.others) for lb in shown))
+    return Layout(shown, len(hidden), sum(1 + len(lb.others) for lb in shown), hidden)
 
 
 # --- the hub's timeframe names -> candle sizes -------------------------------------

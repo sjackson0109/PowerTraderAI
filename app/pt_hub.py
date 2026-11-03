@@ -1008,7 +1008,43 @@ def _end_date_inside(ax) -> None:
         pass
 
 
+# How long a coin's chart waits, the first time a coin and timeframe are shown, for
+# its candlestick patterns: the chart is then drawn once, with room for their labels.
+PATTERN_WAIT_MS = 1500
+# The runner writes this low bound for a timeframe with no prediction: not a price.
+NEURAL_PLACEHOLDER_LOW = 0.01
+# A trade dot's label: 10 pt above the dot, one line of chart text, and the dot.
+MARKER_REACH_PT = 10 + CHART_FONT_PT * 1.2 + 4
+
+
+def padded_range(lo: float, hi: float) -> Tuple[float, float]:
+    """``(lo, hi)`` with a 3% margin each side (a flat range gets a small one)."""
+    pad = (hi - lo) * 0.03
+    if not math.isfinite(pad) or pad <= 0:
+        pad = max(abs(lo) * 0.001, 1e-6)
+    return lo - pad, hi + pad
+
+
+def _positive(value: Any) -> Optional[float]:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) and v > 0 else None
+
+
 class CandleChart(ttk.Frame):
+    """One coin's candles with its lines, price tags, trade dots and pattern labels.
+
+    The axes are framed once, before anything is drawn, from everything the chart
+    will show: every candle's high and low, every line drawn (neural levels, bid,
+    ask, average cost, DCA, sell), every trade dot, and room for the trade labels
+    and the pattern labels; the price tags get their strip whether or not a tag is
+    shown yet. Autoscaling is then off, so no layer drawn afterwards can move or
+    resize the plot. The frame is worked out again only when the coin, the
+    timeframe or the candles shown change, when something to show falls outside it,
+    or when the window is resized (``_frame``)."""
+
     def __init__(
         self,
         parent: tk.Widget,
@@ -1066,8 +1102,16 @@ class CandleChart(ttk.Frame):
         self.ax = self.fig.add_subplot(111)
         self._apply_dark_chart_style()
         # no title: the toolbar above already names the coin and the timeframe
-        self._base_ylim: Optional[Tuple[float, float]] = None  # candle range + pad
+        self._base_ylim: Optional[Tuple[float, float]] = None  # what is shown + pad
         self._price_tags: List[Any] = []
+        # the price range the axes keep (see the class docstring): key, data range,
+        # padded range, label reach, the range set and the canvas size it was set for
+        self._frame: Optional[Dict[str, Any]] = None
+        self._tag_probe: Optional[Any] = None  # an invisible tag: the strip's width
+        # a refresh held back until this coin and timeframe's patterns are in
+        self._pending_refresh: Optional[Dict[str, Any]] = None
+        self._wait_after_id = None
+        self._no_wait_key = None  # waited once already: draw without the labels
 
         # axis names in the corners (owner, 2026-10-14): fit_layout() keeps room
         self._price_name, self._time_name = _corner_axis_names(
@@ -1152,18 +1196,17 @@ class CandleChart(ttk.Frame):
         self._tf_after_id = self.after(120, _do)
 
     def fit_layout(self) -> None:
-        """Size the margins to the text actually drawn: the title, axis labels and tick
-        labels, plus a strip on the right while price tags are shown. The pattern labels
-        then go inside the plot, since the margins no longer leave room for them: the
-        price range widens only as far as they need, and a label at either end is
+        """Size the margins to the text drawn: the price name above the plot, the tick
+        labels, and on the right a strip as wide as the widest price tag could be
+        (``_tag_probe``), kept whether or not a tag is shown. The price range is the
+        frame's and is not changed here. A pattern label at either end of the plot is
         aligned inwards."""
-        fig, ax = self.fig, self.ax
+        fig = self.fig
         layer = getattr(self, "pattern_layer", None)
         labels = layer.label_artists() if layer is not None else []
-        for art in labels + self._price_tags:
+        probe = [self._tag_probe] if self._tag_probe is not None else []
+        for art in labels + self._price_tags + probe:
             art.set_in_layout(False)
-        if self._base_ylim:
-            ax.set_ylim(*self._base_ylim)
         top = 1.0  # a strip above the plot for the price name
         try:
             name_px = self._price_name.get_window_extent(fig.canvas.get_renderer())
@@ -1172,23 +1215,66 @@ class CandleChart(ttk.Frame):
         except Exception:
             pass
         # the time name sits right of the plot, like the price tags
-        right = _fit_axes_beside(fig, self._price_tags + [self._time_name], top)
-        if not (self._base_ylim and labels):
-            return
-        try:
-            from pt_chart_patterns import room_for_labels
+        _fit_axes_beside(fig, probe + [self._time_name], top)
+        if layer is not None and labels:
+            layer.keep_labels_inside()
 
-            height = float(ax.get_window_extent().height)
-            ax.set_ylim(*room_for_labels(*self._base_ylim, layer.label_reach(), height))
-        except Exception:
-            pass
-        _fit_axes(fig, right, top)  # the new range may change the price labels' width
-        layer.keep_labels_inside()
+    def _set_frame(self, reach: List[Tuple[float, bool, float]]) -> None:
+        """Set the price range: the padded range of what is shown, widened as far as
+        the labels in ``reach`` need to sit inside the plot (the margins are fitted to
+        it before and after), then recorded with the canvas size."""
+        from pt_chart_patterns import room_for_labels
+
+        frame = self._frame
+        ax = self.ax
+        ax.set_ylim(*frame["base"])
+        self.fit_layout()
+        if reach:
+            try:
+                height = float(ax.get_window_extent().height)
+                ax.set_ylim(*room_for_labels(*frame["base"], reach, height))
+            except Exception:
+                pass
+            self.fit_layout()  # the new range may change the price labels' width
+        ax.set_autoscale_on(False)
+        frame["ylim"] = tuple(ax.get_ylim())
+        frame["reach"] = list(reach)
+        frame["size"] = self._last_canvas_px
 
     def _fit_and_draw(self) -> None:
+        """After a resize: the labels' room in price depends on the plot's height, so
+        the frame is set again for the new size."""
         self._resize_after_id = None
-        self.fit_layout()
+        if self._frame is not None and self._frame.get("ylim") is not None:
+            self._set_frame(self._frame.get("reach") or [])
+        else:
+            self.fit_layout()
         self.canvas.draw_idle()
+
+    def patterns_ready(self) -> None:
+        """A pattern detection finished. A refresh held back for it is drawn now (the
+        whole chart, framed with its labels' room); otherwise the labels are redrawn
+        inside the frame the chart already has."""
+        if self._wait_after_id is not None:
+            try:
+                self.after_cancel(self._wait_after_id)
+            except Exception:
+                pass
+            self._wait_after_id = None
+        args, self._pending_refresh = self._pending_refresh, None
+        if args is not None:
+            self.refresh(**args)
+        else:
+            self.pattern_layer.redraw()
+
+    def _stop_waiting(self, key) -> None:
+        """The patterns took longer than PATTERN_WAIT_MS: draw the chart without them;
+        their labels then go inside its frame when they arrive."""
+        self._wait_after_id = None
+        args, self._pending_refresh = self._pending_refresh, None
+        if args is not None:
+            self._no_wait_key = key
+            self.refresh(**args)
 
     def _apply_dark_chart_style(self) -> None:
         """Apply dark styling (called on init and after every ax.clear())."""
@@ -1280,6 +1366,31 @@ class CandleChart(ttk.Frame):
         long_sig = _cached(long_sig_path, read_int_from_file, 0) if folder else 0
         short_sig = read_short_signal(folder) if folder else 0
 
+        # The first time this coin and timeframe are shown, their patterns are still
+        # being detected: the chart keeps what it shows and is drawn once they are in
+        # (patterns_ready), so the frame has their labels' room from the start.
+        wait_key = (self.coin, tf)
+        if (
+            candles
+            and self._no_wait_key != wait_key
+            and self.pattern_layer.waiting_for(candles, tf, folder, chart_cfg)
+        ):
+            self._pending_refresh = {
+                "coin_folders": coin_folders,
+                "current_buy_price": current_buy_price,
+                "current_sell_price": current_sell_price,
+                "trail_line": trail_line,
+                "dca_line_price": dca_line_price,
+                "avg_cost_basis": avg_cost_basis,
+                "trader_running": trader_running,
+            }
+            if self._wait_after_id is None:
+                self._wait_after_id = self.after(
+                    PATTERN_WAIT_MS, lambda: self._stop_waiting(wait_key)
+                )
+            return
+        self._pending_refresh = None
+
         # --- Avoid full ax.clear() (expensive). Just clear artists. ---
         try:
             self.ax.lines.clear()
@@ -1291,7 +1402,7 @@ class CandleChart(ttk.Frame):
             self.ax.cla()
             self._apply_dark_chart_style()  # the axis names are figure text: kept
         self._price_tags = []
-        self._base_ylim = None
+        self._tag_probe = None
 
         if not candles:
             self.ax.text(
@@ -1304,9 +1415,69 @@ class CandleChart(ttk.Frame):
                 color=CHART["text"],
             )
             self.pattern_layer.update([], tf, folder, chart_cfg)
+            self._frame = None
+            self._base_ylim = None
             self.fit_layout()
             self.canvas.draw_idle()
             return
+
+        # --- everything the chart will show, before anything is drawn -------------------
+        neural = []
+        for key, levels in (
+            ("neural_long", long_levels),
+            ("neural_short", short_levels),
+        ):
+            if show(key):
+                neural += [
+                    v
+                    for v in map(_positive, levels)
+                    if v is not None and v != NEURAL_PLACEHOLDER_LOW
+                ]
+        line_prices = {
+            key: price
+            for key, price in (
+                ("trail", _positive(trail_line)),
+                ("dca", _positive(dca_line_price)),
+                ("avg", _positive(avg_cost_basis)),
+                ("ask", _positive(current_buy_price)),
+                ("bid", _positive(current_sell_price)),
+            )
+            if show(key) and price is not None
+        }
+        markers = self._trade_markers(candles) if show("trades") else []
+        shown = (
+            [float(c["low"]) for c in candles]
+            + [float(c["high"]) for c in candles]
+            + neural
+            + list(line_prices.values())
+            + [m[1] for m in markers]
+        )
+        lo, hi = min(shown), max(shown)
+        frame_key = (self.coin, tf, int(candles[0]["ts"]), len(candles))
+        frame = self._frame
+        keep = (
+            frame is not None
+            and frame.get("ylim") is not None
+            and frame["key"] == frame_key
+            and frame["lo"] <= lo
+            and hi <= frame["hi"]
+            and frame["size"] == self._last_canvas_px
+            and frame["markers"] == bool(markers)
+        )
+        if not keep:
+            self._frame = frame = {
+                "key": frame_key,
+                "lo": lo,
+                "hi": hi,
+                "base": padded_range(lo, hi),
+                "markers": bool(markers),
+                "ylim": None,
+            }
+        self._base_ylim = frame["base"]
+        # Set the frame first, then switch autoscaling off: no layer below moves it.
+        self.ax.set_xlim(-0.5, (len(candles) - 0.5) + 0.6)
+        self.ax.set_ylim(*(frame["ylim"] or frame["base"]))
+        self.ax.set_autoscale_on(False)
 
         # Candlestick drawing (green up / red down) - batch rectangles
         xs = getattr(self, "_xs", None)
@@ -1349,18 +1520,6 @@ class CandleChart(ttk.Frame):
 
         for r in rects:
             self.ax.add_patch(r)
-
-        # Lock y-limits to candle range so overlay lines can go offscreen without expanding the chart.
-        try:
-            y_low = min(float(c["low"]) for c in candles)
-            y_high = max(float(c["high"]) for c in candles)
-            pad = (y_high - y_low) * 0.03
-            if not math.isfinite(pad) or pad <= 0:
-                pad = max(abs(y_low) * 0.001, 1e-6)
-            self.ax.set_ylim(y_low - pad, y_high + pad)
-            self._base_ylim = (y_low - pad, y_high + pad)
-        except Exception:
-            pass
 
         # Overlay Neural levels (blue long, orange short)
         for lv in long_levels if show("neural_long") else []:
@@ -1446,6 +1605,83 @@ class CandleChart(ttk.Frame):
         except Exception:
             pass
 
+        # --- Trade dots (BUY / DCA / SELL) for THIS coin only ---
+        for x, y, label, color in markers:
+            self.ax.scatter([x], [y], s=35, color=color, zorder=6)
+            self.ax.annotate(
+                label,
+                (x, y),
+                textcoords="offset points",
+                xytext=(0, 10),
+                ha="center",
+                fontsize=CHART_FONT_PT,
+                color=CHART["text"],
+                zorder=7,
+            )
+
+        # x tick labels (date + time) - evenly spaced, never overlapping duplicates
+        n = len(candles)
+        want = 5  # keep it readable even when the window is narrow
+        if n <= want:
+            idxs = list(range(n))
+        else:
+            step = (n - 1) / float(want - 1)
+            idxs = []
+            last = -1
+            for j in range(want):
+                i = int(round(j * step))
+                if i <= last:
+                    i = last + 1
+                if i >= n:
+                    i = n - 1
+                idxs.append(i)
+                last = i
+
+        tick_x = [xs[i] for i in idxs]
+        tick_lbl = [
+            time.strftime(
+                "%Y-%m-%d\n%H:%M", time.localtime(int(candles[i].get("ts", 0)))
+            )
+            for i in idxs
+        ]
+
+        try:
+            self.ax.minorticks_off()
+            self.ax.set_xticks(tick_x)
+            self.ax.set_xticklabels(tick_lbl)
+            self.ax.tick_params(axis="x", labelsize=CHART_FONT_PT)
+            _end_date_inside(self.ax)
+        except Exception:
+            pass
+
+        # Candlestick pattern labels (FDS-CHART-001), placed by open time; a pattern
+        # at one of this chart's trades ranks first (shown dots or not)
+        trades = markers if show("trades") else self._trade_markers(candles)
+        self.pattern_layer.trade_ts = [int(candles[x]["ts"]) for x, _, _, _ in trades]
+        try:
+            self.pattern_layer.update(candles, tf, folder, chart_cfg)
+        except Exception:
+            pass
+
+        # the price tags' strip, as wide as the widest tag at these prices
+        if any(show(k) for k in ("ask", "bid", "avg", "dca", "trail")):
+            self._tag_probe = self._make_tag_probe(frame["lo"], frame["hi"])
+
+        if frame.get("ylim") is None:
+            # a new frame: room for the trade labels and the pattern labels drawn
+            reach = [
+                (y, True, MARKER_REACH_PT * self.fig.dpi / 72.0)
+                for _, y, _, _ in markers
+            ]
+            try:
+                reach += self.pattern_layer.label_reach()
+            except Exception:
+                pass
+            self._set_frame(reach)
+        else:
+            self.ax.set_ylim(*frame["ylim"])
+            self.fit_layout()
+
         # Right-side price tags (so you can read Bid/Ask/AVG/DCA/Sell at a glance).
         # Two lines each, name over price, so the strip they need stays narrow.
         try:
@@ -1459,24 +1695,18 @@ class CandleChart(ttk.Frame):
 
             wanted = []
             # Map to your terminology: Ask=buy line, Bid=sell line
-            for key, y_val, tag, color in (
-                ("ask", current_buy_price, "ASK", LINES["ask"]),
-                ("bid", current_sell_price, "BID", LINES["bid"]),
-                ("avg", avg_cost_basis, "AVG", LINES["avg"]),
-                ("dca", dca_line_price, "DCA", LINES["dca"]),
-                ("trail", trail_line, "SELL", LINES["trail"]),
+            for key, tag, color in (
+                ("ask", "ASK", LINES["ask"]),
+                ("bid", "BID", LINES["bid"]),
+                ("avg", "AVG", LINES["avg"]),
+                ("dca", "DCA", LINES["dca"]),
+                ("trail", "SELL", LINES["trail"]),
             ):
-                if not show(key) or y_val is None:
+                price = line_prices.get(key)
+                if price is None:
                     continue
-                try:
-                    price = float(y_val)
-                except Exception:
-                    continue
-                if (not math.isfinite(price)) or price <= 0:
-                    continue
-                # A price beyond the plot is tagged at the nearest edge, with an arrow
-                # towards it: its line is off the chart, and the margins are too
-                # narrow to hold the tag where the price would be.
+                # Every line is inside the frame; were one beyond the plot it would be
+                # tagged at the nearest edge, with an arrow towards it.
                 yy, arrow = price, ""
                 if price > y1:
                     yy, arrow = y1, " ▲"
@@ -1520,133 +1750,6 @@ class CandleChart(ttk.Frame):
         except Exception:
             pass
 
-        # --- Trade dots (BUY / DCA / SELL) for THIS coin only ---
-        try:
-            trades = (
-                _read_trade_history_jsonl(self.trade_history_path)
-                if self.trade_history_path and show("trades")
-                else []
-            )
-            if trades:
-                candle_ts = [int(c["ts"]) for c in candles]  # oldest->newest
-                t_min = float(candle_ts[0])
-                t_max = float(candle_ts[-1])
-
-                for tr in trades:
-                    sym = str(tr.get("symbol", "")).upper()
-                    base = sym.split("-")[0].strip() if sym else ""
-                    if base != self.coin.upper().strip():
-                        continue
-
-                    side = str(tr.get("side", "")).lower().strip()
-                    tag = str(tr.get("tag") or "").upper().strip()
-
-                    if side == "buy":
-                        label = "DCA" if tag == "DCA" else "BUY"
-                        color = MARKERS["dca"] if tag == "DCA" else MARKERS["buy"]
-                    elif side == "sell":
-                        label = "SELL"
-                        color = MARKERS["sell"]
-                    else:
-                        continue
-
-                    tts = tr.get("ts", None)
-                    if tts is None:
-                        continue
-                    try:
-                        tts = float(tts)
-                    except Exception:
-                        continue
-                    if tts < t_min or tts > t_max:
-                        continue
-
-                    i = bisect.bisect_left(candle_ts, tts)
-                    if i <= 0:
-                        idx = 0
-                    elif i >= len(candle_ts):
-                        idx = len(candle_ts) - 1
-                    else:
-                        idx = (
-                            i
-                            if abs(candle_ts[i] - tts) < abs(tts - candle_ts[i - 1])
-                            else (i - 1)
-                        )
-
-                    # y = trade price if present, else candle close
-                    y = None
-                    try:
-                        p = tr.get("price", None)
-                        if p is not None and float(p) > 0:
-                            y = float(p)
-                    except Exception:
-                        y = None
-                    if y is None:
-                        try:
-                            y = float(candles[idx].get("close", 0.0))
-                        except Exception:
-                            y = None
-                    if y is None:
-                        continue
-
-                    x = idx
-                    self.ax.scatter([x], [y], s=35, color=color, zorder=6)
-                    self.ax.annotate(
-                        label,
-                        (x, y),
-                        textcoords="offset points",
-                        xytext=(0, 10),
-                        ha="center",
-                        fontsize=CHART_FONT_PT,
-                        color=CHART["text"],
-                        zorder=7,
-                    )
-        except Exception:
-            pass
-
-        self.ax.set_xlim(-0.5, (len(candles) - 0.5) + 0.6)
-
-        # x tick labels (date + time) - evenly spaced, never overlapping duplicates
-        n = len(candles)
-        want = 5  # keep it readable even when the window is narrow
-        if n <= want:
-            idxs = list(range(n))
-        else:
-            step = (n - 1) / float(want - 1)
-            idxs = []
-            last = -1
-            for j in range(want):
-                i = int(round(j * step))
-                if i <= last:
-                    i = last + 1
-                if i >= n:
-                    i = n - 1
-                idxs.append(i)
-                last = i
-
-        tick_x = [xs[i] for i in idxs]
-        tick_lbl = [
-            time.strftime(
-                "%Y-%m-%d\n%H:%M", time.localtime(int(candles[i].get("ts", 0)))
-            )
-            for i in idxs
-        ]
-
-        try:
-            self.ax.minorticks_off()
-            self.ax.set_xticks(tick_x)
-            self.ax.set_xticklabels(tick_lbl)
-            self.ax.tick_params(axis="x", labelsize=CHART_FONT_PT)
-            _end_date_inside(self.ax)
-        except Exception:
-            pass
-
-        # Candlestick pattern labels (FDS-CHART-001): drawn last, placed by open time
-        try:
-            self.pattern_layer.update(candles, tf, folder, chart_cfg)
-        except Exception:
-            pass
-
-        self.fit_layout()
         self.canvas.draw_idle()
 
         self.neural_status_label.config(
@@ -1656,6 +1759,97 @@ class CandleChart(ttk.Frame):
                 else ""
             )
         )
+
+    def _make_tag_probe(self, lo: float, hi: float):
+        """An invisible price tag as wide as the widest a tag can be at these prices
+        (every line is inside the frame, so no tag carries an edge arrow): the strip
+        the tags need, kept even before a tag is shown."""
+        widest = max(
+            (
+                f"{name}\n{_fmt_price(price)}"
+                for name in ("ASK", "BID", "AVG", "DCA", "SELL")
+                for price in (lo, hi)
+            ),
+            key=len,
+        )
+        trans = blended_transform_factory(self.ax.transAxes, self.ax.transData)
+        probe = self.ax.text(
+            1.01,
+            self.ax.get_ylim()[0],
+            widest,
+            transform=trans,
+            ha="left",
+            va="center",
+            multialignment="center",
+            fontsize=TAG_FONT_PT,
+            color=(0, 0, 0, 0),
+            bbox=dict(
+                facecolor=(0, 0, 0, 0),
+                edgecolor=(0, 0, 0, 0),
+                boxstyle=f"round,pad={TAG_BOX_PAD}",
+            ),
+            clip_on=False,
+        )
+        probe.set_in_layout(False)
+        return probe
+
+    def _trade_markers(self, candles: List[dict]) -> List[Tuple[int, float, str, str]]:
+        """``(x, price, label, colour)`` of this coin's trades within the candles shown:
+        at the candle nearest each trade's time, at its price (or that candle's close).
+        """
+        out: List[Tuple[int, float, str, str]] = []
+        try:
+            trades = (
+                _read_trade_history_jsonl(self.trade_history_path)
+                if self.trade_history_path
+                else []
+            )
+        except Exception:
+            return out
+        if not trades:
+            return out
+        candle_ts = [int(c["ts"]) for c in candles]  # oldest->newest
+        t_min, t_max = float(candle_ts[0]), float(candle_ts[-1])
+        coin = self.coin.upper().strip()
+        for tr in trades:
+            sym = str(tr.get("symbol", "")).upper()
+            base = sym.split("-")[0].strip() if sym else ""
+            if base != coin:
+                continue
+            side = str(tr.get("side", "")).lower().strip()
+            tag = str(tr.get("tag") or "").upper().strip()
+            if side == "buy":
+                label = "DCA" if tag == "DCA" else "BUY"
+                color = MARKERS["dca"] if tag == "DCA" else MARKERS["buy"]
+            elif side == "sell":
+                label, color = "SELL", MARKERS["sell"]
+            else:
+                continue
+            try:
+                tts = float(tr.get("ts", None))
+            except (TypeError, ValueError):
+                continue
+            if tts < t_min or tts > t_max:
+                continue
+            i = bisect.bisect_left(candle_ts, tts)
+            if i <= 0:
+                idx = 0
+            elif i >= len(candle_ts):
+                idx = len(candle_ts) - 1
+            else:
+                idx = (
+                    i
+                    if abs(candle_ts[i] - tts) < abs(tts - candle_ts[i - 1])
+                    else i - 1
+                )
+            # y = trade price if present, else candle close
+            y = _positive(tr.get("price", None))
+            if y is None:
+                y = _positive(candles[idx].get("close", 0.0))
+            if y is None:
+                continue
+            out.append((idx, y, label, color))
+        return out
 
 
 # -----------------------------

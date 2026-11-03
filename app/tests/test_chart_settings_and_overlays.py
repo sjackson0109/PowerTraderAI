@@ -412,15 +412,19 @@ def make_chart(tk_root, tmp_path, monkeypatch):
     return build
 
 
-def refresh(chart):
-    chart.refresh(
-        {"BTC": chart.folder},
+def refresh(chart, **prices):
+    """Refresh as the hub does, then let the first pattern detection finish: the
+    chart is drawn once it is in (CandleChart.patterns_ready)."""
+    args = dict(
         current_buy_price=101.0,
         current_sell_price=100.8,
         trail_line=102.0,
         dca_line_price=98.0,
         avg_cost_basis=99.5,
     )
+    args.update(prices)
+    chart.refresh({"BTC": chart.folder}, **args)
+    chart.pattern_layer.wait()
 
 
 LINES = ui_tokens.CHART_LINES
@@ -756,12 +760,12 @@ def test_the_coin_chart_has_no_title_and_says_when_there_are_no_candles(make_cha
     assert [t.get_text() for t in empty.ax.texts] == ["BTC (1hour): no candles"]
 
 
-def test_price_tags_get_a_strip_and_a_price_off_the_plot_is_tagged_at_its_edge(
-    make_chart,
-):
+def test_price_tags_get_a_strip_and_every_line_is_inside_the_plot(make_chart):
+    """The price range holds every line drawn (owner, 2026-11-04): DCA at 98.0, below
+    the lowest low (99.3), is inside the plot and tagged at its own price."""
     chart = make_chart(as_candles(down_then_engulfing()))
     wide_and_short(chart)
-    refresh(chart)  # DCA 98.0 is below the lowest low, 99.3
+    refresh(chart)
     ax, fig = boxes(chart)
     tags = {t.get_text().split()[0]: t for t in chart._price_tags}
     assert set(tags) == {"ASK", "BID", "AVG", "DCA", "SELL"}
@@ -770,7 +774,9 @@ def test_price_tags_get_a_strip_and_a_price_off_the_plot_is_tagged_at_its_edge(
         box = tag.get_bbox_patch().get_window_extent()
         assert ax.x1 < box.x0 and box.x1 <= fig.x1  # beside the plot, not cut off
         ends.append(box.x1)
-    assert fig.x1 - max(ends) < EDGE_PX  # the strip is as wide as the widest tag
+    # the strip is as wide as the widest tag could be at these prices
+    probe = chart._tag_probe.get_bbox_patch().get_window_extent()
+    assert max(ends) <= probe.x1 + 1 and fig.x1 - probe.x1 < EDGE_PX
     # two lines each (name over price), stacked clear of one another in price order
     assert all(len(t.get_text().split("\n")) == 2 for t in tags.values())
     order = sorted(tags.values(), key=lambda t: t.get_position()[1])
@@ -787,9 +793,9 @@ def test_price_tags_get_a_strip_and_a_price_off_the_plot_is_tagged_at_its_edge(
             <= high.get_bbox_patch().get_window_extent().y0
         )
     lo, hi = chart.ax.get_ylim()
-    assert tags["DCA"].get_text().endswith("▼")  # at the bottom of the plot
-    assert lo <= tags["DCA"].get_position()[1] <= hi
-    assert not tags["SELL"].get_text().endswith(("▲", "▼"))  # 102.0: on it
+    for name, price in (("DCA", 98.0), ("SELL", 102.0)):
+        assert lo < price < hi  # the line is on the plot
+        assert not tags[name].get_text().endswith(("▲", "▼"))
     time_name = chart._time_name.get_window_extent()
     for tag in tags.values():  # within the plot's height, clear of the time name
         box = tag.get_bbox_patch().get_window_extent()
@@ -829,9 +835,12 @@ def test_the_tag_strip_shares_the_space_the_last_date_label_holds(make_chart):
     chart.refresh(
         {"BTC": chart.folder}, current_buy_price=100.6, current_sell_price=100.4
     )
+    chart.pattern_layer.wait()
     ax, fig = boxes(chart)
     ends = [t.get_bbox_patch().get_window_extent().x1 for t in chart._price_tags]
-    assert len(ends) == 2 and fig.x1 - max(ends) < EDGE_PX
+    probe = chart._tag_probe.get_bbox_patch().get_window_extent()
+    assert len(ends) == 2 and max(ends) <= probe.x1 + 1
+    assert fig.x1 - probe.x1 < EDGE_PX
 
 
 def test_labels_never_cover_the_price_tags_or_the_price_axis(make_chart):
@@ -967,6 +976,7 @@ def test_ask_and_bid_lines_are_dotted_while_the_trader_is_stopped(make_chart):
             avg_cost_basis=99.5,
             trader_running=running,
         )
+        chart.pattern_layer.wait()
         levels = {LINES[k]: k for k in ("ask", "bid", "avg", "dca", "trail")}
         return {
             levels[line.get_color()]: line.get_linestyle()

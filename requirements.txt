@@ -36,6 +36,17 @@ ccxt>=4.0.0
 # Multi-Exchange Support Dependencies
 krakenex>=2.1.0
 
+# Configuration files (pt_config.py)
+PyYAML>=6.0.1
+
+# Async HTTP and file helpers (pt_async_patterns.py)
+aiohttp>=3.9.0
+aiofiles>=23.2.0
+aiodns>=3.2.0
+
+# Optional features (machine-learning models, config hot reload):
+# requirements-optional.txt
+
 # Development and Testing
 # Note: pr_validation.py uses only standard library modules for maximum compatibility
 # pytest>=7.0.0  # Optional: for extended testing with pt_testing.py framework

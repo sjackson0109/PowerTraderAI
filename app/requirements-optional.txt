@@ -1,0 +1,12 @@
+# PowerTraderAI+ optional dependencies
+# Every module loads without these; the feature named beside each turns off.
+#   pip install -r requirements-optional.txt
+
+# Neural-network models and their evaluation
+# (pt_neural_network.py, pt_neural_processor.py, pt_model_evaluation.py)
+scikit-learn>=1.3.0
+ta>=0.11.0
+torch>=2.1.0
+
+# Reloading the configuration file when it changes (pt_config.py)
+watchdog>=3.0.0

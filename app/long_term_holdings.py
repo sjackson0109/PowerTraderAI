@@ -248,6 +248,19 @@ class HoldingsDatabase:
             )
             conn.commit()
 
+    def get_price_history(self) -> Dict[str, List[Tuple[str, float]]]:
+        """The prices recorded for each symbol (update_price), oldest first:
+        {symbol: [(timestamp, price), ...]}. Reads only."""
+        with _connect(self.db_path) as conn:
+            rows = conn.execute(
+                "SELECT symbol, timestamp, price FROM price_history"
+                " ORDER BY timestamp, id"
+            ).fetchall()
+        history: Dict[str, List[Tuple[str, float]]] = {}
+        for symbol, timestamp, price in rows:
+            history.setdefault(symbol, []).append((timestamp, float(price)))
+        return history
+
 
 class HoldingsManager:
     """Main manager for long-term holdings operations"""

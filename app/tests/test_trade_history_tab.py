@@ -1,12 +1,11 @@
-"""The bottom panel's Trade History and Long-term Holdings tabs (owner, 2026-11-04).
+"""The bottom panel's Trade History tab (owner, 2026-11-04).
 
 Trade History: the trade history as a table (Time, Side, Source, Pair, Quantity,
 Price, Value, Fees, Realised PnL, PnL %), newest first, sorted by a heading click;
 filters for the coin, side, source and period and a search through every column;
 a summary of the rows shown. The rows are trade_history.jsonl's, read as before.
 
-Long-term Holdings: holdings.db's entries, with the share of the holdings only, a
-subtitle saying they are apart from the trading account, and nothing linking them.
+(Long-term Holdings: tests/test_long_term_holdings_tab.py.)
 
 Real Tk widgets (hidden, or a transparent window where sizes matter) and a real
 hub, under the isolation guard (app/conftest.py).
@@ -278,56 +277,3 @@ def test_the_hub_shows_every_trade_of_the_history_file(hub):
     assert len(view.trades) == 300 and len(view.tree.get_children()) == 300
     assert view.summary.cget("text").startswith("300 trades")
     assert hub.hist_filter_var is view.search_var
-
-
-def test_long_term_holdings_are_holdings_db_entries_apart_from_the_account(hub):
-    import pt_hub
-    import pt_paths
-    from long_term_holdings import Holding, HoldingsDatabase
-
-    tab = hub.bottom_notebook.tabs()[1]
-    texts = [
-        w.cget("text")
-        for w in hub.nametowidget(tab).winfo_children()
-        if w.winfo_class() == "TLabel"
-    ]
-    assert texts == [pt_hub.LONG_TERM_HOLDINGS_SUBTITLE]
-    assert pt_hub.LONG_TERM_HOLDINGS_SUBTITLE == (
-        "Manual HODL positions, tracked separately from the trading account. "
-        "Not included in Value, Buying Power or % in Trade."
-    )
-    assert hub.lth_tree.heading("allocation", "text") == "% of Holdings"
-
-    path = pt_paths.data_file("holdings.db")
-    hub._refresh_long_term_holdings()  # no holdings.db: nothing shown, none made
-    hub.lth_table.settle()
-    assert not os.path.exists(path) and hub.lth_table.is_empty_shown()
-    assert hub.lth_table.empty.cget("text") == "No holdings yet"
-
-    account = [
-        hub.lbl_acct_total_value.cget("text"),
-        hub.lbl_acct_buying_power.cget("text"),
-        hub.lbl_acct_percent_in_trade.cget("text"),
-    ]
-    db = HoldingsDatabase(path)
-    db.add_holding(
-        Holding(symbol="BTC", quantity=0.5, average_cost=40000.0, current_price=60000.0)
-    )
-    db.add_holding(
-        Holding(symbol="DOT", quantity=100, average_cost=5.0, current_price=10.0)
-    )
-    hub._refresh_long_term_holdings()
-    rows = {
-        hub.lth_tree.item(i, "values")[0]: hub.lth_tree.item(i, "values")
-        for i in hub.lth_tree.get_children()
-    }
-    assert set(rows) == {"BTC", "DOT"}
-    # the share of the holdings' own value: 30,000 and 1,000 of 31,000
-    assert rows["BTC"][7] == "96.77%" and rows["DOT"][7] == "3.23%"
-    assert rows["BTC"][5] == "+$10,000.00"
-    # the account's figures are untouched
-    assert account == [
-        hub.lbl_acct_total_value.cget("text"),
-        hub.lbl_acct_buying_power.cget("text"),
-        hub.lbl_acct_percent_in_trade.cget("text"),
-    ]

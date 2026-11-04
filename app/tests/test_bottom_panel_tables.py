@@ -33,12 +33,24 @@ MODULE_WINDOWS = (
 
 
 @pytest.fixture
-def hub(monkeypatch):
+def hub(monkeypatch, tmp_path):
+    """The real hub, with its Long-term Holdings window (on the guard's temporary
+    holdings.db); the other module windows are off."""
     import helpers_trainer as ht
+    import long_term_holdings
 
+    monkeypatch.setattr(ui_table, "LAYOUT_PATH", str(tmp_path / "table_layout.json"))
+    ui_table.forget_layouts()
+    monkeypatch.setattr(long_term_holdings, "_holdings_manager", None)
+    monkeypatch.setattr(
+        ht,
+        "HEAVY_FLAGS",
+        tuple(f for f in ht.HEAVY_FLAGS if f != "HOLDINGS_MANAGEMENT_AVAILABLE"),
+    )
     hub = ht.build_real_hub(monkeypatch)  # skips when Tk cannot start
     yield hub
     ht.close_hub(hub)
+    ui_table.forget_layouts()
 
 
 def walk(widget):
@@ -66,7 +78,9 @@ def test_no_tab_repeats_its_name_and_every_table_is_a_data_table(hub):
                 assert isinstance(w.master, ui_table.DataTable), name
                 assert str(w.cget("style")) == ui_table.STYLE
                 tables += 1
-    assert tables >= 3  # Current Trades, Long-term Holdings, Trade History
+    # Current Trades, Long-term Holdings (Holdings, Rebalancing), Trade History
+    assert tables >= 4
+    assert [n for n in names if "Holdings" in n] == ["Long-term Holdings"]
 
 
 def test_a_tab_has_one_border_the_panels_own(hub):
@@ -97,11 +111,21 @@ def test_a_tab_has_one_border_the_panels_own(hub):
         assert str(ttk.LabelFrame(dialog, text="x").cget("style")) == "TLabelframe"
     finally:
         dialog.destroy()
-    # the hub's own tabs: the table straight in the tab, no frame round it
-    for table in (hub.trades_table, hub.lth_table, hub.trade_history_view.table):
+    # the hub's own tabs, and Long-term Holdings' sub-tabs: the table straight in
+    # the tab, no frame round it
+    holdings = hub.holdings_gui
+    assert str(holdings.notebook.cget("style")) == "Inner.TNotebook"
+    for table in (
+        hub.trades_table,
+        holdings.holdings_table,
+        holdings.suggestions_table,
+        hub.trade_history_view.table,
+    ):
         assert str(table.cget("style")) in ("", "TFrame")
         assert str(table.pack_info()["fill"]) == "both"
         assert str(table.pack_info()["expand"]) in ("1", "True")
+    assert holdings.holdings_table.master is holdings.holdings_tab
+    assert holdings.suggestions_table.master is holdings.rebalancing_tab
 
 
 @pytest.mark.parametrize("module", MODULE_WINDOWS)

@@ -2,9 +2,11 @@
 Real-time Market Data Integration (Item 24)
 
 Market data from the exchanges in Settings, primary first (FDS-MX-001 phase G2): a
-feed per exchange polls that exchange's public quote for the subscribed coins
-through the exchange layer (``pt_multi_exchange.market_exchanges``), every few
-seconds. No credentials, and no exchange is named here.
+feed per exchange polls that exchange's public 24-hour ticker for the subscribed
+coins through the exchange layer (``pt_multi_exchange.market_exchanges``), every few
+seconds: last price, bid, ask, and the last 24 hours' volume, high, low and change.
+A value the exchange does not give stays None. No credentials, and no exchange is
+named here.
 """
 
 import asyncio
@@ -49,32 +51,36 @@ class DataType(Enum):
 
 @dataclass
 class MarketTicker:
-    """Market ticker data"""
+    """Market ticker data. A field the exchange does not give is None, never 0:
+    ``last`` is the last trade price (the middle of the bid and ask on an exchange
+    that gives no last price), ``volume`` the last 24 hours' volume in the coin."""
 
     symbol: str
     exchange: str
     timestamp: datetime
-    bid: float
-    ask: float
-    last: float
-    volume: float
-    high_24h: float
-    low_24h: float
-    change_24h: float
-    change_24h_pct: float
+    bid: Optional[float]
+    ask: Optional[float]
+    last: Optional[float]
+    volume: Optional[float] = None
+    high_24h: Optional[float] = None
+    low_24h: Optional[float] = None
+    change_24h: Optional[float] = None
+    change_24h_pct: Optional[float] = None
     vwap: Optional[float] = None
 
     @property
-    def spread(self) -> float:
+    def spread(self) -> Optional[float]:
         """Calculate bid-ask spread"""
+        if self.bid is None or self.ask is None:
+            return None
         return self.ask - self.bid
 
     @property
-    def spread_pct(self) -> float:
+    def spread_pct(self) -> Optional[float]:
         """Calculate bid-ask spread percentage"""
-        if self.ask > 0:
+        if self.spread is not None and self.ask > 0:
             return (self.spread / self.ask) * 100
-        return 0.0
+        return None
 
 
 @dataclass
@@ -246,6 +252,29 @@ def _market(symbol: str) -> str:
     from pt_exchange_abstraction import dollar_symbol
 
     return dollar_symbol(symbol)
+
+
+def _market_ticker(market: str, exchange: str, ticker) -> MarketTicker:
+    """A MarketTicker from the exchange layer's Ticker; the fields it lacks stay
+    None."""
+    when = (
+        datetime.fromtimestamp(ticker.ticker_ts)
+        if ticker.ticker_ts is not None
+        else datetime.now()
+    )
+    return MarketTicker(
+        symbol=market,
+        exchange=exchange,
+        timestamp=when,
+        bid=ticker.bid,
+        ask=ticker.ask,
+        last=ticker.price,
+        volume=ticker.volume_24h,
+        high_24h=ticker.high_24h,
+        low_24h=ticker.low_24h,
+        change_24h=ticker.change_24h,
+        change_24h_pct=ticker.change_24h_pct,
+    )
 
 
 class MarketDataAggregator:
@@ -475,40 +504,19 @@ class MarketDataAggregator:
             stop.wait(self.poll_seconds)
 
     def poll_once(self, exchange: str) -> int:
-        """Ask ``exchange`` once for the quote of every coin subscribed to it; returns
-        how many tickers arrived."""
-        connector = self._connector(exchange)
-        if connector is None:
+        """Ask ``exchange`` once, through the exchange layer, for the ticker of every
+        coin subscribed to it (``ExchangeManager.ticker``); returns how many tickers
+        arrived."""
+        if self._connector(exchange) is None:
             return 0
         arrived = 0
         for market in self._subscribed_markets(exchange):
             try:
-                quote = connector.quote(market)
+                answer = self.layer().ticker(market, only=exchange)
             except Exception as e:
-                print(f"{exchange} quote for {market} failed: {e}")
+                print(f"{exchange} ticker for {market} failed: {e}")
                 continue
-            if quote is None or quote.bid <= 0 or quote.ask <= 0:
-                continue
-            when = (
-                datetime.fromtimestamp(quote.quote_ts)
-                if quote.quote_ts is not None
-                else datetime.now()
-            )
-            self._update_ticker(
-                MarketTicker(
-                    symbol=market,
-                    exchange=exchange,
-                    timestamp=when,
-                    bid=float(quote.bid),
-                    ask=float(quote.ask),
-                    last=(float(quote.bid) + float(quote.ask)) / 2,
-                    volume=0.0,
-                    high_24h=0.0,
-                    low_24h=0.0,
-                    change_24h=0.0,
-                    change_24h_pct=0.0,
-                )
-            )
+            self._update_ticker(_market_ticker(market, exchange, answer.value))
             arrived += 1
         return arrived
 
@@ -616,7 +624,11 @@ class MarketDataAggregator:
         self, symbol: str, exchange: str = None, minutes: int = 60
     ) -> Optional[float]:
         """Calculate Volume Weighted Average Price"""
-        history = self.get_price_history(symbol, exchange, minutes)
+        history = [
+            h
+            for h in self.get_price_history(symbol, exchange, minutes)
+            if h["price"] is not None and h["volume"] is not None
+        ]
 
         if not history:
             return None
@@ -645,6 +657,8 @@ class MarketDataAggregator:
 
         for key, data in self.latest_data.items():
             if key.startswith(f"ticker_{symbol}_") and isinstance(data, MarketTicker):
+                if data.bid is None or data.ask is None:
+                    continue
                 exchange = data.exchange
                 analysis["exchanges"][exchange] = {
                     "bid": data.bid,

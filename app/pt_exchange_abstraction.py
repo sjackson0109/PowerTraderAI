@@ -14,12 +14,17 @@ from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 import pt_secrets
 from market_data.resample import build_candles, build_from
-from market_data.timeframes import candle_timeframe_seconds
+from market_data.timeframes import bar_open_floor, candle_timeframe_seconds
 
 logger = logging.getLogger("pt_exchange_abstraction")
 
 # Constructor arguments that carry credentials (see pt_secrets.secret_fields).
 _CREDENTIAL_KWARGS = ("api_key", "api_secret", "passphrase", "private_key")
+
+# A ticker without the 24-hour change gets it from this size of bar, the one open
+# 24 hours ago (ExchangeManager.ticker): the price then, to within its length.
+DAY_AGO_TF = "5m"
+DAY_SECONDS = 86400
 
 
 class MarketNotFound(RuntimeError):
@@ -80,6 +85,42 @@ class PriceQuote:
     bid: float
     ask: float
     quote_ts: Optional[float]  # epoch seconds (UTC) by the exchange's clock, or None
+
+
+@dataclass
+class Ticker:
+    """An exchange's ticker for one market: the last trade price, the best bid and
+    ask, and the last 24 hours' volume (in the coin), high, low and change (in the
+    quote currency, and in percent of the price 24 hours ago). A field the exchange
+    does not give is None, never 0."""
+
+    last: Optional[float]
+    bid: Optional[float]
+    ask: Optional[float]
+    volume_24h: Optional[float] = None
+    high_24h: Optional[float] = None
+    low_24h: Optional[float] = None
+    change_24h: Optional[float] = None
+    change_24h_pct: Optional[float] = None
+    ticker_ts: Optional[float] = None  # epoch seconds (UTC) by the exchange's clock
+
+    @property
+    def price(self) -> Optional[float]:
+        """The last trade price; with none, the middle of the bid and ask."""
+        if self.last is not None and self.last > 0:
+            return self.last
+        if self.bid and self.ask and self.bid > 0 and self.ask > 0:
+            return (self.bid + self.ask) / 2
+        return None
+
+    def set_change_from(self, reference: Optional[float]) -> None:
+        """The 24-hour change: the price now against ``reference``, the price 24
+        hours ago (left None without both)."""
+        price = self.price
+        if price is None or not reference or reference <= 0:
+            return
+        self.change_24h = price - reference
+        self.change_24h_pct = (price - reference) / reference * 100.0
 
 
 @dataclass
@@ -421,6 +462,18 @@ class AbstractExchange(abc.ABC):
         one."""
         return None
 
+    def ticker(self, symbol: str) -> Optional[Ticker]:
+        """The last price, best bid and ask, and the last 24 hours' volume, high, low
+        and change for ``symbol``, from the exchange's own 24-hour ticker. This
+        default has only the bid and ask of ``quote`` (the exchange layer adds the
+        change from the candle cache); None when there is no quote either. Raises
+        MarketNotFound when the exchange has no market for the coin, and passes on
+        any other error, which the market data feed counts."""
+        quote = self.quote(symbol)
+        if quote is None:
+            return None
+        return Ticker(None, quote.bid, quote.ask, ticker_ts=quote.quote_ts)
+
     @abc.abstractmethod
     def get_exchange_name(self) -> str:
         """Return the exchange name"""
@@ -632,6 +685,8 @@ class ExchangeManager:
     def __init__(self):
         self.exchanges: Dict[ExchangeType, AbstractExchange] = {}
         self.primary_exchange: Optional[ExchangeType] = None
+        # (exchange, market) -> (bar open, its open price): the price 24 hours ago
+        self._day_ago: Dict[Tuple[str, str], Tuple[int, Optional[float]]] = {}
 
     def add_exchange(self, exchange_type: ExchangeType, **kwargs):
         """Add an exchange connection"""
@@ -832,6 +887,80 @@ class ExchangeManager:
             if quote is not None and quote.bid > 0 and quote.ask > 0:
                 return self._sourced(quote, exchange_type, exchange, symbol)
         return None
+
+    def ticker(
+        self, symbol: str, only: Optional[str] = None, now: Optional[float] = None
+    ) -> Sourced:
+        """A Ticker for ``symbol``, from the primary exchange, else the next that
+        gives one; ``only`` asks that one exchange and no other. A ticker without the
+        24-hour change (an exchange with no 24-hour ticker, or one whose day opens at
+        midnight) gets it from the candle cache: the price now against the open of
+        that exchange's ``DAY_AGO_TF`` bar holding the moment 24 hours before ``now``
+        (default: the clock).
+
+        Raises MarketNotFound when no exchange asked has a market for the coin,
+        otherwise MarketDataUnavailable with each exchange's answer."""
+        symbol = dollar_symbol(symbol)
+        now = time.time() if now is None else float(now)
+        reasons: List[str] = []
+        not_found = 0
+        for exchange_type, exchange in self._ordered():
+            name = exchange_type.value
+            if only is not None and name != only:
+                continue
+            try:
+                ticker = exchange.ticker(symbol)
+            except MarketNotFound as exc:
+                not_found += 1
+                reasons.append(f"{name}: {exc}")
+                continue
+            except Exception as exc:
+                reasons.append(f"{name}: {type(exc).__name__}: {exc}")
+                continue
+            if ticker is None or ticker.price is None:
+                reasons.append(f"{name}: no ticker")
+                continue
+            if ticker.change_24h is None:
+                ticker.set_change_from(self._price_a_day_ago(name, symbol, now))
+            return self._sourced(ticker, exchange_type, exchange, symbol)
+        if reasons and not_found == len(reasons):
+            raise MarketNotFound(
+                f"No exchange has a market for {symbol}: " + "; ".join(reasons)
+            )
+        raise MarketDataUnavailable(
+            f"No exchange gave a ticker for {symbol}: "
+            + ("; ".join(reasons) or "no exchange connected")
+        )
+
+    def _price_a_day_ago(self, name: str, symbol: str, now: float) -> Optional[float]:
+        """The open of ``name``'s ``DAY_AGO_TF`` bar holding the moment 24 hours
+        before ``now``, read through the candle cache (that exchange's own); None
+        when neither has it. Asked once per bar and market."""
+        opened = bar_open_floor(int(now) - DAY_SECONDS, DAY_AGO_TF)
+        memo = self._day_ago.get((name, symbol))
+        if memo is not None and memo[0] == opened:
+            return memo[1]
+        price = None
+        try:
+            import pandas as pd
+            from market_data.candles import exchange_candles
+
+            step = candle_timeframe_seconds(DAY_AGO_TF)
+            bars = exchange_candles(
+                symbol,
+                DAY_AGO_TF,
+                pd.Timestamp(opened, unit="s", tz="UTC"),
+                pd.Timestamp(opened + step, unit="s", tz="UTC"),
+                now=pd.Timestamp(now, unit="s", tz="UTC"),
+                manager=self,
+                exchanges=[name],
+            )
+            if len(bars):
+                price = float(bars["open"].iloc[0])
+        except Exception as exc:
+            logger.debug(f"No {DAY_AGO_TF} bar a day ago from {name}: {exc}")
+        self._day_ago[(name, symbol)] = (opened, price)
+        return price
 
     def get_best_price(
         self, symbol: str, side: str = "buy"

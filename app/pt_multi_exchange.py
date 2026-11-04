@@ -576,6 +576,15 @@ class MultiExchangeManager:
 
         return self.exchange_manager.quote(symbol)
 
+    def ticker(self, symbol: str, only: Optional[str] = None):
+        """Last price, bid, ask and the last 24 hours' volume, high, low and change,
+        from the primary exchange, else the next that gives them; ``only`` asks one
+        exchange (``ExchangeManager.ticker``)."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.ticker(symbol, only=only)
+
     def compare_prices(self, symbol: str) -> Dict[str, float]:
         """Compare prices across all connected exchanges"""
         if not self.initialized:

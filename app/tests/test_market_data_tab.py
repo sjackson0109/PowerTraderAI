@@ -1,6 +1,6 @@
 """The hub's Market Data tab reads the exchanges in Settings, primary first
-(FDS-MX-001 phase G2): a feed per exchange polls its public quote for the coins
-subscribed to it.
+(FDS-MX-001 phase G2): a feed per exchange polls its public 24-hour ticker for the
+coins subscribed to it, through the exchange layer.
 
 Everything runs under the isolation guard (app/conftest.py); no network.
 """
@@ -16,17 +16,24 @@ import real_time_market_data as rtmd  # noqa: E402
 from pt_exchange_abstraction import (  # noqa: E402
     ExchangeManager,
     ExchangeType,
-    PriceQuote,
+    Ticker,
 )
 
 
 class Connector:
-    def __init__(self, bid, ask):
-        self.bid, self.ask, self.asked = bid, ask, []
+    """A connector whose ticker has no last price (the middle of bid and ask
+    stands in) and the 24-hour fields given as ``day``."""
 
-    def quote(self, symbol):
+    def __init__(self, bid, ask, **day):
+        self.bid, self.ask, self.asked = bid, ask, []
+        self.day = day or {"change_24h": 1.0, "change_24h_pct": 1.0}
+
+    def market_symbol(self, symbol):
+        return symbol
+
+    def ticker(self, symbol):
         self.asked.append(symbol)
-        return PriceQuote(self.bid, self.ask, 1_800_000_000.0)
+        return Ticker(None, self.bid, self.ask, ticker_ts=1_800_000_000.0, **self.day)
 
 
 def layer():
@@ -89,3 +96,47 @@ def test_an_exchange_not_in_settings_gets_no_feed(tmp_path):
         assert m.aggregator.active_feeds["bitstamp"] is False
     finally:
         m.stop()
+
+
+def test_the_feed_fills_every_field_of_the_exchanges_ticker(tmp_path):
+    """BTC-USD on Coinbase: change, change percent and volume come from its ticker
+    (they were hard-coded to 0.0)."""
+    m = manager(tmp_path)
+    coinbase = m.aggregator.layer().exchanges[ExchangeType("coinbase")]
+    coinbase.day = dict(
+        volume_24h=8913.3,
+        high_24h=103.0,
+        low_24h=97.0,
+        change_24h=-2.5,
+        change_24h_pct=-2.42,
+    )
+    try:
+        m.subscribe_symbol("BTC")
+        assert m.aggregator.poll_once("coinbase") == 1
+    finally:
+        m.stop()
+    ticker = m.aggregator.get_latest_ticker("BTC-USD", "coinbase")
+    assert (ticker.volume, ticker.high_24h, ticker.low_24h) == (8913.3, 103.0, 97.0)
+    assert (ticker.change_24h, ticker.change_24h_pct) == (-2.5, -2.42)
+    assert ticker.spread == 2.0 and ticker.spread_pct == 2.0 / 102.0 * 100
+
+
+def test_a_value_the_exchange_does_not_give_is_none_and_shown_as_n_a(tmp_path):
+    from real_time_market_data_gui import NA, _amount, _percent, _price
+
+    m = manager(tmp_path)
+    coinbase = m.aggregator.layer().exchanges[ExchangeType("coinbase")]
+    coinbase.day = {"change_24h": 0.5}  # no volume, high, low or percent
+    try:
+        m.subscribe_symbol("BTC")
+        m.aggregator.poll_once("coinbase")
+    finally:
+        m.stop()
+    ticker = m.aggregator.get_latest_ticker("BTC")
+    assert (ticker.volume, ticker.high_24h, ticker.change_24h_pct) == (None,) * 3
+    assert _amount(ticker.volume) == _price(ticker.high_24h) == NA == "n/a"
+    assert _percent(ticker.change_24h_pct, signed=True) == "n/a"
+    assert _price(0.0) == "0.00000000"  # a real zero is shown as one
+    assert _price(-2.5, signed=True) == "-2.5000"
+    assert _percent(1.234, signed=True) == "+1.23%"
+    assert _amount(53602.0394) == "53,602.04"

@@ -129,23 +129,23 @@ def test_a_market_data_feed_left_running_is_stopped_after_the_test():
     import threading
 
     import real_time_market_data as rtmd
-    from pt_exchange_abstraction import ExchangeType, PriceQuote
+    from pt_exchange_abstraction import ExchangeManager, ExchangeType, Ticker
 
     asked = threading.Event()
 
     class Connector:
-        def quote(self, market):
+        def market_symbol(self, market):
+            return market
+
+        def ticker(self, market):
             asked.set()
-            return PriceQuote(bid=1.0, ask=2.0, quote_ts=None)
+            return Ticker(1.5, 1.0, 2.0, change_24h=0.5, change_24h_pct=50.0)
 
-    class Layer:
-        exchanges = {ExchangeType.KRAKEN: Connector()}
-
-        def exchange_names(self):
-            return ["kraken"]
+    layer = ExchangeManager()
+    layer.exchanges[ExchangeType.KRAKEN] = Connector()
 
     manager = rtmd.get_market_data_manager()
-    manager.aggregator._layer = Layer()
+    manager.aggregator._layer = layer
     manager.aggregator.poll_seconds = 0.01
     manager.subscribe_symbol("BTC", ["kraken"])
     assert asked.wait(5)

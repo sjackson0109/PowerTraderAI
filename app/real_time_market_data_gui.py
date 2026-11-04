@@ -38,6 +38,32 @@ except ImportError:
     MATPLOTLIB_AVAILABLE = False
     print("Warning: Matplotlib not available. Charts disabled.")
 
+# A value the exchange does not give (never shown as 0)
+NA = "n/a"
+
+
+def _price(value: Optional[float], signed: bool = False) -> str:
+    """A price (or a change in price): more decimals the smaller it is."""
+    if value is None:
+        return NA
+    size = abs(float(value))
+    digits = 2 if size >= 100 else 4 if size >= 1 else 8
+    return f"{float(value):{'+' if signed else ''},.{digits}f}"
+
+
+def _percent(value: Optional[float], signed: bool = False, digits: int = 2) -> str:
+    if value is None:
+        return NA
+    return f"{float(value):{'+' if signed else ''}.{digits}f}%"
+
+
+def _amount(value: Optional[float]) -> str:
+    """A quantity of a coin."""
+    if value is None:
+        return NA
+    amount = float(value)
+    return f"{amount:,.2f}" if abs(amount) >= 1000 else f"{amount:,.4f}"
+
 
 class MarketDataGUI:
     """GUI for real-time market data monitoring"""
@@ -211,6 +237,8 @@ class MarketDataGUI:
                 "change",
                 "change_pct",
                 "volume",
+                "high",
+                "low",
                 "bid",
                 "ask",
                 "spread",
@@ -220,9 +248,11 @@ class MarketDataGUI:
                 "symbol": "Symbol",
                 "exchange": "Exchange",
                 "price": "Price",
-                "change": "Change",
-                "change_pct": "Change Pct",
-                "volume": "Volume",
+                "change": "Change 24h",
+                "change_pct": "Change Pct 24h",
+                "volume": "Volume 24h",
+                "high": "High 24h",
+                "low": "Low 24h",
                 "bid": "Bid",
                 "ask": "Ask",
                 "spread": "Spread",
@@ -234,6 +264,8 @@ class MarketDataGUI:
                 "change",
                 "change_pct",
                 "volume",
+                "high",
+                "low",
                 "bid",
                 "ask",
                 "spread",
@@ -616,29 +648,20 @@ class MarketDataGUI:
         if len(self.price_data[ticker.symbol]) > 1000:
             self.price_data[ticker.symbol] = self.price_data[ticker.symbol][-1000:]
 
-        # Format display values
-        price_str = f"{ticker.last:.6f}"
-        change_str = f"{ticker.change_24h:.6f}" if ticker.change_24h else "0.000000"
-        change_pct_str = (
-            f"{ticker.change_24h_pct:.2f}%" if ticker.change_24h_pct else "0.00%"
-        )
-        volume_str = f"{ticker.volume:.2f}" if ticker.volume else "0.00"
-        bid_str = f"{ticker.bid:.6f}" if ticker.bid else "N/A"
-        ask_str = f"{ticker.ask:.6f}" if ticker.ask else "N/A"
-        spread_str = f"{ticker.spread_pct:.3f}%" if ticker.spread_pct else "N/A"
-        updated_str = ticker.timestamp.strftime("%H:%M:%S")
-
+        # A value the exchange does not give shows as n/a, never as 0
         values = (
             ticker.symbol,
             ticker.exchange,
-            price_str,
-            change_str,
-            change_pct_str,
-            volume_str,
-            bid_str,
-            ask_str,
-            spread_str,
-            updated_str,
+            _price(ticker.last),
+            _price(ticker.change_24h, signed=True),
+            _percent(ticker.change_24h_pct, signed=True),
+            _amount(ticker.volume),
+            _price(ticker.high_24h),
+            _price(ticker.low_24h),
+            _price(ticker.bid),
+            _price(ticker.ask),
+            _percent(ticker.spread_pct, digits=3),
+            ticker.timestamp.strftime("%H:%M:%S"),
         )
 
         # Find existing item or create new one

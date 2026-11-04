@@ -28,7 +28,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
-FILE_NAME = "llm_research.db"
 SCHEMA_VERSION = 1
 PROMPT_KINDS = ("analysis", "signal", "report")
 
@@ -165,7 +164,7 @@ class LLMStore:
         if path is None:
             import pt_paths
 
-            path = pt_paths.data_file(FILE_NAME)
+            path = pt_paths.data_file("llm_research.db")
         self.path = path
         self._lock = threading.Lock()  # one writer of prompt versions at a time
         self._init_lock = threading.Lock()

@@ -239,9 +239,9 @@ class OrderManager:
             return None
 
         try:
-            order_type = (
-                OrderType.STOP_LOSS if limit_price is None else OrderType.STOP_LIMIT
-            )
+            # OrderType has no STOP_LOSS: naming it raised, so a stop without a
+            # limit price was never created
+            order_type = OrderType.STOP if limit_price is None else OrderType.STOP_LIMIT
 
             order = self.db.create_order(
                 symbol=symbol,

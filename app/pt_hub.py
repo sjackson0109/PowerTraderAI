@@ -37,6 +37,7 @@ if __name__ == "__main__":
     sys.dont_write_bytecode = True
 
 import chart_settings
+import order_management_view
 import paper_coins
 import position_sizing
 import pt_paths
@@ -2305,6 +2306,9 @@ class PowerTraderHub(tk.Tk):
         # the window flashes dark for one frame before settling on blue. It is
         # `trading.mode` from pt_config.json (paper unless explicitly live).
         self._trading: TradingSettings = read_trading_settings()
+        # the account's Buying Power as last shown (the order dialog checks buys
+        # against it); None until the trader or the paper book gives one
+        self._last_buying_power: Optional[float] = None
         self._paper_mode = not self._trading.is_live
 
         # Force one and only one theme: dark (or paper-blue when enabled).
@@ -3815,8 +3819,8 @@ class PowerTraderHub(tk.Tk):
             pass
 
     def _create_order_management_tab(self):
-        """Create the Order Management tab with order creation forms and monitoring."""
-        p = ui_theme.active_palette()
+        """The Order Management tab: a toolbar over the orders, and the Order
+        Notifications under them (order_management_view)."""
         try:
             # Initialize order manager
             self.order_manager = get_global_order_manager()
@@ -3838,511 +3842,24 @@ class PowerTraderHub(tk.Tk):
             # Start monitoring if not already started
             self.order_manager.start_monitoring()
 
-            # Main container with splitter
-            order_paned = ttk.PanedWindow(order_tab, orient="horizontal")
-            order_paned.pack(fill="both", expand=True)
-
-            # Left panel: Order creation forms
-            left_frame = ui_table.section(order_paned, "Create Orders", packed=False)
-            order_paned.add(left_frame, weight=1)
-
-            # Order type selection
-            type_frame = ttk.Frame(left_frame)
-            type_frame.pack(fill="x", padx=6, pady=6)
-
-            ttk.Label(type_frame, text="Order Type:").pack(side="left")
-            self.order_type_var = tk.StringVar(value="Stop Loss")
-            order_type_combo = ttk.Combobox(
-                type_frame,
-                textvariable=self.order_type_var,
-                values=["Stop Loss", "Take Profit", "DCA Order", "Conditional"],
-                state="readonly",
-                width=15,
+            # Toolbar and orders over the Order Notifications (owner, 2026-11-04);
+            # the view reads both from the order management database every 5 s
+            self.order_view = order_management_view.OrderManagementView(
+                order_tab,
+                self.order_manager,
+                coins=lambda: list(self.coins),
+                chart_coin=lambda: getattr(self, "_current_chart_page", ""),
+                trading=lambda: self._trading,
+                buying_power=lambda: self._last_buying_power,
+                money=_fmt_money,
+                price=_fmt_price,
             )
-            order_type_combo.pack(side="left", padx=(6, 0))
-            order_type_combo.bind("<<ComboboxSelected>>", self._on_order_type_changed)
-
-            # Symbol input
-            symbol_frame = ttk.Frame(left_frame)
-            symbol_frame.pack(fill="x", padx=6, pady=(0, 6))
-
-            ttk.Label(symbol_frame, text="Symbol:").pack(side="left")
-            self.symbol_var = tk.StringVar(value="BTCUSDT")
-            symbol_entry = ttk.Entry(
-                symbol_frame, textvariable=self.symbol_var, width=12
-            )
-            symbol_entry.pack(side="left", padx=(6, 0))
-
-            # Quantity input
-            qty_frame = ttk.Frame(left_frame)
-            qty_frame.pack(fill="x", padx=6, pady=(0, 6))
-
-            ttk.Label(qty_frame, text="Quantity:").pack(side="left")
-            self.quantity_var = tk.StringVar(value="0.001")
-            qty_entry = ttk.Entry(qty_frame, textvariable=self.quantity_var, width=12)
-            qty_entry.pack(side="left", padx=(6, 0))
-
-            # Price input frame (dynamic content based on order type)
-            self.price_frame = ttk.Frame(left_frame)
-            self.price_frame.pack(fill="x", padx=6, pady=(0, 6))
-
-            # Condition frame (for conditional orders)
-            self.condition_frame = ttk.Frame(left_frame)
-            self.condition_frame.pack(fill="x", padx=6, pady=(0, 6))
-
-            # Initialize price controls for default order type
-            self._update_order_form()
-
-            # Create order button
-            create_btn = ttk.Button(
-                left_frame, text="Create Order", command=self._create_order_from_form
-            )
-            create_btn.pack(pady=10)
-
-            # Right panel: Active orders and monitoring
-            right_frame = ui_table.section(order_paned, "Active Orders", packed=False)
-            order_paned.add(right_frame, weight=2)
-
-            order_cols = (
-                "id",
-                "symbol",
-                "type",
-                "side",
-                "quantity",
-                "price",
-                "status",
-                "conditions",
-                "created",
-            )
-
-            order_headers = {
-                "id": "Order ID",
-                "symbol": "Symbol",
-                "type": "Type",
-                "side": "Side",
-                "quantity": "Quantity",
-                "price": "Price",
-                "status": "Status",
-                "conditions": "Conditions",
-                "created": "Created",
-            }
-
-            self.orders_table = ui_table.DataTable(
-                right_frame,
-                order_cols,
-                order_headers,
-                key="order_management",
-                numeric=("quantity", "price"),
-                empty_text="No orders yet",
-            )
-            self.orders_table.pack(fill="both", expand=True)
-            self.orders_tree = self.orders_table.tree
-
-            # Order control buttons
-            control_frame = ttk.Frame(right_frame)
-            control_frame.pack(fill="x", pady=(6, 0))
-
-            ttk.Button(
-                control_frame, text="Refresh", command=self._refresh_orders
-            ).pack(side="left", padx=(0, 6))
-            ttk.Button(
-                control_frame,
-                text="Cancel Selected",
-                command=self._cancel_selected_order,
-            ).pack(side="left", padx=(0, 6))
-
-            # Notifications area
-            notif_frame = ui_table.section(
-                right_frame, "Recent Notifications", fill="x", expand=False, pady=(6, 0)
-            )
-
-            # Create notification text widget with scrollbar
-            notif_text_frame = ttk.Frame(notif_frame)
-            notif_text_frame.pack(fill="x")
-
-            self.notifications_text = tk.Text(
-                notif_text_frame,
-                height=4,
-                wrap="word",
-                bg=p["BG2"],
-                fg=p["FG"],
-                insertbackground=p["FG"],
-            )
-            notif_scroll = ttk.Scrollbar(notif_text_frame, orient="vertical")
-            ui_table.scroll_when_needed(self.notifications_text, notif_scroll)
-
-            # Set initial pane sizes
-            try:
-                order_paned.pane(left_frame, minsize=300)
-                order_paned.pane(right_frame, minsize=400)
-            except Exception:
-                # Fallback for different tkinter versions
-                pass
-
-            # Initial data load
-            self._refresh_orders()
-            self._refresh_notifications()
-
-            # Schedule periodic updates
-            self._schedule_order_updates()
+            self.order_view.pack(fill="both", expand=True)
+            self.orders_table = self.order_view.orders_table
+            self.orders_tree = self.order_view.orders_tree
 
         except Exception as e:
             print(f"Error creating order management tab: {e}")
-
-    def _on_order_type_changed(self, event=None):
-        """Handle order type selection change."""
-        self._update_order_form()
-
-    def _update_order_form(self):
-        """Update the order form based on selected order type."""
-        try:
-            # Clear existing widgets
-            for widget in self.price_frame.winfo_children():
-                widget.destroy()
-            for widget in self.condition_frame.winfo_children():
-                widget.destroy()
-
-            order_type = self.order_type_var.get()
-
-            if order_type == "Stop Loss":
-                # Stop price input
-                ttk.Label(self.price_frame, text="Stop Price:").pack(side="left")
-                self.stop_price_var = tk.StringVar(value="45000")
-                ttk.Entry(
-                    self.price_frame, textvariable=self.stop_price_var, width=12
-                ).pack(side="left", padx=(6, 0))
-
-                # Optional limit price
-                ttk.Label(self.price_frame, text="Limit Price (optional):").pack(
-                    side="left", padx=(12, 0)
-                )
-                self.limit_price_var = tk.StringVar()
-                ttk.Entry(
-                    self.price_frame, textvariable=self.limit_price_var, width=12
-                ).pack(side="left", padx=(6, 0))
-
-            elif order_type == "Take Profit":
-                # Target price input
-                ttk.Label(self.price_frame, text="Target Price:").pack(side="left")
-                self.target_price_var = tk.StringVar(value="50000")
-                ttk.Entry(
-                    self.price_frame, textvariable=self.target_price_var, width=12
-                ).pack(side="left", padx=(6, 0))
-
-            elif order_type == "DCA Order":
-                # DCA specific fields
-                ttk.Label(self.price_frame, text="DCA Stage:").pack(side="left")
-                self.dca_stage_var = tk.StringVar(value="1")
-                ttk.Entry(
-                    self.price_frame, textvariable=self.dca_stage_var, width=6
-                ).pack(side="left", padx=(6, 0))
-
-                ttk.Label(self.condition_frame, text="Neural Level:").pack(side="left")
-                self.neural_level_var = tk.StringVar(value="7")
-                ttk.Entry(
-                    self.condition_frame, textvariable=self.neural_level_var, width=6
-                ).pack(side="left", padx=(6, 0))
-
-            elif order_type == "Conditional":
-                # Condition type selection
-                ttk.Label(self.condition_frame, text="Condition:").pack(side="left")
-                self.condition_type_var = tk.StringVar(value="Price")
-                condition_combo = ttk.Combobox(
-                    self.condition_frame,
-                    textvariable=self.condition_type_var,
-                    values=["Price", "Neural Level", "Volume"],
-                    state="readonly",
-                    width=10,
-                )
-                condition_combo.pack(side="left", padx=(6, 0))
-
-                # Operator selection
-                ttk.Label(self.condition_frame, text="Operator:").pack(
-                    side="left", padx=(12, 0)
-                )
-                self.condition_operator_var = tk.StringVar(value=">=")
-                op_combo = ttk.Combobox(
-                    self.condition_frame,
-                    textvariable=self.condition_operator_var,
-                    values=[">=", "<=", "==", ">", "<"],
-                    state="readonly",
-                    width=6,
-                )
-                op_combo.pack(side="left", padx=(6, 0))
-
-                # Target value
-                ttk.Label(self.condition_frame, text="Value:").pack(
-                    side="left", padx=(12, 0)
-                )
-                self.condition_value_var = tk.StringVar(value="50000")
-                ttk.Entry(
-                    self.condition_frame,
-                    textvariable=self.condition_value_var,
-                    width=12,
-                ).pack(side="left", padx=(6, 0))
-
-        except Exception as e:
-            print(f"Error updating order form: {e}")
-
-    def _create_order_from_form(self):
-        """Create an order based on form inputs."""
-        try:
-            if (
-                not hasattr(self, "order_manager")
-                or not self.order_manager.is_available
-            ):
-                messagebox.showerror("Error", "Order management system not available")
-                return
-
-            symbol = self.symbol_var.get().strip().upper()
-            quantity = float(self.quantity_var.get())
-            order_type = self.order_type_var.get()
-
-            if not symbol or quantity <= 0:
-                messagebox.showerror("Error", "Please enter valid symbol and quantity")
-                return
-
-            order_id = None
-
-            if order_type == "Stop Loss":
-                stop_price = float(self.stop_price_var.get())
-                limit_price = None
-                if (
-                    hasattr(self, "limit_price_var")
-                    and self.limit_price_var.get().strip()
-                ):
-                    limit_price = float(self.limit_price_var.get())
-
-                from decimal import Decimal
-
-                order_id = self.order_manager.create_stop_loss_order(
-                    symbol,
-                    Decimal(str(quantity)),
-                    Decimal(str(stop_price)),
-                    Decimal(str(limit_price)) if limit_price else None,
-                )
-
-            elif order_type == "Take Profit":
-                target_price = float(self.target_price_var.get())
-                from decimal import Decimal
-
-                order_id = self.order_manager.create_take_profit_order(
-                    symbol, Decimal(str(quantity)), Decimal(str(target_price))
-                )
-
-            elif order_type == "DCA Order":
-                dca_stage = int(self.dca_stage_var.get())
-                neural_level = int(self.neural_level_var.get())
-                from decimal import Decimal
-
-                order_id = self.order_manager.create_dca_order(
-                    symbol, Decimal(str(quantity)), dca_stage, neural_level
-                )
-
-            elif order_type == "Conditional":
-                # Create conditional order with specified conditions
-                from decimal import Decimal
-
-                from order_management_models import (
-                    ConditionOperator,
-                    ConditionType,
-                    OrderSide,
-                )
-                from order_management_models import OrderType as OMOrderType
-
-                order = self.order_manager.db.create_order(
-                    symbol=symbol,
-                    order_type=OMOrderType.CONDITIONAL,
-                    side=OrderSide.BUY,  # Default to BUY for now
-                    quantity=Decimal(str(quantity)),
-                )
-                order_id = order.id
-
-                # Add condition
-                condition_type_str = self.condition_type_var.get()
-                condition_type = {
-                    "Price": ConditionType.PRICE,
-                    "Neural Level": ConditionType.NEURAL_LEVEL,
-                    "Volume": ConditionType.VOLUME,
-                }.get(condition_type_str, ConditionType.PRICE)
-
-                operator_str = self.condition_operator_var.get()
-                operator = {
-                    ">=": ConditionOperator.GTE,
-                    "<=": ConditionOperator.LTE,
-                    "==": ConditionOperator.EQ,
-                    ">": ConditionOperator.GT,
-                    "<": ConditionOperator.LT,
-                }.get(operator_str, ConditionOperator.GTE)
-
-                target_value = Decimal(str(float(self.condition_value_var.get())))
-
-                self.order_manager.db.add_condition_to_order(
-                    order_id, condition_type, operator, target_value, symbol=symbol
-                )
-
-            if order_id:
-                messagebox.showinfo(
-                    "Success", f"Order created successfully: {order_id}"
-                )
-                self._refresh_orders()
-
-                # Clear form
-                self.symbol_var.set("BTCUSDT")
-                self.quantity_var.set("0.001")
-            else:
-                messagebox.showerror("Error", "Failed to create order")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to create order: {str(e)}")
-
-    def _refresh_orders(self):
-        """Refresh the active orders table."""
-        try:
-            if (
-                not hasattr(self, "order_manager")
-                or not self.order_manager.is_available
-            ):
-                return
-
-            # Clear existing items
-            for item in self.orders_tree.get_children():
-                self.orders_tree.delete(item)
-
-            # Get active orders
-            active_orders = self.order_manager.get_active_orders()
-
-            for order in active_orders:
-                # Format conditions text
-                conditions_text = ""
-                if order.get("conditions"):
-                    cond_parts = []
-                    for cond in order["conditions"]:
-                        cond_parts.append(
-                            f"{cond['condition_type'].value} {cond['operator'].value} {cond['target_value']}"
-                        )
-                    conditions_text = "; ".join(cond_parts)
-
-                # Format created time
-                created_at = order.get("created_at")
-                created_str = created_at.strftime("%m/%d %H:%M") if created_at else ""
-
-                # Insert into tree
-                order_id_str = str(order["id"])
-                self.orders_tree.insert(
-                    "",
-                    "end",
-                    values=(
-                        order_id_str[:8] + "...",  # Truncated ID
-                        order["symbol"],
-                        order["order_type"].value,
-                        order["side"].value,
-                        f"{order['quantity']}",
-                        f"{order.get('price') or order.get('stop_price') or 'N/A'}",
-                        order["status"].value,
-                        (
-                            conditions_text[:20] + "..."
-                            if len(conditions_text) > 20
-                            else conditions_text
-                        ),
-                        created_str,
-                    ),
-                )
-
-        except Exception as e:
-            print(f"Error refreshing orders: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    def _cancel_selected_order(self):
-        """Cancel the selected order."""
-        try:
-            selection = self.orders_tree.selection()
-            if not selection:
-                messagebox.showwarning(
-                    "No Selection", "Please select an order to cancel"
-                )
-                return
-
-            # Get the order ID from the selected item
-            item_values = self.orders_tree.item(selection[0])["values"]
-            truncated_id = item_values[0]
-
-            # Find full order ID (this is a simplified approach)
-            active_orders = self.order_manager.get_active_orders()
-            full_order_id = None
-
-            for order in active_orders:
-                if str(order["id"]).startswith(truncated_id.replace("...", "")):
-                    full_order_id = str(order["id"])
-                    break
-
-            if not full_order_id:
-                messagebox.showerror("Error", "Could not find order to cancel")
-                return
-
-            # Confirm cancellation
-            if messagebox.askyesno("Confirm", f"Cancel order {truncated_id}?"):
-                if self.order_manager.cancel_order(full_order_id):
-                    messagebox.showinfo("Success", "Order cancelled successfully")
-                    self._refresh_orders()
-                else:
-                    messagebox.showerror("Error", "Failed to cancel order")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Error cancelling order: {str(e)}")
-            import traceback
-
-            traceback.print_exc()
-
-    def _refresh_notifications(self):
-        """Refresh the notifications display."""
-        try:
-            if (
-                not hasattr(self, "order_manager")
-                or not self.order_manager.is_available
-            ):
-                return
-
-            notifications = self.order_manager.get_unread_notifications(limit=10)
-
-            # Clear existing text
-            self.notifications_text.delete(1.0, tk.END)
-
-            if not notifications:
-                self.notifications_text.insert(tk.END, "No new notifications")
-                return
-
-            # Add notifications to text widget
-            for notif in notifications:
-                created_at = notif.get("created_at")
-                time_str = created_at.strftime("%H:%M:%S") if created_at else ""
-                notification_line = (
-                    f"[{time_str}] {notif['title']}: {notif['message']}\n"
-                )
-                self.notifications_text.insert(tk.END, notification_line)
-
-            # Scroll to bottom
-            self.notifications_text.see(tk.END)
-
-        except Exception as e:
-            print(f"Error refreshing notifications: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    def _schedule_order_updates(self):
-        """Schedule periodic updates for orders and notifications."""
-        try:
-            self._refresh_orders()
-            self._refresh_notifications()
-
-            # Schedule next update in 5 seconds
-            self.after(5000, self._schedule_order_updates)
-
-        except Exception as e:
-            print(f"Error in scheduled order updates: {e}")
 
     def _create_llm_research_tab(self):
         """Create the LLM Research Engine tab for AI-powered market analysis."""
@@ -6489,6 +6006,7 @@ Platform: {sys.platform}
             if book_data is not None:
                 data = book_data
         if not data:
+            self._last_buying_power = None
             # account summary (right-side status area)
             try:
                 self.lbl_acct_total_value.config(text="N/A")
@@ -6528,6 +6046,10 @@ Platform: {sys.platform}
             self.lbl_acct_buying_power.config(
                 text=_fmt_money(acct.get("buying_power", None))
             )
+            try:
+                self._last_buying_power = float(acct["buying_power"])
+            except (KeyError, TypeError, ValueError):
+                self._last_buying_power = None
 
             pit = acct.get("percent_in_trade", None)
             try:

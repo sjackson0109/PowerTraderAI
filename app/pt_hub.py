@@ -1822,7 +1822,8 @@ class CandleChart(ttk.Frame):
                 label = "DCA" if tag == "DCA" else "BUY"
                 color = MARKERS["dca"] if tag == "DCA" else MARKERS["buy"]
             elif side == "sell":
-                label, color = "SELL", MARKERS["sell"]
+                label = "SELL"
+                color = MARKERS["sell"]
             else:
                 continue
             try:

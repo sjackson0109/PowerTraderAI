@@ -64,6 +64,10 @@ _SCHEMA = (
     "CREATE INDEX IF NOT EXISTS usage_by_provider ON usage (provider, ts)",
 )
 
+# Columns added after a table was first made: (table, column, type). A file from
+# before one gets it on first use, so older files stay readable.
+_ADDED_COLUMNS = (("decisions", "order_id", "TEXT"),)
+
 SIGNAL_COLUMNS = (
     "id",
     "ts",
@@ -182,6 +186,14 @@ class LLMStore:
                         pass
                     for statement in _SCHEMA:
                         conn.execute(statement)
+                    for table, column, kind in _ADDED_COLUMNS:
+                        have = {
+                            r[1] for r in conn.execute(f"PRAGMA table_info({table})")
+                        }
+                        if column not in have:  # a file from before the column
+                            conn.execute(
+                                f"ALTER TABLE {table} ADD COLUMN {column} {kind}"
+                            )
                     conn.execute(
                         "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
                         ("schema_version", str(SCHEMA_VERSION)),
@@ -571,6 +583,13 @@ class LLMStore:
                 trading_mode,
                 int(bool(allowed)),
             ),
+        )
+
+    def link_decision(self, decision_id: int, order_id: str) -> None:
+        """The order an allowed entry placed (the trade history's order id)."""
+        self._run(
+            "UPDATE decisions SET order_id = ? WHERE id = ?",
+            (str(order_id), int(decision_id)),
         )
 
     def decisions(self, limit: int = 200) -> List[Dict[str, Any]]:

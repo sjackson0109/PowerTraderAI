@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from io import BytesIO
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from matplotlib import rcParams
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -1864,24 +1864,100 @@ class CandleChart(ttk.Frame):
 
 
 # -----------------------------
+# Account panel: profit figures
+# -----------------------------
+
+REALIZED_TIP = (
+    "Realized: profit or loss on coins already sold. For each sale, what it "
+    "brought in minus what those coins cost. It changes only when a coin is sold."
+)
+UNREALIZED_TIP = (
+    "Unrealized: profit or loss on coins still held. What they would sell for "
+    "now, at the bid price, minus what they cost. It moves with the price, and "
+    "becomes realized when the coin is sold."
+)
+SINCE_START_TIP = (
+    "Since start: Value now minus the paper account's starting balance "
+    "(Settings > Paper Account), in dollars and as a percentage of that balance. "
+    "It includes realized and unrealized profit."
+)
+
+
+def _fmt_profit(value: Optional[float]) -> Tuple[str, str]:
+    """A profit figure's text and label style: signed dollars, green for a profit,
+    red for a loss, plain when it rounds to $0.00 (or N/A when not known)."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return "N/A", "TLabel"
+    if not math.isfinite(value):
+        return "N/A", "TLabel"
+    if abs(value) < 0.005:
+        return "$0.00", "TLabel"
+    style = "Good.TLabel" if value > 0 else "Bad.TLabel"
+    return trade_history_view.signed_money(value), style
+
+
+def unrealized_profit(positions: Any) -> Optional[float]:
+    """What the coins held would sell for now (each position's bid) minus what they
+    cost, from the trader's positions. None when a coin held has no bid or no cost."""
+    if not isinstance(positions, dict):
+        return None
+    total = 0.0
+    for pos in positions.values():
+        try:
+            qty = float(pos.get("quantity") or 0.0)
+            if qty <= 0.0:
+                continue
+            bid = float(pos.get("current_sell_price") or 0.0)
+            cost = float(pos.get("avg_cost_basis") or 0.0)
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if not (bid > 0.0 and cost > 0.0):
+            return None
+        total += qty * (bid - cost)
+    return total
+
+
+def paper_starting_balance(book_path: Optional[str]) -> Optional[float]:
+    """The saved paper account's starting balance; None when there is no book or
+    it does not keep the rules (Settings > Paper Account shows why)."""
+    if not book_path:
+        return None
+    try:
+        book = read_paper_book(book_path)
+    except PaperBookError:
+        return None
+    return None if book is None else float(book.initial_balance)
+
+
+# -----------------------------
 # Account Value chart widget
 # -----------------------------
 
 
 class AccountValueChart(ttk.Frame):
+    """The account's value over time, with a dot for each trade. The hub's Timeframe
+    box sets the period shown: the last ``bars()`` bars of that timeframe, the
+    period a coin chart on the same timeframe covers."""
+
     def __init__(
         self,
         parent: tk.Widget,
         history_path: str,
         trade_history_path: str,
         max_points: int = 250,
+        timeframe: str = "1hour",
+        bars: Callable[[], int] = lambda: 120,
     ):
         super().__init__(parent)
         self.history_path = history_path
         self.trade_history_path = trade_history_path
         # Hard-cap to 250 points max (account value chart only)
         self.max_points = min(int(max_points or 0) or 250, 250)
-        self._last_mtime: Optional[float] = None
+        self.timeframe_var = tk.StringVar(self, value=timeframe)
+        self._bars = bars
+        self._last_key: Optional[tuple] = None
 
         top = ttk.Frame(self)
         top.pack(fill="x", padx=6, pady=6)
@@ -1958,6 +2034,24 @@ class AccountValueChart(ttk.Frame):
         except Exception:
             pass
 
+    def set_timeframe(self, tf: str) -> None:
+        """Show ``tf``, chosen in the hub's Timeframe box, and redraw at once."""
+        self.timeframe_var.set(tf)
+        self.refresh()
+
+    def period_seconds(self) -> Optional[float]:
+        """How far back the chart reaches from its newest point: ``bars()`` bars of
+        the timeframe. None (the whole history) when the timeframe is not known."""
+        try:
+            from candlestick_patterns import HUB_TO_CANDLE
+            from market_data.timeframes import candle_timeframe_seconds
+
+            tf = self.timeframe_var.get().strip()
+            bars = max(1, int(self._bars()))
+            return float(candle_timeframe_seconds(HUB_TO_CANDLE.get(tf, tf)) * bars)
+        except Exception:
+            return None
+
     def refresh(self) -> None:
         path = self.history_path
 
@@ -1979,9 +2073,12 @@ class AccountValueChart(ttk.Frame):
         candidates = [m for m in (m_hist, m_trades) if m is not None]
         mtime = max(candidates) if candidates else None
 
-        if mtime is not None and self._last_mtime == mtime:
+        # ... or the period shown (timeframe, bars) changed
+        span = self.period_seconds()
+        key = (mtime, span)
+        if mtime is not None and self._last_key == key:
             return
-        self._last_mtime = mtime
+        self._last_key = key
 
         points: List[Tuple[float, float]] = []
 
@@ -2029,6 +2126,11 @@ class AccountValueChart(ttk.Frame):
                 else:
                     dedup.append((tsf, vf))
             points = dedup
+
+            # the period the timeframe covers, back from the newest point
+            if span:
+                start = points[-1][0] - span
+                points = [pt for pt in points if pt[0] >= start]
 
         # Downsample to <= 250 points by AVERAGING buckets instead of skipping points.
         # IMPORTANT: never average the VERY FIRST or VERY LAST point.
@@ -2971,16 +3073,25 @@ class PowerTraderHub(tk.Tk):
         )
         self.lbl_exchange.pack(side="left", padx=(2, 0))
 
-        def _figure(row: int, col: int, key: str, attr: str) -> None:
-            ttk.Label(
+        def _figure(
+            row: int, col: int, key: str, attr: str, tip: str = "", span: int = 1
+        ) -> ttk.Label:
+            name = ttk.Label(
                 acct_box,
                 text=key,
                 font=ui_tokens.font("caption"),
                 foreground=p["MUTED"],
-            ).grid(row=row, column=col, sticky="w", padx=(4, 6))
+            )
+            name.grid(row=row, column=col, sticky="w", padx=(4, 6))
             value = ttk.Label(acct_box, text="N/A", font=ui_tokens.font("caption"))
-            value.grid(row=row, column=col + 1, sticky="w", padx=(0, 8))
+            value.grid(
+                row=row, column=col + 1, columnspan=span, sticky="w", padx=(0, 8)
+            )
             setattr(self, attr, value)
+            if tip:
+                ToolTip(name, tip)
+                ToolTip(value, tip)
+            return name
 
         _figure(1, 0, "Value", "lbl_acct_total_value")
         _figure(1, 2, "Buying Power", "lbl_acct_buying_power")
@@ -2988,8 +3099,13 @@ class PowerTraderHub(tk.Tk):
         _figure(2, 2, "% in Trade", "lbl_acct_percent_in_trade")
         _figure(3, 0, "DCA Single", "lbl_acct_dca_single")
         _figure(3, 2, "DCA Spread", "lbl_acct_dca_spread")
-        _figure(4, 0, "Realized", "lbl_pnl")
-        ttk.Frame(acct_box, height=2).grid(row=5, column=0, columnspan=4)
+        _figure(4, 0, "Realized", "lbl_pnl", REALIZED_TIP)
+        _figure(4, 2, "Unrealized", "lbl_acct_unrealized", UNREALIZED_TIP)
+        # paper only: shown by _show_profit_figures when the paper book is in use
+        self.lbl_acct_since_start_key = _figure(
+            5, 0, "Since start", "lbl_acct_since_start", SINCE_START_TIP, span=3
+        )
+        ttk.Frame(acct_box, height=2).grid(row=6, column=0, columnspan=4)
 
         # Coins: one cell per coin (training status, trained-for, long/short
         # signal counts), with the Training and Thinking controls in its header.
@@ -3375,12 +3491,7 @@ class PowerTraderHub(tk.Tk):
         )
         self._chart_tab_buttons["ACCOUNT"] = acct_btn
 
-        self.account_chart = AccountValueChart(
-            acct_page,
-            self.account_value_history_path,
-            self.trade_history_path,
-        )
-        self.account_chart.pack(fill="both", expand=True)
+        self.account_chart = self._new_account_chart(acct_page)
 
         # Coin pages
         self.charts: Dict[str, CandleChart] = {}
@@ -6019,6 +6130,7 @@ Platform: {sys.platform}
                 self.lbl_acct_dca_single.config(text="N/A")
             except Exception:
                 pass
+            self._show_profit_figures({})
 
             # clear tree (once; subsequent ticks are mtime-short-circuited)
             for iid in self.trades_tree.get_children():
@@ -6093,6 +6205,7 @@ Platform: {sys.platform}
         if isinstance(positions, list):
             positions = {}
         self._last_positions = positions
+        self._show_profit_figures(data)
 
         # --- precompute per-coin DCA count in rolling 24h (and after last SELL for that coin) ---
         dca_24h_by_coin: Dict[str, int] = {}
@@ -6281,11 +6394,51 @@ Platform: {sys.platform}
         self._last_pnl_mtime = mtime
 
         data = _safe_read_json(self.pnl_ledger_path)
-        if not data:
-            self.lbl_pnl.config(text="N/A")
+        total = data.get("total_realized_profit_usd", 0.0) if data else None
+        text, style = _fmt_profit(total)
+        self.lbl_pnl.config(text=text, style=style)
+
+    def _show_profit_figures(self, data: dict) -> None:
+        """Unrealized and Since start, from the status the Account panel shows
+        (Realized comes from the P&L ledger: _refresh_pnl). Since start is shown
+        for the paper account only: it is measured from its starting balance."""
+        unrealized = getattr(self, "lbl_acct_unrealized", None)
+        since = getattr(self, "lbl_acct_since_start", None)
+        if unrealized is None or since is None:
             return
-        total = float(data.get("total_realized_profit_usd", 0.0))
-        self.lbl_pnl.config(text=_fmt_money(total))
+        from_book = data.get("source") == "paper_book"
+        # the saved book holds no prices: positions at cost, nothing to compare
+        profit = (
+            None
+            if (from_book or not data)
+            else unrealized_profit(data.get("positions") or {})
+        )
+        text, style = _fmt_profit(profit)
+        unrealized.config(text=text, style=style)
+
+        book_path = self._shown_paper_book_path()
+        key = getattr(self, "lbl_acct_since_start_key", None)
+        for widget in (key, since):
+            if widget is None:
+                continue
+            if book_path is None:
+                widget.grid_remove()
+            elif widget.winfo_manager() != "grid":
+                widget.grid()  # back where grid_remove() took it from
+        if book_path is None:
+            return
+        start = paper_starting_balance(book_path)
+        try:
+            value = float((data.get("account") or {})["total_account_value"])
+        except (KeyError, TypeError, ValueError):
+            value = None
+        if start is None or start <= 0 or value is None:
+            since.config(text="N/A", style="TLabel")
+            return
+        text, style = _fmt_profit(value - start)
+        pct = (value - start) / start * 100.0
+        pct_text = "0.00%" if text == "$0.00" else f"{pct:+.2f}%"
+        since.config(text=f"{text} ({pct_text})", style=style)
 
     def _refresh_trade_history(self) -> None:
         # mtime cache: avoid reading/parsing/rebuilding the table every tick
@@ -6753,13 +6906,37 @@ Platform: {sys.platform}
             **before,
         )  # level with the buttons, also while the scrollbar shows
 
+    def _new_account_chart(self, parent: tk.Widget) -> "AccountValueChart":
+        """The ACCOUNT page's chart, packed, on the timeframe the one it replaces
+        showed (the default timeframe the first time)."""
+        try:
+            tf = self.account_chart.timeframe_var.get()
+        except Exception:
+            tf = ""
+        chart = AccountValueChart(
+            parent,
+            self.account_value_history_path,
+            self.trade_history_path,
+            timeframe=tf or self.settings["default_timeframe"],
+            bars=lambda: int(self.settings.get("candles_limit", 120)),
+        )
+        chart.pack(fill="both", expand=True)
+        return chart
+
+    def _chart_named(self, name: str) -> Any:
+        """The chart of page ``name``: a coin's CandleChart or, for ACCOUNT, the
+        account chart. Both have a timeframe_var and set_timeframe()."""
+        if name == "ACCOUNT":
+            return getattr(self, "account_chart", None)
+        return getattr(self, "charts", {}).get(name)
+
     def _show_chart_timeframe(self, name: str) -> None:
-        """The Timeframe box shows the selected coin chart's timeframe. The account
-        chart has none, so the box is hidden there."""
+        """The Timeframe box shows the selected chart's timeframe (the account
+        chart's too)."""
         box = getattr(self, "_chart_tf_box", None)
         if box is None:
             return
-        chart = getattr(self, "charts", {}).get(name)
+        chart = self._chart_named(name)
         try:
             if chart is None:
                 box.pack_forget()
@@ -6771,9 +6948,7 @@ Platform: {sys.platform}
             pass
 
     def _on_chart_timeframe_selected(self, event=None) -> None:
-        chart = getattr(self, "charts", {}).get(
-            getattr(self, "_current_chart_page", "")
-        )
+        chart = self._chart_named(getattr(self, "_current_chart_page", ""))
         if chart is not None:
             chart.set_timeframe(self.chart_tf_combo.get())
 
@@ -6867,12 +7042,7 @@ Platform: {sys.platform}
         )
         self._chart_tab_buttons["ACCOUNT"] = acct_btn
 
-        self.account_chart = AccountValueChart(
-            acct_page,
-            self.account_value_history_path,
-            self.trade_history_path,
-        )
-        self.account_chart.pack(fill="both", expand=True)
+        self.account_chart = self._new_account_chart(acct_page)
 
         # Coin pages
         self.charts = {}

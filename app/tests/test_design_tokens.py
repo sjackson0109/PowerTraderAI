@@ -236,7 +236,6 @@ EVERY_STYLE = (  # (style, option, palette key) across every style the hub uses
     ("ChartTab.TButton", "background", "BG2"),
     ("ChartTabSelected.TButton", "background", "PANEL"),
     ("ChartTabSelected.TButton", "foreground", "ACCENT"),
-    ("ChartCog.TButton", "background", "BG"),
     ("Treeview", "background", "PANEL"),
     ("Treeview.Heading", "background", "BG2"),
     ("TPanedwindow", "background", "BG"),
@@ -262,6 +261,25 @@ def test_one_palette_styles_every_widget(tk_root, name):
             option,
         )
     assert str(tk_root.cget("bg")).upper() == p["BG"].upper()
+
+
+@pytest.mark.parametrize("name", ["PAPER", "DARK"])
+def test_what_sits_on_a_chart_takes_the_chart_background(tk_root, name):
+    """The Timeframe box and the cog sit on the chart (owner, 2026-11-04): the
+    chart's background in either mode, which paper mode does not recolour."""
+    from tkinter import ttk
+
+    import ui_theme
+
+    style = ttk.Style(tk_root)
+    ui_theme.apply_theme(tk_root, style, getattr(ui_tokens, name))
+    chart_bg = ui_tokens.CHART["figure"].upper()
+    for widget_style in (
+        "ChartCog.TButton",
+        "ChartOverlay.TFrame",
+        "ChartOverlay.TLabel",
+    ):
+        assert str(style.lookup(widget_style, "background")).upper() == chart_bg
 
 
 def test_keyboard_focus_is_visible(tk_root):
@@ -428,7 +446,11 @@ def test_every_state_takes_its_colours_from_the_palette(tk_root, name):
     p = getattr(ui_tokens, name)
     style = ttk.Style(tk_root)
     ui_theme.apply_theme(tk_root, style, p)
-    allowed = {c.upper() for c in (*p.values(), *ui_tokens.STATUS.values())}
+    # and the chart's background, for what sits on a chart (the cog), in either mode
+    allowed = {
+        c.upper()
+        for c in (*p.values(), *ui_tokens.STATUS.values(), ui_tokens.CHART["figure"])
+    }
     leaks = []
     for widget_style in STATE_STYLES:
         for state in STATES:

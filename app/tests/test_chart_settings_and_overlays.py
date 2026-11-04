@@ -994,8 +994,8 @@ def test_ask_and_bid_lines_are_dotted_while_the_trader_is_stopped(make_chart):
 
 def test_the_coin_chart_shows_no_last_update_time(make_chart):
     """Owner, 2026-10-14: "Last:" was the neural level files' age, not the chart's,
-    so it is gone from the chart. The cog moved to the hub's tab row
-    (test_hub_layout)."""
+    so it is gone from the chart. The cog is the hub's, on the chart's top right
+    corner (test_hub_layout)."""
     chart = make_chart(as_candles(down_then_engulfing()))
     refresh(chart)
     assert not any(t.get_text().startswith("Last:") for t in chart.ax.texts)

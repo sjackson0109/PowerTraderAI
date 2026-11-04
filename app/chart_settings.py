@@ -13,7 +13,14 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, Tuple
 
-from candlestick_patterns import PATTERNS, PatternDef
+from candlestick_patterns import (
+    DEFAULT_RANK,
+    DEFAULT_RECENT_CANDLES,
+    PATTERNS,
+    RANK_RANGE,
+    RECENT_CANDLES_RANGE,
+    PatternDef,
+)
 
 # (key, label, what it controls) for the Overlays tab, in display order
 OVERLAYS: Tuple[Tuple[str, str, str], ...] = (
@@ -86,6 +93,8 @@ def defaults() -> Dict[str, Any]:
             "items": {p.id: default_on(p) for p in PATTERNS},
             "max_labels": 12,
             "next_arrows": True,
+            "rank": dict(DEFAULT_RANK),
+            "recent_candles": DEFAULT_RECENT_CANDLES,
         },
         "palette": "default",
         "candle_style": "filled",
@@ -124,6 +133,21 @@ def normalize(raw: Any) -> Dict[str, Any]:
     lo, hi = MAX_LABELS_RANGE
     pats["max_labels"] = min(hi, max(lo, cap))
     pats["next_arrows"] = _as_bool(pats_raw.get("next_arrows"), True)
+    given = pats_raw.get("rank") if isinstance(pats_raw.get("rank"), dict) else {}
+    low, high = RANK_RANGE
+    rank = {}
+    for key, value in DEFAULT_RANK.items():
+        weight = given.get(key, value)
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            weight = value
+        rank[key] = int(min(high, max(low, int(weight))))
+    pats["rank"] = rank
+    try:
+        within = int(pats_raw.get("recent_candles", DEFAULT_RECENT_CANDLES))
+    except (TypeError, ValueError):
+        within = DEFAULT_RECENT_CANDLES
+    low, high = RECENT_CANDLES_RANGE
+    pats["recent_candles"] = min(high, max(low, within))
     out["patterns"] = pats
     if out.get("palette") not in PALETTES:
         out["palette"] = "default"

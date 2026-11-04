@@ -1,18 +1,27 @@
 """
 Long-term Holdings Management System (Item 20)
 Manages cryptocurrency portfolios with long-term investment tracking
+
+Tags (owner, 2026-11-04): each holding has none, one or more free-text labels
+("Steve", "Pension"), kept in holdings.db's ``holding_tags`` table, one row per
+holding and tag. The table is created when holdings.db is opened if it is not there
+yet; the ``holdings`` table and its rows are left exactly as they are, so a holding
+from before has no tags. Tags compare without regard to case and hold no commas.
+A tag selection (``filter_holdings``) keeps the holdings with any of its tags;
+UNTAGGED in it keeps those with none, and an empty one keeps every holding.
 """
 
 import json
 import os
+import re
 import sqlite3
 import tkinter as tk
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:
     import pandas as pd
@@ -46,6 +55,55 @@ def _connect(path: str):
         conn.close()
 
 
+# ---- tags ----
+
+UNTAGGED = ""  # in a tag selection: the holdings with no tags (no tag is blank)
+TAG_SEPARATOR = ", "  # between a holding's tags in the table and the CSV export
+
+
+def clean_tags(tags: Iterable[str]) -> List[str]:
+    """``tags`` as kept: each trimmed, its inner spaces made single, commas split it,
+    blanks dropped, and only the first of tags differing only in case."""
+    kept: List[str] = []
+    seen = set()
+    for text in tags or ():
+        for part in str(text).split(","):
+            tag = re.sub(r"\s+", " ", part).strip()
+            if tag and tag.casefold() not in seen:
+                seen.add(tag.casefold())
+                kept.append(tag)
+    return kept
+
+
+def sorted_tags(tags: Iterable[str]) -> List[str]:
+    return sorted(clean_tags(tags), key=lambda t: (t.casefold(), t))
+
+
+def tags_text(tags: Iterable[str]) -> str:
+    """A holding's tags in one line, in alphabetical order: "Pension, Steve"."""
+    return TAG_SEPARATOR.join(sorted_tags(tags))
+
+
+def matches_tags(holding: "Holding", selection: Iterable[str] = ()) -> bool:
+    """Whether ``holding`` is kept by the tag selection: any of its tags is in it
+    (UNTAGGED: it has none); an empty selection keeps every holding."""
+    wanted = {str(t).strip().casefold() for t in selection or ()}
+    if not wanted:
+        return True
+    own = {t.casefold() for t in clean_tags(holding.tags)}
+    if not own:
+        return UNTAGGED in wanted
+    return bool(own & wanted)
+
+
+def filter_holdings(
+    holdings: Iterable["Holding"], selection: Iterable[str] = ()
+) -> List["Holding"]:
+    """The holdings the tag selection keeps, in their order (see matches_tags)."""
+    selection = tuple(selection or ())
+    return [h for h in holdings if matches_tags(h, selection)]
+
+
 @dataclass
 class Holding:
     """Represents a long-term cryptocurrency holding"""
@@ -61,6 +119,7 @@ class Holding:
     target_percentage: float = 0.0
     rebalance_threshold: float = 5.0  # Percentage deviation before rebalancing
     last_updated: str = ""
+    tags: List[str] = field(default_factory=list)  # holding_tags; [] untagged
 
     @property
     def total_cost(self) -> float:
@@ -133,7 +192,26 @@ class HoldingsDatabase:
                     notes TEXT DEFAULT ''
                 )
             """)
+
+            # The tags (2026-11-04): a table of their own, so a holdings.db from
+            # before only gains it, empty; its holdings rows stay as they are.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS holding_tags (
+                    holding_id INTEGER NOT NULL,
+                    tag TEXT NOT NULL COLLATE NOCASE,
+                    PRIMARY KEY (holding_id, tag)
+                )
+            """)
             conn.commit()
+
+    @staticmethod
+    def _write_tags(conn: sqlite3.Connection, holding_id: int, tags) -> None:
+        """Replace the tags of holding ``holding_id`` with ``tags`` (clean_tags)."""
+        conn.execute("DELETE FROM holding_tags WHERE holding_id=?", (holding_id,))
+        conn.executemany(
+            "INSERT OR IGNORE INTO holding_tags (holding_id, tag) VALUES (?, ?)",
+            [(holding_id, tag) for tag in clean_tags(tags)],
+        )
 
     def add_holding(self, holding: Holding) -> int:
         """Add a new holding to the database"""
@@ -159,8 +237,10 @@ class HoldingsDatabase:
                     holding.last_updated,
                 ),
             )
+            holding_id = cursor.lastrowid
+            self._write_tags(conn, holding_id, holding.tags)
             conn.commit()
-            return cursor.lastrowid
+            return holding_id
 
     def update_holding(self, holding: Holding):
         """Update an existing holding"""
@@ -188,13 +268,16 @@ class HoldingsDatabase:
                     holding.id,
                 ),
             )
+            if holding.id is not None and cursor.rowcount:  # the holding is there
+                self._write_tags(conn, holding.id, holding.tags)
             conn.commit()
 
     def delete_holding(self, holding_id: int):
-        """Delete a holding from the database"""
+        """Delete a holding (and its tags) from the database"""
         with _connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM holdings WHERE id=?", (holding_id,))
+            cursor.execute("DELETE FROM holding_tags WHERE holding_id=?", (holding_id,))
             conn.commit()
 
     def get_all_holdings(self) -> List[Holding]:
@@ -203,6 +286,11 @@ class HoldingsDatabase:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM holdings ORDER BY symbol")
             rows = cursor.fetchall()
+            tags: Dict[int, List[str]] = {}
+            for holding_id, tag in cursor.execute(
+                "SELECT holding_id, tag FROM holding_tags ORDER BY holding_id, rowid"
+            ):
+                tags.setdefault(holding_id, []).append(tag)
 
             holdings = []
             for row in rows:
@@ -218,6 +306,7 @@ class HoldingsDatabase:
                     target_percentage=row[8],
                     rebalance_threshold=row[9],
                     last_updated=row[10],
+                    tags=sorted_tags(tags.get(row[0], ())),
                 )
                 holdings.append(holding)
             return holdings
@@ -305,6 +394,18 @@ class HoldingsManager:
         except Exception as e:
             print(f"Error deleting holding: {e}")
             return False
+
+    # ---- tags ----
+
+    def all_tags(self) -> List[str]:
+        """Every tag the holdings have, once each (whatever its case), in
+        alphabetical order."""
+        return sorted_tags(t for h in self.holdings for t in h.tags)
+
+    def filter_by_tags(self, selection: Iterable[str] = ()) -> List[Holding]:
+        """The holdings the tag selection keeps: those with any of its tags, the
+        untagged ones for UNTAGGED, and every holding for an empty selection."""
+        return filter_holdings(self.holdings, selection)
 
     def get_portfolio_summary(self) -> Dict[str, float]:
         """Get overall portfolio summary"""

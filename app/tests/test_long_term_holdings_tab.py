@@ -742,6 +742,153 @@ def test_an_existing_holdings_db_is_read_and_left_as_it_is(root, tmp_path):
     assert _dump(path) == before
 
 
+# ---- tags in holdings.db ----
+
+# holdings.db as the app made it before the tags (2026-11-04)
+OLD_SCHEMA = (
+    """CREATE TABLE holdings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        average_cost REAL NOT NULL,
+        current_price REAL DEFAULT 0.0,
+        exchange TEXT DEFAULT '',
+        purchase_date TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        target_percentage REAL DEFAULT 0.0,
+        rebalance_threshold REAL DEFAULT 5.0,
+        last_updated TEXT DEFAULT '',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )""",
+    """CREATE TABLE price_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        price REAL NOT NULL,
+        timestamp TEXT NOT NULL,
+        source TEXT DEFAULT 'manual'
+    )""",
+    """CREATE TABLE rebalance_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        portfolio_value REAL NOT NULL,
+        rebalance_data TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        notes TEXT DEFAULT ''
+    )""",
+)
+
+
+def _old_holdings_db(path):
+    conn = sqlite3.connect(path)
+    try:
+        for sql in OLD_SCHEMA:
+            conn.execute(sql)
+        conn.executemany(
+            "INSERT INTO holdings (symbol, quantity, average_cost, current_price,"
+            " exchange, purchase_date, notes, target_percentage, rebalance_threshold,"
+            " last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                ("BTC", 0.5, 40000.0, 60000.0, "binance", "2021-03-01", "", 50, 5, ""),
+                ("ETH", 2.0, 3000.0, 3200.0, "", "last spring", "cold", 0, 5, "x"),
+            ],
+        )
+        conn.execute(
+            "INSERT INTO price_history (symbol, price, timestamp) VALUES (?, ?, ?)",
+            ("BTC", 61000.0, "2026-01-01T00:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO rebalance_history (portfolio_value, rebalance_data,"
+            " timestamp) VALUES (?, ?, ?)",
+            (36400.0, "{}", "2026-01-02T00:00:00"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_an_old_holdings_db_keeps_its_holdings_unchanged_and_untagged(tmp_path):
+    path = str(tmp_path / "holdings.db")
+    _old_holdings_db(path)
+    schema, tables = _dump(path)
+
+    for _ in range(2):  # opened twice: the second time changes nothing more
+        m = lth.HoldingsManager(path)
+        new_schema, new_tables = _dump(path)
+        # every table and row from before, exactly; one new, empty table
+        assert new_tables == tables
+        # (and the index of its key)
+        assert [s for s in new_schema if "holding_tags" not in s[0]] == schema
+        assert "holding_tags" in [name for name, _sql in new_schema]
+        conn = sqlite3.connect(path)
+        try:
+            assert conn.execute("SELECT COUNT(*) FROM holding_tags").fetchone() == (0,)
+        finally:
+            conn.close()
+        assert [(h.symbol, h.tags) for h in m.holdings] == [("BTC", []), ("ETH", [])]
+        assert m.all_tags() == []
+        assert [h.symbol for h in m.filter_by_tags([lth.UNTAGGED])] == ["BTC", "ETH"]
+        assert m.filter_by_tags(["Steve"]) == []
+
+    # tagged afterwards: the tag is kept, the row otherwise as it was
+    btc = m.holdings[0]
+    btc.tags = ["Steve"]
+    assert m.update_holding(btc)
+    again, eth = lth.HoldingsManager(path).holdings
+    assert again.tags == ["Steve"] and eth.tags == []
+    assert (again.purchase_date, eth.purchase_date) == ("2021-03-01", "last spring")
+
+
+def test_tags_are_kept_cleaned_and_removed_with_their_holding(manager):
+    h = holding("BTC", 1, 100.0, 100.0, tags=[" Steve ", "pension", "steve", "a,  b"])
+    assert manager.add_holding(h)
+    (saved,) = manager.db.get_all_holdings()
+    # trimmed, split at commas, once whatever the case, in alphabetical order
+    assert saved.tags == ["a", "b", "pension", "Steve"]
+    assert lth.tags_text(saved.tags) == "a, b, pension, Steve"
+
+    saved.tags = ["Pension"]
+    assert manager.update_holding(saved)
+    (saved,) = manager.db.get_all_holdings()
+    assert saved.tags == ["Pension"]
+
+    assert manager.add_holding(holding("ETH", 1, 1.0, 1.0))  # no tags
+    assert manager.all_tags() == ["Pension"]
+    assert manager.delete_holding(saved.id)
+    gone = holding("BTC", 1, 1.0, 1.0, tags=["Ghost"])
+    gone.id = saved.id
+    manager.db.update_holding(gone)  # a holding no longer there gains no tags
+    conn = sqlite3.connect(manager.db.db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM holding_tags").fetchone() == (0,)
+    finally:
+        conn.close()
+    assert manager.all_tags() == []
+
+
+def test_a_tag_selection_keeps_the_holdings_with_any_of_its_tags(manager):
+    for coin, tags in (
+        ("BTC", ["Steve"]),
+        ("ETH", ["Steve", "Pension"]),
+        ("SOL", ["Pension"]),
+        ("DOT", []),
+    ):
+        manager.add_holding(holding(coin, 1, 1.0, 1.0, tags=tags))
+
+    def kept(*selection):
+        return sorted(h.symbol for h in manager.filter_by_tags(selection))
+
+    assert kept() == ["BTC", "DOT", "ETH", "SOL"]  # All
+    assert kept("Steve") == ["BTC", "ETH"]
+    assert kept("Pension") == ["ETH", "SOL"]  # ETH under either tag
+    assert kept("steve") == ["BTC", "ETH"]  # in any case
+    assert kept(" Steve ") == ["BTC", "ETH"]
+    assert kept("Steve", "Pension") == ["BTC", "ETH", "SOL"]
+    assert kept(lth.UNTAGGED) == ["DOT"]
+    assert kept(lth.UNTAGGED, "Pension") == ["DOT", "ETH", "SOL"]
+    assert kept("Nobody") == []
+    assert manager.all_tags() == ["Pension", "Steve"]
+
+
 def test_a_parent_that_is_not_a_widget_is_refused_at_once(monkeypatch):
     """A mock parent's masters never end: the window refuses it before it reads
     holdings.db or makes a Tk variable (test_suite.py builds one so)."""

@@ -161,10 +161,30 @@ def blocks(markdown: str) -> List[Tuple[str, str, Tuple[str, ...]]]:
                     ("bullet",),
                 )
             )
+        elif line.strip():
+            # a paragraph: its lines run on, as Markdown wraps them
+            para = [line.strip()]
+            while i + 1 < len(lines) and _plain_line(lines[i + 1], lines, i + 1):
+                i += 1
+                para.append(lines[i].strip())
+            out.append(("inline", " ".join(para) + "\n", ()))
         else:
-            out.append(("inline", line + "\n", ()))
+            out.append(("plain", "\n", ()))
         i += 1
     return out
+
+
+def _plain_line(line: str, lines: List[str], i: int) -> bool:
+    """True for a line that continues a paragraph (not blank, not another block)."""
+    text = line.strip()
+    if not text or text.startswith(("```", ">", "|")):
+        return False
+    return not (
+        _HEADING.match(line)
+        or _RULE.match(line)
+        or _BULLET.match(line)
+        or _NUMBERED.match(line)
+    )
 
 
 def show(widget: tk.Text, markdown: str, keep_state: bool = True) -> None:

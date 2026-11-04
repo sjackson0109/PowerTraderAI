@@ -130,6 +130,15 @@ SCORE_HEADINGS = {
     "mean": "Mean after fees",
     "gate": "Gate",
 }
+DECISION_COLUMNS = ("time", "coin", "mode", "decision", "order", "reason")
+DECISION_HEADINGS = {
+    "time": "Time",
+    "coin": "Coin",
+    "mode": "LLM signals",
+    "decision": "Decision",
+    "order": "Order",
+    "reason": "Reason",
+}
 ALL = "All"
 HIGH_CONFIDENCE = "High confidence (70% or more)"
 DIRECTION_FILTERS = (ALL, "BUY", "SELL", "HOLD", HIGH_CONFIDENCE)
@@ -403,12 +412,7 @@ class ResearchEngineGUI:
         self.research_frame.bind("<Destroy>", self._on_destroy, add="+")
         self.jobs = BackgroundJobs(self.research_frame, name="llm-research")
 
-        self.notebook = ttk.Notebook(self.research_frame)
-        self.notebook.pack(fill="both", expand=True)
-        self._build_analysis_tab()
-        self._build_signals_tab()
-        self._build_reports_tab()
-
+        # the status bar is packed first, so the sub-tabs never squeeze it out
         bar = ttk.Frame(self.research_frame)
         bar.pack(side="bottom", fill="x", padx=ui_tokens.SPACE["sm"], pady=(2, 2))
         self.status_var = tk.StringVar(master=self.research_frame, value="Ready")
@@ -426,6 +430,12 @@ class ResearchEngineGUI:
         ttk.Label(bar, textvariable=self.answered_var, style="Muted.TLabel").pack(
             side="right"
         )
+
+        self.notebook = ttk.Notebook(self.research_frame)
+        self.notebook.pack(fill="both", expand=True)
+        self._build_analysis_tab()
+        self._build_signals_tab()
+        self._build_reports_tab()
 
         self.reset_symbols(lookup=False)
         self._load_symbols()
@@ -960,8 +970,23 @@ class ResearchEngineGUI:
             height=4,
         )
         self.scores_table.pack(fill="both", expand=True)
-        bottom.add(reasons, weight=1)
-        bottom.add(scores, weight=1)
+        decisions = ttk.Frame(bottom)
+        ttk.Label(decisions, text="Entry decisions", style=ui_table.SECTION_STYLE).pack(
+            side="top", anchor="w", padx=gap, pady=(gap, 2)
+        )
+        self.decisions_table = ui_table.DataTable(
+            decisions,
+            DECISION_COLUMNS,
+            DECISION_HEADINGS,
+            key="llm_research.entry_decisions",
+            sort=("time", True),
+            empty_text="No entry decisions yet",
+            height=4,
+        )
+        self.decisions_table.pack(fill="both", expand=True)
+        bottom.add(reasons, weight=2)
+        bottom.add(scores, weight=2)
+        bottom.add(decisions, weight=2)
         self.signals_paned.add(top, weight=3)
         self.signals_paned.add(bottom, weight=2)
 
@@ -987,6 +1012,7 @@ class ResearchEngineGUI:
                 box.set(ALL)
         self.apply_signal_filter()
         self._show_scores()
+        self._show_decisions()
 
     def signal_cells(self, s: Any) -> tuple:
         return (
@@ -1062,6 +1088,32 @@ class ResearchEngineGUI:
         self.signal_summary.set(text)
 
     filter_signals = apply_signal_filter
+
+    def _show_decisions(self) -> None:
+        """What the trader's entry hook decided, newest first, with the order."""
+        try:
+            rows = self.store.decisions(limit=500)
+        except Exception:
+            rows = []
+        tree = self.decisions_table.tree
+        tree.delete(*tree.get_children())
+        for d in rows:
+            tree.insert(
+                "",
+                "end",
+                values=(
+                    _when(d.get("ts")),
+                    d.get("coin") or "",
+                    llm_settings.SIGNAL_MODE_NAMES.get(
+                        d.get("mode"), d.get("mode") or ""
+                    ),
+                    llm_gate.DECISION_WORDS.get(
+                        d.get("decision"), d.get("decision") or ""
+                    ),
+                    d.get("order_id") or d.get("trade_ref") or "",
+                    d.get("reason") or "",
+                ),
+            )
 
     def _show_scores(self) -> None:
         tree = self.scores_table.tree

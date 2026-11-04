@@ -497,3 +497,19 @@ def test_the_hub_builds_the_tab_on_its_coins_and_stops_it_on_close(monkeypatch, 
     assert thread is not None
     thread.join(timeout=5)
     assert not thread.is_alive()
+
+
+def test_entry_decisions_are_shown_with_their_order_and_reason(root, store):
+    gui = build(root, store, FakeHttp(ollama_routes(answer_for)))
+    d = store.add_decision("BTC", "veto", "vetoed", "Ollama m: SELL", False, 3, "ref-1")
+    store.add_decision("ETH", "confirm", "confirmed", "Ollama m: BUY", True, 4, "ref-2")
+    store.link_decision(d + 1, "order-7")
+    gui.reload_signals()
+    shown = {r[1]: r for r in rows(gui.decisions_table)}
+    assert shown["BTC"][2:] == (
+        "Veto entries",
+        "vetoed: the entry is skipped",
+        "ref-1",
+        "Ollama m: SELL",
+    )
+    assert shown["ETH"][3:5] == ("confirmed", "order-7")

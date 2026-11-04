@@ -13,7 +13,9 @@ Styles, beyond the plain ttk class names:
 
     ChartTab.TButton          an unselected chart tab button
     ChartTabSelected.TButton  the selected chart tab button
-    ChartCog.TButton          the borderless Chart settings button
+    ChartCog.TButton          the borderless Chart settings button, on the chart
+    ChartOverlay.TFrame       what sits on a chart: the chart's background
+    ChartOverlay.TLabel       a label on a chart
     Accent.TButton            the one main action in a panel (Run, Save)
     HiddenTabs.TNotebook      a notebook with no tab strip
     Inner.TNotebook           a notebook inside a bottom-panel tab: no pane border
@@ -409,15 +411,21 @@ def apply_theme(root: tk.Misc, style: ttk.Style, p: Dict[str, str]) -> None:
         bordercolor=[("focus", p["ACCENT"]), ("active", p["ACCENT2"])],
     )
 
+    # The Timeframe box and the cog sit on the chart's top right corner (owner,
+    # 2026-11-04), on the chart's own background in either mode (paper mode
+    # recolours the frames, not the chart).
+    chart_bg = ui_tokens.CHART["figure"]
+    style.configure("ChartOverlay.TFrame", background=chart_bg)
+    style.configure("ChartOverlay.TLabel", background=chart_bg, foreground=p["FG"])
     # The Chart settings cog shows no border (owner, 2026-10-14): its edges take its
-    # background, the frame colour. Hover and keyboard focus light the whole button.
+    # background, the chart's. Hover and keyboard focus light the whole button.
     edges = ("background", "bordercolor", "lightcolor", "darkcolor", "focuscolor")
     style.configure(
         "ChartCog.TButton",
         foreground=p["FG"],
         padding=(7, 7),
         width=0,
-        **{edge: p["BG"] for edge in edges},
+        **{edge: chart_bg for edge in edges},
     )
     lit = [("pressed", p["PANEL"]), ("active", p["PANEL2"]), ("focus", p["PANEL2"])]
     style.map(

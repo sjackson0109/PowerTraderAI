@@ -3953,20 +3953,13 @@ class PowerTraderHub(tk.Tk):
                 print("LLM Research Engine not available")
                 return
 
-            # Initialize the research GUI
-            config = {
-                "llm": {
-                    "api_key": "",  # Users will need to add their API key in settings
-                    "model": "gpt-4",
-                },
-                "news": {
-                    "sources": ["alpaca_news", "polygon_news"],
-                    "update_interval": 300,
-                },
-                "auto_analysis_interval": 600,
-            }
-
-            self.research_gui = ResearchEngineGUI(research_tab, config)
+            # The research tab: the coins in Settings; every LLM setting is in
+            # Settings > LLM Providers
+            self.research_gui = ResearchEngineGUI(
+                research_tab,
+                coins=lambda: list(getattr(self, "coins", []) or []),
+                open_settings=self.open_llm_settings,
+            )
 
             print("LLM Research Engine tab created successfully")
 

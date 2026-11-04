@@ -46,9 +46,6 @@ cd PowerTraderAI
 
 # Verify dependencies
 pip install -r requirements.txt
-
-# Verify system status
-python app/test_dependencies.py
 ```
 
 ### Step 2: GitHub Project Setup (10 minutes)

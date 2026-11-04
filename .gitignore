@@ -270,6 +270,7 @@ trainer_status.json
 killer.txt
 emergency_snapshot_*.json
 *_current_price.txt
+node_modules/
 dependency_report.txt
 PHASE_COMPLETION_REPORT.txt
 cache/

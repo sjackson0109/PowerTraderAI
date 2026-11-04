@@ -8,9 +8,12 @@ import hmac
 import unittest
 from unittest.mock import MagicMock, patch
 
+import os
 import sys
 
-sys.path.insert(0, ".")
+APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
 
 from pt_exchanges import (
     BinanceExchange,

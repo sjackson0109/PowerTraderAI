@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 
-APP_DIR = os.path.dirname(__file__)
+APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Modules explicitly allowed to reference credential filenames
 ALLOWLIST = {
@@ -30,7 +30,6 @@ TEST_FILES = {
     "test_paper_trading_integration.py",
     "test_security_logger.py",
     "test_pt_hub.py",
-    "test_comprehensive.py",
 }
 
 

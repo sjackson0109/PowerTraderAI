@@ -6,9 +6,9 @@ Run (from anywhere; the checkout is an argument):
     python run_suite.py run <checkout> --python <test-venv python> --out <results.json> [--github]
 
 * Every app/test_*.py and app/tests/test_*.py, one file at a time, with the checkout as the
-  working folder; test_phase1_phase2_integration.py is excluded (it kills its own process
-  group on Windows). --github also runs every .github/scripts/test_*.py the same way,
-  reported separately.
+  working folder; test_phase1_phase2_integration.py (in older checkouts) is excluded (it
+  kills its own process group on Windows). --github also runs every
+  .github/scripts/test_*.py the same way, reported separately.
 * 300 s per test (pytest-timeout), 1800 s per file; per-test results from JUnit XML.
 * Every test process gets a fresh scratch POWERTRADER_HOME and the "fail" keyring backend,
   so nothing can reach the real user folders or credential store even if a conftest guard

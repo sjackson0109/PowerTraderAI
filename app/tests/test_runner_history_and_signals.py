@@ -19,6 +19,7 @@ APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
+from helpers_sleep import own_thread_sleep  # noqa: E402
 import pt_data_provider  # noqa: E402
 import pt_hub  # noqa: E402
 from market_data import runner_history  # noqa: E402
@@ -173,7 +174,7 @@ def test_the_runner_reads_the_last_closed_bar(runner, monkeypatch):
 def test_one_candle_is_not_enough_and_does_not_hang(runner, monkeypatch):
     provider = TextProvider("[[1760000000000, 5.0, 5.0, 5.0, 5.0, 1000]]")
     monkeypatch.setattr(runner, "data_provider", provider)
-    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    monkeypatch.setattr(runner.time, "sleep", own_thread_sleep(lambda s: None))
     with pytest.raises(runner.CoinDataError, match="only 1 candle"):
         runner._last_closed_bar("BTC-USDT", "1hour")
     assert provider.calls == runner._HISTORY_ATTEMPTS
@@ -183,7 +184,7 @@ def test_a_failing_source_is_retried_briefly_then_skipped(runner, monkeypatch):
     provider = TextProvider(error=RuntimeError("timeout"))
     monkeypatch.setattr(runner, "data_provider", provider)
     sleeps = []
-    monkeypatch.setattr(runner.time, "sleep", sleeps.append)
+    monkeypatch.setattr(runner.time, "sleep", own_thread_sleep(sleeps.append))
     with pytest.raises(runner.CoinDataError, match="timeout"):
         runner._history_rows("BTC-USDT", "4hour")
     assert provider.calls == runner._HISTORY_ATTEMPTS
@@ -278,7 +279,7 @@ def test_a_coin_waiting_for_data_is_labelled_and_its_gate_closed(runner):
 
 def test_init_does_not_hang_when_the_source_is_down(runner, monkeypatch, capsys):
     monkeypatch.setattr(runner, "data_provider", TextProvider(error=OSError("down")))
-    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    monkeypatch.setattr(runner.time, "sleep", own_thread_sleep(lambda s: None))
     runner.init_coin("DOGE")
     assert runner.states["DOGE"]["tf_times"] == [0.0] * len(runner.tf_choices)
     assert "DOGE: no 1hour price history" in capsys.readouterr().out
@@ -308,7 +309,7 @@ def test_one_coins_error_does_not_stop_the_runner(runner, monkeypatch, capsys):
         if len(sleeps) == 2:
             raise StopLoop()
 
-    monkeypatch.setattr(runner.time, "sleep", sleep)
+    monkeypatch.setattr(runner.time, "sleep", own_thread_sleep(sleep))
     with pytest.raises(StopLoop):
         runner.main()
     assert stepped == ["ZEC", "XRP", "ZEC", "XRP"]  # two full passes

@@ -20,10 +20,9 @@ if APP_DIR not in sys.path:
 
 SKIP_DIRS = {".venv", "venv", "__pycache__", "tests", ".git"}
 
-# Known and left alone: order_execution_engine is used by nothing (roadmap #56, closed
-# as not planned). Its ExecutionStatus import has never resolved, so the module always
-# reports itself unavailable. Listed by name so a new break is not hidden behind it.
-KNOWN = {("order_execution_engine.py", "order_management_models.ExecutionStatus")}
+# Known breaks left alone, as (file, module.name): none now. order_execution_engine,
+# whose ExecutionStatus import never resolved, is in archive/legacy/ (2026-11-04).
+KNOWN: set = set()
 
 
 def _app_files():

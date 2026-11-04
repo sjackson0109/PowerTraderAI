@@ -41,6 +41,7 @@ for _path in (APP_DIR, TESTS_DIR):
 import helpers_candles as hc  # noqa: E402
 import helpers_thinker as hth  # noqa: E402
 import helpers_trainer as ht  # noqa: E402
+from helpers_sleep import own_thread_sleep  # noqa: E402
 import model_store  # noqa: E402
 import pattern_model  # noqa: E402
 import pt_paths  # noqa: E402
@@ -807,7 +808,9 @@ def test_publishing_retries_a_folder_rename_a_scanner_holds_up(published, monkey
         replace(staging, final)
 
     monkeypatch.setattr(model_store, "_replace", held_twice)
-    monkeypatch.setattr(model_store.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        model_store.time, "sleep", own_thread_sleep(lambda seconds: None)
+    )
     assert model_store.publish(coin_folder, manifest, trainer_root=None) == model_folder
     assert len(calls) == 3
     assert model_store.verify_folder(model_folder)["files"] == manifest["files"]

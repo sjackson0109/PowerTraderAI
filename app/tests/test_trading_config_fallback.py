@@ -13,7 +13,7 @@ from pt_multi_exchange import (
     MultiExchangeManager,
 )
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 REPO_DIR = os.path.dirname(APP_DIR)
 CREDENTIAL_FIELDS = ("api_key", "api_secret", "passphrase")
 

@@ -122,13 +122,13 @@ This document outlines the development workflow for transitioning PowerTrader AI
 4. **Testing Requirements**
    ```bash
    # Run local tests
-   python -m pytest app/test_*.py -v
+   python -m pytest app/tests -v
 
    # Run security scan
    bandit -r app/
 
    # Run integration tests
-   python app/test_integration.py
+   python app/tests/test_integration.py
    ```
 
 ### Pull Request Process

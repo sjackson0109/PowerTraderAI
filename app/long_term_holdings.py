@@ -59,6 +59,7 @@ def _connect(path: str):
 
 UNTAGGED = ""  # in a tag selection: the holdings with no tags (no tag is blank)
 TAG_SEPARATOR = ", "  # between a holding's tags in the table and the CSV export
+QUANTITY_DECIMALS = 8  # a quantity worked out from an amount is rounded to this
 
 
 def clean_tags(tags: Iterable[str]) -> List[str]:
@@ -104,6 +105,17 @@ def filter_holdings(
     return [h for h in holdings if matches_tags(h, selection)]
 
 
+def quantity_for_amount(amount: float, average_cost: float) -> float:
+    """The quantity ``amount`` dollars buy at ``average_cost`` dollars a coin,
+    rounded half up to QUANTITY_DECIMALS places; ValueError unless the cost is
+    above 0."""
+    if not average_cost > 0:
+        raise ValueError("the average cost must be greater than 0")
+    step = Decimal(1).scaleb(-QUANTITY_DECIMALS)
+    exact = Decimal(str(amount)) / Decimal(str(average_cost))
+    return float(exact.quantize(step, rounding=ROUND_HALF_UP))
+
+
 @dataclass
 class Holding:
     """Represents a long-term cryptocurrency holding"""
@@ -114,6 +126,8 @@ class Holding:
     average_cost: float = 0.0
     current_price: float = 0.0
     exchange: str = ""
+    # "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" (local time) from the dialog; "" unknown.
+    # Older rows keep whatever was typed.
     purchase_date: str = ""
     notes: str = ""
     target_percentage: float = 0.0

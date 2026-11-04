@@ -147,7 +147,9 @@ def holding(symbol, qty, cost, price, **kw):
     )
 
 
-def add(g, win, coin, qty, cost, price="", exchange="", target=""):
+def add(
+    g, win, coin, qty, cost, price="", exchange="", target="", tags="", date="", time=""
+):
     """A holding added through the Add Holding dialog."""
     dlg = g.add_holding_dialog()
     dlg.attributes("-alpha", 0.0)
@@ -157,6 +159,9 @@ def add(g, win, coin, qty, cost, price="", exchange="", target=""):
     dlg.cost_var.set(str(cost))
     dlg.price_var.set(str(price))
     dlg.target_var.set(str(target))
+    dlg.date_var.set(date)
+    dlg.time_var.set(time)
+    dlg.add_tag(tags)
     saved = dlg.save()
     assert saved is not None
     settle(win, g)
@@ -686,6 +691,195 @@ def test_the_dialog_refuses_what_is_not_a_holding(
     assert dialogs.calls[-1][0] == "showerror" and dialogs.calls[-1][2] == message
     assert dlg.winfo_exists() and manager.db.get_all_holdings() == []
     dlg.destroy()
+
+
+def typed(dlg, text):
+    """``text`` typed in the dialog's tag field, key by key (the completion runs on
+    each key's release)."""
+    from types import SimpleNamespace as Key
+
+    box = dlg.tag_box
+    for char in text:
+        if box.selection_present():  # a key replaces the selected text
+            box.delete("sel.first", "sel.last")
+        box.insert("insert", char)
+        dlg.complete_tag(Key(keysym=char, char=char))
+
+
+def test_a_position_entered_as_an_amount_shows_and_saves_the_quantity(
+    root, manager, dialogs
+):
+    """Acceptance: BTC added as "$50 at <price>", tagged Steve."""
+    g = gui(root, manager)
+    dlg = g.add_holding_dialog()
+    dlg.attributes("-alpha", 0.0)
+    assert dlg.entry_mode.get() == ltg.BY_QUANTITY
+    assert dlg.amount_entry.instate(["disabled"])  # worked out, not typed
+    dlg.entry_mode.set(ltg.BY_AMOUNT)
+    assert dlg.quantity_entry.instate(["disabled"])
+    assert not dlg.amount_entry.instate(["disabled"])
+    dlg.coin_var.set("BTC")
+    dlg.amount_var.set("50")
+    dlg.cost_var.set("61234.56")
+    dlg.price_var.set("61234.56")
+    # both shown before saving: 50 / 61,234.56 = 0.000816532..., to 8 places
+    assert dlg.quantity_var.get() == "0.00081653"
+    assert dlg.amount_var.get() == "50"
+    dlg.cost_var.set("50000")  # the quantity follows the cost
+    assert dlg.quantity_var.get() == "0.001"
+    dlg.cost_var.set("61234.56")
+    dlg.tag_var.set("Steve")
+    assert dlg.add_tag() == ["Steve"]
+    saved = dlg.save()
+    assert saved is not None and not dlg.winfo_exists()
+    (row,) = manager.db.get_all_holdings()
+    assert (row.symbol, row.quantity, row.average_cost) == ("BTC", 0.00081653, 61234.56)
+    assert row.tags == ["Steve"]
+    assert row.total_cost == pytest.approx(50.0, abs=0.001)
+
+
+def test_a_position_entered_as_a_quantity_shows_the_amount(root, manager, dialogs):
+    manager.add_holding(holding("ETH", 2, 3000.0, 3200.0))
+    g = gui(root, manager)
+    g.holdings_tree.selection_set(g.holdings_tree.get_children()[0])
+    root.update()
+    dlg = g.edit_holding_dialog()
+    dlg.attributes("-alpha", 0.0)
+    assert (dlg.quantity_var.get(), dlg.amount_var.get()) == ("2", "6000.00")
+    dlg.quantity_var.set("2.5")
+    assert dlg.amount_var.get() == "7500.00"
+    # switching to the amount changes nothing until the amount is typed
+    dlg.entry_mode.set(ltg.BY_AMOUNT)
+    assert (dlg.quantity_var.get(), dlg.amount_var.get()) == ("2.5", "7500.00")
+    dlg.amount_var.set("abc")
+    assert dlg.quantity_var.get() == ""
+    assert dlg.save() is None
+    assert dialogs.calls[-1][2] == "Enter numbers in the number fields."
+    dlg.amount_var.set("0")
+    assert dlg.save() is None
+    assert dialogs.calls[-1][2] == "Amount invested must be greater than 0."
+    dlg.amount_var.set("9000")
+    assert dlg.quantity_var.get() == "3"
+    assert dlg.save() is not None
+    (row,) = manager.db.get_all_holdings()
+    assert (row.quantity, row.average_cost) == (3.0, 3000.0)
+
+
+def test_tags_are_added_completed_from_those_used_and_removed(root, manager, dialogs):
+    manager.add_holding(holding("BTC", 1, 1.0, 1.0, tags=["Steve", "Pension"]))
+    g = gui(root, manager)
+    dlg = g.add_holding_dialog()
+    dlg.attributes("-alpha", 0.0)
+    assert dlg.tags == [] and dlg.tag_buttons == {}
+    assert list(dlg.tag_box["values"]) == ["Pension", "Steve"]  # the tags used
+
+    # typing completes from the tags used; the rest is selected
+    typed(dlg, "st")
+    assert dlg.tag_box.get() == "steve"
+    assert dlg.tag_box.selection_get() == "eve"
+    assert list(dlg.tag_box["values"]) == ["Steve"]
+    assert dlg.add_tag() == ["Steve"]  # in the spelling already used
+    assert list(dlg.tag_box["values"]) == ["Pension"]  # not offered twice
+    typed(dlg, "p")
+    assert dlg.tag_box.get() == "pension"
+    typed(dlg, "x")  # a key replaces the completion
+    assert dlg.tag_box.get() == "px" and list(dlg.tag_box["values"]) == []
+    dlg.tag_var.set("")
+
+    # several at once, separated by commas
+    assert dlg.add_tag("pension,  ISA  , steve") == ["ISA", "Pension", "Steve"]
+    assert sorted(dlg.tag_buttons) == ["ISA", "Pension", "Steve"]
+    assert dlg.tag_buttons["ISA"].cget("text") == "ISA  ×"
+    dlg.tag_buttons["Pension"].invoke()  # a tag's button removes it
+    assert dlg.tags == ["ISA", "Steve"] and "Pension" not in dlg.tag_buttons
+
+    # a tag typed and not added yet is kept on saving
+    dlg.quantity_var.set("1")
+    dlg.cost_var.set("100")
+    dlg.tag_var.set("Kids")
+    assert dlg.save() is not None
+    _btc, new = sorted(manager.db.get_all_holdings(), key=lambda h: h.id)
+    assert new.tags == ["ISA", "Kids", "Steve"]
+
+    # editing shows the holding's tags and offers the others
+    g.holdings_tree.selection_set(str(new.id))
+    root.update()
+    dlg = g.edit_holding_dialog()
+    dlg.attributes("-alpha", 0.0)
+    assert dlg.tags == ["ISA", "Kids", "Steve"]
+    assert list(dlg.tag_box["values"]) == ["Pension"]
+    for tag in list(dlg.tags):
+        dlg.remove_tag(tag)
+    assert [w.cget("text") for w in dlg.tags_frame.winfo_children()] == ["No tags"]
+    assert dlg.save() is not None
+    assert {h.id: h.tags for h in manager.db.get_all_holdings()}[new.id] == []
+
+
+@pytest.mark.parametrize(
+    "day, clock, kept",
+    [
+        ("", "", ""),
+        ("2024-01-15", "", "2024-01-15"),
+        ("2024-1-5", "9:05", "2024-01-05 09:05"),
+        ("2024-01-15", "23:59", "2024-01-15 23:59"),
+    ],
+)
+def test_the_purchase_date_and_time_are_optional(
+    root, manager, dialogs, day, clock, kept
+):
+    g = gui(root, manager)
+    saved = add(g, root, "BTC", 1, 100, date=day, time=clock)
+    assert saved.purchase_date == kept
+    (row,) = manager.db.get_all_holdings()
+    assert row.purchase_date == kept
+    # and shown again, split, when the holding is edited
+    g.holdings_tree.selection_set(str(row.id))
+    root.update()
+    dlg = g.edit_holding_dialog()
+    dlg.attributes("-alpha", 0.0)
+    assert (dlg.date_var.get(), dlg.time_var.get()) == (day and kept[:10], kept[11:])
+    dlg.destroy()
+
+
+@pytest.mark.parametrize(
+    "day, clock, message",
+    [
+        ("", "10:30", "Enter the purchase date for the time."),
+        ("15/01/2024", "", "Enter the purchase date as YYYY-MM-DD."),
+        ("2024-02-30", "", "Enter the purchase date as YYYY-MM-DD."),
+        ("2024-01-15", "25:00", "Enter the purchase time as HH:MM, 24-hour."),
+        ("2024-01-15", "10am", "Enter the purchase time as HH:MM, 24-hour."),
+        ("2999-01-01", "", "The purchase date cannot be in the future."),
+    ],
+)
+def test_the_purchase_date_must_be_a_date_and_time(
+    root, manager, dialogs, day, clock, message
+):
+    g = gui(root, manager)
+    dlg = g.add_holding_dialog()
+    dlg.attributes("-alpha", 0.0)
+    dlg.quantity_var.set("1")
+    dlg.cost_var.set("100")
+    dlg.date_var.set(day)
+    dlg.time_var.set(clock)
+    assert dlg.save() is None
+    assert dialogs.calls[-1][0] == "showerror" and dialogs.calls[-1][2] == message
+    assert manager.db.get_all_holdings() == []
+    dlg.destroy()
+
+
+def test_a_purchase_date_typed_before_is_kept_as_it_is(root, manager, dialogs):
+    manager.add_holding(holding("BTC", 1, 100.0, 100.0, purchase_date="last spring"))
+    g = gui(root, manager)
+    g.holdings_tree.selection_set(g.holdings_tree.get_children()[0])
+    root.update()
+    dlg = g.edit_holding_dialog()
+    dlg.attributes("-alpha", 0.0)
+    assert (dlg.date_var.get(), dlg.time_var.get()) == ("last spring", "")
+    dlg.quantity_var.set("2")
+    assert dlg.save() is not None
+    (row,) = manager.db.get_all_holdings()
+    assert (row.quantity, row.purchase_date) == (2.0, "last spring")
 
 
 def test_delete_asks_first(root, manager, dialogs):

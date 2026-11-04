@@ -7227,6 +7227,30 @@ Platform: {sys.platform}
         self._strategy_settings_win = win
         return win
 
+    def open_risk_settings(self, parent=None, on_saved=None):
+        """Settings > Risk: the limits that protect the account
+        (``risk_settings_ui``)."""
+        win = getattr(self, "_risk_settings_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.deiconify()
+                win.lift()
+                win.focus_set()
+                return win
+        except tk.TclError:
+            pass
+        try:
+            from risk_settings_ui import RiskSettingsWindow
+
+            win = RiskSettingsWindow(
+                parent or self, on_saved=on_saved, palette=ui_theme.active_palette()
+            )
+        except Exception as e:
+            messagebox.showerror("Risk", f"Could not open the risk settings: {e}")
+            return None
+        self._risk_settings_win = win
+        return win
+
     @staticmethod
     def _strategy_summary() -> str:
         """Settings' Strategy line: what decides each buy and sale."""
@@ -7634,6 +7658,16 @@ Platform: {sys.platform}
         ttk.Label(frm, textvariable=strategy_summary_var, wraplength=520).grid(
             row=r, column=1, columnspan=2, sticky="w", pady=6
         )
+        r += 1
+
+        # --- Risk: the limits that protect the account (its own window, saved there)
+        ttk.Label(frm, text="Risk", font=ui_tokens.font("body", "bold")).grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
+        )
+        r += 1
+        ttk.Button(
+            frm, text="Risk...", command=lambda: self.open_risk_settings(win)
+        ).grid(row=r, column=0, sticky="w", pady=6)
         r += 1
 
         ttk.Separator(frm, orient="horizontal").grid(

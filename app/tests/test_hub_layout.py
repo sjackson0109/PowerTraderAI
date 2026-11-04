@@ -363,7 +363,6 @@ def test_each_coin_field_has_its_own_tooltip(hub):
 
 
 def test_the_timeframe_box_sits_at_the_right_end_of_the_chart_tab_row(hub):
-    hub._show_chart_page(hub.coins[0])  # the hub opens on ACCOUNT, which has none
     row, box = hub._chart_tabs_row, hub._chart_tf_box
     assert isinstance(hub.chart_tabs_bar, pt_hub.ScrollingRow)
     # packed after the cog and before the buttons, so it keeps its room
@@ -374,10 +373,8 @@ def test_the_timeframe_box_sits_at_the_right_end_of_the_chart_tab_row(hub):
     )
 
 
-def test_the_timeframe_box_follows_the_selected_coin_chart(hub):
+def test_the_timeframe_box_follows_the_selected_chart(hub):
     box, combo = hub._chart_tf_box, hub.chart_tf_combo
-    hub._show_chart_page("ACCOUNT")
-    assert box.winfo_manager() == ""  # the account chart has no timeframe
     coin = hub.coins[0]
     chart = hub.charts[coin]
     other = [tf for tf in combo.cget("values") if tf != chart.timeframe_var.get()][0]
@@ -388,6 +385,16 @@ def test_the_timeframe_box_follows_the_selected_coin_chart(hub):
     hub._on_chart_timeframe_selected()
     assert chart.timeframe_var.get() == other
     assert hub.charts[hub.coins[1]].timeframe_var.get() != other or len(hub.coins) < 2
+    # the account chart (owner, 2026-11-04) has a timeframe of its own in the box
+    account = hub.account_chart.timeframe_var
+    hub._show_chart_page("ACCOUNT")
+    assert box.winfo_manager() == "pack" and hub._chart_tabs_row.pack_slaves()[1] is box
+    assert combo.get() == account.get() == hub.settings["default_timeframe"]
+    combo.set("1day")
+    hub._on_chart_timeframe_selected()
+    assert account.get() == "1day" and chart.timeframe_var.get() == other
+    hub._show_chart_page(coin)
+    assert combo.get() == other
 
 
 def test_the_coin_chart_toolbar_names_no_coin_and_has_no_timeframe_box(hub):

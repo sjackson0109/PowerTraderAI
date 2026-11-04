@@ -404,6 +404,9 @@ class TestAccountPanelShowsTheBook(unittest.TestCase):
             lambda: pt_hub.PowerTraderHub._shown_paper_book_path(hub)
         )
         hub._paper_book_status = pt_hub.PowerTraderHub._paper_book_status
+        hub._show_profit_figures = (
+            lambda data: pt_hub.PowerTraderHub._show_profit_figures(hub, data)
+        )
         self.hub = hub
 
     def refresh(self):

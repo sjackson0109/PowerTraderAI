@@ -19,54 +19,16 @@ if APP_DIR not in sys.path:
 import llm_providers as lp  # noqa: E402
 import llm_settings  # noqa: E402
 import pt_secrets  # noqa: E402
+from helpers_llm import (  # noqa: E402
+    ANTHROPIC,
+    NVIDIA,
+    OLLAMA,
+    OPENAI,
+    FakeHttp,
+    chat_answer,
+    openai_models,
+)
 from llm_store import LLMStore  # noqa: E402
-
-
-class FakeHttp:
-    """Answers requests from ``routes``: {(method, url prefix): response or
-    exception}; records every request (method, url, headers, body, timeout)."""
-
-    def __init__(self, routes=None):
-        self.routes = dict(routes or {})
-        self.requests = []
-
-    def __call__(self, method, url, headers, body, timeout):
-        self.requests.append((method, url, dict(headers), body, timeout))
-        for (m, prefix), answer in sorted(
-            self.routes.items(), key=lambda kv: -len(kv[0][1])
-        ):
-            if m == method and url.startswith(prefix):
-                if isinstance(answer, Exception):
-                    raise answer
-                if callable(answer):
-                    return answer(method, url, headers, body, timeout)
-                status, data = answer
-                return lp.HttpResponse(status, data, json.dumps(data))
-        raise lp.ProviderUnavailable("could not connect (no route)")
-
-
-OLLAMA = "http://localhost:11434"
-OPENAI = "https://api.openai.com/v1"
-ANTHROPIC = "https://api.anthropic.com/v1"
-NVIDIA = "https://integrate.api.nvidia.com/v1"
-
-
-def openai_models(*rows):
-    return (200, {"object": "list", "data": [dict(id=i, created=c) for i, c in rows]})
-
-
-def chat_answer(text, prompt_tokens=100, completion_tokens=50):
-    return (
-        200,
-        {
-            "choices": [{"message": {"role": "assistant", "content": text}}],
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-            },
-        },
-    )
-
 
 # --- settings ---------------------------------------------------------------------------
 

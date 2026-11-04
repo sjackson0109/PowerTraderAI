@@ -42,6 +42,7 @@ import paper_coins
 import position_sizing
 import pt_paths
 import trade_history_view
+import training_settings
 import ui_table
 import ui_theme
 import ui_tokens
@@ -7127,6 +7128,42 @@ Platform: {sys.platform}
         except Exception as e:
             return f"Could not read the strategy settings: {e}"
 
+    def open_llm_settings(self, parent=None, on_saved=None):
+        """Settings > LLM Providers: the LLM providers, their order and the LLM
+        signals in trading (``llm_settings_ui``), saved to pt_config.json."""
+        win = getattr(self, "_llm_settings_win", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.deiconify()
+                win.lift()
+                win.focus_set()
+                return win
+        except tk.TclError:
+            pass
+        try:
+            from llm_settings_ui import LLMProvidersWindow
+
+            win = LLMProvidersWindow(
+                parent or self, on_saved=on_saved, palette=ui_theme.active_palette()
+            )
+        except Exception as e:
+            messagebox.showerror(
+                "LLM Providers", f"Could not open the LLM provider settings: {e}"
+            )
+            return None
+        self._llm_settings_win = win
+        return win
+
+    @staticmethod
+    def _llm_summary() -> str:
+        """Settings' LLM Providers line: the provider order and the signal mode."""
+        try:
+            from llm_settings_ui import summary_line
+
+            return summary_line()
+        except Exception as e:
+            return f"Could not read the LLM settings: {e}"
+
     # ---- settings dialog ----
 
     # ---- Chart settings pop-out (FDS-CHART-001 section 8) ----
@@ -7497,6 +7534,52 @@ Platform: {sys.platform}
         )
         r += 1
 
+        # --- Training: when a source of signals has earned its place in trading
+        # (training_settings; the LLM signal gate reads them)
+        ttk.Label(frm, text="Training", font=ui_tokens.font("body", "bold")).grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
+        )
+        r += 1
+        _training = training_settings.read_training_settings()
+        min_signals_var = tk.StringVar(
+            master=win, value=str(_training["holdout_min_signals"])
+        )
+        min_hit_rate_var = tk.StringVar(
+            master=win, value=f"{_training['holdout_min_hit_rate'] * 100:g}"
+        )
+        add_row(r, "Minimum scored signals:", min_signals_var)
+        r += 1
+        add_row(r, "Minimum hit rate after fees %:", min_hit_rate_var)
+        r += 1
+
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        )
+        r += 1
+
+        # --- LLM Providers: providers, their order, LLM signals (its own window)
+        ttk.Label(frm, text="LLM Providers", font=ui_tokens.font("body", "bold")).grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
+        )
+        r += 1
+        llm_summary_var = tk.StringVar(master=win, value=self._llm_summary())
+        ttk.Button(
+            frm,
+            text="LLM Providers...",
+            command=lambda: self.open_llm_settings(
+                win, on_saved=lambda: llm_summary_var.set(self._llm_summary())
+            ),
+        ).grid(row=r, column=0, sticky="w", pady=6)
+        ttk.Label(frm, textvariable=llm_summary_var, wraplength=520).grid(
+            row=r, column=1, columnspan=2, sticky="w", pady=6
+        )
+        r += 1
+
+        ttk.Separator(frm, orient="horizontal").grid(
+            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        )
+        r += 1
+
         # --- Exchange Provider Settings ---
         ttk.Label(
             frm,
@@ -7840,6 +7923,15 @@ Platform: {sys.platform}
                 )
                 return
             try:
+                # Training: read first, so a value that is not a number saves nothing
+                min_signals = int(float(min_signals_var.get().strip()))
+                min_hit_rate = float(min_hit_rate_var.get().strip().replace("%", ""))
+                if min_signals < 1 or not 0.0 <= min_hit_rate <= 100.0:
+                    raise ValueError(
+                        "Minimum scored signals is at least 1, and the minimum hit "
+                        "rate between 0 and 100 %"
+                    )
+
                 # Track coins before changes so we can detect newly added coins
                 prev_coins = set(
                     [
@@ -8008,6 +8100,12 @@ Platform: {sys.platform}
                 self.settings["training_notifications"] = notifications_var.get()
 
                 self._save_settings()
+                training_settings.save_training_settings(
+                    {
+                        "holdout_min_signals": min_signals,
+                        "holdout_min_hit_rate": min_hit_rate / 100.0,
+                    }
+                )
                 # the runner, trainers and trader read the exchange choice from
                 # trading_config.json, not from gui_settings.json
                 self._sync_exchange_choice()

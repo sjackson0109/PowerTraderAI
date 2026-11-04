@@ -60,87 +60,12 @@ class ResearchEngineGUI:
         self.refresh_interval = tk.StringVar(value="10")  # minutes
         self.current_symbols = []
 
-        # Model cache for OpenAI models
-        self.available_models = ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo"]  # fallback
-        self.models_loaded = False
-
         # Background threads
         self.refresh_thread = None
         self.analysis_thread = None
         self.running = False
 
         self.setup_gui()
-
-    def fetch_openai_models(self):
-        """Fetch available OpenAI models dynamically."""
-        if not RESEARCH_ENGINE_AVAILABLE or self.models_loaded:
-            return self.available_models
-
-        try:
-            import openai
-
-            # Try to get API key from entry or config
-            api_key = None
-            if hasattr(self, "api_key_entry") and self.api_key_entry.get().strip():
-                api_key = self.api_key_entry.get().strip()
-            elif self.config.get("openai_api_key"):
-                api_key = self.config.get("openai_api_key")
-
-            if not api_key:
-                print("No OpenAI API key available, using fallback models")
-                return self.available_models
-
-            # Initialize OpenAI client
-            client = openai.OpenAI(api_key=api_key)
-
-            # Fetch models
-            models_response = client.models.list()
-            all_models = [model.id for model in models_response.data]
-
-            # Filter to ChatGPT models only
-            chat_models = []
-            for model in all_models:
-                if any(prefix in model for prefix in ["gpt-4", "gpt-3.5"]):
-                    chat_models.append(model)
-
-            # Sort models (put gpt-4 variants first, then 3.5)
-            chat_models.sort(
-                key=lambda x: (
-                    "0" if "gpt-4" in x else "1",  # gpt-4 models first
-                    "0" if "turbo" in x else "1",  # turbo models first within category
-                    x,  # alphabetical within sub-categories
-                )
-            )
-
-            if chat_models:
-                self.available_models = chat_models
-                self.models_loaded = True
-                print(f"Loaded {len(chat_models)} OpenAI models")
-            else:
-                print("No compatible ChatGPT models found, using fallback")
-
-        except Exception as e:
-            print(f"Failed to fetch OpenAI models: {e}")
-            # Keep fallback models
-
-        return self.available_models
-
-    def update_model_combobox(self):
-        """Update model combobox with latest models."""
-        if hasattr(self, "model_combo"):
-            current_selection = self.model_combo.get()
-            models = self.fetch_openai_models()
-            self.model_combo["values"] = models
-
-            # Restore selection if still available, otherwise pick first gpt-4 model
-            if current_selection in models:
-                self.model_combo.set(current_selection)
-            else:
-                gpt4_models = [m for m in models if "gpt-4" in m]
-                if gpt4_models:
-                    self.model_combo.set(gpt4_models[0])
-                elif models:
-                    self.model_combo.set(models[0])
 
     def setup_gui(self):
         """Setup the research engine GUI."""
@@ -178,11 +103,6 @@ class ResearchEngineGUI:
                 self.create_research_reports_tab()
             except Exception as e:
                 print(f"Error creating research reports tab: {e}")
-
-            try:
-                self.create_settings_tab()
-            except Exception as e:
-                print(f"Error creating settings tab: {e}")
 
             # Status bar
             self.status_bar = ttk.Frame(self.research_frame)
@@ -437,147 +357,6 @@ class ResearchEngineGUI:
         except Exception as e:
             print(f"Error creating research reports tab: {e}")
 
-    def create_settings_tab(self):
-        """Create settings and configuration tab."""
-        try:
-            self.settings_tab = ttk.Frame(self.notebook)
-            self.notebook.add(self.settings_tab, text="Settings")
-
-            # LLM Configuration
-            llm_frame = ttk.LabelFrame(self.settings_tab, text="LLM Configuration")
-            llm_frame.pack(fill=tk.X, padx=5, pady=5)
-
-            # API Key
-            api_frame = ttk.Frame(llm_frame)
-            api_frame.pack(fill=tk.X, padx=5, pady=2)
-
-            ttk.Label(api_frame, text="OpenAI API Key:").pack(side=tk.LEFT)
-            self.api_key_entry = ttk.Entry(
-                api_frame, width=50, show="*", font=ui_tokens.mono("small")
-            )
-            self.api_key_entry.pack(side=tk.LEFT, padx=(5, 0), fill=tk.X, expand=True)
-
-            # Model selection
-            model_frame = ttk.Frame(llm_frame)
-            model_frame.pack(fill=tk.X, padx=5, pady=2)
-
-            ttk.Label(model_frame, text="Model:").pack(side=tk.LEFT)
-            self.model_combo = ttk.Combobox(
-                model_frame,
-                values=self.fetch_openai_models(),
-                state="readonly",
-                width=25,
-            )
-            # Set default to first gpt-4 model or first available
-            default_models = self.available_models
-            gpt4_models = [m for m in default_models if "gpt-4" in m]
-            if gpt4_models:
-                self.model_combo.set(gpt4_models[0])
-            elif default_models:
-                self.model_combo.set(default_models[0])
-            else:
-                self.model_combo.set("gpt-4")
-            self.model_combo.pack(side=tk.LEFT, padx=(5, 0))
-
-            # Refresh models button
-            self.refresh_models_btn = ttk.Button(
-                model_frame,
-                text="🔄",
-                width=3,
-                command=self.refresh_models,
-                style="Accent.TButton",
-            )
-            self.refresh_models_btn.pack(side=tk.LEFT, padx=(5, 0))
-
-            # Apply settings button
-            self.apply_settings_btn = ttk.Button(
-                llm_frame, text="Apply Settings", command=self.apply_settings
-            )
-            self.apply_settings_btn.pack(pady=5)
-        except Exception as e:
-            print(f"Error creating settings tab: {e}")
-
-    def refresh_models(self):
-        """Refresh the OpenAI models list."""
-        try:
-            self.models_loaded = False  # Force refresh
-            self.status_label.config(text="Refreshing models...")
-            self.refresh_models_btn.config(state="disabled")
-
-            # Run in background thread to avoid blocking UI
-            def fetch_and_update():
-                try:
-                    self.update_model_combobox()
-                    # Update status on main thread
-                    self.parent.after(
-                        0,
-                        lambda: self.status_label.config(
-                            text=f"Models updated - {len(self.available_models)} available"
-                        ),
-                    )
-                except Exception as e:
-                    self.parent.after(
-                        0,
-                        lambda err=e: self.status_label.config(
-                            text=f"Model refresh failed: {str(err)}"
-                        ),
-                    )
-                finally:
-                    self.parent.after(
-                        0, lambda: self.refresh_models_btn.config(state="normal")
-                    )
-
-            threading.Thread(target=fetch_and_update, daemon=True).start()
-
-        except Exception as e:
-            self.status_label.config(text=f"Error refreshing models: {e}")
-            self.refresh_models_btn.config(state="normal")
-
-            # Analysis Settings
-            analysis_frame = ttk.LabelFrame(self.settings_tab, text="Analysis Settings")
-            analysis_frame.pack(fill=tk.X, padx=5, pady=5)
-
-            # News settings
-            news_frame = ttk.Frame(analysis_frame)
-            news_frame.pack(fill=tk.X, padx=5, pady=2)
-
-            self.include_news = tk.BooleanVar(value=True)
-            ttk.Checkbutton(
-                news_frame, text="Include News Analysis", variable=self.include_news
-            ).pack(side=tk.LEFT)
-
-            # Cache settings
-            cache_frame = ttk.Frame(analysis_frame)
-            cache_frame.pack(fill=tk.X, padx=5, pady=2)
-
-            ttk.Label(cache_frame, text="Cache Duration (minutes):").pack(side=tk.LEFT)
-            self.cache_duration = ttk.Spinbox(
-                cache_frame, from_=1, to=60, width=10, value=10
-            )
-            self.cache_duration.pack(side=tk.LEFT, padx=(5, 0))
-
-            # Engine Status
-            status_frame = ttk.LabelFrame(self.settings_tab, text="Engine Status")
-            status_frame.pack(fill=tk.X, padx=5, pady=5)
-
-            self.status_text = scrolledtext.ScrolledText(
-                status_frame, height=8, font=ui_tokens.mono("small")
-            )
-            self.status_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-            ui_table.scroll_when_needed(self.status_text)
-
-            # Update status button
-            self.update_status_btn = ttk.Button(
-                status_frame, text="Update Status", command=self.update_engine_status
-            )
-            self.update_status_btn.pack(pady=2)
-
-            # Initialize status
-            self.update_engine_status()
-
-        except Exception as e:
-            print(f"Error creating settings tab: {e}")
-
     def run_market_analysis(self):
         """Run market analysis in background thread."""
         try:
@@ -612,9 +391,7 @@ class ResearchEngineGUI:
         """Worker thread for market analysis."""
         try:
             # Run analysis
-            analysis = self.engine.analyze_market(
-                symbols, include_news=self.include_news.get()
-            )
+            analysis = self.engine.analyze_market(symbols, include_news=False)
 
             # Update GUI in main thread
             self.parent.after(0, self._update_analysis_results, analysis)
@@ -1011,64 +788,6 @@ class ResearchEngineGUI:
         except Exception as e:
             print(f"Error filtering signals: {e}")
 
-    def apply_settings(self):
-        """Apply LLM and analysis settings."""
-        try:
-            api_key = self.api_key_entry.get().strip()
-            model = self.model_combo.get()
-
-            if not api_key:
-                messagebox.showwarning("Warning", "Please enter OpenAI API key")
-                return
-
-            # Update engine configuration
-            if self.engine:
-                self.engine.llm_provider.api_key = api_key
-                self.engine.llm_provider.model = model
-                self.engine.llm_provider._setup_client()
-
-                messagebox.showinfo("Success", "Settings applied successfully")
-                self.update_engine_status()
-            else:
-                messagebox.showerror("Error", "Research engine not available")
-
-        except Exception as e:
-            print(f"Error applying settings: {e}")
-            messagebox.showerror("Error", f"Failed to apply settings: {str(e)}")
-
-    def update_engine_status(self):
-        """Update engine status display."""
-        try:
-            if not self.engine:
-                status = "Research Engine: Not Available\n"
-                status += "Please check installation and dependencies."
-            else:
-                summary = self.engine.get_analysis_summary()
-                status = "Research Engine Status\n"
-                status += "=" * 30 + "\n\n"
-                status += f"LLM Provider Available: {summary.get('llm_provider_available', False)}\n"
-                status += f"Cache Entries: {summary.get('cache_entries', 0)}\n"
-                status += (
-                    f"Signal Cache Entries: {summary.get('signal_cache_entries', 0)}\n"
-                )
-                status += f"Background Analysis: {summary.get('background_analysis_running', False)}\n\n"
-
-                if summary.get("last_analyses"):
-                    status += "Recent Analyses:\n"
-                    for key, timestamp in summary.get("last_analyses", {}).items():
-                        status += f"  {key}: {timestamp}\n"
-                else:
-                    status += "No recent analyses\n"
-
-                if summary.get("error"):
-                    status += f"\nError: {summary['error']}"
-
-            self.status_text.delete(1.0, tk.END)
-            self.status_text.insert(1.0, status)
-
-        except Exception as e:
-            print(f"Error updating engine status: {e}")
-
     def toggle_auto_refresh(self):
         """Toggle auto-refresh for market analysis."""
         try:
@@ -1095,7 +814,7 @@ class ResearchEngineGUI:
                 if self.current_symbols:
                     # Run analysis
                     analysis = self.engine.analyze_market(
-                        self.current_symbols, include_news=self.include_news.get()
+                        self.current_symbols, include_news=False
                     )
 
                     # Update GUI
@@ -1128,19 +847,3 @@ def create_research_engine_tab(parent, config: Dict = None):
             font=ui_tokens.font("title"),
         ).pack(expand=True)
         return placeholder
-
-
-if __name__ == "__main__":
-    # Test the GUI
-    root = ui_theme.themed_root()
-    root.title("LLM Research Engine - Test")
-    root.geometry("1200x800")
-
-    config = {
-        "llm": {"api_key": "", "model": "gpt-4"}  # Add your API key here for testing
-    }
-
-    research_tab = create_research_engine_tab(root, config)
-    research_tab.pack(fill=tk.BOTH, expand=True)
-
-    root.mainloop()

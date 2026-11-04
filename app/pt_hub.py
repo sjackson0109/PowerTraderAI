@@ -299,8 +299,6 @@ LINES = ui_tokens.CHART_LINES
 MARKERS = ui_tokens.TRADE_MARKERS
 CHART_FONT_PT = ui_tokens.CHART_FONT_PT
 SPACE = ui_tokens.SPACE  # spacing scale, in pixels
-# Not a gap: how far down the chart status text sits to centre it on the tab buttons
-STATUS_TEXT_DROP = 9
 # The chart tab row (owner, 2026-10-14): the coin buttons sit TAB_BUTTON_GAP above
 # the plot. Before, each coin chart had its status line in a row between them and
 # the plot, CHART_STATUS_ROW_PADY above and below it (a chart on its own still
@@ -970,6 +968,20 @@ def _fit_axes_beside(fig: Figure, tags: List[Any], top: float = 1.0) -> float:
     return right
 
 
+def _top_below(fig: Figure, ax, reserve_px: float, top: float) -> float:
+    """The ``top`` to fit with again so the plot starts ``reserve_px`` below the
+    figure's top edge, where the hub puts the Timeframe box and the cog; ``top`` when
+    it already does."""
+    try:
+        height = float(fig.bbox.height)
+        over = float(ax.get_window_extent().y1) - (height - float(reserve_px))
+    except Exception:
+        return top
+    if reserve_px <= 0 or over <= 0 or height <= 0:
+        return top
+    return top - over / height
+
+
 def _corner_axis_names(fig: Figure, ax, price_name: str, time_name: str) -> List[Any]:
     """The axis names in two corners instead of a row and a column of their own: the
     price name level, above the price labels at the top left; the time name beside the
@@ -1074,6 +1086,8 @@ class CandleChart(ttk.Frame):
         self.timeframe_var = tk.StringVar(
             value=self.settings_getter()["default_timeframe"]
         )
+        # how far down the plot starts, for what the hub puts on its top right corner
+        self.overlay_px: Callable[[], int] = lambda: 0
 
         # The status line (neural readout, pattern count). In the hub it sits in the
         # tab row, right of the coin buttons, and the hub shows the selected chart's
@@ -1090,17 +1104,19 @@ class CandleChart(ttk.Frame):
         # that row calls set_timeframe().
         self._tf_after_id = None
 
+        # Two lines (owner, 2026-11-04): the neural readout, the pattern count below
         self.neural_status_label = ttk.Label(top, text="Neural: N/A")
-        self.neural_status_label.pack(side="left")
+        self.neural_status_label.pack(side="top", anchor="w")
 
         # Candlestick patterns (FDS-CHART-001): a status line (click: list of all
         # detections) and the Chart settings pop-out.
         self.patterns_status_label = ttk.Label(top, text="", cursor="hand2")
-        self.patterns_status_label.pack(side="left", padx=(12, 0))
+        self.patterns_status_label.pack(side="top", anchor="w")
 
-        # The Chart settings cog sits at the right end of the hub's tab row. No "Last:"
-        # time: it was the neural level files' age, which says nothing about the
-        # chart, whose candles are fetched on every refresh (owner, 2026-10-14).
+        # The Chart settings cog sits on the chart's top right corner, placed by the
+        # hub. No "Last:" time: it was the neural level files' age, which says
+        # nothing about the chart, whose candles are fetched on every refresh
+        # (owner, 2026-10-14).
 
         # Figure
         # IMPORTANT: keep a stable DPI and resize the figure to the widget's pixel size.
@@ -1227,6 +1243,9 @@ class CandleChart(ttk.Frame):
             pass
         # the time name sits right of the plot, like the price tags
         _fit_axes_beside(fig, probe + [self._time_name], top)
+        lower = _top_below(fig, self.ax, self.overlay_px(), top)
+        if lower < top:  # clear of the hub's Timeframe box and cog
+            _fit_axes_beside(fig, probe + [self._time_name], lower)
         if layer is not None and labels:
             layer.keep_labels_inside()
 
@@ -1959,14 +1978,11 @@ class AccountValueChart(ttk.Frame):
         self.timeframe_var = tk.StringVar(self, value=timeframe)
         self._bars = bars
         self._last_key: Optional[tuple] = None
+        # how far down the plot starts, for what the hub puts on its top right corner
+        self.overlay_px: Callable[[], int] = lambda: 0
 
-        top = ttk.Frame(self)
-        top.pack(fill="x", padx=6, pady=6)
-
-        ttk.Label(top, text="Account value").pack(side="left")
-        self.last_update_label = ttk.Label(top, text="Last: N/A")
-        self.last_update_label.pack(side="right")
-
+        # No header row (owner, 2026-11-04): no "Account value" name and no "Last:"
+        # time; the plot fills the page under the coin buttons, as a coin chart does.
         self.fig = Figure(figsize=(6.5, 3.5), dpi=100)
         self.fig.patch.set_facecolor(CHART["figure"])
         # margins: _fit_axes(), after every refresh and resize
@@ -2021,8 +2037,16 @@ class AccountValueChart(ttk.Frame):
 
     def _fit_and_draw(self) -> None:
         self._resize_after_id = None
-        _fit_axes(self.fig)
+        self._fit()
         self.canvas.draw_idle()
+
+    def _fit(self) -> None:
+        """Fit the margins to the text drawn, the plot clear of the hub's Timeframe
+        box and cog on the top right corner."""
+        _fit_axes(self.fig)
+        top = _top_below(self.fig, self.ax, self.overlay_px(), 1.0)
+        if top < 1.0:
+            _fit_axes(self.fig, 1.0, top)
 
     def _apply_dark_chart_style(self) -> None:
         try:
@@ -2192,8 +2216,7 @@ class AccountValueChart(ttk.Frame):
 
         if not points:
             self.ax.set_title("Account Value - no data", color=CHART["text"])
-            self.last_update_label.config(text="Last: N/A")
-            _fit_axes(self.fig)
+            self._fit()
             self.canvas.draw_idle()
             return
 
@@ -2324,14 +2347,7 @@ class AccountValueChart(ttk.Frame):
         except Exception:
             self.ax.set_title("Account Value", color=CHART["text"])
 
-        try:
-            self.last_update_label.config(
-                text=f"Last: {time.strftime('%H:%M:%S', time.localtime(points[-1][0]))}"
-            )
-        except Exception:
-            self.last_update_label.config(text="Last: N/A")
-
-        _fit_axes(self.fig)
+        self._fit()
         self.canvas.draw_idle()
 
 
@@ -6730,23 +6746,70 @@ Platform: {sys.platform}
 
     def _build_chart_tab_row(self, charts_frame) -> None:
         """The chart tab row (owner, 2026-10-14): the coin buttons in one row that
-        scrolls sideways when the panel is too narrow for it, and the Timeframe box
-        anchored at the right end, never overlapping the buttons."""
+        scrolls sideways when the panel is too narrow for it, then the selected
+        chart's status lines out to the right edge (owner, 2026-11-04). The
+        Timeframe box and the Chart settings cog sit on the chart itself
+        (_build_chart_overlay)."""
         row = ttk.Frame(charts_frame)
         row.pack(fill="x", padx=(SPACE["edge"], SPACE["edge"]), pady=(SPACE["sm"], 0))
         self._chart_tabs_row = row
-        # the Chart settings cog at the far right, the Timeframe box to its left
-        cog = ttk.Button(
-            row,
-            text="\u2699",
-            style="ChartCog.TButton",
-            command=self.open_chart_settings,
+        self._build_chart_overlay(charts_frame)
+        # The buttons, then the status lines straight after them, in a strip as wide
+        # as the row. With room to spare the status column takes it, out to the
+        # right edge; short of room the buttons' column narrows first, down to
+        # MIN_TAB_BUTTONS_W, and they scroll, while the status keeps its width
+        # (_balance_chart_tab_strip).
+        strip = ttk.Frame(row)
+        strip.pack(side="left", anchor="n", fill="x", expand=True)
+        strip.columnconfigure(0, minsize=MIN_TAB_BUTTONS_W)
+        self._chart_tabs_strip = strip
+        self.chart_tabs_bar = ScrollingRow(strip)
+        self.chart_tabs_bar.grid(row=0, column=0, sticky="new")
+        self._chart_status_slot = ttk.Frame(strip)
+        self._chart_status_slot.grid(
+            row=0,
+            column=1,
+            sticky="new",
+            padx=(SPACE["sm"], 0),
+            pady=(0, TAB_BUTTON_GAP),
         )
-        cog.pack(side="right", anchor="n", pady=(0, TAB_BUTTON_GAP))
-        ToolTip(cog, "Chart settings")
-        self.chart_settings_button = cog
-        box = ttk.Frame(row)
-        ttk.Label(box, text="Timeframe:").pack(side="left", padx=(0, 4))
+        for widget in (strip, self._chart_status_slot, self.chart_tabs_bar.inner):
+            widget.bind("<Configure>", self._balance_chart_tab_strip, add="+")
+        self._balance_chart_tab_strip()
+
+    def _balance_chart_tab_strip(self, event=None) -> None:
+        """Give the tab strip's spare width to the status column, or take a
+        shortfall from the buttons' column, whichever applies at this width."""
+        strip = getattr(self, "_chart_tabs_strip", None)
+        try:
+            need = (
+                self.chart_tabs_bar.inner.winfo_reqwidth()
+                + self._chart_status_slot.winfo_reqwidth()
+                + SPACE["sm"]
+            )
+            roomy = strip.winfo_width() >= need
+            strip.columnconfigure(0, weight=0 if roomy else 1)
+            strip.columnconfigure(1, weight=1 if roomy else 0)
+        except (AttributeError, tk.TclError):
+            pass
+
+    def _build_chart_overlay(self, parent: tk.Widget) -> None:
+        """The Timeframe box with the Chart settings cog butted up to its right, on
+        the shown chart's top right corner (owner, 2026-11-04), above the plot.
+        A child of the charts panel, placed on the chart's canvas by
+        _place_chart_overlay; it is rebuilt with the tab row."""
+        old = getattr(self, "_chart_overlay", None)
+        try:
+            if old is not None and old.winfo_exists():
+                old.destroy()
+        except tk.TclError:
+            pass
+        overlay = ttk.Frame(parent, style="ChartOverlay.TFrame")
+        self._chart_overlay = overlay
+        box = ttk.Frame(overlay, style="ChartOverlay.TFrame")
+        ttk.Label(box, text="Timeframe:", style="ChartOverlay.TLabel").pack(
+            side="left", padx=(0, 4)
+        )
         combo = ttk.Combobox(
             box,
             values=self._settings_getter()["timeframes"],
@@ -6756,29 +6819,53 @@ Platform: {sys.platform}
         combo.pack(side="left")
         combo.bind("<<ComboboxSelected>>", self._on_chart_timeframe_selected)
         self._chart_tf_box, self.chart_tf_combo = box, combo
-        self._pack_chart_tf_box()  # packed first, so the buttons get what is left
-        # The buttons, then the selected chart's status line straight after them
-        # (owner, 2026-10-14), in a strip only as wide as both. With less room the
-        # buttons' column narrows first (it has the weight), down to
-        # MIN_TAB_BUTTONS_W, and they scroll; the status line keeps its width.
-        strip = ttk.Frame(row)
-        strip.pack(side="left", anchor="n")
-        strip.columnconfigure(0, weight=1, minsize=MIN_TAB_BUTTONS_W)
-        self._chart_tabs_strip = strip
-        self.chart_tabs_bar = ScrollingRow(strip)
-        self.chart_tabs_bar.grid(row=0, column=0, sticky="new")
-        self._chart_status_slot = ttk.Frame(strip)
-        self._chart_status_slot.grid(
-            row=0,
-            column=1,
-            sticky="nw",
-            padx=(SPACE["sm"], 0),
-            pady=(STATUS_TEXT_DROP, TAB_BUTTON_GAP),
+        box.pack(side="left")
+        cog = ttk.Button(
+            overlay,
+            text="\u2699",
+            style="ChartCog.TButton",
+            command=self.open_chart_settings,
         )
+        cog.pack(side="left")
+        ToolTip(cog, "Chart settings")
+        self.chart_settings_button = cog
+
+    def _place_chart_overlay(self, chart: Any) -> None:
+        """Put the Timeframe box and the cog on ``chart``'s top right corner, or take
+        them away when there is no chart. Raised each time: the page container is
+        created after it, so it would draw over it."""
+        overlay = getattr(self, "_chart_overlay", None)
+        if overlay is None:
+            return
+        try:
+            if chart is None:
+                overlay.place_forget()
+                return
+            overlay.place(
+                in_=chart.canvas.get_tk_widget(),
+                relx=1.0,
+                rely=0.0,
+                x=0,
+                y=0,
+                anchor="ne",
+            )
+            overlay.lift()
+            if chart.overlay_px != self._chart_overlay_px:
+                chart.overlay_px = self._chart_overlay_px  # the plot starts below it
+                chart.after_idle(chart._fit_and_draw)
+        except (AttributeError, tk.TclError):
+            pass
+
+    def _chart_overlay_px(self) -> int:
+        """The Timeframe box and cog's height on the chart."""
+        try:
+            return int(self._chart_overlay.winfo_reqheight())
+        except (AttributeError, tk.TclError):
+            return 0
 
     def _show_chart_status(self, name: str) -> None:
-        """The selected coin chart's status line, in the tab row. The account chart
-        has none."""
+        """The selected coin chart's status lines, in the tab row out to its right
+        edge. The account chart has none."""
         for coin, chart in getattr(self, "charts", {}).items():
             frame = getattr(chart, "status_frame", None)
             if frame is None or frame.master is not getattr(
@@ -6788,7 +6875,7 @@ Platform: {sys.platform}
             try:
                 if coin == name:
                     if frame.winfo_manager() != "pack":
-                        frame.pack(side="left")
+                        frame.pack(fill="x")
                 elif frame.winfo_manager():
                     frame.pack_forget()
             except Exception:
@@ -6805,17 +6892,6 @@ Platform: {sys.platform}
             return 0
         row = int(label.winfo_reqheight()) + 2 * CHART_STATUS_ROW_PADY
         return row + FORMER_TAB_BUTTON_GAP - TAB_BUTTON_GAP
-
-    def _pack_chart_tf_box(self) -> None:
-        strip = getattr(self, "_chart_tabs_strip", None)
-        before = {"before": strip} if strip is not None and strip.winfo_exists() else {}
-        self._chart_tf_box.pack(
-            side="right",
-            anchor="n",
-            padx=(SPACE["md"], SPACE["sm"]),
-            pady=(SPACE["sm"], TAB_BUTTON_GAP),
-            **before,
-        )  # level with the buttons, also while the scrollbar shows
 
     def _new_account_chart(self, parent: tk.Widget) -> "AccountValueChart":
         """The ACCOUNT page's chart, packed, on the timeframe the one it replaces
@@ -6843,20 +6919,16 @@ Platform: {sys.platform}
 
     def _show_chart_timeframe(self, name: str) -> None:
         """The Timeframe box shows the selected chart's timeframe (the account
-        chart's too)."""
-        box = getattr(self, "_chart_tf_box", None)
-        if box is None:
+        chart's too), on that chart with the cog."""
+        if getattr(self, "_chart_overlay", None) is None:
             return
         chart = self._chart_named(name)
         try:
-            if chart is None:
-                box.pack_forget()
-                return
-            self.chart_tf_combo.set(chart.timeframe_var.get())
-            if box.winfo_manager() != "pack":
-                self._pack_chart_tf_box()
+            if chart is not None:
+                self.chart_tf_combo.set(chart.timeframe_var.get())
         except Exception:
             pass
+        self._place_chart_overlay(chart)
 
     def _on_chart_timeframe_selected(self, event=None) -> None:
         chart = self._chart_named(getattr(self, "_current_chart_page", ""))

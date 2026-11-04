@@ -362,15 +362,88 @@ def test_each_coin_field_has_its_own_tooltip(hub):
 # --- the chart tab row (owner, 2026-10-14) -------------------------------------------
 
 
-def test_the_timeframe_box_sits_at_the_right_end_of_the_chart_tab_row(hub):
-    row, box = hub._chart_tabs_row, hub._chart_tf_box
+def placed_on(hub) -> object:
+    """The widget the Timeframe box and cog are placed on, or None."""
+    overlay = hub._chart_overlay
+    return overlay.place_info().get("in") if overlay.winfo_manager() else None
+
+
+def test_the_timeframe_box_and_cog_sit_on_the_chart_top_right(hub):
+    """Owner, 2026-11-04: the cog on the chart's top right corner, anchored to the
+    chart, and the Timeframe box butted up against its left; the tab row keeps only
+    the buttons and the status lines."""
+    overlay, box, cog = hub._chart_overlay, hub._chart_tf_box, hub.chart_settings_button
     assert isinstance(hub.chart_tabs_bar, pt_hub.ScrollingRow)
-    # packed after the cog and before the buttons, so it keeps its room
-    assert row.pack_slaves()[:2] == [hub.chart_settings_button, box]
-    assert box.pack_info()["side"] == "right"
     assert all(
         b.master is hub.chart_tabs_bar.inner for b in hub._chart_tab_buttons.values()
     )
+    assert box.master is overlay and cog.master is overlay
+    assert overlay.pack_slaves() == [box, cog]  # the box, then the cog at the right
+    for widget in (box, cog):
+        assert widget.pack_info()["padx"] in (0, (0, 0))  # no gap between them
+    assert overlay not in hub._chart_tabs_row.winfo_children()
+    for page in (hub.coins[0], "ACCOUNT"):
+        hub._show_chart_page(page)
+        chart = hub._chart_named(page)
+        info = overlay.place_info()
+        assert info["in"] is chart.canvas.get_tk_widget()  # the chart, not its page
+        assert info["anchor"] == "ne"
+        assert (float(info["relx"]), float(info["rely"])) == (1.0, 0.0)
+        assert (int(info["x"]), int(info["y"])) == (0, 0)
+
+
+def test_the_plot_starts_below_the_timeframe_box_and_cog(hub):
+    """The chart shown gets the overlay's height, and its plot is fitted to start
+    below it."""
+    from matplotlib.figure import Figure
+
+    for page in (hub.coins[0], "ACCOUNT"):
+        hub._show_chart_page(page)
+        chart = hub._chart_named(page)
+        assert chart.overlay_px == hub._chart_overlay_px
+    hub.update_idletasks()
+    assert hub._chart_overlay_px() == hub._chart_overlay.winfo_reqheight() > 1
+    fig = Figure(figsize=(6, 4), dpi=100)
+    ax = fig.add_subplot(111)
+    fig.canvas.draw()
+    pt_hub._fit_axes(fig)
+    height = fig.bbox.height
+    assert pt_hub._top_below(fig, ax, 0, 1.0) == 1.0  # nothing to keep clear of
+    reserve = height - ax.get_window_extent().y1 + 20
+    top = pt_hub._top_below(fig, ax, reserve, 1.0)
+    pt_hub._fit_axes(fig, 1.0, top)
+    assert abs(ax.get_window_extent().y1 - (height - reserve)) <= 1
+    assert pt_hub._top_below(fig, ax, reserve, top) == top  # clear already
+
+
+def test_the_timeframe_box_and_cog_come_back_after_the_coins_change(hub):
+    """The tab row and the pages are rebuilt when the coins change; the overlay is
+    rebuilt with them and placed on the chart shown."""
+    hub._show_chart_page(hub.coins[0])
+    old = hub._chart_overlay
+    hub._rebuild_coin_chart_tabs()
+    assert not old.winfo_exists()
+    page = hub._current_chart_page
+    assert placed_on(hub) is hub._chart_named(page).canvas.get_tk_widget()
+    assert hub._chart_overlay.pack_slaves() == [
+        hub._chart_tf_box,
+        hub.chart_settings_button,
+    ]
+
+
+def test_the_account_chart_fills_its_page_like_a_coin_chart(hub):
+    """Owner, 2026-11-04: no "Account value" name and no "Last:" time above the
+    account chart; its plot fills the page under the coin buttons."""
+    chart = hub.account_chart
+    assert chart.pack_slaves() == [chart.canvas.get_tk_widget()]
+    info = chart.canvas.get_tk_widget().pack_info()
+    assert info["fill"] == "both" and int(info["expand"])
+    assert chart.pack_info()["fill"] == "both" and int(chart.pack_info()["expand"])
+    texts = [
+        str(w.cget("text")) for w in all_widgets(chart) if isinstance(w, ttk.Label)
+    ]
+    assert texts == []
+    assert not hasattr(chart, "last_update_label")
 
 
 def test_the_timeframe_box_follows_the_selected_chart(hub):
@@ -379,7 +452,9 @@ def test_the_timeframe_box_follows_the_selected_chart(hub):
     chart = hub.charts[coin]
     other = [tf for tf in combo.cget("values") if tf != chart.timeframe_var.get()][0]
     hub._show_chart_page(coin)
-    assert box.winfo_manager() == "pack" and hub._chart_tabs_row.pack_slaves()[1] is box
+    assert (
+        box.winfo_manager() == "pack" and placed_on(hub) is chart.canvas.get_tk_widget()
+    )
     assert combo.get() == chart.timeframe_var.get()
     combo.set(other)
     hub._on_chart_timeframe_selected()
@@ -388,7 +463,7 @@ def test_the_timeframe_box_follows_the_selected_chart(hub):
     # the account chart (owner, 2026-11-04) has a timeframe of its own in the box
     account = hub.account_chart.timeframe_var
     hub._show_chart_page("ACCOUNT")
-    assert box.winfo_manager() == "pack" and hub._chart_tabs_row.pack_slaves()[1] is box
+    assert placed_on(hub) is hub.account_chart.canvas.get_tk_widget()
     assert combo.get() == account.get() == hub.settings["default_timeframe"]
     combo.set("1day")
     hub._on_chart_timeframe_selected()
@@ -459,14 +534,15 @@ def test_the_chart_tab_buttons_are_sized_to_their_text(hub):
         assert abs(button.winfo_reqheight() - (font.metrics("linespace") + 20)) <= 1
 
 
-def test_the_chart_settings_cog_sits_at_the_far_right_of_the_tab_row(hub):
-    """Owner, 2026-10-14: the cog at the far right, the Timeframe box to its left."""
+def test_the_chart_settings_cog_opens_chart_settings_on_every_chart(hub):
+    """Owner, 2026-10-14: the cog right of the Timeframe box; on the chart since
+    2026-11-04, the account chart's too."""
     cog = hub.chart_settings_button
-    assert str(cog.cget("text")) == "\u2699" and cog.master is hub._chart_tabs_row
+    assert str(cog.cget("text")) == "\u2699" and cog.master is hub._chart_overlay
     hub._show_chart_page(hub.coins[0])
-    assert hub._chart_tabs_row.pack_slaves()[:2] == [cog, hub._chart_tf_box]
+    assert hub._chart_overlay.pack_slaves()[-1] is cog
     hub._show_chart_page("ACCOUNT")
-    assert hub._chart_tabs_row.pack_slaves()[0] is cog  # Chart settings stays
+    assert placed_on(hub) is hub.account_chart.canvas.get_tk_widget()  # it stays
     before = set(hub.winfo_children())
     cog.invoke()
     opened = [w for w in hub.winfo_children() if w not in before]
@@ -576,9 +652,14 @@ def test_the_chart_settings_cog_has_no_visible_border(hub):
     style = ttk.Style(hub)
     name = str(cog.cget("style"))
     assert name == "ChartCog.TButton"
-    # the cog sits on the tab row, so idle it takes the row's colour (paper mode
-    # recolours the frames blue)
-    assert style.lookup(name, "background") == style.lookup("TFrame", "background")
+    # idle it takes the chart's background, which it sits on, in either mode
+    # (paper mode recolours the frames blue, not the chart); so do the overlay's
+    # frames and its Timeframe label
+    chart_bg = pt_hub.CHART["figure"]
+    assert style.lookup(name, "background") == chart_bg
+    for widget in [hub._chart_overlay] + all_widgets(hub._chart_overlay):
+        if isinstance(widget, (ttk.Frame, ttk.Label)):
+            assert style.lookup(str(widget.cget("style")), "background") == chart_bg
     for state in ([], ["active"], ["pressed"]):
         bg = style.lookup(name, "background", state)
         for edge in ("bordercolor", "lightcolor", "darkcolor", "focuscolor"):
@@ -607,20 +688,29 @@ def test_coin_charts_learn_whether_the_trader_is_running(hub, monkeypatch):
 def test_the_status_line_sits_in_the_tab_row_after_the_buttons(hub):
     """Owner, 2026-10-14: the selected coin chart's status line (neural readout,
     pattern count) sits right of the coin buttons, outside their scroll area, and
-    the chart has no status row above its plot any more."""
+    the chart has no status row above its plot any more. Since 2026-11-04 it is two
+    lines, the neural readout above the pattern count, out to the row's right edge."""
     row, slot, bar = hub._chart_tabs_row, hub._chart_status_slot, hub.chart_tabs_bar
     coin, other = hub.coins[0], hub.coins[1]
     hub._show_chart_page(coin)
     strip = hub._chart_tabs_strip
-    assert row.pack_slaves() == [hub.chart_settings_button, hub._chart_tf_box, strip]
+    assert row.pack_slaves() == [strip]
     assert strip.grid_slaves(column=0) == [bar] and strip.grid_slaves(column=1) == [
         slot
     ]
+    assert slot.grid_info()["sticky"] == "new"
     chart = hub.charts[coin]
     assert chart.status_frame.master is slot and chart.neural_status_label.master is (
         chart.status_frame
     )
     assert slot.pack_slaves() == [chart.status_frame]
+    assert chart.status_frame.pack_info()["fill"] == "x"
+    lines = [chart.neural_status_label, chart.patterns_status_label]
+    assert chart.status_frame.pack_slaves() == lines
+    for label in lines:
+        info = label.pack_info()
+        assert (info["side"], info["anchor"]) == ("top", "w")
+        assert info["padx"] in (0, (0, 0))
     assert hub.charts[other].status_frame.winfo_manager() == ""
     assert chart.pack_slaves()[0] is chart.canvas.get_tk_widget()  # plot at the top
     hub._show_chart_page(other)
@@ -642,20 +732,31 @@ def test_a_destroyed_chart_takes_its_status_line_with_it(hub):
     assert hub._chart_status_slot.pack_slaves() == []
 
 
-def test_the_buttons_shrink_before_the_status_line(hub):
-    """Tk sizes the row: the buttons and the status line share a strip that asks for
-    both widths and is packed last, so it is what gives way. Inside it only the
-    buttons' column has weight, so it narrows first (to MIN_TAB_BUTTONS_W) and the
-    buttons scroll; the status column keeps its width. (A hidden window lays
-    nothing out, so this checks the layout's settings, not pixels.)"""
+def test_the_buttons_shrink_before_the_status_line(hub, monkeypatch):
+    """Tk sizes the row: the buttons and the status lines share a strip as wide as
+    the row. With room to spare the status column has the weight, so it reaches the
+    right edge (owner, 2026-11-04); short of room the buttons' column has it, so it
+    narrows first (to MIN_TAB_BUTTONS_W) and the buttons scroll while the status
+    keeps its width. (A hidden window lays nothing out, so the strip's width is
+    stood in and this checks the layout's settings, not pixels.)"""
     hub._show_chart_page(hub.coins[0])
     hub.update_idletasks()
     row, strip, bar = hub._chart_tabs_row, hub._chart_tabs_strip, hub.chart_tabs_bar
-    assert row.pack_slaves()[-1] is strip
-    assert strip.pack_info()["fill"] == "none" and not int(strip.pack_info()["expand"])
-    buttons, status = strip.grid_columnconfigure(0), strip.grid_columnconfigure(1)
-    assert (buttons["weight"], buttons["minsize"]) == (1, pt_hub.MIN_TAB_BUTTONS_W)
-    assert status["weight"] == 0
+    assert row.pack_slaves() == [strip]
+    assert strip.pack_info()["fill"] == "x" and int(strip.pack_info()["expand"])
+    for event in (strip, hub._chart_status_slot, bar.inner):
+        assert event.bind("<Configure>")  # a change of either width balances again
+    need = (
+        bar.inner.winfo_reqwidth()
+        + hub._chart_status_slot.winfo_reqwidth()
+        + pt_hub.SPACE["sm"]
+    )
+    for width, weights in ((need + 200, (0, 1)), (need, (0, 1)), (need - 1, (1, 0))):
+        monkeypatch.setattr(strip, "winfo_width", lambda w=width: w)
+        hub._balance_chart_tab_strip()
+        buttons, status = strip.grid_columnconfigure(0), strip.grid_columnconfigure(1)
+        assert (buttons["weight"], status["weight"]) == weights, width
+        assert buttons["minsize"] == pt_hub.MIN_TAB_BUTTONS_W
     assert "e" in bar.grid_info()["sticky"] and "w" in bar.grid_info()["sticky"]
     # the bar asks for all its buttons
     assert int(bar._canvas.cget("width")) == bar.inner.winfo_reqwidth()
@@ -667,7 +768,7 @@ def test_the_chart_sits_4px_under_the_buttons_and_the_divider_moves_up(hub):
     keeps its height and the panel below gains it."""
     for button in hub._chart_tab_buttons.values():
         assert button.pack_info()["pady"] == (0, 4)
-    assert hub.chart_settings_button.pack_info()["pady"] == (0, 4)
+    assert hub._chart_status_slot.grid_info()["pady"] == (0, 4)
     label = next(iter(hub.charts.values())).neural_status_label
     # the old status row (label and its pads) plus what the gap under the buttons
     # shrank by, measured from the buttons as packed

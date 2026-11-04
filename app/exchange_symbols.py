@@ -38,7 +38,7 @@ def coin_of(symbol: Any) -> str:
     return dollar_symbol(text).split("-", 1)[0]
 
 
-def _quote(coin: str, pair: str) -> str:
+def quote_of(coin: str, pair: str) -> str:
     text = str(pair or "").upper()
     if text.startswith(coin.upper()):
         rest = text[len(coin) :].strip("-/_ ")
@@ -83,7 +83,7 @@ def market_pairs(
                 pair = str(connector.market_symbol(common)) or common
             except Exception:
                 pair = common
-        out.append(MarketPair(coin, pair, exchange, _quote(coin, pair)))
+        out.append(MarketPair(coin, pair, exchange, quote_of(coin, pair)))
     return out
 
 

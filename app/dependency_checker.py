@@ -129,7 +129,7 @@ class DependencyChecker:
                 module="openai",
                 required=False,
                 available=False,
-                description="OpenAI API for LLM research engine",
+                description="OpenAI Python library (optional; not used by LLM Research)",
                 install_command="pip install openai",
             ),
             # Data science (optional)
@@ -372,21 +372,13 @@ class DependencyChecker:
                 "status": "Limited (no database persistence)",
             }
 
-        # LLM Research Engine
-        openai_available = self.results.get(
-            "OpenAI", DependencyInfo("", "", False, False)
-        ).available
+        # LLM Research: the LLM providers are reached over HTTP (llm_providers)
         requests_available = self.results.get(
             "Requests", DependencyInfo("", "", False, False)
         ).available
 
-        if openai_available and requests_available:
+        if requests_available:
             status["LLM Research"] = {"icon": "✅", "status": "Fully Available"}
-        elif requests_available:
-            status["LLM Research"] = {
-                "icon": "⚠️",
-                "status": "Limited (no LLM integration)",
-            }
         else:
             status["LLM Research"] = {"icon": "❌", "status": "Not Available"}
 
@@ -527,7 +519,6 @@ def quick_check() -> Dict[str, bool]:
         "tkinter": "Core GUI",
         "matplotlib": "Charts",
         "sqlalchemy": "Order Management",
-        "openai": "LLM Research",
         "requests": "API Calls",
     }
 

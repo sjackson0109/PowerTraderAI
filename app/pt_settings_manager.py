@@ -637,6 +637,18 @@ class SettingsManager:
             self._settings["strategy"] = strategy
             return self.save_settings() if persist else True
 
+    def set_section(
+        self, name: str, values: Dict[str, Any], persist: bool = True
+    ) -> bool:
+        """Replace the whole top-level section ``name`` (``llm``, ``training``) with
+        ``values``, as its own Settings window saves it; the rest of the file is
+        kept. The caller has checked the values (llm_settings, training_settings)."""
+        if not isinstance(values, dict) or not str(name).strip() or "." in name:
+            return False
+        with self._lock:
+            self._settings[str(name)] = copy.deepcopy(values)
+            return self.save_settings() if persist else True
+
     def reset_to_defaults(self) -> bool:
         """Reset all settings to defaults."""
         with self._lock:

@@ -1173,6 +1173,34 @@ class CryptoAPITrading:
             )
         return coins
 
+    def _llm_hook(self):
+        """The LLM signal hook (llm_gate.EntryHook), made on first use."""
+        hook = getattr(self, "_llm_entry_hook", None)
+        if hook is None:
+            import llm_gate
+
+            hook = self._llm_entry_hook = llm_gate.EntryHook(self._settings_source)
+        return hook
+
+    def _llm_entry_allowed(self, coin: str, client_order_id: str) -> bool:
+        """False only when a usable LLM signal vetoes, or does not confirm, the
+        entry the strategy wants (llm_gate). It never places an order, waits at
+        most the signal wait in Settings, and any failure lets the entry go ahead."""
+        try:
+            verdict = self._llm_hook().check(
+                coin, client_order_id, live=self._settings.is_live
+            )
+            return bool(verdict.allow)
+        except Exception:
+            return True
+
+    def _llm_entry_placed(self, client_order_id: str, response: Any) -> None:
+        """Link the LLM decision that let an entry through to its filled order."""
+        try:
+            self._llm_hook().placed(client_order_id, (response or {}).get("id"))
+        except Exception:
+            pass
+
     def initialize_dca_levels(self):
         """
         Initializes the DCA levels_triggered dictionary from the local trade history:
@@ -2666,6 +2694,13 @@ class CryptoAPITrading:
                     start_index += 1
                     continue
 
+            # An LLM signal may confirm or veto this entry, never make one
+            # (Settings > LLM Providers; off and log only change nothing here)
+            client_order_id = str(uuid.uuid4())
+            if not self._llm_entry_allowed(base_symbol, client_order_id):
+                start_index += 1
+                continue
+
             # Start allocation % of the account, raised to the exchange's minimum
             allocation_in_usd = position_sizing.entry_usd(
                 total_account_value,
@@ -2673,7 +2708,7 @@ class CryptoAPITrading:
                 self._minimum_order_usd(full_symbol),
             )
             response = self.place_buy_order(
-                str(uuid.uuid4()),
+                client_order_id,
                 "buy",
                 "market",
                 full_symbol,
@@ -2683,6 +2718,7 @@ class CryptoAPITrading:
 
             if response and "errors" not in response:
                 trades_made = True
+                self._llm_entry_placed(client_order_id, response)
                 if entry_decision is not None:
                     self.signal_engine.record_entry(
                         base_symbol,

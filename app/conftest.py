@@ -47,3 +47,16 @@ def _no_request_pacing():
 
 
 _no_request_pacing()
+
+
+def _no_llm_requests():
+    """The trader's LLM signal hook (llm_gate) asks a provider for a signal at every
+    entry in its default mode ("log only"), Ollama on this computer included, which
+    the isolation guard lets through. No trader test may do that: off for the whole
+    session; test_llm_gate.py switches it on with a fake provider."""
+    import llm_gate
+
+    llm_gate.REQUESTS_ENABLED = False
+
+
+_no_llm_requests()

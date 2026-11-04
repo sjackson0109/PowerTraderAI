@@ -1,1072 +1,557 @@
 """
-LLM-Powered Research Engine
-Implements AI-driven market analysis, news sentiment analysis, trade signal generation,
-and automated research report creation for PowerTrader.
+LLM Research: market analysis, trade signals and research reports for the coins in
+Settings, answered through the LLM provider layer (``llm_providers.LLMRouter``: the
+preferred provider, then the fallbacks) and kept in ``llm_store``.
+
+Market data comes from the exchange layer (``pt_multi_exchange.market_exchanges``:
+the primary exchange first, public market data): the last 200 closed hourly candles
+of each coin, in the market and format of the exchange that served them
+(``exchange_symbols``). From them: the last close, the 24-hour change and volume,
+the 7-day high and low, RSI(14) and the 50- and 200-hour moving averages, and the
+last 24 closes. No price, symbol or model name is written here.
+
+Prompts are templates with ``${name}`` fields (``PROMPT_FIELDS``); each edit is a
+new version in the store, and every answer records the version it came from.
 """
 
-import asyncio
-import hashlib
-import json
-import re
-import threading
+from __future__ import annotations
+
+import string
 import time
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
-from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
-import requests
+import exchange_symbols
+import llm_settings
+import llm_signals
+from llm_store import AnalysisRecord, LLMStore, SignalRecord
 
-try:
-    import openai
+BARS = 200  # hourly candles read for each coin
+HOUR_MS = 3600 * 1000
 
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
+DEFAULT_PROMPTS = {
+    "analysis": (
+        "You are a cryptocurrency market analyst. Analyse ${coin} (${pair}, prices "
+        "in ${quote}) from the market data below.\n\n"
+        "${market_data}\n\n"
+        "Write the analysis in Markdown with these sections: ## Summary, ## Trend and "
+        "momentum, ## Support and resistance, ## Risks, ## Outlook. Explain your "
+        "reasoning and use only the data given; say where it is not enough to "
+        "judge.\n\n"
+        "End with one line in exactly this form: SIGNAL: BUY, SIGNAL: SELL or "
+        "SIGNAL: HOLD"
+    ),
+    "signal": (
+        "You are a cryptocurrency trading analyst. Give one trade signal for ${coin} "
+        "(${pair}, prices in ${quote}) from the market data below.\n\n"
+        "${market_data}\n\n"
+        "Answer with one JSON object and nothing else, with these keys:\n"
+        '"direction": "BUY", "SELL" or "HOLD"\n'
+        '"strength": "very_bearish", "bearish", "neutral", "bullish" or '
+        '"very_bullish"\n'
+        '"confidence": a number from 0 to 100\n'
+        '"price_target": a price in ${quote}, or null\n'
+        '"stop_loss": a price in ${quote}, or null\n'
+        '"time_horizon": "SHORT" (up to 1 day), "MEDIUM" (up to 1 week) or "LONG" '
+        "(up to 1 month)\n"
+        '"reasoning": a short explanation'
+    ),
+    "report": (
+        "You are a cryptocurrency research analyst. Write a ${report_type} research "
+        "report in Markdown for ${coins}, from the market data below.\n\n"
+        "${market_data}\n\n"
+        "Use these sections: ## Summary, ## Market performance, ## Technical picture, "
+        "## Opportunities, ## Risks, ## Outlook. Use only the data given, and say "
+        "where it is not enough to judge."
+    ),
+}
+PROMPT_FIELDS = {
+    "analysis": ("coin", "pair", "quote", "market_data"),
+    "signal": ("coin", "pair", "quote", "market_data"),
+    "report": ("report_type", "coins", "market_data"),
+}
+MAX_TOKENS = {"analysis": 1500, "signal": 600, "report": 2500}
+REPORT_TYPES = ("Market Overview", "Coin Report")
+# The market data block in a prompt is about this long (for cost estimates).
+MARKET_DATA_CHARS = 1200
+CHARS_PER_TOKEN = 4
 
-try:
-    from order_management_db import OrderManagementDB
 
-    DB_AVAILABLE = True
-except ImportError:
-    DB_AVAILABLE = False
-
-
-class AnalysisType(Enum):
-    """Types of LLM analysis."""
-
-    MARKET_OVERVIEW = "market_overview"
-    TECHNICAL_ANALYSIS = "technical_analysis"
-    FUNDAMENTAL_ANALYSIS = "fundamental_analysis"
-    NEWS_SENTIMENT = "news_sentiment"
-    TRADE_SIGNALS = "trade_signals"
-    RISK_ASSESSMENT = "risk_assessment"
-    CORRELATION_ANALYSIS = "correlation_analysis"
-    SECTOR_ANALYSIS = "sector_analysis"
+def render(template: str, **values: Any) -> str:
+    """The template with its ``${name}`` fields filled in (others left as they are)."""
+    return string.Template(template).safe_substitute(
+        {k: "" if v is None else str(v) for k, v in values.items()}
+    )
 
 
-class SignalStrength(Enum):
-    """Trade signal strength levels."""
-
-    VERY_BEARISH = "very_bearish"
-    BEARISH = "bearish"
-    NEUTRAL = "neutral"
-    BULLISH = "bullish"
-    VERY_BULLISH = "very_bullish"
+# --- market data --------------------------------------------------------------------
 
 
-class NewsSource(Enum):
-    """News data sources."""
+def _rsi(closes: Sequence[float], period: int = 14) -> Optional[float]:
+    """Wilder's RSI of ``closes``; None with too few."""
+    if len(closes) <= period:
+        return None
+    gains, losses = [], []
+    for a, b in zip(closes[:-1], closes[1:]):
+        change = b - a
+        gains.append(max(change, 0.0))
+        losses.append(max(-change, 0.0))
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for g, loss in zip(gains[period:], losses[period:]):
+        avg_gain = (avg_gain * (period - 1) + g) / period
+        avg_loss = (avg_loss * (period - 1) + loss) / period
+    if avg_loss == 0:
+        return 100.0
+    return 100.0 - 100.0 / (1.0 + avg_gain / avg_loss)
 
-    ALPACA_NEWS = "alpaca_news"
-    POLYGON_NEWS = "polygon_news"
-    FINNHUB_NEWS = "finnhub_news"
-    NEWSAPI = "newsapi"
-    RSS_FEEDS = "rss_feeds"
-    CUSTOM = "custom"
+
+def _sma(closes: Sequence[float], n: int) -> Optional[float]:
+    return sum(closes[-n:]) / n if len(closes) >= n else None
+
+
+def _price(value: Optional[float]) -> str:
+    if value is None:
+        return "not known"
+    if value >= 1000:
+        return f"{value:,.2f}"
+    if value >= 1:
+        return f"{value:,.4f}"
+    return f"{value:.8f}".rstrip("0").rstrip(".")
 
 
 @dataclass
+class MarketSnapshot:
+    coin: str
+    pair: str
+    exchange: str
+    quote: str
+    price: Optional[float] = None
+    bar_ms: Optional[int] = None  # the last closed bar's open time
+    change_24h_pct: Optional[float] = None
+    volume_24h: Optional[float] = None
+    high_7d: Optional[float] = None
+    low_7d: Optional[float] = None
+    rsi_14: Optional[float] = None
+    sma_50: Optional[float] = None
+    sma_200: Optional[float] = None
+    closes_24h: List[float] = field(default_factory=list)
+    problem: str = ""
+
+    def facts(self) -> Dict[str, Any]:
+        return {
+            "coin": self.coin,
+            "pair": self.pair,
+            "exchange": self.exchange,
+            "quote": self.quote,
+            "price": self.price,
+            "bar_ms": self.bar_ms,
+            "change_24h_pct": self.change_24h_pct,
+            "volume_24h": self.volume_24h,
+            "high_7d": self.high_7d,
+            "low_7d": self.low_7d,
+            "rsi_14": self.rsi_14,
+            "sma_50": self.sma_50,
+            "sma_200": self.sma_200,
+            "problem": self.problem,
+        }
+
+    def text(self, closes: bool = True) -> str:
+        """The market data block of a prompt."""
+        if self.price is None:
+            return f"{self.coin}: no market data ({self.problem or 'not available'})"
+        when = time.strftime(
+            "%Y-%m-%d %H:%M UTC", time.gmtime((self.bar_ms or 0) / 1000)
+        )
+        lines = [
+            f"Market: {self.pair} (prices in {self.quote})",
+            f"Last hourly close: {_price(self.price)} (bar opened {when})",
+        ]
+        if self.change_24h_pct is not None:
+            lines.append(f"24-hour change: {self.change_24h_pct:+.2f}%")
+        if self.volume_24h is not None:
+            lines.append(f"24-hour volume: {self.volume_24h:,.4f} {self.coin}")
+        if self.high_7d is not None:
+            lines.append(
+                f"7-day high / low: {_price(self.high_7d)} / {_price(self.low_7d)}"
+            )
+        if self.rsi_14 is not None:
+            lines.append(f"RSI (14, hourly): {self.rsi_14:.1f}")
+        if self.sma_50 is not None:
+            averages = f"50-hour {_price(self.sma_50)}"
+            if self.sma_200 is not None:
+                averages += f", 200-hour {_price(self.sma_200)}"
+            lines.append(f"Moving averages (hourly): {averages}")
+        if closes and self.closes_24h:
+            lines.append(
+                "Hourly closes, last 24 hours (oldest first): "
+                + ", ".join(_price(c) for c in self.closes_24h)
+            )
+        return "\n".join(lines)
+
+
 class MarketData:
-    """Market data structure for LLM analysis."""
+    """Hourly candles from the exchange layer. ``layer`` returns the shared
+    MultiExchangeManager (``pt_multi_exchange.market_exchanges`` by default)."""
 
-    symbol: str
-    current_price: float
-    price_change_24h: float
-    price_change_pct_24h: float
-    volume_24h: float
-    market_cap: Optional[float] = None
-    high_24h: Optional[float] = None
-    low_24h: Optional[float] = None
-    rsi: Optional[float] = None
-    ma_50: Optional[float] = None
-    ma_200: Optional[float] = None
-    timestamp: datetime = None
-
-    def __post_init__(self):
-        if self.timestamp is None:
-            self.timestamp = datetime.now()
-
-
-@dataclass
-class NewsArticle:
-    """News article structure."""
-
-    title: str
-    content: str
-    source: str
-    url: str
-    published_at: datetime
-    symbols_mentioned: List[str]
-    sentiment_score: Optional[float] = None
-    relevance_score: Optional[float] = None
-
-
-@dataclass
-class TradeSignal:
-    """Trade signal generated by LLM."""
-
-    symbol: str
-    signal_type: str  # BUY, SELL, HOLD
-    strength: SignalStrength
-    confidence: float  # 0-100
-    price_target: Optional[float]
-    stop_loss: Optional[float]
-    reasoning: str
-    time_horizon: str  # SHORT, MEDIUM, LONG
-    generated_at: datetime
-
-    def __post_init__(self):
-        if self.generated_at is None:
-            self.generated_at = datetime.now()
-
-
-class LLMProvider:
-    """Base class for LLM providers."""
-
-    def __init__(self, api_key: str, model: str = "gpt-4"):
-        self.api_key = api_key
-        self.model = model
-        self.client = None
-        self._setup_client()
-
-    def _setup_client(self):
-        """Setup LLM client."""
-        if OPENAI_AVAILABLE and self.api_key:
-            openai.api_key = self.api_key
-            self.client = openai
-
-    def generate_analysis(self, prompt: str, context: Dict = None) -> str:
-        """Generate analysis using LLM."""
-        try:
-            if not self.client:
-                return "LLM client not available"
-
-            # Add context to prompt if provided
-            if context:
-                context_str = json.dumps(context, indent=2, default=str)
-                full_prompt = f"Context: {context_str}\n\nAnalysis Request: {prompt}"
-            else:
-                full_prompt = prompt
-
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a professional cryptocurrency and financial market analyst with deep expertise in technical analysis, fundamental analysis, and market sentiment. Provide detailed, actionable insights.",
-                    },
-                    {"role": "user", "content": full_prompt},
-                ],
-                max_tokens=2000,
-                temperature=0.7,
-            )
-
-            return response.choices[0].message.content
-
-        except Exception as e:
-            return f"Error generating analysis: {str(e)}"
-
-    def generate_trade_signals(
-        self, market_data: List[MarketData], news_data: List[NewsArticle] = None
-    ) -> List[TradeSignal]:
-        """Generate trade signals based on market and news data."""
-        try:
-            signals = []
-
-            for data in market_data:
-                # Prepare context for LLM
-                context = {
-                    "symbol": data.symbol,
-                    "current_price": data.current_price,
-                    "price_change_24h": data.price_change_pct_24h,
-                    "volume_24h": data.volume_24h,
-                    "rsi": data.rsi,
-                    "ma_50": data.ma_50,
-                    "ma_200": data.ma_200,
-                }
-
-                # Add relevant news if available
-                relevant_news = []
-                if news_data:
-                    relevant_news = [
-                        news
-                        for news in news_data
-                        if data.symbol in news.symbols_mentioned
-                    ]
-                    if relevant_news:
-                        context["recent_news"] = [
-                            {"title": news.title, "sentiment": news.sentiment_score}
-                            for news in relevant_news[:3]  # Top 3 most relevant
-                        ]
-
-                prompt = f"""
-                Analyze the following market data for {data.symbol} and provide a trade signal:
-
-                Technical Indicators:
-                - Current Price: ${data.current_price}
-                - 24h Change: {data.price_change_pct_24h}%
-                - RSI: {data.rsi}
-                - MA 50: ${data.ma_50}
-                - MA 200: ${data.ma_200}
-
-                Please provide:
-                1. Trade recommendation (BUY/SELL/HOLD)
-                2. Signal strength (very_bearish, bearish, neutral, bullish, very_bullish)
-                3. Confidence level (0-100)
-                4. Price target (if applicable)
-                5. Stop loss level (if applicable)
-                6. Time horizon (SHORT/MEDIUM/LONG)
-                7. Detailed reasoning
-
-                Format your response as JSON with these exact keys:
-                signal_type, strength, confidence, price_target, stop_loss, time_horizon, reasoning
-                """
-
-                response = self.generate_analysis(prompt, context)
-
-                # Parse LLM response
-                signal = self._parse_signal_response(response, data.symbol)
-                if signal:
-                    signals.append(signal)
-
-            return signals
-
-        except Exception as e:
-            print(f"Error generating trade signals: {e}")
-            return []
-
-    def _parse_signal_response(
-        self, response: str, symbol: str
-    ) -> Optional[TradeSignal]:
-        """Parse LLM response into TradeSignal object."""
-        try:
-            # Extract JSON from response
-            json_match = re.search(r"\{.*\}", response, re.DOTALL)
-            if not json_match:
-                return None
-
-            signal_data = json.loads(json_match.group())
-
-            # Map strength string to enum
-            strength_mapping = {
-                "very_bearish": SignalStrength.VERY_BEARISH,
-                "bearish": SignalStrength.BEARISH,
-                "neutral": SignalStrength.NEUTRAL,
-                "bullish": SignalStrength.BULLISH,
-                "very_bullish": SignalStrength.VERY_BULLISH,
-            }
-
-            strength = strength_mapping.get(
-                signal_data.get("strength", "neutral"), SignalStrength.NEUTRAL
-            )
-
-            return TradeSignal(
-                symbol=symbol,
-                signal_type=signal_data.get("signal_type", "HOLD"),
-                strength=strength,
-                confidence=float(signal_data.get("confidence", 50)),
-                price_target=signal_data.get("price_target"),
-                stop_loss=signal_data.get("stop_loss"),
-                reasoning=signal_data.get("reasoning", ""),
-                time_horizon=signal_data.get("time_horizon", "MEDIUM"),
-                generated_at=datetime.now(),
-            )
-
-        except Exception as e:
-            print(f"Error parsing signal response: {e}")
-            return None
-
-
-class NewsAggregator:
-    """Aggregates news from multiple sources."""
-
-    def __init__(self, config: Dict = None):
-        if config is None:
-            config = {}
-
-        self.sources = config.get("sources", {})
-        self.update_interval = config.get("update_interval", 300)  # 5 minutes
-        self.max_articles_per_source = config.get("max_articles_per_source", 20)
-        self.cache = {}
-        self.last_update = {}
-
-    def get_news_for_symbols(
-        self, symbols: List[str], hours_back: int = 24
-    ) -> List[NewsArticle]:
-        """Get news articles for specified symbols."""
-        try:
-            all_articles = []
-            cutoff_time = datetime.now() - timedelta(hours=hours_back)
-
-            for symbol in symbols:
-                symbol_articles = self._get_cached_news(symbol, cutoff_time)
-                if not symbol_articles:
-                    # Fetch new articles
-                    symbol_articles = self._fetch_news_for_symbol(symbol)
-                    self._cache_news(symbol, symbol_articles)
-
-                all_articles.extend(symbol_articles)
-
-            # Remove duplicates and sort by relevance
-            unique_articles = self._deduplicate_articles(all_articles)
-            return sorted(unique_articles, key=lambda x: x.published_at, reverse=True)
-
-        except Exception as e:
-            print(f"Error getting news: {e}")
-            return []
-
-    def _get_cached_news(self, symbol: str, cutoff_time: datetime) -> List[NewsArticle]:
-        """Get cached news articles."""
-        try:
-            cache_key = f"news_{symbol}"
-            if cache_key not in self.cache:
-                return []
-
-            # Check if cache is still valid
-            if cache_key in self.last_update:
-                if datetime.now() - self.last_update[cache_key] < timedelta(
-                    seconds=self.update_interval
-                ):
-                    # Filter articles by time
-                    cached_articles = self.cache[cache_key]
-                    return [
-                        article
-                        for article in cached_articles
-                        if article.published_at >= cutoff_time
-                    ]
-
-            return []
-
-        except Exception as e:
-            print(f"Error getting cached news: {e}")
-            return []
-
-    def _fetch_news_for_symbol(self, symbol: str) -> List[NewsArticle]:
-        """Fetch news articles for a specific symbol."""
-        try:
-            articles = []
-
-            # Mock news fetching (in real implementation, use actual news APIs)
-            mock_articles = [
-                {
-                    "title": f"{symbol} Shows Strong Technical Breakout",
-                    "content": f"Technical analysis suggests {symbol} has broken through key resistance levels...",
-                    "source": "CryptoNews",
-                    "url": f"https://cryptonews.com/{symbol}-breakout",
-                    "published_at": datetime.now() - timedelta(hours=2),
-                    "symbols_mentioned": [symbol],
-                },
-                {
-                    "title": f"Market Analysis: {symbol} Faces Potential Correction",
-                    "content": f"Analysts warn that {symbol} may face short-term correction due to...",
-                    "source": "MarketWatch",
-                    "url": f"https://marketwatch.com/{symbol}-analysis",
-                    "published_at": datetime.now() - timedelta(hours=6),
-                    "symbols_mentioned": [symbol],
-                },
-            ]
-
-            for article_data in mock_articles:
-                article = NewsArticle(
-                    title=article_data["title"],
-                    content=article_data["content"],
-                    source=article_data["source"],
-                    url=article_data["url"],
-                    published_at=article_data["published_at"],
-                    symbols_mentioned=article_data["symbols_mentioned"],
-                )
-                articles.append(article)
-
-            return articles
-
-        except Exception as e:
-            print(f"Error fetching news for {symbol}: {e}")
-            return []
-
-    def _cache_news(self, symbol: str, articles: List[NewsArticle]):
-        """Cache news articles."""
-        try:
-            cache_key = f"news_{symbol}"
-            self.cache[cache_key] = articles
-            self.last_update[cache_key] = datetime.now()
-
-        except Exception as e:
-            print(f"Error caching news: {e}")
-
-    def _deduplicate_articles(self, articles: List[NewsArticle]) -> List[NewsArticle]:
-        """Remove duplicate articles based on title similarity."""
-        try:
-            seen_titles = set()
-            unique_articles = []
-
-            for article in articles:
-                title_hash = hashlib.md5(article.title.lower().encode()).hexdigest()
-                if title_hash not in seen_titles:
-                    seen_titles.add(title_hash)
-                    unique_articles.append(article)
-
-            return unique_articles
-
-        except Exception as e:
-            print(f"Error deduplicating articles: {e}")
-            return articles
-
-
-class SentimentAnalyzer:
-    """Analyzes sentiment of news articles using LLM."""
-
-    def __init__(self, llm_provider: LLMProvider):
-        self.llm_provider = llm_provider
-
-    def analyze_articles(self, articles: List[NewsArticle]) -> List[NewsArticle]:
-        """Analyze sentiment of news articles."""
-        try:
-            analyzed_articles = []
-
-            for article in articles:
-                sentiment_score = self._analyze_article_sentiment(article)
-                relevance_score = self._analyze_article_relevance(article)
-
-                # Create new article with sentiment scores
-                analyzed_article = NewsArticle(
-                    title=article.title,
-                    content=article.content,
-                    source=article.source,
-                    url=article.url,
-                    published_at=article.published_at,
-                    symbols_mentioned=article.symbols_mentioned,
-                    sentiment_score=sentiment_score,
-                    relevance_score=relevance_score,
-                )
-                analyzed_articles.append(analyzed_article)
-
-            return analyzed_articles
-
-        except Exception as e:
-            print(f"Error analyzing articles: {e}")
-            return articles
-
-    def _analyze_article_sentiment(self, article: NewsArticle) -> float:
-        """Analyze sentiment of a single article."""
-        try:
-            prompt = f"""
-            Analyze the sentiment of this financial news article and provide a sentiment score from -1.0 (very negative) to +1.0 (very positive):
-
-            Title: {article.title}
-            Content: {article.content[:500]}...
-
-            Consider factors like:
-            - Positive/negative language
-            - Market impact implications
-            - Price direction indicators
-            - Risk/opportunity mentions
-
-            Respond with only a number between -1.0 and +1.0
-            """
-
-            response = self.llm_provider.generate_analysis(prompt)
-
-            # Extract sentiment score from response
-            try:
-                sentiment_score = float(response.strip())
-                return max(-1.0, min(1.0, sentiment_score))  # Clamp to [-1, 1]
-            except ValueError:
-                return 0.0  # Neutral if can't parse
-
-        except Exception as e:
-            print(f"Error analyzing sentiment: {e}")
-            return 0.0
-
-    def _analyze_article_relevance(self, article: NewsArticle) -> float:
-        """Analyze relevance of article for trading decisions."""
-        try:
-            prompt = f"""
-            Rate the relevance of this financial news article for cryptocurrency trading decisions on a scale of 0.0 to 1.0:
-
-            Title: {article.title}
-            Content: {article.content[:300]}...
-
-            Consider factors like:
-            - Direct impact on mentioned cryptocurrencies
-            - Market-moving potential
-            - Actionable information content
-            - Time sensitivity
-
-            Respond with only a number between 0.0 and 1.0
-            """
-
-            response = self.llm_provider.generate_analysis(prompt)
-
-            # Extract relevance score from response
-            try:
-                relevance_score = float(response.strip())
-                return max(0.0, min(1.0, relevance_score))  # Clamp to [0, 1]
-            except ValueError:
-                return 0.5  # Medium relevance if can't parse
-
-        except Exception as e:
-            print(f"Error analyzing relevance: {e}")
-            return 0.5
-
-
-class ResearchReportGenerator:
-    """Generates comprehensive research reports using LLM."""
-
-    def __init__(self, llm_provider: LLMProvider):
-        self.llm_provider = llm_provider
-
-    def generate_market_overview_report(
-        self, market_data: List[MarketData], news_data: List[NewsArticle]
-    ) -> str:
-        """Generate comprehensive market overview report."""
-        try:
-            # Prepare context
-            context = {
-                "market_data": [asdict(data) for data in market_data],
-                "news_summary": self._summarize_news(news_data),
-                "timestamp": datetime.now().isoformat(),
-            }
-
-            prompt = """
-            Generate a comprehensive cryptocurrency market overview report based on the provided data.
-
-            Include the following sections:
-            1. Executive Summary
-            2. Market Performance Analysis
-            3. Technical Analysis Summary
-            4. News Sentiment Analysis
-            5. Key Trading Opportunities
-            6. Risk Assessment
-            7. Market Outlook
-
-            Make the report professional, detailed, and actionable for traders and investors.
-            """
-
-            return self.llm_provider.generate_analysis(prompt, context)
-
-        except Exception as e:
-            return f"Error generating market overview report: {str(e)}"
-
-    def generate_symbol_analysis_report(
+    def __init__(
         self,
-        symbol: str,
-        market_data: MarketData,
-        historical_data: List[Dict],
-        news_data: List[NewsArticle],
-    ) -> str:
-        """Generate detailed analysis report for a specific symbol."""
+        layer: Optional[Callable[[], Any]] = None,
+        clock: Callable[[], float] = time.time,
+    ):
+        self._layer = layer
+        self.clock = clock
+
+    def layer(self):
+        if self._layer is not None:
+            return self._layer()
+        from pt_multi_exchange import market_exchanges
+
+        return market_exchanges()
+
+    def pair(self, coin: str) -> exchange_symbols.MarketPair:
+        return exchange_symbols.market_pair(coin, self.layer)
+
+    def bars(self, coin: str, start_ms: int, end_ms: int, only: Optional[str] = None):
+        """``Sourced``: closed hourly bars of ``coin`` from the exchange layer."""
+        manager = self.layer()
         try:
-            context = {
-                "symbol": symbol,
-                "current_data": asdict(market_data),
-                "historical_data": historical_data[-30:],  # Last 30 periods
-                "relevant_news": [
-                    asdict(news)
-                    for news in news_data
-                    if symbol in news.symbols_mentioned
-                ],
-                "timestamp": datetime.now().isoformat(),
-            }
+            return manager.candles(coin, "1h", int(start_ms), int(end_ms), only=only)
+        except Exception:
+            if only is None:
+                raise
+            return manager.candles(coin, "1h", int(start_ms), int(end_ms))
 
-            prompt = f"""
-            Generate a detailed analysis report for {symbol} cryptocurrency.
-
-            Include:
-            1. Current Market Position
-            2. Technical Analysis (RSI, Moving Averages, Support/Resistance)
-            3. Historical Performance Analysis
-            4. News Impact Assessment
-            5. Trading Recommendations
-            6. Risk Factors
-            7. Price Targets and Timeframes
-
-            Provide specific, actionable insights for trading decisions.
-            """
-
-            return self.llm_provider.generate_analysis(prompt, context)
-
-        except Exception as e:
-            return f"Error generating symbol analysis report: {str(e)}"
-
-    def generate_portfolio_analysis_report(
-        self, portfolio_data: Dict, market_data: List[MarketData]
-    ) -> str:
-        """Generate portfolio analysis and optimization report."""
+    def snapshot(self, coin: str) -> MarketSnapshot:
+        coin = exchange_symbols.coin_of(coin)
+        shown = self.pair(coin)
+        now_ms = int(self.clock() * 1000)
+        end = (now_ms // HOUR_MS) * HOUR_MS - HOUR_MS
+        start = end - (BARS - 1) * HOUR_MS
+        snap = MarketSnapshot(coin, shown.pair, shown.exchange, shown.quote)
         try:
-            context = {
-                "portfolio": portfolio_data,
-                "market_context": [asdict(data) for data in market_data],
-                "timestamp": datetime.now().isoformat(),
-            }
+            sourced = self.bars(coin, start, end)
+        except Exception as exc:
+            snap.problem = f"{type(exc).__name__}: {exc}"[:300]
+            return snap
+        rows = list(sourced.value or [])
+        if not rows:
+            snap.problem = "no candles"
+            return snap
+        served = exchange_symbols.MarketPair(
+            coin,
+            str(sourced.pair or shown.pair),
+            str(sourced.exchange or ""),
+            shown.quote,
+        )
+        snap.pair, snap.exchange = served.pair, served.exchange
+        snap.quote = exchange_symbols.quote_of(coin, served.pair)
+        closes = [float(r[4]) for r in rows]
+        snap.price = closes[-1]
+        snap.bar_ms = int(rows[-1][0])
+        if len(closes) > 24 and closes[-25]:
+            snap.change_24h_pct = (closes[-1] / closes[-25] - 1.0) * 100.0
+        snap.volume_24h = sum(float(r[5]) for r in rows[-24:])
+        week = rows[-168:]
+        snap.high_7d = max(float(r[2]) for r in week)
+        snap.low_7d = min(float(r[3]) for r in week)
+        snap.rsi_14 = _rsi(closes)
+        snap.sma_50 = _sma(closes, 50)
+        snap.sma_200 = _sma(closes, 200)
+        snap.closes_24h = closes[-24:]
+        return snap
 
-            prompt = """
-            Generate a comprehensive portfolio analysis and optimization report.
 
-            Include:
-            1. Portfolio Performance Summary
-            2. Asset Allocation Analysis
-            3. Risk Assessment
-            4. Correlation Analysis
-            5. Rebalancing Recommendations
-            6. Diversification Opportunities
-            7. Strategic Adjustments
+# --- results ---------------------------------------------------------------------------
 
-            Provide specific recommendations for portfolio optimization.
-            """
 
-            return self.llm_provider.generate_analysis(prompt, context)
+@dataclass
+class AnalysisResult:
+    record: AnalysisRecord
+    routed: Any  # llm_providers.RoutedCompletion
+    snapshot: MarketSnapshot
+    signal: Optional[str]  # the SIGNAL line of the analysis
 
-        except Exception as e:
-            return f"Error generating portfolio analysis report: {str(e)}"
 
-    def _summarize_news(self, news_data: List[NewsArticle]) -> Dict:
-        """Summarize news data for context."""
-        try:
-            if not news_data:
-                return {"total_articles": 0, "avg_sentiment": 0.0}
+@dataclass
+class SignalResult:
+    record: SignalRecord
+    routed: Any
 
-            sentiments = [
-                news.sentiment_score
-                for news in news_data
-                if news.sentiment_score is not None
-            ]
 
-            return {
-                "total_articles": len(news_data),
-                "avg_sentiment": (
-                    sum(sentiments) / len(sentiments) if sentiments else 0.0
-                ),
-                "sources": list(set(news.source for news in news_data)),
-                "symbols_mentioned": list(
-                    set(
-                        symbol
-                        for news in news_data
-                        for symbol in news.symbols_mentioned
-                    )
-                ),
-            }
+@dataclass
+class ReportResult:
+    text: str
+    report_type: str
+    coins: List[str]
+    provider: str
+    model: str
+    prompt_version: int
+    ts: float
+    routed: Any = None
 
-        except Exception as e:
-            print(f"Error summarizing news: {e}")
-            return {"total_articles": 0, "avg_sentiment": 0.0}
+    def markdown_file(self) -> str:
+        """The report as a Markdown file: a header naming its source, then the
+        report."""
+        from llm_settings import provider_name
+
+        when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.ts))
+        header = [
+            "---",
+            f"title: {self.report_type}",
+            f"coins: {', '.join(self.coins)}",
+            f"provider: {provider_name(self.provider)}",
+            f"model: {self.model}",
+            f"prompt_version: report v{self.prompt_version}",
+            f"generated: {when}",
+            "---",
+            "",
+        ]
+        return "\n".join(header) + self.text.strip() + "\n"
+
+
+@dataclass(frozen=True)
+class CostEstimate:
+    provider: str
+    model: str
+    per_refresh: Optional[float]  # dollars; None: not known (no price set)
+    per_day: Optional[float]
+
+    @property
+    def free(self) -> bool:
+        return self.per_refresh == 0.0
 
 
 class LLMResearchEngine:
-    """Main LLM research engine coordinating all components."""
+    """Analyses, signals and reports. ``router`` an LLMRouter, ``store`` an
+    LLMStore, ``market`` a MarketData; each is built with its defaults when not
+    given (no request is made until one is asked for)."""
 
-    def __init__(self, config: Dict = None, db_path: Optional[str] = None):
-        if config is None:
-            config = {}
-        if db_path is None:
-            import pt_paths
+    def __init__(
+        self,
+        router: Any = None,
+        store: Optional[LLMStore] = None,
+        market: Optional[MarketData] = None,
+        clock: Callable[[], float] = time.time,
+        trading_mode: Optional[Callable[[], str]] = None,
+    ):
+        self.store = store if store is not None else LLMStore()
+        if router is None:
+            from llm_providers import LLMRouter
 
-            # The same order database as the rest of the app (user data folder)
-            db_path = pt_paths.data_file("order_management.db")
+            router = LLMRouter(store=self.store)
+        self.router = router
+        self.market = market or MarketData(clock=clock)
+        self.clock = clock
+        self._trading_mode = trading_mode
 
-        # Initialize components
-        llm_config = config.get("llm", {})
-        api_key = llm_config.get("api_key", "")
-        model = llm_config.get("model", "gpt-4")
+    # ---- prompts ----
 
-        self.llm_provider = LLMProvider(api_key, model)
-        self.news_aggregator = NewsAggregator(config.get("news", {}))
-        self.sentiment_analyzer = SentimentAnalyzer(self.llm_provider)
-        self.report_generator = ResearchReportGenerator(self.llm_provider)
+    def prompt(self, kind: str):
+        """The prompt version in use for ``kind`` (version 1 is the default)."""
+        return self.store.ensure_prompt(kind, DEFAULT_PROMPTS[kind])
 
-        # Database
-        if DB_AVAILABLE:
-            # Ensure proper SQLAlchemy URL format for SQLite
-            if db_path.startswith("sqlite://"):
-                self.db = OrderManagementDB(db_path)
-            else:
-                # Convert file path to SQLite URL
-                self.db = OrderManagementDB(f"sqlite:///{db_path}")
-        else:
-            self.db = None
-
-        # Cache and state
-        self.analysis_cache = {}
-        self.signal_cache = {}
-        self.last_analysis_time = {}
-
-        # Settings
-        self.auto_analysis_interval = config.get(
-            "auto_analysis_interval", 600
-        )  # 10 minutes
-        self.max_symbols = config.get("max_symbols", 50)
-
-        # Background tasks
-        self.background_thread = None
-        self.running = False
-
-    def analyze_market(
-        self, symbols: List[str], include_news: bool = True
-    ) -> Dict[str, Any]:
-        """Perform comprehensive market analysis."""
+    def trading_mode(self) -> str:
+        if self._trading_mode is not None:
+            return self._trading_mode()
         try:
-            print(f"Starting market analysis for {len(symbols)} symbols...")
+            from trading_mode import read_trading_settings
 
-            # Get market data
-            market_data = self._get_market_data(symbols)
+            return "live" if read_trading_settings().is_live else "paper"
+        except Exception:
+            return "paper"
 
-            # Get news data if requested
-            news_data = []
-            if include_news:
-                news_data = self.news_aggregator.get_news_for_symbols(symbols)
-                news_data = self.sentiment_analyzer.analyze_articles(news_data)
+    # ---- analysis ----
 
-            # Generate trade signals
-            trade_signals = self.llm_provider.generate_trade_signals(
-                market_data, news_data
+    def analyze(self, coin: str) -> AnalysisResult:
+        snap = self.market.snapshot(coin)
+        version = self.prompt("analysis")
+        text = render(
+            version.template,
+            coin=snap.coin,
+            pair=snap.pair,
+            quote=snap.quote,
+            market_data=snap.text(),
+        )
+        routed = self.router.complete(
+            text, purpose="analysis", max_tokens=MAX_TOKENS["analysis"]
+        )
+        record = self.store.add_analysis(
+            AnalysisRecord(
+                ts=self.clock(),
+                coin=snap.coin,
+                provider=routed.provider,
+                model=routed.model,
+                prompt_version=version.version,
+                text=routed.completion.text,
+                pair=snap.pair,
+                exchange=snap.exchange,
+                facts=dict(
+                    snap.facts(),
+                    signal=llm_signals.analysis_signal(routed.completion.text),
+                    warning=routed.warning(),
+                ),
             )
+        )
+        return AnalysisResult(
+            record, routed, snap, llm_signals.analysis_signal(routed.completion.text)
+        )
 
-            # Create analysis summary
-            analysis = {
-                "timestamp": datetime.now(),
-                "symbols_analyzed": len(symbols),
-                "market_data": [asdict(data) for data in market_data],
-                "news_articles": len(news_data),
-                "trade_signals": [asdict(signal) for signal in trade_signals],
-                "market_sentiment": self._calculate_overall_sentiment(news_data),
-                "signal_summary": self._summarize_signals(trade_signals),
-            }
+    # ---- signals ----
 
-            # Cache results
-            cache_key = f"market_analysis_{hash(tuple(symbols))}"
-            self.analysis_cache[cache_key] = analysis
-            self.last_analysis_time[cache_key] = datetime.now()
-
-            print(f"Market analysis completed. Generated {len(trade_signals)} signals.")
-            return analysis
-
-        except Exception as e:
-            print(f"Error in market analysis: {e}")
-            return {"error": str(e)}
-
-    def generate_research_report(
-        self, report_type: str, symbols: List[str] = None, portfolio_data: Dict = None
-    ) -> str:
-        """Generate comprehensive research report."""
-        try:
-            if report_type == "market_overview":
-                if not symbols:
-                    symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT"]  # Default symbols
-
-                market_data = self._get_market_data(symbols)
-                news_data = self.news_aggregator.get_news_for_symbols(symbols)
-                news_data = self.sentiment_analyzer.analyze_articles(news_data)
-
-                return self.report_generator.generate_market_overview_report(
-                    market_data, news_data
-                )
-
-            elif report_type == "symbol_analysis" and symbols:
-                symbol = symbols[0]  # Analyze first symbol
-                market_data = self._get_market_data([symbol])[0]
-                historical_data = self._get_historical_data(symbol)
-                news_data = self.news_aggregator.get_news_for_symbols([symbol])
-                news_data = self.sentiment_analyzer.analyze_articles(news_data)
-
-                return self.report_generator.generate_symbol_analysis_report(
-                    symbol, market_data, historical_data, news_data
-                )
-
-            elif report_type == "portfolio_analysis" and portfolio_data:
-                portfolio_symbols = list(portfolio_data.get("positions", {}).keys())
-                market_data = self._get_market_data(portfolio_symbols)
-
-                return self.report_generator.generate_portfolio_analysis_report(
-                    portfolio_data, market_data
-                )
-
-            else:
-                return "Invalid report type or missing required parameters"
-
-        except Exception as e:
-            return f"Error generating research report: {str(e)}"
-
-    def get_trade_signals(
-        self, symbols: List[str], force_refresh: bool = False
-    ) -> List[TradeSignal]:
-        """Get trade signals for specified symbols."""
-        try:
-            cache_key = f"signals_{hash(tuple(symbols))}"
-
-            # Check cache
-            if not force_refresh and self._is_cache_valid(cache_key):
-                cached_data = self.signal_cache.get(cache_key, [])
-                return [TradeSignal(**signal) for signal in cached_data]
-
-            # Generate new signals
-            market_data = self._get_market_data(symbols)
-            news_data = self.news_aggregator.get_news_for_symbols(symbols)
-            news_data = self.sentiment_analyzer.analyze_articles(news_data)
-
-            signals = self.llm_provider.generate_trade_signals(market_data, news_data)
-
-            # Cache signals
-            self.signal_cache[cache_key] = [asdict(signal) for signal in signals]
-            self.last_analysis_time[cache_key] = datetime.now()
-
-            return signals
-
-        except Exception as e:
-            print(f"Error getting trade signals: {e}")
-            return []
-
-    def _get_market_data(self, symbols: List[str]) -> List[MarketData]:
-        """Get current market data for symbols."""
-        try:
-            market_data = []
-
-            for symbol in symbols:
-                # Mock market data (in real implementation, fetch from exchange APIs)
-                import random
-
-                base_prices = {
-                    "BTCUSDT": 45000,
-                    "ETHUSDT": 3000,
-                    "ADAUSDT": 0.5,
-                    "BNBUSDT": 300,
-                    "XRPUSDT": 0.6,
-                }
-
-                base_price = base_prices.get(symbol, 100)
-                current_price = base_price * (1 + random.uniform(-0.05, 0.05))
-                price_change_24h = random.uniform(-10, 10)
-
-                data = MarketData(
-                    symbol=symbol,
-                    current_price=current_price,
-                    price_change_24h=current_price * (price_change_24h / 100),
-                    price_change_pct_24h=price_change_24h,
-                    volume_24h=random.uniform(1000000, 10000000),
-                    market_cap=current_price * random.uniform(1000000, 100000000),
-                    high_24h=current_price * 1.05,
-                    low_24h=current_price * 0.95,
-                    rsi=random.uniform(20, 80),
-                    ma_50=current_price * random.uniform(0.95, 1.05),
-                    ma_200=current_price * random.uniform(0.9, 1.1),
-                )
-                market_data.append(data)
-
-            return market_data
-
-        except Exception as e:
-            print(f"Error getting market data: {e}")
-            return []
-
-    def _get_historical_data(self, symbol: str, days: int = 30) -> List[Dict]:
-        """Get historical data for symbol."""
-        try:
-            # Mock historical data
-            historical_data = []
-            base_price = (
-                45000 if symbol == "BTCUSDT" else 3000 if symbol == "ETHUSDT" else 100
+    def signal(
+        self,
+        coin: str,
+        source: str = "manual",
+        trading_mode: Optional[str] = None,
+        snapshot: Optional[MarketSnapshot] = None,
+    ) -> SignalResult:
+        """A new trade signal for ``coin``, kept in the store."""
+        snap = snapshot or self.market.snapshot(coin)
+        version = self.prompt("signal")
+        text = render(
+            version.template,
+            coin=snap.coin,
+            pair=snap.pair,
+            quote=snap.quote,
+            market_data=snap.text(),
+        )
+        routed = self.router.complete(
+            text, purpose="signal", max_tokens=MAX_TOKENS["signal"]
+        )
+        parsed = llm_signals.parse_signal(routed.completion.text)
+        record = self.store.add_signal(
+            SignalRecord(
+                ts=self.clock(),
+                coin=snap.coin,
+                provider=routed.provider,
+                model=routed.model,
+                prompt_version=version.version,
+                price=snap.price,
+                pair=snap.pair,
+                exchange=snap.exchange,
+                source=source,
+                trading_mode=trading_mode or self.trading_mode(),
+                **parsed,
             )
+        )
+        return SignalResult(record, routed)
 
-            for i in range(days):
-                date = datetime.now() - timedelta(days=days - i)
-                price = base_price * (1 + (i * 0.001))  # Slight upward trend
+    def score_pending(self, costs: Optional[llm_signals.Costs] = None) -> int:
+        """Score the signals whose outcome is known now; returns how many were."""
+        now_ms = int(self.clock() * 1000)
+        pending = self.store.unscored_signals()
+        if not pending:
+            return 0
+        costs = costs or llm_signals.trade_costs(self.market.layer)
+        done = 0
+        for s in pending:
+            if s.direction not in ("BUY", "SELL") or not s.price:
+                if s.direction == "HOLD":
+                    self.store.set_outcome(
+                        s.id, "no direction", None, None, None, self.clock()
+                    )
+                continue
+            start = int(s.ts * 1000)
+            hours = llm_signals.HORIZON_HOURS.get(s.time_horizon, 24 * 7)
+            end = min(now_ms - HOUR_MS, start + hours * HOUR_MS)
+            if end <= start:
+                continue
+            try:
+                sourced = self.market.bars(
+                    s.coin, (start // HOUR_MS) * HOUR_MS, end, only=s.exchange or None
+                )
+            except Exception:
+                continue
+            outcome = llm_signals.score_signal(
+                s.direction,
+                s.price,
+                start,
+                s.time_horizon,
+                s.price_target,
+                s.stop_loss,
+                list(sourced.value or []),
+                costs,
+                now_ms,
+            )
+            if outcome is None:
+                continue
+            self.store.set_outcome(
+                s.id,
+                outcome.outcome,
+                outcome.net_return,
+                outcome.hit,
+                outcome.exit_price,
+                self.clock(),
+            )
+            done += 1
+        return done
 
-                historical_data.append(
-                    {
-                        "date": date.isoformat(),
-                        "open": price * 0.99,
-                        "high": price * 1.02,
-                        "low": price * 0.98,
-                        "close": price,
-                        "volume": 1000000 + (i * 10000),
+    # ---- reports ----
+
+    def report(self, report_type: str, coins: Sequence[str]) -> ReportResult:
+        coins = [
+            exchange_symbols.coin_of(c) for c in coins if exchange_symbols.coin_of(c)
+        ]
+        if not coins:
+            raise ValueError("no coins for the report")
+        snaps = [self.market.snapshot(c) for c in coins]
+        one = len(snaps) == 1
+        market = "\n\n".join(s.text(closes=one) for s in snaps)
+        version = self.prompt("report")
+        text = render(
+            version.template,
+            report_type=report_type,
+            coins=", ".join(f"{s.coin} ({s.pair})" for s in snaps),
+            market_data=market,
+        )
+        routed = self.router.complete(
+            text, purpose="report", max_tokens=MAX_TOKENS["report"]
+        )
+        return ReportResult(
+            routed.completion.text,
+            report_type,
+            coins,
+            routed.provider,
+            routed.model,
+            version.version,
+            self.clock(),
+            routed,
+        )
+
+    # ---- cost estimate ----
+
+    def estimate(self, coins: Sequence[str], minutes: float) -> List[CostEstimate]:
+        """What one refresh (an analysis and a signal for each coin) and a day of
+        refreshes every ``minutes`` would cost with each provider in the order that
+        is set up: 0 for Ollama, None while a paid model's price is not set."""
+        settings = self.router.settings()
+        out = []
+        for p in llm_settings.order(settings):
+            cfg = settings["providers"][p]
+            if not cfg["enabled"]:
+                continue
+            if p in llm_settings.KEYED and not self.router.api_key(p):
+                continue
+            model = cfg["model"] or self.router.recommended(p) or ""
+            price = llm_settings.price_of(settings, p, model) if model else None
+            if p not in llm_settings.PAID:
+                per = 0.0
+            elif price is None:
+                per = None
+            else:
+                per = 0.0
+                for kind in ("analysis", "signal"):
+                    tokens = self.store.average_tokens(p, model, kind) or {
+                        "input": (len(self.prompt(kind).template) + MARKET_DATA_CHARS)
+                        / CHARS_PER_TOKEN,
+                        "output": MAX_TOKENS[kind],
                     }
-                )
-
-            return historical_data
-
-        except Exception as e:
-            print(f"Error getting historical data: {e}")
-            return []
-
-    def _calculate_overall_sentiment(self, news_data: List[NewsArticle]) -> float:
-        """Calculate overall market sentiment from news."""
-        try:
-            if not news_data:
-                return 0.0
-
-            sentiments = [
-                news.sentiment_score
-                for news in news_data
-                if news.sentiment_score is not None
-            ]
-
-            if not sentiments:
-                return 0.0
-
-            # Weighted average based on relevance
-            total_weight = 0
-            weighted_sentiment = 0
-
-            for news in news_data:
-                if (
-                    news.sentiment_score is not None
-                    and news.relevance_score is not None
-                ):
-                    weight = news.relevance_score
-                    weighted_sentiment += news.sentiment_score * weight
-                    total_weight += weight
-
-            return weighted_sentiment / total_weight if total_weight > 0 else 0.0
-
-        except Exception as e:
-            print(f"Error calculating sentiment: {e}")
-            return 0.0
-
-    def _summarize_signals(self, signals: List[TradeSignal]) -> Dict:
-        """Summarize trade signals."""
-        try:
-            if not signals:
-                return {"total": 0, "buy": 0, "sell": 0, "hold": 0}
-
-            summary = {"total": len(signals), "buy": 0, "sell": 0, "hold": 0}
-
-            for signal in signals:
-                signal_type = signal.signal_type.lower()
-                if signal_type == "buy":
-                    summary["buy"] += 1
-                elif signal_type == "sell":
-                    summary["sell"] += 1
-                else:
-                    summary["hold"] += 1
-
-            # Add average confidence
-            confidences = [signal.confidence for signal in signals]
-            summary["avg_confidence"] = (
-                sum(confidences) / len(confidences) if confidences else 0
-            )
-
-            return summary
-
-        except Exception as e:
-            print(f"Error summarizing signals: {e}")
-            return {"total": 0, "buy": 0, "sell": 0, "hold": 0}
-
-    def _is_cache_valid(self, cache_key: str, max_age_minutes: int = 10) -> bool:
-        """Check if cache is still valid."""
-        try:
-            if cache_key not in self.last_analysis_time:
-                return False
-
-            age = datetime.now() - self.last_analysis_time[cache_key]
-            return age.total_seconds() < (max_age_minutes * 60)
-
-        except Exception as e:
-            return False
-
-    def start_background_analysis(self, symbols: List[str]):
-        """Start background analysis for specified symbols."""
-        try:
-            if self.running:
-                print("Background analysis already running")
-                return
-
-            self.running = True
-            self.background_thread = threading.Thread(
-                target=self._background_analysis_loop, args=(symbols,), daemon=True
-            )
-            self.background_thread.start()
-            print(f"Started background analysis for {len(symbols)} symbols")
-
-        except Exception as e:
-            print(f"Error starting background analysis: {e}")
-
-    def stop_background_analysis(self):
-        """Stop background analysis."""
-        self.running = False
-        if self.background_thread:
-            print("Stopping background analysis...")
-
-    def _background_analysis_loop(self, symbols: List[str]):
-        """Background analysis loop."""
-        try:
-            while self.running:
-                print("Running background market analysis...")
-                self.analyze_market(symbols, include_news=True)
-
-                # Sleep for specified interval
-                time.sleep(self.auto_analysis_interval)
-
-        except Exception as e:
-            print(f"Error in background analysis loop: {e}")
-        finally:
-            self.running = False
-
-    def get_analysis_summary(self) -> Dict[str, Any]:
-        """Get summary of current analysis status."""
-        try:
-            return {
-                "cache_entries": len(self.analysis_cache),
-                "signal_cache_entries": len(self.signal_cache),
-                "background_analysis_running": self.running,
-                "last_analyses": {
-                    key: time_val.isoformat()
-                    for key, time_val in self.last_analysis_time.items()
-                },
-                "llm_provider_available": self.llm_provider.client is not None,
-            }
-
-        except Exception as e:
-            return {"error": str(e)}
-
-
-# Global research engine instance
-_research_engine = None
-
-
-def get_research_engine(
-    config: Dict = None, db_path: Optional[str] = None
-) -> LLMResearchEngine:
-    """Get the global research engine instance."""
-    global _research_engine
-    if _research_engine is None:
-        # Ensure proper SQLAlchemy URL format
-        if db_path and not db_path.startswith("sqlite://"):
-            db_path = f"sqlite:///{db_path}"
-        _research_engine = LLMResearchEngine(config, db_path)
-    return _research_engine
-
-
-if __name__ == "__main__":
-    # Test the LLM research engine
-    config = {
-        "llm": {
-            "api_key": "your_openai_api_key_here",  # Replace with actual key
-            "model": "gpt-4",
-        },
-        "news": {"sources": ["alpaca_news", "polygon_news"], "update_interval": 300},
-        "auto_analysis_interval": 600,
-    }
-
-    engine = get_research_engine(config)
-
-    print("LLM Research Engine Test")
-    print("=" * 40)
-
-    # Test market analysis
-    test_symbols = ["BTCUSDT", "ETHUSDT", "ADAUSDT"]
-    analysis = engine.analyze_market(test_symbols)
-    print(
-        f"Market Analysis: {len(analysis.get('trade_signals', []))} signals generated"
-    )
-
-    # Test trade signals
-    signals = engine.get_trade_signals(test_symbols)
-    print(f"Trade Signals: {len(signals)} signals")
-
-    # Test research report
-    report = engine.generate_research_report("market_overview", test_symbols)
-    print(f"Research Report: {len(report)} characters")
-
-    # Get summary
-    summary = engine.get_analysis_summary()
-    print(f"Engine Summary: {summary}")
+                    per += (
+                        tokens["input"] * price["input"]
+                        + tokens["output"] * price["output"]
+                    ) / 1e6
+                per *= len(coins)
+            per_day = None if per is None else per * (1440.0 / max(1.0, float(minutes)))
+            out.append(CostEstimate(p, model, per, per_day))
+        return out

@@ -6,7 +6,7 @@ For each exchange and coin it reads the market status and the best bid and ask
 day of hourly BTC candles and the minimum BTC order. Nothing here places, previews
 or cancels an order.
 
-The window is ``exchange_check_gui``; ``test_exchanges.py`` runs the same checks
+The window is ``exchange_check_gui``; ``tests/test_exchanges.py`` runs the same checks
 from a terminal and, opted in, under pytest.
 """
 

@@ -17,8 +17,9 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, Mock, patch
 
 # Add current directory to path for imports
-sys.path.append(".")
-sys.path.append("..")
+APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
 
 
 # Color codes for test output

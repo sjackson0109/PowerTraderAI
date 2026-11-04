@@ -15,7 +15,9 @@ from unittest.mock import Mock, patch, MagicMock
 import numpy as np
 
 # Add the app directory to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
 
 try:
     from pt_neural_processor import (

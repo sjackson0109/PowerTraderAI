@@ -99,7 +99,26 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        pytest app/test_*.py -v --cov=app --cov-report=xml --cov-report=html
+        pytest \
+          app/test_advanced_features.py \
+          app/tests/test_backup_validation.py \
+          app/tests/test_binance_exchange.py \
+          app/tests/test_circuit_breaker.py \
+          app/tests/test_credential_audit.py \
+          app/tests/test_credentials_rotation.py \
+          app/tests/test_database_manager.py \
+          app/tests/test_error_handler.py \
+          app/tests/test_exchanges.py \
+          app/tests/test_integration.py \
+          app/tests/test_paper_mode.py \
+          app/tests/test_paper_trading_integration.py \
+          app/tests/test_phase3_integration.py \
+          app/tests/test_security_logger.py \
+          app/tests/test_suite.py \
+          app/tests/test_trade_proposal_approval.py \
+          app/tests/test_trading_config_fallback.py \
+          app/tests/test_trading_mode.py \
+          -v --cov=app --cov-report=xml --cov-report=html
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -129,8 +148,7 @@ jobs:
     - name: Run integration tests
       run: |
         cd app
-        python test_integration.py
-        python test_comprehensive.py
+        python tests/test_integration.py
 
   deployment-check:
     runs-on: ubuntu-latest

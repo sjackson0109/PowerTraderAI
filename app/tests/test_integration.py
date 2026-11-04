@@ -15,8 +15,9 @@ from tkinter import ttk
 from unittest.mock import MagicMock, Mock, patch
 
 # Add current directory to path (we're already in app directory)
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
 
 
 def _new_hub(test, hub_class):

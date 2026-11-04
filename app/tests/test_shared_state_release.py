@@ -1,4 +1,4 @@
-"""Two pieces of process-wide state that made app/test_suite.py fail when run on its
+"""Two pieces of process-wide state that made app/tests/test_suite.py fail when run on its
 own (it passed in the full suite only because earlier tests had set them up):
 
 * ExchangeFactory knew no exchange until something imported pt_exchanges, whose

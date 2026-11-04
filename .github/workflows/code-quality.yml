@@ -152,9 +152,9 @@ jobs:
           cd app && python test_advanced_features.py || echo "Advanced tests completed with warnings/errors"
         fi
 
-        if [ -f "app/test_integration.py" ]; then
+        if [ -f "app/tests/test_integration.py" ]; then
           echo "Running integration tests..."
-          cd app && python test_integration.py || echo "Integration tests completed with warnings/errors"
+          cd app && python tests/test_integration.py || echo "Integration tests completed with warnings/errors"
         fi
       continue-on-error: true
 

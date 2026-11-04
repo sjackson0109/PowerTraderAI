@@ -25,6 +25,7 @@ if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 import helpers_candles as hc  # noqa: E402
+from helpers_sleep import own_thread_sleep  # noqa: E402
 import pt_data_provider  # noqa: E402
 import pt_pattern_trainer as ppt  # noqa: E402
 import trading_mode as tm  # noqa: E402
@@ -553,7 +554,7 @@ def test_a_verdict_write_the_trader_blocked_is_written_on_the_next_call(
             raise PermissionError("in use")
         return real_replace(src, dst)
 
-    monkeypatch.setattr(listing.time, "sleep", lambda s: None)
+    monkeypatch.setattr(listing.time, "sleep", own_thread_sleep(lambda s: None))
     monkeypatch.setattr(listing.os, "replace", busy)
     runner._mark_unavailable("HYPE", "Binance spot HYPEUSDT is BREAK, not trading")
     folder = runner.coin_folder("HYPE")

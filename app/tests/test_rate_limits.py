@@ -16,6 +16,7 @@ APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
+from helpers_sleep import own_thread_sleep  # noqa: E402
 import pt_exchanges  # noqa: E402
 import rate_limits  # noqa: E402
 from pt_exchange_abstraction import AbstractExchange  # noqa: E402
@@ -207,7 +208,7 @@ def test_public_get_waits_before_every_attempt(monkeypatch):
 
     answers = iter([Response(429), Response(429), Response(200)])
     monkeypatch.setattr(pt_exchanges.requests, "get", lambda *a, **k: next(answers))
-    monkeypatch.setattr(pt_exchanges.time, "sleep", lambda s: None)
+    monkeypatch.setattr(pt_exchanges.time, "sleep", own_thread_sleep(lambda s: None))
     assert (
         pt_exchanges._public_get(
             "https://example.invalid", exchange=Exchange()

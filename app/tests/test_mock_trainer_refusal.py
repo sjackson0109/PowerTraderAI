@@ -21,14 +21,11 @@ import pt_settings_manager  # noqa: E402
 import trading_mode  # noqa: E402
 import trainer_guard  # noqa: E402
 
+# The per-coin copies (app/<COIN>/pt_trainer*.py) were removed from the repo
+# (2026-11-04 cleanup); these two remain.
 STUBS = [
-    os.path.join(APP_DIR, *parts)
-    for parts in [("pt_trainer.py",), ("pt_trainer_standalone.py",)]
-    + [
-        (coin, name)
-        for name in ("pt_trainer.py", "pt_trainer_standalone.py")
-        for coin in ("BNB", "BTC", "DOGE", "ETH", "XRP")
-    ]
+    os.path.join(APP_DIR, name)
+    for name in ("pt_trainer.py", "pt_trainer_standalone.py")
 ]
 MOCK = os.path.join(pt_paths.program_dir(), "pt_trainer.py")
 HEADER = (
@@ -41,7 +38,7 @@ HEADER = (
 
 
 def test_every_stub_trainer_carries_the_mock_header_on_line_2():
-    assert len(STUBS) == 12
+    assert len(STUBS) == 2
     for path in STUBS:
         with open(path, encoding="utf-8") as f:
             lines = f.read().splitlines()

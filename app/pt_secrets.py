@@ -34,6 +34,9 @@ robinhood        ``robinhood:private_key`` ``POWERTRADER_ROBINHOOD_PRIVATE_KEY``
 aave, yearn_finance, ``<x>:private_key``  ``POWERTRADER_<X>_PRIVATE_KEY``        ``private_key``
 lido_finance
 smtp (alerts)    ``smtp:password``        ``POWERTRADER_SMTP_PASSWORD``          ``password``
+openai, anthropic, ``<x>:api_key``        ``POWERTRADER_<X>_API_KEY``            ``api_key``
+nvidia (LLM
+providers)
 any other        ``<x>:api_key``          ``POWERTRADER_<X>_API_KEY``            ``api_key``
 any other        ``<x>:api_secret``       ``POWERTRADER_<X>_API_SECRET``         ``api_secret``
 any other        ``<x>:passphrase``       ``POWERTRADER_<X>_PASSPHRASE``         ``passphrase``
@@ -172,8 +175,14 @@ def _env(exchange: str, suffix: str) -> str:
     return f"POWERTRADER_{exchange.upper()}_{suffix}"
 
 
+# LLM providers with an API key (llm_providers.py). A local Ollama has none.
+LLM_KEY_PROVIDERS = ("openai", "anthropic", "nvidia")
+
+
 def _fields(exchange: str) -> Tuple[SecretField, ...]:
     x = exchange
+    if x in LLM_KEY_PROVIDERS:  # one key, no secret
+        return (SecretField("api_key", "api_key", (_env(x, "API_KEY"),)),)
     if x == "coinbase":
         return (
             SecretField("key_name", "api_key", (_env(x, "API_KEY"),)),

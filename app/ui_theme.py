@@ -16,6 +16,10 @@ Styles, beyond the plain ttk class names:
     ChartCog.TButton          the borderless Chart settings button
     Accent.TButton            the one main action in a panel (Run, Save)
     HiddenTabs.TNotebook      a notebook with no tab strip
+    Inner.TNotebook           a notebook inside a bottom-panel tab: no pane border
+    Flat.TLabelframe          a titled group with no box round it
+    Table.Treeview            a bottom-panel table (ui_table.DataTable): no border
+    TableEmpty.TLabel         a table's "No trades yet" message
     Title.TLabel              a panel title
     Header.TLabel             a field name or a column heading made of labels
     Muted.TLabel              secondary text: hints, units, "not available"
@@ -152,6 +156,15 @@ def themed_root() -> tk.Tk:
     root = tk.Tk()
     apply_theme(root, ttk.Style(root), ui_tokens.DARK)
     return root
+
+
+def table_row_height(root: tk.Misc) -> int:
+    """A table row: the table text's line height and 3 pixels above and below."""
+    try:
+        line = tkfont.nametofont("TkDefaultFont", root=root).metrics("linespace")
+    except tk.TclError:
+        line = 15
+    return int(line) + 6
 
 
 def apply_theme(root: tk.Misc, style: ttk.Style, p: Dict[str, str]) -> None:
@@ -357,6 +370,13 @@ def apply_theme(root: tk.Misc, style: ttk.Style, p: Dict[str, str]) -> None:
         ],
     )
 
+    # Inside a bottom-panel tab (the module windows), one border only, the panel's
+    # (owner, 2026-11-04): a notebook whose pane draws none, and a titled group
+    # with no box round it
+    no_edge = {edge: p["BG"] for edge in ("bordercolor", "lightcolor", "darkcolor")}
+    style.configure("Inner.TNotebook", **no_edge)
+    style.configure("Flat.TLabelframe", **no_edge)
+
     # Chart tab buttons, sized to their text: 10 px from the text to each edge
     # (owner, 2026-10-14) is 7 px of padding plus the theme's 3 px of border and
     # focus ring. Width 0 drops the theme's 11-character minimum.
@@ -430,6 +450,11 @@ def apply_theme(root: tk.Misc, style: ttk.Style, p: Dict[str, str]) -> None:
         background=[("active", p["PANEL2"])],
         foreground=[("active", p["ACCENT2"])],
     )
+    # The bottom panel's tables (ui_table.DataTable): no border of their own, the
+    # panel's is the only one; the same row height in every tab, from the text size
+    style.layout("Table.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
+    style.configure("Table.Treeview", rowheight=table_row_height(root))
+    style.configure("TableEmpty.TLabel", background=p["PANEL"], foreground=p["MUTED"])
 
     # Progress bars: an accent bar (it took the frame colour, unseen on its trough)
     style.configure(

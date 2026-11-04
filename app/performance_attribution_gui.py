@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+import ui_table
 import ui_theme
 import ui_tokens
 
@@ -77,7 +78,7 @@ class PerformanceAttributionGUI:
 
         # Create main notebook for tabs
         self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
         # Create tabs
         self.setup_data_input_tab()
@@ -181,23 +182,22 @@ class PerformanceAttributionGUI:
         holdings_frame = ttk.LabelFrame(portfolio_section, text="Current Holdings")
         holdings_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Create treeview for portfolio holdings
-        columns = ("Security", "Weight", "Return", "Sector")
-        self.portfolio_tree = ttk.Treeview(
-            holdings_frame, columns=columns, show="headings", height=12
+        # Portfolio holdings table
+        self.portfolio_table = ui_table.DataTable(
+            holdings_frame,
+            ("Security", "Weight", "Return", "Sector"),
+            {
+                "Security": "Security",
+                "Weight": "Weight",
+                "Return": "Return",
+                "Sector": "Sector",
+            },
+            key="performance_attribution.portfolio_holdings",
+            numeric=("Weight", "Return"),
+            empty_text="No holdings yet",
         )
-
-        for col in columns:
-            self.portfolio_tree.heading(col, text=col)
-            self.portfolio_tree.column(col, width=100)
-
-        portfolio_scrollbar = ttk.Scrollbar(
-            holdings_frame, orient=tk.VERTICAL, command=self.portfolio_tree.yview
-        )
-        self.portfolio_tree.configure(yscrollcommand=portfolio_scrollbar.set)
-
-        self.portfolio_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        portfolio_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.portfolio_table.pack(fill=tk.BOTH, expand=True)
+        self.portfolio_tree = self.portfolio_table.tree
 
         # Add/Edit controls
         portfolio_controls = tk.Frame(portfolio_section)
@@ -242,23 +242,22 @@ class PerformanceAttributionGUI:
         holdings_frame = ttk.LabelFrame(benchmark_section, text="Current Holdings")
         holdings_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Create treeview for benchmark holdings
-        columns = ("Security", "Weight", "Return", "Sector")
-        self.benchmark_tree = ttk.Treeview(
-            holdings_frame, columns=columns, show="headings", height=12
+        # Benchmark holdings table
+        self.benchmark_table = ui_table.DataTable(
+            holdings_frame,
+            ("Security", "Weight", "Return", "Sector"),
+            {
+                "Security": "Security",
+                "Weight": "Weight",
+                "Return": "Return",
+                "Sector": "Sector",
+            },
+            key="performance_attribution.benchmark_holdings",
+            numeric=("Weight", "Return"),
+            empty_text="No holdings yet",
         )
-
-        for col in columns:
-            self.benchmark_tree.heading(col, text=col)
-            self.benchmark_tree.column(col, width=100)
-
-        benchmark_scrollbar = ttk.Scrollbar(
-            holdings_frame, orient=tk.VERTICAL, command=self.benchmark_tree.yview
-        )
-        self.benchmark_tree.configure(yscrollcommand=benchmark_scrollbar.set)
-
-        self.benchmark_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        benchmark_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.benchmark_table.pack(fill=tk.BOTH, expand=True)
+        self.benchmark_tree = self.benchmark_table.tree
 
         # Add/Edit controls
         benchmark_controls = tk.Frame(benchmark_section)
@@ -350,37 +349,42 @@ class PerformanceAttributionGUI:
         summary_frame = ttk.LabelFrame(results_left, text="Summary")
         summary_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        self.sector_summary_tree = ttk.Treeview(
-            summary_frame, columns=("Value",), show="tree headings", height=6
+        self.sector_summary_table = ui_table.DataTable(
+            summary_frame,
+            ("Value",),
+            {"Value": "Value"},
+            key="performance_attribution.sector_summary",
+            numeric=("Value",),
+            empty_text="No metrics yet",
+            show="tree headings",
+            sortable=False,  # a list of metrics, not rows to sort
+            height=6,
         )
-        self.sector_summary_tree.heading("#0", text="Metric")
-        self.sector_summary_tree.heading("Value", text="Value")
-        self.sector_summary_tree.pack(fill=tk.X, padx=5, pady=5)
+        self.sector_summary_table.pack(fill=tk.BOTH, expand=True)
+        self.sector_summary_tree = self.sector_summary_table.tree
+        self.sector_summary_tree.heading("#0", text="Metric")  # each row's own text
 
         # Detailed breakdown
         breakdown_frame = ttk.LabelFrame(results_left, text="Sector Breakdown")
         breakdown_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        self.sector_breakdown_tree = ttk.Treeview(
+        self.sector_breakdown_table = ui_table.DataTable(
             breakdown_frame,
-            columns=("Allocation", "Selection", "Interaction", "Total"),
-            show="headings",
-            height=8,
+            ("Allocation", "Selection", "Interaction", "Total"),
+            {
+                "Allocation": "Allocation",
+                "Selection": "Selection",
+                "Interaction": "Interaction",
+                "Total": "Total",
+            },
+            key="performance_attribution.sector_breakdown",
+            numeric=("Allocation", "Selection", "Interaction", "Total"),
+            empty_text="No sectors yet",
+            show="tree headings",  # each row's sector, inserted as its text
         )
-
-        for col in ["Allocation", "Selection", "Interaction", "Total"]:
-            self.sector_breakdown_tree.heading(col, text=col)
-            self.sector_breakdown_tree.column(col, width=80)
-
-        sector_scrollbar = ttk.Scrollbar(
-            breakdown_frame,
-            orient=tk.VERTICAL,
-            command=self.sector_breakdown_tree.yview,
-        )
-        self.sector_breakdown_tree.configure(yscrollcommand=sector_scrollbar.set)
-
-        self.sector_breakdown_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sector_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.sector_breakdown_table.pack(fill=tk.BOTH, expand=True)
+        self.sector_breakdown_tree = self.sector_breakdown_table.tree
+        self.sector_breakdown_tree.heading("#0", text="Sector")
 
         # Chart area
         chart_frame = ttk.LabelFrame(results_right, text="Sector Attribution Chart")
@@ -454,23 +458,22 @@ class PerformanceAttributionGUI:
         )
         factor_breakdown_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        self.factor_tree = ttk.Treeview(
+        self.factor_table = ui_table.DataTable(
             factor_breakdown_frame,
-            columns=("Exposure", "Return", "Contribution"),
-            show="headings",
+            ("Exposure", "Return", "Contribution"),
+            {
+                "Exposure": "Exposure",
+                "Return": "Return",
+                "Contribution": "Contribution",
+            },
+            key="performance_attribution.factor_contributions",
+            numeric=("Exposure", "Return", "Contribution"),
+            empty_text="No factors yet",
+            show="tree headings",  # each row's factor, inserted as its text
         )
-
-        for col in ["Exposure", "Return", "Contribution"]:
-            self.factor_tree.heading(col, text=col)
-            self.factor_tree.column(col, width=100)
-
-        factor_scrollbar = ttk.Scrollbar(
-            factor_breakdown_frame, orient=tk.VERTICAL, command=self.factor_tree.yview
-        )
-        self.factor_tree.configure(yscrollcommand=factor_scrollbar.set)
-
-        self.factor_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        factor_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.factor_table.pack(fill=tk.BOTH, expand=True)
+        self.factor_tree = self.factor_table.tree
+        self.factor_tree.heading("#0", text="Factor")
 
         # Factor chart area
         factor_chart_frame = ttk.LabelFrame(
@@ -524,12 +527,20 @@ class PerformanceAttributionGUI:
         risk_metrics_frame = ttk.LabelFrame(results_left, text="Portfolio Risk Metrics")
         risk_metrics_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        self.risk_metrics_tree = ttk.Treeview(
-            risk_metrics_frame, columns=("Value",), show="tree headings", height=6
+        self.risk_metrics_table = ui_table.DataTable(
+            risk_metrics_frame,
+            ("Value",),
+            {"Value": "Value"},
+            key="performance_attribution.risk_metrics",
+            numeric=("Value",),
+            empty_text="No metrics yet",
+            show="tree headings",
+            sortable=False,  # a list of metrics, not rows to sort
+            height=6,
         )
-        self.risk_metrics_tree.heading("#0", text="Metric")
-        self.risk_metrics_tree.heading("Value", text="Value")
-        self.risk_metrics_tree.pack(fill=tk.X, padx=5, pady=5)
+        self.risk_metrics_table.pack(fill=tk.BOTH, expand=True)
+        self.risk_metrics_tree = self.risk_metrics_table.tree
+        self.risk_metrics_tree.heading("#0", text="Metric")  # each row's own text
 
         # Component risk contributions
         risk_breakdown_frame = ttk.LabelFrame(
@@ -537,25 +548,23 @@ class PerformanceAttributionGUI:
         )
         risk_breakdown_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        self.risk_breakdown_tree = ttk.Treeview(
+        self.risk_breakdown_table = ui_table.DataTable(
             risk_breakdown_frame,
-            columns=("Weight", "Marginal", "Component", "Percentage"),
-            show="headings",
+            ("Weight", "Marginal", "Component", "Percentage"),
+            {
+                "Weight": "Weight",
+                "Marginal": "Marginal",
+                "Component": "Component",
+                "Percentage": "Percentage",
+            },
+            key="performance_attribution.risk_contributions",
+            numeric=("Weight", "Marginal", "Component", "Percentage"),
+            empty_text="No contributions yet",
+            show="tree headings",  # each row's security, inserted as its text
         )
-
-        for col in ["Weight", "Marginal", "Component", "Percentage"]:
-            self.risk_breakdown_tree.heading(col, text=col)
-            self.risk_breakdown_tree.column(col, width=80)
-
-        risk_scrollbar = ttk.Scrollbar(
-            risk_breakdown_frame,
-            orient=tk.VERTICAL,
-            command=self.risk_breakdown_tree.yview,
-        )
-        self.risk_breakdown_tree.configure(yscrollcommand=risk_scrollbar.set)
-
-        self.risk_breakdown_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        risk_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.risk_breakdown_table.pack(fill=tk.BOTH, expand=True)
+        self.risk_breakdown_tree = self.risk_breakdown_table.tree
+        self.risk_breakdown_tree.heading("#0", text="Security")
 
         # Risk chart area
         risk_chart_frame = ttk.LabelFrame(results_right, text="Risk Attribution Charts")
@@ -610,13 +619,8 @@ class PerformanceAttributionGUI:
         self.report_text = tk.Text(
             report_display_frame, wrap=tk.WORD, font=ui_tokens.mono("small")
         )
-        report_scrollbar = ttk.Scrollbar(
-            report_display_frame, orient=tk.VERTICAL, command=self.report_text.yview
-        )
-        self.report_text.configure(yscrollcommand=report_scrollbar.set)
-
-        self.report_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        report_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        report_scrollbar = ttk.Scrollbar(report_display_frame, orient=tk.VERTICAL)
+        ui_table.scroll_when_needed(self.report_text, report_scrollbar)
 
     # Event handlers and data management
     def browse_portfolio_file(self):

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, List, Optional
 
+import ui_table
 import ui_theme
 import ui_tokens
 
@@ -60,7 +61,7 @@ class PortfolioAnalyticsGUI:
     def setup_ui(self):
         """Setup the user interface"""
         self.main_frame = ttk.Frame(self.parent)
-        self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.main_frame.pack(fill="both", expand=True)
 
         # Create notebook for analytics tabs
         self.notebook = ttk.Notebook(self.main_frame)
@@ -244,28 +245,21 @@ class PortfolioAnalyticsGUI:
         current_frame = ttk.LabelFrame(self.allocation_tab, text="Current Allocation")
         current_frame.pack(fill="x", padx=10, pady=5)
 
-        # Allocation tree
-        self.allocation_tree = ttk.Treeview(
+        # Allocation table: each row's text (the tree column) is its asset
+        self.allocation_table = ui_table.DataTable(
             current_frame,
-            columns=("percentage", "value"),
-            show="tree headings",
+            ("percentage", "value"),
+            {"percentage": "Percentage", "value": "Value"},
+            key="portfolio_analytics.allocation",
+            numeric=("percentage", "value"),
+            empty_text="No assets yet",
             height=6,
+            show="tree headings",
         )
-        self.allocation_tree.heading("#0", text="Asset")
-        self.allocation_tree.heading("percentage", text="Percentage")
-        self.allocation_tree.heading("value", text="Value")
-
-        self.allocation_tree.column("#0", width=100)
-        self.allocation_tree.column("percentage", width=100, anchor="center")
-        self.allocation_tree.column("value", width=150, anchor="e")
-
-        allocation_scrollbar = ttk.Scrollbar(
-            current_frame, orient="vertical", command=self.allocation_tree.yview
-        )
-        self.allocation_tree.configure(yscrollcommand=allocation_scrollbar.set)
-
-        self.allocation_tree.pack(side="left", fill="both", expand=True)
-        allocation_scrollbar.pack(side="right", fill="y")
+        self.allocation_table.pack(fill="both", expand=True)
+        self.allocation_tree = self.allocation_table.tree
+        # the table titles and sizes its own columns, not the tree column
+        self.allocation_tree.heading("#0", text="Asset")  # each row's own text
 
         # Allocation history charts
         if MATPLOTLIB_AVAILABLE:
@@ -387,13 +381,8 @@ class PortfolioAnalyticsGUI:
         preview_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         self.report_text = tk.Text(preview_frame, height=15, width=80)
-        report_scrollbar = ttk.Scrollbar(
-            preview_frame, orient="vertical", command=self.report_text.yview
-        )
-        self.report_text.configure(yscrollcommand=report_scrollbar.set)
-
-        self.report_text.pack(side="left", fill="both", expand=True)
-        report_scrollbar.pack(side="right", fill="y")
+        report_scrollbar = ttk.Scrollbar(preview_frame, orient="vertical")
+        ui_table.scroll_when_needed(self.report_text, report_scrollbar)
 
     def refresh_analytics(self):
         """Refresh all analytics displays"""

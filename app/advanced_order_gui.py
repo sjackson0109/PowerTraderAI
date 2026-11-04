@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from tkinter import messagebox, simpledialog, ttk
 from typing import Any, Dict, List, Optional
 
+import ui_table
 import ui_theme
 import ui_tokens
 
@@ -54,7 +55,7 @@ class AdvancedOrderGUI:
     def setup_ui(self):
         """Setup the user interface"""
         self.main_frame = ttk.Frame(self.parent)
-        self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.main_frame.pack(fill="both", expand=True)
 
         if not AUTOMATION_AVAILABLE:
             self.setup_fallback_ui()
@@ -138,7 +139,6 @@ class AdvancedOrderGUI:
         )
 
         canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
 
         # Order type selection
         type_frame = ttk.LabelFrame(scrollable_frame, text="Order Type")
@@ -188,8 +188,7 @@ class AdvancedOrderGUI:
             side="left", padx=5
         )
 
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
+        ui_table.scroll_when_needed(canvas, scrollbar)
 
         # Initialize with OCO configuration
         self.on_order_type_changed()
@@ -213,44 +212,35 @@ class AdvancedOrderGUI:
             control_frame, text="Force Execute", command=self.force_execute_order
         ).pack(side="left", padx=5)
 
-        # Orders treeview
-        tree_frame = ttk.Frame(self.orders_tab)
-        tree_frame.pack(fill="both", expand=True, padx=5, pady=5)
-
-        columns = (
-            "id",
-            "type",
-            "symbol",
-            "side",
-            "quantity",
-            "price",
-            "status",
-            "created",
+        # Orders table (ui_table: fitted columns, its own scrollbars, sortable)
+        self.orders_table = ui_table.DataTable(
+            self.orders_tab,
+            (
+                "id",
+                "type",
+                "symbol",
+                "side",
+                "quantity",
+                "price",
+                "status",
+                "created",
+            ),
+            {
+                "id": "Id",
+                "type": "Type",
+                "symbol": "Symbol",
+                "side": "Side",
+                "quantity": "Quantity",
+                "price": "Price",
+                "status": "Status",
+                "created": "Created",
+            },
+            key="advanced_orders.active_orders",
+            numeric=("quantity", "price"),
+            empty_text="No orders yet",
         )
-        self.orders_tree = ttk.Treeview(
-            tree_frame, columns=columns, show="tree headings"
-        )
-
-        # Configure columns
-        self.orders_tree.column("#0", width=0, stretch=False)
-        for col in columns:
-            self.orders_tree.column(col, width=100, anchor="center")
-            self.orders_tree.heading(col, text=col.replace("_", " ").title())
-
-        # Scrollbars
-        v_scrollbar = ttk.Scrollbar(
-            tree_frame, orient="vertical", command=self.orders_tree.yview
-        )
-        h_scrollbar = ttk.Scrollbar(
-            tree_frame, orient="horizontal", command=self.orders_tree.xview
-        )
-        self.orders_tree.configure(
-            yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set
-        )
-
-        self.orders_tree.pack(side="left", fill="both", expand=True)
-        v_scrollbar.pack(side="right", fill="y")
-        h_scrollbar.pack(side="bottom", fill="x")
+        self.orders_table.pack(fill="both", expand=True)
+        self.orders_tree = self.orders_table.tree
 
         # Bind selection
         self.orders_tree.bind("<<TreeviewSelect>>", self.on_order_select)
@@ -260,13 +250,8 @@ class AdvancedOrderGUI:
         details_frame.pack(fill="x", padx=5, pady=5)
 
         self.details_text = tk.Text(details_frame, height=8, width=80)
-        details_scrollbar = ttk.Scrollbar(
-            details_frame, orient="vertical", command=self.details_text.yview
-        )
-        self.details_text.configure(yscrollcommand=details_scrollbar.set)
-
-        self.details_text.pack(side="left", fill="both", expand=True)
-        details_scrollbar.pack(side="right", fill="y")
+        details_scrollbar = ttk.Scrollbar(details_frame, orient="vertical")
+        ui_table.scroll_when_needed(self.details_text, details_scrollbar)
 
     def setup_automation_tab(self):
         """Setup automation rules tab"""
@@ -287,41 +272,29 @@ class AdvancedOrderGUI:
             rules_frame, text="Test Rule", command=self.test_automation_rule
         ).pack(side="left", padx=5)
 
-        # Rules list
-        rules_list_frame = ttk.Frame(self.automation_tab)
-        rules_list_frame.pack(fill="both", expand=True, padx=10, pady=5)
-
-        self.rules_tree = ttk.Treeview(
-            rules_list_frame,
-            columns=("name", "trigger", "conditions", "status"),
-            show="tree headings",
+        # Rules table
+        self.rules_table = ui_table.DataTable(
+            self.automation_tab,
+            ("name", "trigger", "conditions", "status"),
+            {
+                "name": "Rule Name",
+                "trigger": "Trigger Type",
+                "conditions": "Conditions",
+                "status": "Status",
+            },
+            key="advanced_orders.automation_rules",
+            empty_text="No rules yet",
         )
-
-        self.rules_tree.heading("name", text="Rule Name")
-        self.rules_tree.heading("trigger", text="Trigger Type")
-        self.rules_tree.heading("conditions", text="Conditions")
-        self.rules_tree.heading("status", text="Status")
-
-        rules_scrollbar = ttk.Scrollbar(
-            rules_list_frame, orient="vertical", command=self.rules_tree.yview
-        )
-        self.rules_tree.configure(yscrollcommand=rules_scrollbar.set)
-
-        self.rules_tree.pack(side="left", fill="both", expand=True)
-        rules_scrollbar.pack(side="right", fill="y")
+        self.rules_table.pack(fill="both", expand=True)
+        self.rules_tree = self.rules_table.tree
 
         # Rule details
         rule_details_frame = ttk.LabelFrame(self.automation_tab, text="Rule Details")
         rule_details_frame.pack(fill="x", padx=10, pady=5)
 
         self.rule_details_text = tk.Text(rule_details_frame, height=6, width=80)
-        rule_details_scrollbar = ttk.Scrollbar(
-            rule_details_frame, orient="vertical", command=self.rule_details_text.yview
-        )
-        self.rule_details_text.configure(yscrollcommand=rule_details_scrollbar.set)
-
-        self.rule_details_text.pack(side="left", fill="both", expand=True)
-        rule_details_scrollbar.pack(side="right", fill="y")
+        rule_details_scrollbar = ttk.Scrollbar(rule_details_frame, orient="vertical")
+        ui_table.scroll_when_needed(self.rule_details_text, rule_details_scrollbar)
 
     def setup_history_tab(self):
         """Setup order history tab"""
@@ -353,44 +326,39 @@ class AdvancedOrderGUI:
             filter_frame, text="Apply Filter", command=self.apply_history_filter
         ).grid(row=0, column=6, padx=10, pady=2)
 
-        # History tree
-        history_frame = ttk.Frame(self.history_tab)
-        history_frame.pack(fill="both", expand=True, padx=10, pady=5)
-
-        history_columns = (
-            "id",
-            "type",
-            "symbol",
-            "side",
-            "quantity",
-            "price",
-            "status",
-            "created",
-            "executed",
-            "pnl",
+        # History table
+        self.history_table = ui_table.DataTable(
+            self.history_tab,
+            (
+                "id",
+                "type",
+                "symbol",
+                "side",
+                "quantity",
+                "price",
+                "status",
+                "created",
+                "executed",
+                "pnl",
+            ),
+            {
+                "id": "Id",
+                "type": "Type",
+                "symbol": "Symbol",
+                "side": "Side",
+                "quantity": "Quantity",
+                "price": "Price",
+                "status": "Status",
+                "created": "Created",
+                "executed": "Executed",
+                "pnl": "Pnl",
+            },
+            key="advanced_orders.order_history",
+            numeric=("quantity", "price", "pnl"),
+            empty_text="No order history yet",
         )
-        self.history_tree = ttk.Treeview(
-            history_frame, columns=history_columns, show="tree headings"
-        )
-
-        for col in history_columns:
-            self.history_tree.column(col, width=80, anchor="center")
-            self.history_tree.heading(col, text=col.replace("_", " ").title())
-
-        history_v_scrollbar = ttk.Scrollbar(
-            history_frame, orient="vertical", command=self.history_tree.yview
-        )
-        history_h_scrollbar = ttk.Scrollbar(
-            history_frame, orient="horizontal", command=self.history_tree.xview
-        )
-        self.history_tree.configure(
-            yscrollcommand=history_v_scrollbar.set,
-            xscrollcommand=history_h_scrollbar.set,
-        )
-
-        self.history_tree.pack(side="left", fill="both", expand=True)
-        history_v_scrollbar.pack(side="right", fill="y")
-        history_h_scrollbar.pack(side="bottom", fill="x")
+        self.history_table.pack(fill="both", expand=True)
+        self.history_tree = self.history_table.tree
 
     def on_order_type_changed(self):
         """Handle order type selection change"""
@@ -719,8 +687,16 @@ class AdvancedOrderGUI:
         conditions_frame.pack(fill="x", padx=5, pady=5)
 
         # Condition list
-        self.conditions_listbox = tk.Listbox(conditions_frame, height=4)
-        self.conditions_listbox.pack(fill="x", padx=5, pady=5)
+        self.conditions_table = ui_table.DataTable(
+            conditions_frame,
+            ("condition",),
+            {"condition": "Condition"},
+            key="advanced_orders.conditions",
+            empty_text="No conditions yet",
+            height=4,
+        )
+        self.conditions_table.pack(fill="both", expand=True)
+        self.conditions_tree = self.conditions_table.tree
 
         # Condition controls
         condition_controls = ttk.Frame(conditions_frame)

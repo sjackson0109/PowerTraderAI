@@ -12,6 +12,7 @@ from decimal import Decimal
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List
 
+import ui_table
 import ui_theme
 import ui_tokens
 from institutional_trading import (
@@ -31,7 +32,7 @@ class InstitutionalTradingGUI:
 
         # Create main frame
         self.frame = ttk.Frame(parent)
-        self.frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.frame.pack(fill=tk.BOTH, expand=True)
 
         self.setup_gui()
 
@@ -44,15 +45,10 @@ class InstitutionalTradingGUI:
 
     def setup_gui(self):
         """Setup the institutional trading interface"""
-        # Header
+        # Status indicator (no title: the hub's tab names this window)
         header_frame = ttk.Frame(self.frame)
-        header_frame.pack(fill=tk.X, pady=(0, 20))
+        header_frame.pack(fill=tk.X, padx=6, pady=(4, 4))
 
-        ttk.Label(
-            header_frame, text="🏦 Institutional Trading", style="Title.TLabel"
-        ).pack(side=tk.LEFT)
-
-        # Status indicator
         self.status_label = ttk.Label(
             header_frame, text="● Online", style="Good.TLabel"
         )
@@ -219,23 +215,17 @@ class InstitutionalTradingGUI:
         right_frame = ttk.LabelFrame(tab, text="Recent Orders", padding="10")
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
 
-        # Order history tree
+        # Order history table (ui_table: fitted columns, its own scrollbars, sortable)
         columns = ("Order ID", "Symbol", "Side", "Type", "Quantity", "Price", "Status")
-        self.order_tree = ttk.Treeview(
-            right_frame, columns=columns, show="headings", height=15
+        self.order_table = ui_table.DataTable(
+            right_frame,
+            columns,
+            key="institutional_trading.recent_orders",
+            numeric=("Quantity", "Price"),
+            empty_text="No orders yet",
         )
-
-        for col in columns:
-            self.order_tree.heading(col, text=col)
-            self.order_tree.column(col, width=80)
-
-        order_scroll = ttk.Scrollbar(
-            right_frame, orient=tk.VERTICAL, command=self.order_tree.yview
-        )
-        self.order_tree.configure(yscrollcommand=order_scroll.set)
-
-        self.order_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        order_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.order_table.pack(fill="both", expand=True)
+        self.order_tree = self.order_table.tree
 
     def setup_batch_processing_tab(self):
         """Setup batch processing interface"""
@@ -281,21 +271,15 @@ class InstitutionalTradingGUI:
             "Submitted",
             "Completed",
         )
-        self.batch_tree = ttk.Treeview(
-            status_frame, columns=batch_columns, show="headings", height=12
+        self.batch_table = ui_table.DataTable(
+            status_frame,
+            batch_columns,
+            key="institutional_trading.batches",
+            numeric=("Orders", "Success Rate"),
+            empty_text="No batches yet",
         )
-
-        for col in batch_columns:
-            self.batch_tree.heading(col, text=col)
-            self.batch_tree.column(col, width=120)
-
-        batch_scroll = ttk.Scrollbar(
-            status_frame, orient=tk.VERTICAL, command=self.batch_tree.yview
-        )
-        self.batch_tree.configure(yscrollcommand=batch_scroll.set)
-
-        self.batch_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        batch_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.batch_table.pack(fill="both", expand=True)
+        self.batch_tree = self.batch_table.tree
 
     def setup_algorithmic_trading_tab(self):
         """Setup algorithmic trading interface"""
@@ -368,25 +352,18 @@ class InstitutionalTradingGUI:
             "Status",
             "Start Time",
         )
-        self.algo_tree = ttk.Treeview(
-            active_frame, columns=algo_columns, show="headings", height=10
+        self.algo_table = ui_table.DataTable(
+            active_frame,
+            algo_columns,
+            key="institutional_trading.active_algorithms",
+            numeric=("Progress",),
+            empty_text="No algorithms yet",
         )
+        self.algo_tree = self.algo_table.tree
 
-        for col in algo_columns:
-            self.algo_tree.heading(col, text=col)
-            self.algo_tree.column(col, width=120)
-
-        algo_scroll = ttk.Scrollbar(
-            active_frame, orient=tk.VERTICAL, command=self.algo_tree.yview
-        )
-        self.algo_tree.configure(yscrollcommand=algo_scroll.set)
-
-        self.algo_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        algo_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-
-        # Control buttons
+        # Control buttons, under the table (packed first so a short panel keeps them)
         control_frame = ttk.Frame(active_frame)
-        control_frame.pack(fill=tk.X, pady=5)
+        control_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=5)
 
         ttk.Button(
             control_frame, text="Stop Selected", command=self.stop_algorithm
@@ -395,6 +372,8 @@ class InstitutionalTradingGUI:
         ttk.Button(control_frame, text="Refresh", command=self.refresh_algorithms).pack(
             side=tk.LEFT
         )
+
+        self.algo_table.pack(fill="both", expand=True)
 
     def setup_risk_management_tab(self):
         """Setup risk management interface"""
@@ -450,21 +429,15 @@ class InstitutionalTradingGUI:
             "Daily Volume",
             "Risk Level",
         )
-        self.exposure_tree = ttk.Treeview(
-            exposure_frame, columns=exposure_columns, show="headings", height=12
+        self.exposure_table = ui_table.DataTable(
+            exposure_frame,
+            exposure_columns,
+            key="institutional_trading.exposures",
+            numeric=("Position", "Value", "Daily Volume"),
+            empty_text="No exposures yet",
         )
-
-        for col in exposure_columns:
-            self.exposure_tree.heading(col, text=col)
-            self.exposure_tree.column(col, width=120)
-
-        exposure_scroll = ttk.Scrollbar(
-            exposure_frame, orient=tk.VERTICAL, command=self.exposure_tree.yview
-        )
-        self.exposure_tree.configure(yscrollcommand=exposure_scroll.set)
-
-        self.exposure_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        exposure_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.exposure_table.pack(fill="both", expand=True)
+        self.exposure_tree = self.exposure_table.tree
 
     def setup_performance_tab(self):
         """Setup performance monitoring interface"""
@@ -530,21 +503,17 @@ class InstitutionalTradingGUI:
             "Total Volume",
             "P&L",
         )
-        self.account_tree = ttk.Treeview(
-            account_frame, columns=account_columns, show="headings", height=6
+        # six rows high: this section keeps its height, the chart above takes the rest
+        self.account_table = ui_table.DataTable(
+            account_frame,
+            account_columns,
+            key="institutional_trading.account_performance",
+            numeric=("Total Orders", "Success Rate", "Total Volume", "P&L"),
+            empty_text="No accounts yet",
+            height=6,
         )
-
-        for col in account_columns:
-            self.account_tree.heading(col, text=col)
-            self.account_tree.column(col, width=120)
-
-        account_scroll = ttk.Scrollbar(
-            account_frame, orient=tk.VERTICAL, command=self.account_tree.yview
-        )
-        self.account_tree.configure(yscrollcommand=account_scroll.set)
-
-        self.account_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        account_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.account_table.pack(fill="both", expand=True)
+        self.account_tree = self.account_table.tree
 
     def setup_monitoring_tab(self):
         """Setup system monitoring interface"""
@@ -597,13 +566,8 @@ class InstitutionalTradingGUI:
             wrap=tk.WORD,
             font=ui_tokens.mono("small"),
         )
-        log_scroll = ttk.Scrollbar(
-            log_frame, orient=tk.VERTICAL, command=self.log_text.yview
-        )
-        self.log_text.configure(yscrollcommand=log_scroll.set)
-
-        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        log_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        log_scroll = ttk.Scrollbar(log_frame, orient=tk.VERTICAL)
+        ui_table.scroll_when_needed(self.log_text, log_scroll)
 
         # Add initial log entries
         self.add_log_entry("System started", "INFO")

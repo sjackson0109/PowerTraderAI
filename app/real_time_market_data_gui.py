@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Optional
 
+import ui_table
 import ui_tokens
 
 try:
@@ -78,7 +79,7 @@ class MarketDataGUI:
             return
 
         self.main_frame = ttk.Frame(self.parent)
-        self.main_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        self.main_frame.pack(fill="both", expand=True)
 
         # Create notebook for different views
         self.notebook = ttk.Notebook(self.main_frame)
@@ -200,59 +201,47 @@ class MarketDataGUI:
         self.subscriptions_count_label = ttk.Label(status_frame, text="0")
         self.subscriptions_count_label.pack(side="left", padx=5)
 
-        # Market data table
-        data_frame = ttk.LabelFrame(self.overview_tab, text="Market Data")
-        data_frame.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Treeview for market data
-        columns = (
-            "symbol",
-            "exchange",
-            "price",
-            "change",
-            "change_pct",
-            "volume",
-            "bid",
-            "ask",
-            "spread",
-            "updated",
+        # Market data table (ui_table: fitted columns, its own scrollbars, sortable)
+        self.data_table = ui_table.DataTable(
+            self.overview_tab,
+            (
+                "symbol",
+                "exchange",
+                "price",
+                "change",
+                "change_pct",
+                "volume",
+                "bid",
+                "ask",
+                "spread",
+                "updated",
+            ),
+            {
+                "symbol": "Symbol",
+                "exchange": "Exchange",
+                "price": "Price",
+                "change": "Change",
+                "change_pct": "Change Pct",
+                "volume": "Volume",
+                "bid": "Bid",
+                "ask": "Ask",
+                "spread": "Spread",
+                "updated": "Updated",
+            },
+            key="market_data.overview",
+            numeric=(
+                "price",
+                "change",
+                "change_pct",
+                "volume",
+                "bid",
+                "ask",
+                "spread",
+            ),
+            empty_text="No market data yet",
         )
-        self.data_tree = ttk.Treeview(data_frame, columns=columns, show="headings")
-
-        # Configure columns
-        column_widths = {
-            "symbol": 80,
-            "exchange": 90,
-            "price": 100,
-            "change": 80,
-            "change_pct": 70,
-            "volume": 120,
-            "bid": 90,
-            "ask": 90,
-            "spread": 70,
-            "updated": 120,
-        }
-
-        for col in columns:
-            self.data_tree.heading(col, text=col.replace("_", " ").title())
-            self.data_tree.column(
-                col, width=column_widths.get(col, 80), anchor="center"
-            )
-
-        # Scrollbars
-        data_v_scrollbar = ttk.Scrollbar(
-            data_frame, orient="vertical", command=self.data_tree.yview
-        )
-        data_h_scrollbar = ttk.Scrollbar(
-            data_frame, orient="horizontal", command=self.data_tree.xview
-        )
-        self.data_tree.configure(
-            yscrollcommand=data_v_scrollbar.set, xscrollcommand=data_h_scrollbar.set
-        )
-
-        self.data_tree.pack(side="left", fill="both", expand=True)
-        data_v_scrollbar.pack(side="right", fill="y")
-        data_h_scrollbar.pack(side="bottom", fill="x")
+        self.data_table.pack(fill="both", expand=True)
+        self.data_tree = self.data_table.tree
 
     def setup_charts_tab(self):
         """Setup price charts tab"""
@@ -337,53 +326,39 @@ class MarketDataGUI:
             ob_controls, text="Load Order Book", command=self.load_orderbook
         ).pack(side="left", padx=5)
 
-        # Order book display
-        ob_frame = ttk.LabelFrame(self.orderbook_tab, text="Order Book")
-        ob_frame.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Split into bids and asks
-        ob_paned = ttk.PanedWindow(ob_frame, orient="horizontal")
+        # Order book display, split into asks and bids
+        ob_paned = ttk.PanedWindow(self.orderbook_tab, orient="horizontal")
         ob_paned.pack(fill="both", expand=True)
 
         # Asks (sells)
         asks_frame = ttk.LabelFrame(ob_paned, text="Asks (Sellers)")
-        ob_paned.add(asks_frame)
+        ob_paned.add(asks_frame, weight=1)
 
-        asks_columns = ("price", "quantity", "total")
-        self.asks_tree = ttk.Treeview(
-            asks_frame, columns=asks_columns, show="headings", height=15
+        self.asks_table = ui_table.DataTable(
+            asks_frame,
+            ("price", "quantity", "total"),
+            {"price": "Price", "quantity": "Quantity", "total": "Total"},
+            key="market_data.asks",
+            numeric=("price", "quantity", "total"),
+            empty_text="No asks yet",
         )
-
-        for col in asks_columns:
-            self.asks_tree.heading(col, text=col.title())
-            self.asks_tree.column(col, width=120, anchor="center")
-
-        asks_scrollbar = ttk.Scrollbar(
-            asks_frame, orient="vertical", command=self.asks_tree.yview
-        )
-        self.asks_tree.configure(yscrollcommand=asks_scrollbar.set)
-        self.asks_tree.pack(side="left", fill="both", expand=True)
-        asks_scrollbar.pack(side="right", fill="y")
+        self.asks_table.pack(fill="both", expand=True)
+        self.asks_tree = self.asks_table.tree
 
         # Bids (buys)
         bids_frame = ttk.LabelFrame(ob_paned, text="Bids (Buyers)")
-        ob_paned.add(bids_frame)
+        ob_paned.add(bids_frame, weight=1)
 
-        bids_columns = ("price", "quantity", "total")
-        self.bids_tree = ttk.Treeview(
-            bids_frame, columns=bids_columns, show="headings", height=15
+        self.bids_table = ui_table.DataTable(
+            bids_frame,
+            ("price", "quantity", "total"),
+            {"price": "Price", "quantity": "Quantity", "total": "Total"},
+            key="market_data.bids",
+            numeric=("price", "quantity", "total"),
+            empty_text="No bids yet",
         )
-
-        for col in bids_columns:
-            self.bids_tree.heading(col, text=col.title())
-            self.bids_tree.column(col, width=120, anchor="center")
-
-        bids_scrollbar = ttk.Scrollbar(
-            bids_frame, orient="vertical", command=self.bids_tree.yview
-        )
-        self.bids_tree.configure(yscrollcommand=bids_scrollbar.set)
-        self.bids_tree.pack(side="left", fill="both", expand=True)
-        bids_scrollbar.pack(side="right", fill="y")
+        self.bids_table.pack(fill="both", expand=True)
+        self.bids_tree = self.bids_table.tree
 
     def setup_arbitrage_tab(self):
         """Setup arbitrage monitoring tab"""
@@ -410,48 +385,34 @@ class MarketDataGUI:
         arb_frame = ttk.LabelFrame(self.arbitrage_tab, text="Arbitrage Opportunities")
         arb_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        arb_columns = (
-            "symbol",
-            "buy_exchange",
-            "sell_exchange",
-            "buy_price",
-            "sell_price",
-            "profit",
-            "profit_pct",
-            "updated",
+        self.arb_table = ui_table.DataTable(
+            arb_frame,
+            (
+                "symbol",
+                "buy_exchange",
+                "sell_exchange",
+                "buy_price",
+                "sell_price",
+                "profit",
+                "profit_pct",
+                "updated",
+            ),
+            {
+                "symbol": "Symbol",
+                "buy_exchange": "Buy Exchange",
+                "sell_exchange": "Sell Exchange",
+                "buy_price": "Buy Price",
+                "sell_price": "Sell Price",
+                "profit": "Profit",
+                "profit_pct": "Profit Pct",
+                "updated": "Updated",
+            },
+            key="market_data.arbitrage",
+            numeric=("buy_price", "sell_price", "profit", "profit_pct"),
+            empty_text="No opportunities yet",
         )
-        self.arb_tree = ttk.Treeview(arb_frame, columns=arb_columns, show="headings")
-
-        arb_column_widths = {
-            "symbol": 80,
-            "buy_exchange": 100,
-            "sell_exchange": 100,
-            "buy_price": 100,
-            "sell_price": 100,
-            "profit": 90,
-            "profit_pct": 80,
-            "updated": 120,
-        }
-
-        for col in arb_columns:
-            self.arb_tree.heading(col, text=col.replace("_", " ").title())
-            self.arb_tree.column(
-                col, width=arb_column_widths.get(col, 80), anchor="center"
-            )
-
-        arb_v_scrollbar = ttk.Scrollbar(
-            arb_frame, orient="vertical", command=self.arb_tree.yview
-        )
-        arb_h_scrollbar = ttk.Scrollbar(
-            arb_frame, orient="horizontal", command=self.arb_tree.xview
-        )
-        self.arb_tree.configure(
-            yscrollcommand=arb_v_scrollbar.set, xscrollcommand=arb_h_scrollbar.set
-        )
-
-        self.arb_tree.pack(side="left", fill="both", expand=True)
-        arb_v_scrollbar.pack(side="right", fill="y")
-        arb_h_scrollbar.pack(side="bottom", fill="x")
+        self.arb_table.pack(fill="both", expand=True)
+        self.arb_tree = self.arb_table.tree
 
     def setup_feeds_tab(self):
         """Setup data feeds monitoring tab"""
@@ -483,28 +444,30 @@ class MarketDataGUI:
         stats_frame = ttk.LabelFrame(self.feeds_tab, text="Feed Statistics")
         stats_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        stats_columns = (
-            "exchange",
-            "status",
-            "messages_received",
-            "last_message",
-            "uptime",
-            "errors",
+        self.stats_table = ui_table.DataTable(
+            stats_frame,
+            (
+                "exchange",
+                "status",
+                "messages_received",
+                "last_message",
+                "uptime",
+                "errors",
+            ),
+            {
+                "exchange": "Exchange",
+                "status": "Status",
+                "messages_received": "Messages Received",
+                "last_message": "Last Message",
+                "uptime": "Uptime",
+                "errors": "Errors",
+            },
+            key="market_data.feed_statistics",
+            numeric=("messages_received", "errors"),
+            empty_text="No feed statistics yet",
         )
-        self.stats_tree = ttk.Treeview(
-            stats_frame, columns=stats_columns, show="headings"
-        )
-
-        for col in stats_columns:
-            self.stats_tree.heading(col, text=col.replace("_", " ").title())
-            self.stats_tree.column(col, width=120, anchor="center")
-
-        stats_scrollbar = ttk.Scrollbar(
-            stats_frame, orient="vertical", command=self.stats_tree.yview
-        )
-        self.stats_tree.configure(yscrollcommand=stats_scrollbar.set)
-        self.stats_tree.pack(side="left", fill="both", expand=True)
-        stats_scrollbar.pack(side="right", fill="y")
+        self.stats_table.pack(fill="both", expand=True)
+        self.stats_tree = self.stats_table.tree
 
     def exchange_names(self) -> List[str]:
         """The exchanges in Settings, primary first ([] without a market manager)."""

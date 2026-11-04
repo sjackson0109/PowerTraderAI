@@ -733,7 +733,8 @@ def test_the_hubs_classic_widgets_take_the_active_palette(hub):
 
     menubar = hub.nametowidget(hub["menu"])
     assert colour(menubar, "background") == p["BG2"].upper()
-    for text in (hub.trainer_text, hub.runner_text, hub.trader_text, hub.hist_list):
+    # Trade History is a table now (ui_table.DataTable): ttk, styled by the theme
+    for text in (hub.trainer_text, hub.runner_text, hub.trader_text):
         assert colour(text, "background") == p["PANEL"].upper()
         assert colour(text, "selectbackground") == p["SELECT_BG"].upper()
         assert colour(text, "selectforeground") == p["SELECT_FG"].upper()

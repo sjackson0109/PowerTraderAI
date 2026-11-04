@@ -9,6 +9,7 @@ from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 from typing import Any, Dict, List, Optional
 
+import ui_table
 import ui_theme
 import ui_tokens
 
@@ -51,7 +52,7 @@ class HoldingsManagementGUI:
     def setup_ui(self):
         """Setup the user interface"""
         self.main_frame = ttk.Frame(self.parent)
-        self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.main_frame.pack(fill="both", expand=True)
 
         # Create notebook for tabs
         self.notebook = ttk.Notebook(self.main_frame)
@@ -102,17 +103,10 @@ class HoldingsManagementGUI:
             control_frame, text="Refresh", command=self.refresh_holdings_display
         ).pack(side="right", padx=5)
 
-        # Holdings treeview
-        tree_frame = ttk.Frame(self.holdings_tab)
-        tree_frame.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Create treeview with scrollbars
-        tree_container = ttk.Frame(tree_frame)
-        tree_container.pack(fill="both", expand=True)
-
-        self.holdings_tree = ttk.Treeview(
-            tree_container,
-            columns=(
+        # Holdings table (ui_table: fitted columns, its own scrollbars, sortable)
+        self.holdings_table = ui_table.DataTable(
+            self.holdings_tab,
+            (
                 "symbol",
                 "quantity",
                 "avg_cost",
@@ -124,48 +118,33 @@ class HoldingsManagementGUI:
                 "exchange",
                 "target_pct",
             ),
-            show="tree headings",
+            {
+                "symbol": "Symbol",
+                "quantity": "Quantity",
+                "avg_cost": "Avg Cost",
+                "current_price": "Current Price",
+                "total_cost": "Total Cost",
+                "current_value": "Current Value",
+                "pnl": "P&L",
+                "pnl_pct": "P&L %",
+                "exchange": "Exchange",
+                "target_pct": "Target %",
+            },
+            key="holdings_management.holdings",
+            numeric=(
+                "quantity",
+                "avg_cost",
+                "current_price",
+                "total_cost",
+                "current_value",
+                "pnl",
+                "pnl_pct",
+                "target_pct",
+            ),
+            empty_text="No holdings yet",
         )
-
-        # Configure columns
-        self.holdings_tree.column("#0", width=0, stretch=False)
-        self.holdings_tree.column("symbol", width=80, anchor="center")
-        self.holdings_tree.column("quantity", width=100, anchor="e")
-        self.holdings_tree.column("avg_cost", width=100, anchor="e")
-        self.holdings_tree.column("current_price", width=100, anchor="e")
-        self.holdings_tree.column("total_cost", width=100, anchor="e")
-        self.holdings_tree.column("current_value", width=120, anchor="e")
-        self.holdings_tree.column("pnl", width=100, anchor="e")
-        self.holdings_tree.column("pnl_pct", width=80, anchor="e")
-        self.holdings_tree.column("exchange", width=80, anchor="center")
-        self.holdings_tree.column("target_pct", width=80, anchor="e")
-
-        # Configure headings
-        self.holdings_tree.heading("symbol", text="Symbol")
-        self.holdings_tree.heading("quantity", text="Quantity")
-        self.holdings_tree.heading("avg_cost", text="Avg Cost")
-        self.holdings_tree.heading("current_price", text="Current Price")
-        self.holdings_tree.heading("total_cost", text="Total Cost")
-        self.holdings_tree.heading("current_value", text="Current Value")
-        self.holdings_tree.heading("pnl", text="P&L")
-        self.holdings_tree.heading("pnl_pct", text="P&L %")
-        self.holdings_tree.heading("exchange", text="Exchange")
-        self.holdings_tree.heading("target_pct", text="Target %")
-
-        # Scrollbars
-        v_scrollbar = ttk.Scrollbar(
-            tree_container, orient="vertical", command=self.holdings_tree.yview
-        )
-        h_scrollbar = ttk.Scrollbar(
-            tree_container, orient="horizontal", command=self.holdings_tree.xview
-        )
-        self.holdings_tree.configure(
-            yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set
-        )
-
-        self.holdings_tree.pack(side="left", fill="both", expand=True)
-        v_scrollbar.pack(side="right", fill="y")
-        h_scrollbar.pack(side="bottom", fill="x")
+        self.holdings_table.pack(fill="both", expand=True)
+        self.holdings_tree = self.holdings_table.tree
 
         # Bind selection
         self.holdings_tree.bind("<<TreeviewSelect>>", self.on_holding_select)
@@ -226,13 +205,10 @@ class HoldingsManagementGUI:
             control_frame, text="Export Suggestions", command=self.export_suggestions
         ).pack(side="left", padx=5)
 
-        # Suggestions treeview
-        tree_frame = ttk.Frame(self.rebalancing_tab)
-        tree_frame.pack(fill="both", expand=True, padx=5, pady=5)
-
-        self.suggestions_tree = ttk.Treeview(
-            tree_frame,
-            columns=(
+        # Suggestions table
+        self.suggestions_table = ui_table.DataTable(
+            self.rebalancing_tab,
+            (
                 "symbol",
                 "action",
                 "current_pct",
@@ -240,33 +216,20 @@ class HoldingsManagementGUI:
                 "deviation",
                 "amount_diff",
             ),
-            show="tree headings",
+            {
+                "symbol": "Symbol",
+                "action": "Action",
+                "current_pct": "Current %",
+                "target_pct": "Target %",
+                "deviation": "Deviation %",
+                "amount_diff": "Amount Diff",
+            },
+            key="holdings_management.rebalancing",
+            numeric=("current_pct", "target_pct", "deviation", "amount_diff"),
+            empty_text="No suggestions yet",
         )
-
-        # Configure columns
-        self.suggestions_tree.column("#0", width=0, stretch=False)
-        self.suggestions_tree.column("symbol", width=80, anchor="center")
-        self.suggestions_tree.column("action", width=60, anchor="center")
-        self.suggestions_tree.column("current_pct", width=100, anchor="e")
-        self.suggestions_tree.column("target_pct", width=100, anchor="e")
-        self.suggestions_tree.column("deviation", width=100, anchor="e")
-        self.suggestions_tree.column("amount_diff", width=120, anchor="e")
-
-        # Configure headings
-        self.suggestions_tree.heading("symbol", text="Symbol")
-        self.suggestions_tree.heading("action", text="Action")
-        self.suggestions_tree.heading("current_pct", text="Current %")
-        self.suggestions_tree.heading("target_pct", text="Target %")
-        self.suggestions_tree.heading("deviation", text="Deviation %")
-        self.suggestions_tree.heading("amount_diff", text="Amount Diff")
-
-        suggestions_scrollbar = ttk.Scrollbar(
-            tree_frame, orient="vertical", command=self.suggestions_tree.yview
-        )
-        self.suggestions_tree.configure(yscrollcommand=suggestions_scrollbar.set)
-
-        self.suggestions_tree.pack(side="left", fill="both", expand=True)
-        suggestions_scrollbar.pack(side="right", fill="y")
+        self.suggestions_table.pack(fill="both", expand=True)
+        self.suggestions_tree = self.suggestions_table.tree
 
     def setup_analytics_tab(self):
         """Setup analytics and charts tab"""
@@ -331,9 +294,8 @@ class HoldingsManagementGUI:
                 elif holding.unrealized_pnl < 0:
                     tags.append("loss")
 
-                item_id = self.holdings_tree.insert("", "end", values=values, tags=tags)
-                # Store holding ID for reference
-                self.holdings_tree.set(item_id, "holding_id", holding.id)
+                # a selection finds its holding by symbol (on_holding_select)
+                self.holdings_tree.insert("", "end", values=values, tags=tags)
 
             # Configure tags for colors
             status = ui_tokens.STATUS

@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+import ui_table
 import ui_theme
 import ui_tokens
 
@@ -75,7 +76,7 @@ class BacktestingGUI:
 
         # Create main notebook for tabs
         self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
         # Create tabs
         self.setup_data_strategy_tab()
@@ -181,13 +182,8 @@ class BacktestingGUI:
         info_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         self.data_info_text = tk.Text(info_frame, height=8, wrap=tk.WORD)
-        data_scrollbar = ttk.Scrollbar(
-            info_frame, orient=tk.VERTICAL, command=self.data_info_text.yview
-        )
-        self.data_info_text.configure(yscrollcommand=data_scrollbar.set)
-
-        self.data_info_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        data_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        data_scrollbar = ttk.Scrollbar(info_frame, orient=tk.VERTICAL)
+        ui_table.scroll_when_needed(self.data_info_text, data_scrollbar)
 
         # Backtest parameters
         params_frame = ttk.LabelFrame(data_section, text="Backtest Parameters")
@@ -247,13 +243,8 @@ class BacktestingGUI:
         desc_frame.pack(fill=tk.X, padx=5, pady=5)
 
         self.strategy_desc_text = tk.Text(desc_frame, height=6, wrap=tk.WORD)
-        desc_scrollbar = ttk.Scrollbar(
-            desc_frame, orient=tk.VERTICAL, command=self.strategy_desc_text.yview
-        )
-        self.strategy_desc_text.configure(yscrollcommand=desc_scrollbar.set)
-
-        self.strategy_desc_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        desc_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        desc_scrollbar = ttk.Scrollbar(desc_frame, orient=tk.VERTICAL)
+        ui_table.scroll_when_needed(self.strategy_desc_text, desc_scrollbar)
 
         self.update_strategy_description()
 
@@ -298,37 +289,41 @@ class BacktestingGUI:
         metrics_frame = ttk.LabelFrame(left_panel, text="Performance Metrics")
         metrics_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        self.metrics_tree = ttk.Treeview(
-            metrics_frame, columns=("Value",), show="tree headings", height=12
+        self.metrics_table = ui_table.DataTable(
+            metrics_frame,
+            ("Value",),
+            {"Value": "Value"},
+            key="backtesting.metrics",
+            numeric=("Value",),
+            empty_text="No metrics yet",
+            show="tree headings",
+            sortable=False,  # metrics grouped under section rows, not to sort
+            height=12,
         )
-        self.metrics_tree.heading("#0", text="Metric")
-        self.metrics_tree.heading("Value", text="Value")
-        self.metrics_tree.column("#0", width=200)
-        self.metrics_tree.column("Value", width=150)
-        self.metrics_tree.pack(fill=tk.X, padx=5, pady=5)
+        self.metrics_table.pack(fill=tk.BOTH, expand=True)
+        self.metrics_tree = self.metrics_table.tree
+        self.metrics_tree.heading("#0", text="Metric")  # each row's own text
 
         # Trade list
         trades_frame = ttk.LabelFrame(left_panel, text="Trade History")
         trades_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        self.trades_tree = ttk.Treeview(
+        self.trades_table = ui_table.DataTable(
             trades_frame,
-            columns=("Entry", "Exit", "PnL", "PnL%", "Duration"),
-            show="headings",
-            height=8,
+            ("Entry", "Exit", "PnL", "PnL%", "Duration"),
+            {
+                "Entry": "Entry",
+                "Exit": "Exit",
+                "PnL": "PnL",
+                "PnL%": "PnL%",
+                "Duration": "Duration",
+            },
+            key="backtesting.trades",
+            numeric=("PnL", "PnL%", "Duration"),
+            empty_text="No trades yet",
         )
-
-        for col in ["Entry", "Exit", "PnL", "PnL%", "Duration"]:
-            self.trades_tree.heading(col, text=col)
-            self.trades_tree.column(col, width=100)
-
-        trades_scrollbar = ttk.Scrollbar(
-            trades_frame, orient=tk.VERTICAL, command=self.trades_tree.yview
-        )
-        self.trades_tree.configure(yscrollcommand=trades_scrollbar.set)
-
-        self.trades_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        trades_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.trades_table.pack(fill=tk.BOTH, expand=True)
+        self.trades_tree = self.trades_table.tree
 
         # Charts section
         charts_frame = ttk.LabelFrame(right_panel, text="Performance Charts")
@@ -406,23 +401,21 @@ class BacktestingGUI:
         opt_results_frame = ttk.LabelFrame(opt_frame, text="Optimization Results")
         opt_results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        self.opt_results_tree = ttk.Treeview(
+        self.opt_results_table = ui_table.DataTable(
             opt_results_frame,
-            columns=("Parameters", "Score", "Return", "Sharpe"),
-            show="headings",
+            ("Parameters", "Score", "Return", "Sharpe"),
+            {
+                "Parameters": "Parameters",
+                "Score": "Score",
+                "Return": "Return",
+                "Sharpe": "Sharpe",
+            },
+            key="backtesting.optimization_results",
+            numeric=("Score", "Return", "Sharpe"),
+            empty_text="No results yet",
         )
-
-        for col in ["Parameters", "Score", "Return", "Sharpe"]:
-            self.opt_results_tree.heading(col, text=col)
-            self.opt_results_tree.column(col, width=150)
-
-        opt_scrollbar = ttk.Scrollbar(
-            opt_results_frame, orient=tk.VERTICAL, command=self.opt_results_tree.yview
-        )
-        self.opt_results_tree.configure(yscrollcommand=opt_scrollbar.set)
-
-        self.opt_results_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        opt_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.opt_results_table.pack(fill=tk.BOTH, expand=True)
+        self.opt_results_tree = self.opt_results_table.tree
 
     def setup_monte_carlo_tab(self):
         """Setup the Monte Carlo simulation tab."""
@@ -470,15 +463,19 @@ class BacktestingGUI:
         mc_results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         # Split into stats and distribution
-        stats_frame = tk.Frame(mc_results_frame)
-        stats_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self.mc_stats_tree = ttk.Treeview(
-            stats_frame, columns=("Value",), show="tree headings", height=15
+        self.mc_stats_table = ui_table.DataTable(
+            mc_results_frame,
+            ("Value",),
+            {"Value": "Value"},
+            key="backtesting.monte_carlo_stats",
+            numeric=("Value",),
+            empty_text="No statistics yet",
+            show="tree headings",
+            sortable=False,  # a list of statistics, not rows to sort
         )
-        self.mc_stats_tree.heading("#0", text="Statistic")
-        self.mc_stats_tree.heading("Value", text="Value")
-        self.mc_stats_tree.pack(fill=tk.BOTH, expand=True, padx=5)
+        self.mc_stats_table.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        self.mc_stats_tree = self.mc_stats_table.tree
+        self.mc_stats_tree.heading("#0", text="Statistic")  # each row's own text
 
         # Distribution chart area
         self.mc_chart_frame = tk.Frame(mc_results_frame)

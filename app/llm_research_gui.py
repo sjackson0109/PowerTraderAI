@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from tkinter import messagebox, scrolledtext, ttk
 from typing import Any, Dict, List, Optional
 
+import ui_table
 import ui_theme
 import ui_tokens
 
@@ -146,7 +147,7 @@ class ResearchEngineGUI:
         try:
             # Create main research frame
             self.research_frame = ttk.Frame(self.parent)
-            self.research_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            self.research_frame.pack(fill=tk.BOTH, expand=True)
 
             if not RESEARCH_ENGINE_AVAILABLE:
                 # Show message about unavailable research engine
@@ -268,7 +269,7 @@ class ResearchEngineGUI:
             results_frame = ttk.LabelFrame(self.analysis_tab, text="Analysis Results")
             results_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-            # Create treeview for analysis results
+            # Analysis results table (ui_table: fitted columns, its own scrollbars)
             columns = (
                 "Symbol",
                 "Price",
@@ -278,35 +279,15 @@ class ResearchEngineGUI:
                 "Sentiment",
                 "Last Updated",
             )
-            self.analysis_tree = ttk.Treeview(
-                results_frame, columns=columns, show="headings", height=10
+            self.analysis_table = ui_table.DataTable(
+                results_frame,
+                columns,
+                key="llm_research.analysis_results",
+                numeric=("Price", "Change %", "RSI", "Sentiment"),
+                empty_text="No results yet",
             )
-
-            # Setup columns
-            for col in columns:
-                self.analysis_tree.heading(col, text=col)
-                if col == "Symbol":
-                    self.analysis_tree.column(col, width=80, anchor=tk.W)
-                elif col in ["Price", "Change %"]:
-                    self.analysis_tree.column(col, width=100, anchor=tk.E)
-                elif col == "RSI":
-                    self.analysis_tree.column(col, width=60, anchor=tk.E)
-                elif col == "Signal":
-                    self.analysis_tree.column(col, width=80, anchor=tk.CENTER)
-                elif col == "Sentiment":
-                    self.analysis_tree.column(col, width=80, anchor=tk.E)
-                else:
-                    self.analysis_tree.column(col, width=120, anchor=tk.W)
-
-            # Scrollbar for analysis tree
-            analysis_scrollbar = ttk.Scrollbar(
-                results_frame, orient=tk.VERTICAL, command=self.analysis_tree.yview
-            )
-            self.analysis_tree.configure(yscrollcommand=analysis_scrollbar.set)
-
-            # Pack analysis tree and scrollbar
-            self.analysis_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            analysis_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.analysis_table.pack(fill="both", expand=True)
+            self.analysis_tree = self.analysis_table.tree
 
             # Details area
             details_frame = ttk.LabelFrame(self.analysis_tab, text="Detailed Analysis")
@@ -316,6 +297,7 @@ class ResearchEngineGUI:
                 details_frame, height=6, font=ui_tokens.mono("small")
             )
             self.analysis_details.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            ui_table.scroll_when_needed(self.analysis_details)
 
             # Bind selection event
             self.analysis_tree.bind("<<TreeviewSelect>>", self.on_analysis_select)
@@ -364,10 +346,8 @@ class ResearchEngineGUI:
             self.signal_filter.pack(side=tk.LEFT, padx=(5, 0))
             self.signal_filter.bind("<<ComboboxSelected>>", self.filter_signals)
 
-            # Signals tree
-            signals_frame = ttk.LabelFrame(self.signals_tab, text="Trade Signals")
-            signals_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
+            # Signals table, straight in the tab: a "Trade Signals" title round it
+            # would only repeat the tab's name
             signal_columns = (
                 "Symbol",
                 "Signal",
@@ -378,35 +358,15 @@ class ResearchEngineGUI:
                 "Time Horizon",
                 "Generated",
             )
-            self.signals_tree = ttk.Treeview(
-                signals_frame, columns=signal_columns, show="headings", height=12
+            self.signals_table = ui_table.DataTable(
+                self.signals_tab,
+                signal_columns,
+                key="llm_research.trade_signals",
+                numeric=("Confidence", "Price Target", "Stop Loss"),
+                empty_text="No signals yet",
             )
-
-            # Setup signal columns
-            for col in signal_columns:
-                self.signals_tree.heading(col, text=col)
-                if col == "Symbol":
-                    self.signals_tree.column(col, width=80, anchor=tk.W)
-                elif col in ["Signal", "Strength"]:
-                    self.signals_tree.column(col, width=80, anchor=tk.CENTER)
-                elif col == "Confidence":
-                    self.signals_tree.column(col, width=80, anchor=tk.E)
-                elif col in ["Price Target", "Stop Loss"]:
-                    self.signals_tree.column(col, width=100, anchor=tk.E)
-                elif col == "Time Horizon":
-                    self.signals_tree.column(col, width=90, anchor=tk.CENTER)
-                else:
-                    self.signals_tree.column(col, width=120, anchor=tk.W)
-
-            # Scrollbar for signals tree
-            signals_scrollbar = ttk.Scrollbar(
-                signals_frame, orient=tk.VERTICAL, command=self.signals_tree.yview
-            )
-            self.signals_tree.configure(yscrollcommand=signals_scrollbar.set)
-
-            # Pack signals tree and scrollbar
-            self.signals_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            signals_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            self.signals_table.pack(fill="both", expand=True)
+            self.signals_tree = self.signals_table.tree
 
             # Signal details
             signal_details_frame = ttk.LabelFrame(
@@ -418,6 +378,7 @@ class ResearchEngineGUI:
                 signal_details_frame, height=5, font=ui_tokens.mono("small")
             )
             self.signal_details.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            ui_table.scroll_when_needed(self.signal_details)
 
             # Bind selection event
             self.signals_tree.bind("<<TreeviewSelect>>", self.on_signal_select)
@@ -471,6 +432,7 @@ class ResearchEngineGUI:
                 report_frame, font=ui_tokens.mono("small"), wrap=tk.WORD
             )
             self.report_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            ui_table.scroll_when_needed(self.report_display)
 
         except Exception as e:
             print(f"Error creating research reports tab: {e}")
@@ -602,6 +564,7 @@ class ResearchEngineGUI:
                 status_frame, height=8, font=ui_tokens.mono("small")
             )
             self.status_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+            ui_table.scroll_when_needed(self.status_text)
 
             # Update status button
             self.update_status_btn = ttk.Button(

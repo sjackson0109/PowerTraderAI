@@ -13,6 +13,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+import ui_table
 import ui_theme
 import ui_tokens
 
@@ -64,7 +65,7 @@ class PortfolioOptimizerGUI:
         """Setup the main GUI layout."""
         # Create main notebook for tabs
         self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
 
         # Create tabs
         self.setup_data_tab()
@@ -186,17 +187,23 @@ class PortfolioOptimizerGUI:
             controls_frame, text="Load Sample", command=self.load_sample_data
         ).pack(side=tk.LEFT, padx=5)
 
-        # Asset list display
-        self.asset_tree = ttk.Treeview(
+        # Asset list display (ui_table: fitted columns, its own scrollbars, sortable);
+        # eight rows high, so the Data Summary below stays in a short panel
+        self.asset_table = ui_table.DataTable(
             list_frame,
-            columns=("Symbol", "Return", "Volatility"),
-            show="headings",
+            ("Symbol", "Return", "Volatility"),
+            {
+                "Symbol": "Symbol",
+                "Return": "Expected Return (%)",
+                "Volatility": "Volatility (%)",
+            },
+            key="portfolio_optimization.assets",
+            numeric=("Return", "Volatility"),
+            empty_text="No assets yet",
             height=8,
         )
-        self.asset_tree.heading("Symbol", text="Symbol")
-        self.asset_tree.heading("Return", text="Expected Return (%)")
-        self.asset_tree.heading("Volatility", text="Volatility (%)")
-        self.asset_tree.pack(fill=tk.BOTH, expand=True)
+        self.asset_table.pack(fill="both", expand=True)
+        self.asset_tree = self.asset_table.tree
 
         # Data summary
         summary_frame = ttk.LabelFrame(data_frame, text="Data Summary")
@@ -302,13 +309,8 @@ class PortfolioOptimizerGUI:
         results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         self.results_text = tk.Text(results_frame, height=10, wrap=tk.WORD)
-        scrollbar = ttk.Scrollbar(
-            results_frame, orient=tk.VERTICAL, command=self.results_text.yview
-        )
-        self.results_text.configure(yscrollcommand=scrollbar.set)
-
-        self.results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL)
+        ui_table.scroll_when_needed(self.results_text, scrollbar)
 
     def setup_rebalancing_tab(self):
         """Setup the rebalancing tab."""
@@ -393,15 +395,8 @@ class PortfolioOptimizerGUI:
         rebal_results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         self.rebal_results_text = tk.Text(rebal_results_frame, wrap=tk.WORD)
-        rebal_scrollbar = ttk.Scrollbar(
-            rebal_results_frame,
-            orient=tk.VERTICAL,
-            command=self.rebal_results_text.yview,
-        )
-        self.rebal_results_text.configure(yscrollcommand=rebal_scrollbar.set)
-
-        self.rebal_results_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        rebal_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        rebal_scrollbar = ttk.Scrollbar(rebal_results_frame, orient=tk.VERTICAL)
+        ui_table.scroll_when_needed(self.rebal_results_text, rebal_scrollbar)
 
     def setup_analysis_tab(self):
         """Setup the analysis and visualization tab."""

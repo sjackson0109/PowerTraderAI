@@ -40,6 +40,8 @@ import chart_settings
 import paper_coins
 import position_sizing
 import pt_paths
+import trade_history_view
+import ui_table
 import ui_theme
 import ui_tokens
 
@@ -590,6 +592,13 @@ def _safe_write_json(path: str, data: dict) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, path)
+
+
+# Long-term Holdings tab (owner, 2026-11-04)
+LONG_TERM_HOLDINGS_SUBTITLE = (
+    "Manual HODL positions, tracked separately from the trading account. "
+    "Not included in Value, Buying Power or % in Trade."
+)
 
 
 def _read_trade_history_jsonl(path: str) -> List[dict]:
@@ -3404,18 +3413,21 @@ class PowerTraderHub(tk.Tk):
         # RIGHT BOTTOM: Tabbed Interface (Current Trades + Long-term Holdings + Trade History)
         # ----------------------------
         self.bottom_notebook = ttk.Notebook(right_split)
+        # the panel's border is the only one round each tab: the notebooks and
+        # titled groups the module windows build inside it draw none
+        ui_table.borderless_inside(self.bottom_notebook)
+
+        # Every tab's table is a ui_table.DataTable filling its tab (owner,
+        # 2026-11-04): no inner title or border, scrollbars on the table itself.
 
         # ----------------------------
         # TAB 1: Current Trades
         # ----------------------------
         trades_tab = ttk.Frame(self.bottom_notebook)
         self.bottom_notebook.add(trades_tab, text="Current\nTrades")
-
-        trades_frame = ttk.LabelFrame(trades_tab, text="Current Trades")
-        trades_frame.pack(fill="both", expand=True, padx=6, pady=6)
         # Exposed so the paper-mode hook can pack a "PAPER TRADING" label
         # at the top of the trading section without re-walking the widget tree.
-        self.trades_frame = trades_frame
+        self.trades_frame = trades_tab
 
         cols = (
             "coin",
@@ -3447,88 +3459,22 @@ class PowerTraderHub(tk.Tk):
             "trail_line": "Trail Line",
         }
 
-        trades_table_wrap = ttk.Frame(trades_frame)
-        trades_table_wrap.pack(fill="both", expand=True, padx=6, pady=6)
-
-        self.trades_tree = ttk.Treeview(
-            trades_table_wrap, columns=cols, show="headings", height=10
+        self.trades_table = ui_table.DataTable(
+            trades_tab,
+            cols,
+            header_labels,
+            key="current_trades",
+            numeric=[c for c in cols if c != "coin"],
         )
-        for c in cols:
-            self.trades_tree.heading(c, text=header_labels.get(c, c))
-            self.trades_tree.column(c, width=110, anchor="center", stretch=True)
-
-        # Reasonable starting widths (they will be dynamically scaled on resize)
-        self.trades_tree.column("coin", width=70)
-        self.trades_tree.column("qty", width=95)
-        self.trades_tree.column("value", width=110)
-        self.trades_tree.column("next_dca", width=160)
-        self.trades_tree.column("dca_stages", width=90)
-        self.trades_tree.column("dca_24h", width=80)
-
-        ysb = ttk.Scrollbar(
-            trades_table_wrap, orient="vertical", command=self.trades_tree.yview
-        )
-        xsb = ttk.Scrollbar(
-            trades_table_wrap, orient="horizontal", command=self.trades_tree.xview
-        )
-        self.trades_tree.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
-
-        self.trades_tree.pack(side="top", fill="both", expand=True)
-        xsb.pack(side="bottom", fill="x")
-        ysb.pack(side="right", fill="y")
-
-        def _resize_trades_columns(*_):
-            # Scale the initial column widths proportionally so the table always fits the current window.
-            try:
-                total_w = int(self.trades_tree.winfo_width())
-            except Exception:
-                return
-            if total_w <= 1:
-                return
-
-            try:
-                sb_w = int(ysb.winfo_width() or 0)
-            except Exception:
-                sb_w = 0
-
-            avail = max(200, total_w - sb_w - 8)
-
-            base = {
-                "coin": 70,
-                "qty": 95,
-                "value": 110,
-                "avg_cost": 110,
-                "buy_price": 110,
-                "buy_pnl": 110,
-                "sell_price": 110,
-                "sell_pnl": 110,
-                "dca_stages": 90,
-                "dca_24h": 80,
-                "next_dca": 160,
-                "trail_line": 110,
-            }
-            base_total = sum(base.get(c, 110) for c in cols) or 1
-            scale = avail / base_total
-
-            for c in cols:
-                w = int(base.get(c, 110) * scale)
-                self.trades_tree.column(c, width=max(60, min(420, w)))
-
-        self.trades_tree.bind(
-            "<Configure>", lambda e: self.after_idle(_resize_trades_columns)
-        )
-        self.after_idle(_resize_trades_columns)
+        self.trades_table.pack(fill="both", expand=True)
+        self.trades_tree = self.trades_table.tree
 
         # ----------------------------
         # TAB 2: Long-term Holdings
         # ----------------------------
         lth_tab = ttk.Frame(self.bottom_notebook)
         self.bottom_notebook.add(lth_tab, text="Long-term\nHoldings")
-
-        lth_frame = ttk.LabelFrame(
-            lth_tab, text="Long-term Holdings (Manual/HODL Positions)"
-        )
-        lth_frame.pack(fill="both", expand=True, padx=6, pady=6)
+        ui_table.subtitle(lth_tab, LONG_TERM_HOLDINGS_SUBTITLE)
 
         lth_cols = (
             "coin",
@@ -3549,86 +3495,31 @@ class PowerTraderHub(tk.Tk):
             "current_price": "Current Price",
             "total_pnl": "Total P&L",
             "pnl_pct": "P&L %",
-            "allocation": "% of Portfolio",
+            # the share of the holdings below (holdings.db) only, not of the account
+            "allocation": "% of Holdings",
         }
 
-        lth_table_wrap = ttk.Frame(lth_frame)
-        lth_table_wrap.pack(fill="both", expand=True, padx=6, pady=6)
-
-        self.lth_tree = ttk.Treeview(
-            lth_table_wrap, columns=lth_cols, show="headings", height=10
+        self.lth_table = ui_table.DataTable(
+            lth_tab,
+            lth_cols,
+            lth_headers,
+            key="long_term_holdings",
+            numeric=[c for c in lth_cols if c != "coin"],
+            empty_text="No holdings yet",
         )
-        for c in lth_cols:
-            self.lth_tree.heading(c, text=lth_headers.get(c, c))
-            self.lth_tree.column(c, width=110, anchor="center", stretch=True)
+        self.lth_table.pack(fill="both", expand=True)
+        self.lth_tree = self.lth_table.tree
 
-        # Set reasonable column widths for LTH table
-        self.lth_tree.column("coin", width=70)
-        self.lth_tree.column("qty", width=100)
-        self.lth_tree.column("value", width=110)
-        self.lth_tree.column("avg_cost", width=90)
-        self.lth_tree.column("current_price", width=90)
-        self.lth_tree.column("total_pnl", width=100)
-        self.lth_tree.column("pnl_pct", width=80)
-        self.lth_tree.column("allocation", width=90)
-
-        lth_ysb = ttk.Scrollbar(
-            lth_table_wrap, orient="vertical", command=self.lth_tree.yview
-        )
-        lth_xsb = ttk.Scrollbar(
-            lth_table_wrap, orient="horizontal", command=self.lth_tree.xview
-        )
-        self.lth_tree.configure(yscrollcommand=lth_ysb.set, xscrollcommand=lth_xsb.set)
-
-        self.lth_tree.pack(side="top", fill="both", expand=True)
-        lth_xsb.pack(side="bottom", fill="x")
-        lth_ysb.pack(side="right", fill="y")
-
-        # Trade history (now in its own tab)
+        # ----------------------------
+        # TAB 3: Trade History: the history as a table, with filters and a summary
+        # ----------------------------
         hist_tab = ttk.Frame(self.bottom_notebook)
         self.bottom_notebook.add(hist_tab, text="Trade\nHistory")
-
-        hist_frame = ttk.LabelFrame(hist_tab, text="Trade History (Scroll)")
-        hist_frame.pack(fill="both", expand=True, padx=6, pady=6)
-
-        # Add filter/search controls for trade history
-        hist_controls = ttk.Frame(hist_frame)
-        hist_controls.pack(fill="x", padx=6, pady=(6, 0))
-
-        ttk.Label(hist_controls, text="Filter:").pack(side="left")
-        self.hist_filter_var = tk.StringVar()
-        hist_filter_entry = ttk.Entry(
-            hist_controls, textvariable=self.hist_filter_var, width=20
+        self.trade_history_view = trade_history_view.TradeHistoryView(
+            hist_tab, money=_fmt_money, price=_fmt_price, pct=_fmt_pct
         )
-        hist_filter_entry.pack(side="left", padx=(4, 8))
-
-        ttk.Button(
-            hist_controls, text="Clear", command=lambda: self.hist_filter_var.set("")
-        ).pack(side="left")
-
-        hist_wrap = ttk.Frame(hist_frame)
-        hist_wrap.pack(fill="both", expand=True, padx=6, pady=6)
-
-        self.hist_list = tk.Listbox(
-            hist_wrap,
-            height=10,
-            bg=p["PANEL"],
-            fg=p["FG"],
-            selectbackground=p["SELECT_BG"],
-            selectforeground=p["SELECT_FG"],
-            font=ui_tokens.mono("small"),
-        )
-
-        # Add scrollbars for hist_list
-        ysb2 = ttk.Scrollbar(hist_wrap, orient="vertical", command=self.hist_list.yview)
-        xsb2 = ttk.Scrollbar(
-            hist_wrap, orient="horizontal", command=self.hist_list.xview
-        )
-        self.hist_list.configure(yscrollcommand=ysb2.set, xscrollcommand=xsb2.set)
-
-        self.hist_list.pack(side="left", fill="both", expand=True)
-        ysb2.pack(side="right", fill="y")
-        xsb2.pack(side="bottom", fill="x")
+        self.trade_history_view.pack(fill="both", expand=True)
+        self.hist_filter_var = self.trade_history_view.search_var
 
         # ----------------------------
         # TAB 4: Order Management
@@ -3722,9 +3613,6 @@ class PowerTraderHub(tk.Tk):
                 pass
 
         self.after_idle(_init_right_split_sash_once)
-
-        # Create a placeholder LTH refresh method (will be implemented in Phase 3)
-        self._refresh_lth_status = lambda: None
 
         # Initial clamp once everything is laid out
         self.after_idle(
@@ -3952,10 +3840,10 @@ class PowerTraderHub(tk.Tk):
 
             # Main container with splitter
             order_paned = ttk.PanedWindow(order_tab, orient="horizontal")
-            order_paned.pack(fill="both", expand=True, padx=6, pady=6)
+            order_paned.pack(fill="both", expand=True)
 
             # Left panel: Order creation forms
-            left_frame = ttk.LabelFrame(order_paned, text="Create Orders")
+            left_frame = ui_table.section(order_paned, "Create Orders", packed=False)
             order_paned.add(left_frame, weight=1)
 
             # Order type selection
@@ -4012,12 +3900,8 @@ class PowerTraderHub(tk.Tk):
             create_btn.pack(pady=10)
 
             # Right panel: Active orders and monitoring
-            right_frame = ttk.LabelFrame(order_paned, text="Active Orders")
+            right_frame = ui_table.section(order_paned, "Active Orders", packed=False)
             order_paned.add(right_frame, weight=2)
-
-            # Orders table
-            orders_frame = ttk.Frame(right_frame)
-            orders_frame.pack(fill="both", expand=True, padx=6, pady=6)
 
             order_cols = (
                 "id",
@@ -4043,42 +3927,20 @@ class PowerTraderHub(tk.Tk):
                 "created": "Created",
             }
 
-            self.orders_tree = ttk.Treeview(
-                orders_frame, columns=order_cols, show="headings", height=10
+            self.orders_table = ui_table.DataTable(
+                right_frame,
+                order_cols,
+                order_headers,
+                key="order_management",
+                numeric=("quantity", "price"),
+                empty_text="No orders yet",
             )
-            for c in order_cols:
-                self.orders_tree.heading(c, text=order_headers.get(c, c))
-                self.orders_tree.column(c, width=80, anchor="center", stretch=True)
-
-            # Set specific column widths
-            self.orders_tree.column("id", width=100)
-            self.orders_tree.column("symbol", width=80)
-            self.orders_tree.column("type", width=90)
-            self.orders_tree.column("side", width=50)
-            self.orders_tree.column("quantity", width=80)
-            self.orders_tree.column("price", width=80)
-            self.orders_tree.column("status", width=70)
-            self.orders_tree.column("conditions", width=120)
-            self.orders_tree.column("created", width=120)
-
-            # Scrollbars for orders table
-            orders_ysb = ttk.Scrollbar(
-                orders_frame, orient="vertical", command=self.orders_tree.yview
-            )
-            orders_xsb = ttk.Scrollbar(
-                orders_frame, orient="horizontal", command=self.orders_tree.xview
-            )
-            self.orders_tree.configure(
-                yscrollcommand=orders_ysb.set, xscrollcommand=orders_xsb.set
-            )
-
-            self.orders_tree.pack(side="top", fill="both", expand=True)
-            orders_xsb.pack(side="bottom", fill="x")
-            orders_ysb.pack(side="right", fill="y")
+            self.orders_table.pack(fill="both", expand=True)
+            self.orders_tree = self.orders_table.tree
 
             # Order control buttons
             control_frame = ttk.Frame(right_frame)
-            control_frame.pack(fill="x", padx=6, pady=(0, 6))
+            control_frame.pack(fill="x", pady=(6, 0))
 
             ttk.Button(
                 control_frame, text="Refresh", command=self._refresh_orders
@@ -4090,12 +3952,13 @@ class PowerTraderHub(tk.Tk):
             ).pack(side="left", padx=(0, 6))
 
             # Notifications area
-            notif_frame = ttk.LabelFrame(right_frame, text="Recent Notifications")
-            notif_frame.pack(fill="x", padx=6, pady=(6, 0))
+            notif_frame = ui_table.section(
+                right_frame, "Recent Notifications", fill="x", expand=False, pady=(6, 0)
+            )
 
             # Create notification text widget with scrollbar
             notif_text_frame = ttk.Frame(notif_frame)
-            notif_text_frame.pack(fill="x", padx=6, pady=6)
+            notif_text_frame.pack(fill="x")
 
             self.notifications_text = tk.Text(
                 notif_text_frame,
@@ -4105,15 +3968,8 @@ class PowerTraderHub(tk.Tk):
                 fg=p["FG"],
                 insertbackground=p["FG"],
             )
-            notif_scroll = ttk.Scrollbar(
-                notif_text_frame,
-                orient="vertical",
-                command=self.notifications_text.yview,
-            )
-            self.notifications_text.configure(yscrollcommand=notif_scroll.set)
-
-            self.notifications_text.pack(side="left", fill="x", expand=True)
-            notif_scroll.pack(side="right", fill="y")
+            notif_scroll = ttk.Scrollbar(notif_text_frame, orient="vertical")
+            ui_table.scroll_when_needed(self.notifications_text, notif_scroll)
 
             # Set initial pane sizes
             try:
@@ -6391,6 +6247,7 @@ Platform: {sys.platform}
 
         # trade history (now mtime-cached inside)
         self._refresh_trade_history()
+        self._refresh_long_term_holdings()
 
         # charts (throttle)
         now = time.time()
@@ -6909,7 +6766,7 @@ Platform: {sys.platform}
         self.lbl_pnl.config(text=_fmt_money(total))
 
     def _refresh_trade_history(self) -> None:
-        # mtime cache: avoid reading/parsing/rebuilding the list every tick
+        # mtime cache: avoid reading/parsing/rebuilding the table every tick
         try:
             mtime = os.path.getmtime(self.trade_history_path)
         except Exception:
@@ -6919,74 +6776,57 @@ Platform: {sys.platform}
             return
         self._last_trade_history_mtime = mtime
 
-        if not os.path.isfile(self.trade_history_path):
-            self.hist_list.delete(0, "end")
-            self.hist_list.insert("end", "(no trade_history.jsonl yet)")
-            return
+        # every buy and sell: the filters and the summary need the whole history
+        rows = (
+            _read_trade_history_jsonl(self.trade_history_path)
+            if mtime is not None
+            else []
+        )
+        self.trade_history_view.load(rows)
 
-        # show last N lines
+    def _refresh_long_term_holdings(self) -> None:
+        """Long-term Holdings: the entries of holdings.db (Holdings Management keeps
+        them), read when the file changes. Separate from the trading account: the
+        account's figures do not include them, and nothing here links them."""
+        path = pt_paths.data_file("holdings.db")
         try:
-            with open(self.trade_history_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-        except Exception:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            mtime = None
+        if getattr(self, "_last_holdings_mtime", object()) == mtime:
             return
-
-        lines = lines[-250:]  # cap for UI
-        self.hist_list.delete(0, "end")
-        for line in reversed(lines):
-            line = line.strip()
-            if not line:
-                continue
+        self._last_holdings_mtime = mtime
+        holdings = []
+        if mtime is not None:
             try:
-                obj = json.loads(line)
-                ts = obj.get("ts", None)
-                tss = (
-                    time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
-                    if isinstance(ts, (int, float))
-                    else "?"
-                )
-                side = str(obj.get("side", "")).upper()
-                tag = str(obj.get("tag", "") or "").upper()
+                from long_term_holdings import HoldingsDatabase
 
-                sym = obj.get("symbol", "")
-                qty = obj.get("qty", "")
-                px = obj.get("price", None)
-                pnl = obj.get("realized_profit_usd", None)
+                holdings = HoldingsDatabase(path).get_all_holdings()
+            except Exception as exc:
+                print(f"Long-term holdings not read: {exc}")
+        self._show_long_term_holdings(holdings)
 
-                pnl_pct = obj.get("pnl_pct", None)
-
-                px_txt = _fmt_price(px) if px is not None else "N/A"
-
-                action = side
-                if tag:
-                    action = f"{side}/{tag}"
-
-                txt = f"{tss} | {action:10s} {sym:5s} | qty={qty} | px={px_txt}"
-
-                # Show the exact trade-time PnL%:
-                # - DCA buys: show the BUY-side PnL (how far below avg cost it was when it bought)
-                # - sells: show the SELL-side PnL (how far above/below avg cost it sold)
-                show_trade_pnl_pct = None
-                if side == "SELL":
-                    show_trade_pnl_pct = pnl_pct
-                elif side == "BUY" and tag == "DCA":
-                    show_trade_pnl_pct = pnl_pct
-
-                if show_trade_pnl_pct is not None:
-                    try:
-                        txt += f" | pnl@trade={_fmt_pct(float(show_trade_pnl_pct))}"
-                    except Exception:
-                        txt += f" | pnl@trade={show_trade_pnl_pct}"
-
-                if pnl is not None:
-                    try:
-                        txt += f" | realized={float(pnl):+.2f}"
-                    except Exception:
-                        txt += f" | realized={pnl}"
-
-                self.hist_list.insert("end", txt)
-            except Exception:
-                self.hist_list.insert("end", line)
+    def _show_long_term_holdings(self, holdings) -> None:
+        tree = self.lth_tree
+        tree.delete(*tree.get_children())
+        total = sum(max(0.0, float(h.current_value)) for h in holdings)
+        for h in holdings:
+            value = float(h.current_value)
+            share = f"{value / total * 100:.2f}%" if total > 0 else "N/A"
+            tree.insert(
+                "",
+                "end",
+                values=(
+                    h.symbol,
+                    f"{float(h.quantity):.8f}".rstrip("0").rstrip("."),
+                    _fmt_money(value),
+                    _fmt_price(h.average_cost),
+                    _fmt_price(h.current_price),
+                    trade_history_view.signed_money(float(h.unrealized_pnl)),
+                    _fmt_pct(h.unrealized_pnl_percentage),
+                    share,
+                ),
+            )
 
     def _refresh_coin_dependent_ui(self, prev_coins: List[str]) -> None:
         """

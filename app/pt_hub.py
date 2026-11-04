@@ -157,7 +157,7 @@ try:
     HOLDINGS_MANAGEMENT_AVAILABLE = True
 except ImportError:
     HOLDINGS_MANAGEMENT_AVAILABLE = False
-    print("Warning: Holdings Management not available.")
+    print("Warning: Long-term Holdings not available.")
 
 # Portfolio Analytics imports
 try:
@@ -3585,45 +3585,12 @@ class PowerTraderHub(tk.Tk):
         self.trades_tree = self.trades_table.tree
 
         # ----------------------------
-        # TAB 2: Long-term Holdings
+        # TAB 2: Long-term Holdings: the holdings window (Holdings, Portfolio
+        # Overview, Rebalancing, Analytics) under one subtitle (owner, 2026-11-04)
         # ----------------------------
         lth_tab = ttk.Frame(self.bottom_notebook)
         self.bottom_notebook.add(lth_tab, text="Long-term\nHoldings")
-        ui_table.subtitle(lth_tab, LONG_TERM_HOLDINGS_SUBTITLE)
-
-        lth_cols = (
-            "coin",
-            "qty",
-            "value",
-            "avg_cost",
-            "current_price",
-            "total_pnl",
-            "pnl_pct",
-            "allocation",
-        )
-
-        lth_headers = {
-            "coin": "Coin",
-            "qty": "Quantity",
-            "value": "Current Value",
-            "avg_cost": "Avg Cost",
-            "current_price": "Current Price",
-            "total_pnl": "Total P&L",
-            "pnl_pct": "P&L %",
-            # the share of the holdings below (holdings.db) only, not of the account
-            "allocation": "% of Holdings",
-        }
-
-        self.lth_table = ui_table.DataTable(
-            lth_tab,
-            lth_cols,
-            lth_headers,
-            key="long_term_holdings",
-            numeric=[c for c in lth_cols if c != "coin"],
-            empty_text="No holdings yet",
-        )
-        self.lth_table.pack(fill="both", expand=True)
-        self.lth_tree = self.lth_table.tree
+        self._create_long_term_holdings_tab(lth_tab)
 
         # ----------------------------
         # TAB 3: Trade History: the history as a table, with filters and a summary
@@ -3648,42 +3615,37 @@ class PowerTraderHub(tk.Tk):
         self._create_llm_research_tab()
 
         # ----------------------------
-        # TAB 6: Holdings Management
-        # ----------------------------
-        self._create_holdings_management_tab()
-
-        # ----------------------------
-        # TAB 7: Portfolio Analytics
+        # TAB 6: Portfolio Analytics
         # ----------------------------
         self._create_portfolio_analytics_tab()
 
         # ----------------------------
-        # TAB 8: Advanced Order Types
+        # TAB 7: Advanced Order Types
         # ----------------------------
         self._create_advanced_order_tab()
 
         # ----------------------------
-        # TAB 9: Real-time Market Data
+        # TAB 8: Real-time Market Data
         # ----------------------------
         self._create_market_data_tab()
 
         # ----------------------------
-        # TAB 10: Portfolio Optimization
+        # TAB 9: Portfolio Optimization
         # ----------------------------
         self._create_portfolio_optimization_tab()
 
         # ----------------------------
-        # TAB 11: Backtesting Framework
+        # TAB 10: Backtesting Framework
         # ----------------------------
         self._create_backtesting_tab()
 
         # ----------------------------
-        # TAB 12: Performance Attribution
+        # TAB 11: Performance Attribution
         # ----------------------------
         self._create_performance_attribution_tab()
 
         # ----------------------------
-        # TAB 13: Institutional Trading
+        # TAB 12: Institutional Trading
         # ----------------------------
         self._create_institutional_trading_tab()
 
@@ -4025,43 +3987,43 @@ class PowerTraderHub(tk.Tk):
 
             traceback.print_exc()
 
-    def _create_holdings_management_tab(self):
-        """Create the Holdings Management tab for long-term portfolio management."""
+    def _create_long_term_holdings_tab(self, tab) -> None:
+        """Long-term Holdings: a subtitle over the holdings window
+        (long_term_holdings_gui: Holdings, Portfolio Overview, Rebalancing,
+        Analytics), all from holdings.db. Separate from the trading account: the
+        account's figures do not include the holdings, and nothing links them. The
+        Add Holding dialog offers the coins in Settings."""
+        ui_table.subtitle(tab, LONG_TERM_HOLDINGS_SUBTITLE)
+        self.holdings_gui = None
+        body = ttk.Frame(tab)
+        body.pack(fill="both", expand=True)
+        if not HOLDINGS_MANAGEMENT_AVAILABLE:
+            ttk.Label(
+                body,
+                text="The holdings could not be loaded.",
+                style="Muted.TLabel",
+                anchor="center",
+            ).pack(expand=True, fill="both", padx=20, pady=20)
+            print("Long-term Holdings not available")
+            return
         try:
-            # Always create the tab first
-            holdings_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(holdings_tab, text="Holdings\nManagement")
-
-            if not HOLDINGS_MANAGEMENT_AVAILABLE:
-                # Show a message about unavailability
-                ttk.Label(
-                    holdings_tab,
-                    text="Holdings Management Not Available\n\nRequired dependencies missing.\nPlease install: pip install sqlite3",
-                    font=ui_tokens.font("body"),
-                    anchor="center",
-                ).pack(expand=True, fill="both", padx=20, pady=20)
-                print("Holdings Management not available")
-                return
-
-            # Initialize the holdings GUI
-            self.holdings_gui = HoldingsManagementGUI(holdings_tab)
-
-            print("Holdings Management tab created successfully")
-
+            self.holdings_gui = HoldingsManagementGUI(
+                body,
+                coins=lambda: list(self.coins),
+                money=_fmt_money,
+                price=_fmt_price,
+            )
         except Exception as e:
-            # If there's an error after tab creation, show error message in the tab
-            try:
-                for widget in holdings_tab.winfo_children():
-                    widget.destroy()
-                ttk.Label(
-                    holdings_tab,
-                    text=f"Holdings Management Error\n\n{str(e)}\n\nPlease check console for details.",
-                    font=ui_tokens.font("body"),
-                    anchor="center",
-                ).pack(expand=True, fill="both", padx=20, pady=20)
-            except Exception:
-                pass
-            print(f"Error creating Holdings Management tab: {e}")
+            self.holdings_gui = None
+            for widget in body.winfo_children():
+                widget.destroy()
+            ttk.Label(
+                body,
+                text=f"The holdings could not be loaded:\n{e}",
+                style="Muted.TLabel",
+                anchor="center",
+            ).pack(expand=True, fill="both", padx=20, pady=20)
+            print(f"Error creating the Long-term Holdings tab: {e}")
             import traceback
 
             traceback.print_exc()
@@ -5875,7 +5837,6 @@ Platform: {sys.platform}
 
         # trade history (now mtime-cached inside)
         self._refresh_trade_history()
-        self._refresh_long_term_holdings()
 
         # charts (throttle)
         now = time.time()
@@ -6458,50 +6419,6 @@ Platform: {sys.platform}
             else []
         )
         self.trade_history_view.load(rows)
-
-    def _refresh_long_term_holdings(self) -> None:
-        """Long-term Holdings: the entries of holdings.db (Holdings Management keeps
-        them), read when the file changes. Separate from the trading account: the
-        account's figures do not include them, and nothing here links them."""
-        path = pt_paths.data_file("holdings.db")
-        try:
-            mtime = os.path.getmtime(path)
-        except OSError:
-            mtime = None
-        if getattr(self, "_last_holdings_mtime", object()) == mtime:
-            return
-        self._last_holdings_mtime = mtime
-        holdings = []
-        if mtime is not None:
-            try:
-                from long_term_holdings import HoldingsDatabase
-
-                holdings = HoldingsDatabase(path).get_all_holdings()
-            except Exception as exc:
-                print(f"Long-term holdings not read: {exc}")
-        self._show_long_term_holdings(holdings)
-
-    def _show_long_term_holdings(self, holdings) -> None:
-        tree = self.lth_tree
-        tree.delete(*tree.get_children())
-        total = sum(max(0.0, float(h.current_value)) for h in holdings)
-        for h in holdings:
-            value = float(h.current_value)
-            share = f"{value / total * 100:.2f}%" if total > 0 else "N/A"
-            tree.insert(
-                "",
-                "end",
-                values=(
-                    h.symbol,
-                    f"{float(h.quantity):.8f}".rstrip("0").rstrip("."),
-                    _fmt_money(value),
-                    _fmt_price(h.average_cost),
-                    _fmt_price(h.current_price),
-                    trade_history_view.signed_money(float(h.unrealized_pnl)),
-                    _fmt_pct(h.unrealized_pnl_percentage),
-                    share,
-                ),
-            )
 
     def _refresh_coin_dependent_ui(self, prev_coins: List[str]) -> None:
         """

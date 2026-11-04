@@ -24,7 +24,8 @@ replaces a bordered LabelFrame around a table. ``borderless_inside(panel)`` make
 every notebook and titled group created inside ``panel`` draw no border of its own,
 so ``panel``'s border is the only one (the module windows of the bottom panel).
 ``scroll_when_needed(text, bar)`` gives a text pane in a tab the same scrollbar
-rule as the tables: shown only while its content overflows.
+rule as the tables: shown only while its content overflows. ``SearchBox`` is a
+toolbar's free-text search through every column of a table's rows.
 """
 
 import json
@@ -47,6 +48,7 @@ MIN_WIDTH = 40
 MAX_FIT = 420  # a fitted column is at most this wide: drag its edge for more
 FIT_SAMPLE = 30  # the longest values of a column are the ones measured
 SORT_MARKS = {False: " ▲", True: " ▼"}  # ascending, descending
+SEARCH_DELAY_MS = 150  # a SearchBox searches this long after the last key
 
 # a number inside a cell: "$1,234.56", "-$5.00", "+2.50%", "3/4", "0.0012 (stop)"
 _NUMBER = re.compile(r"[-+]?(?:\d[\d,]*(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
@@ -189,6 +191,53 @@ def subtitle(parent: tk.Misc, text: str) -> ttk.Label:
 
     label.bind("<Configure>", wrap, add="+")
     return label
+
+
+class SearchBox:
+    """A toolbar's "Search" label and entry, packed left in ``bar`` (the entry takes
+    the room left). ``on_change()`` runs SEARCH_DELAY_MS after the last key, or at
+    once with ``now()``; ``matches(cells)`` says whether a row holds every word
+    typed, each in any of its cells, in any case. The caller shows the rows that
+    match and the table sorts them as before."""
+
+    def __init__(self, bar: tk.Misc, on_change: Callable[[], None], *, width: int = 16):
+        self._on_change = on_change
+        self._after: Optional[str] = None
+        self.var = tk.StringVar(master=bar)
+        ttk.Label(bar, text="Search").pack(side="left", padx=(0, 4))
+        self.entry = ttk.Entry(bar, textvariable=self.var, width=width)
+        self.entry.pack(side="left", fill="x", expand=True)
+        self.var.trace_add("write", lambda *_: self._changed())
+
+    def _changed(self) -> None:
+        self._cancel()
+        try:
+            self._after = self.entry.after(SEARCH_DELAY_MS, self.now)
+        except tk.TclError:
+            self._after = None  # the entry is gone
+
+    def _cancel(self) -> None:
+        if self._after is not None:
+            try:
+                self.entry.after_cancel(self._after)
+            except tk.TclError:
+                pass
+            self._after = None
+
+    def now(self) -> None:
+        """Search at once."""
+        self._cancel()
+        self._on_change()
+
+    def words(self) -> List[str]:
+        return self.var.get().casefold().split()
+
+    def matches(self, cells: Iterable) -> bool:
+        words = self.words()
+        if not words:
+            return True
+        text = " ".join(str(c) for c in cells).casefold()
+        return all(w in text for w in words)
 
 
 class _Tree(ttk.Treeview):

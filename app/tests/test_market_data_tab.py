@@ -1,6 +1,6 @@
 """The hub's Market Data tab reads the exchanges in Settings, primary first
-(FDS-MX-001 phase G2): a feed per exchange polls its public quote for the coins
-subscribed to it.
+(FDS-MX-001 phase G2): a feed per exchange polls its public 24-hour ticker for the
+coins subscribed to it, through the exchange layer.
 
 Everything runs under the isolation guard (app/conftest.py); no network.
 """
@@ -16,17 +16,24 @@ import real_time_market_data as rtmd  # noqa: E402
 from pt_exchange_abstraction import (  # noqa: E402
     ExchangeManager,
     ExchangeType,
-    PriceQuote,
+    Ticker,
 )
 
 
 class Connector:
-    def __init__(self, bid, ask):
-        self.bid, self.ask, self.asked = bid, ask, []
+    """A connector whose ticker has no last price (the middle of bid and ask
+    stands in) and the 24-hour fields given as ``day``."""
 
-    def quote(self, symbol):
+    def __init__(self, bid, ask, **day):
+        self.bid, self.ask, self.asked = bid, ask, []
+        self.day = day or {"change_24h": 1.0, "change_24h_pct": 1.0}
+
+    def market_symbol(self, symbol):
+        return symbol
+
+    def ticker(self, symbol):
         self.asked.append(symbol)
-        return PriceQuote(self.bid, self.ask, 1_800_000_000.0)
+        return Ticker(None, self.bid, self.ask, ticker_ts=1_800_000_000.0, **self.day)
 
 
 def layer():
@@ -87,5 +94,183 @@ def test_an_exchange_not_in_settings_gets_no_feed(tmp_path):
     try:
         m.aggregator.start_feed("bitstamp")
         assert m.aggregator.active_feeds["bitstamp"] is False
+    finally:
+        m.stop()
+
+
+def test_the_feed_fills_every_field_of_the_exchanges_ticker(tmp_path):
+    """BTC-USD on Coinbase: change, change percent and volume come from its ticker
+    (they were hard-coded to 0.0)."""
+    m = manager(tmp_path)
+    coinbase = m.aggregator.layer().exchanges[ExchangeType("coinbase")]
+    coinbase.day = dict(
+        volume_24h=8913.3,
+        high_24h=103.0,
+        low_24h=97.0,
+        change_24h=-2.5,
+        change_24h_pct=-2.42,
+    )
+    try:
+        m.subscribe_symbol("BTC")
+        assert m.aggregator.poll_once("coinbase") == 1
+    finally:
+        m.stop()
+    ticker = m.aggregator.get_latest_ticker("BTC-USD", "coinbase")
+    assert (ticker.volume, ticker.high_24h, ticker.low_24h) == (8913.3, 103.0, 97.0)
+    assert (ticker.change_24h, ticker.change_24h_pct) == (-2.5, -2.42)
+    assert ticker.spread == 2.0 and ticker.spread_pct == 2.0 / 102.0 * 100
+
+
+def test_a_value_the_exchange_does_not_give_is_none_and_shown_as_n_a(tmp_path):
+    from real_time_market_data_gui import NA, _amount, _percent, _price
+
+    m = manager(tmp_path)
+    coinbase = m.aggregator.layer().exchanges[ExchangeType("coinbase")]
+    coinbase.day = {"change_24h": 0.5}  # no volume, high, low or percent
+    try:
+        m.subscribe_symbol("BTC")
+        m.aggregator.poll_once("coinbase")
+    finally:
+        m.stop()
+    ticker = m.aggregator.get_latest_ticker("BTC")
+    assert (ticker.volume, ticker.high_24h, ticker.change_24h_pct) == (None,) * 3
+    assert _amount(ticker.volume) == _price(ticker.high_24h) == NA == "n/a"
+    assert _percent(ticker.change_24h_pct, signed=True) == "n/a"
+    assert _price(0.0) == "0.00000000"  # a real zero is shown as one
+    assert _price(-2.5, signed=True) == "-2.5000"
+    assert _percent(1.234, signed=True) == "+1.23%"
+    assert _amount(53602.0394) == "53,602.04"
+
+
+class NotListed(Connector):
+    """An exchange with no market for these coins."""
+
+    def __init__(self, bid, ask, coins):
+        super().__init__(bid, ask)
+        self.coins = set(coins)
+
+    def ticker(self, symbol):
+        from pt_exchange_abstraction import MarketNotFound
+
+        if symbol.split("-")[0] in self.coins:
+            self.asked.append(symbol)
+            raise MarketNotFound(f"no market {symbol}")
+        return super().ticker(symbol)
+
+
+def test_a_coin_the_primary_does_not_list_moves_to_the_next_exchange(tmp_path):
+    """Subscribed without naming an exchange: the primary, else the next exchange
+    in Settings order that has a market for the coin."""
+    m = manager(tmp_path)
+    m.aggregator.layer().exchanges[ExchangeType("coinbase")] = NotListed(
+        100.0, 102.0, {"XMR"}
+    )
+    try:
+        m.subscribe_symbol("XMR")
+        m.subscribe_symbol("BTC")
+        m.aggregator.poll_once("coinbase")  # (its feed may have asked already)
+        assert m.aggregator.subscribed()["XMR-USD"] == ["kraken"]
+        assert m.aggregator.active_feeds["kraken"] is True
+        assert m.aggregator.poll_once("kraken") == 1
+        # named on an exchange that has no market: it is not moved anywhere
+        m.subscribe_symbol("XMR", ["coinbase"])
+        m.aggregator.not_listed.clear()
+        m.aggregator.poll_once("coinbase")
+        assert m.aggregator.subscribed()["XMR-USD"] == ["kraken"]
+    finally:
+        m.stop()
+    assert m.get_current_price("XMR", "kraken") == 100.0
+
+
+def test_a_feed_left_with_no_coin_stops_and_starts_again(tmp_path):
+    m = manager(tmp_path)
+    try:
+        m.subscribe_symbol("ETH", ["kraken"])
+        assert m.aggregator.active_feeds["kraken"] is True
+        m.unsubscribe_symbol("ETH")
+        assert m.aggregator.active_feeds["kraken"] is False
+        m.subscribe_symbol("ETH", ["kraken"])  # a stopped feed starts again
+        assert m.aggregator.active_feeds["kraken"] is True
+    finally:
+        m.stop()
+
+
+class Failing(Connector):
+    """An exchange that cannot be reached."""
+
+    def ticker(self, symbol):
+        raise ConnectionError("no route to host")
+
+
+def test_a_feed_is_live_stale_failing_or_stopped(tmp_path):
+    from datetime import timedelta
+
+    m = manager(tmp_path)
+    agg = m.aggregator
+    agg.poll_seconds = 5.0
+    assert agg.feed_state("coinbase") == rtmd.FEED_STOPPED  # never started
+    try:
+        agg._poll_feed = lambda exchange, stop: None  # the test polls by hand
+        m.subscribe_symbol("BTC")
+        assert agg.feed_state("coinbase") == rtmd.FEED_STALE  # nothing arrived yet
+        agg.poll_once("coinbase")
+        arrived = agg.feed_statistics("coinbase").last_message
+        assert agg.feed_state("coinbase", arrived + timedelta(seconds=10)) == (
+            rtmd.FEED_LIVE
+        )  # within two poll intervals
+        assert agg.feed_state("coinbase", arrived + timedelta(seconds=11)) == (
+            rtmd.FEED_STALE
+        )
+        agg.layer().exchanges[ExchangeType("coinbase")] = Failing(0, 0)
+        agg.poll_once("coinbase")
+        assert agg.feed_state("coinbase") == rtmd.FEED_ERROR
+        assert agg.overall_state() == rtmd.FEED_ERROR
+    finally:
+        m.stop()
+    assert agg.feed_state("coinbase") == rtmd.FEED_STOPPED
+    assert agg.overall_state() == rtmd.FEED_STOPPED
+
+
+def test_feed_statistics_count_messages_and_errors(tmp_path):
+    m = manager(tmp_path)
+    agg = m.aggregator
+    try:
+        agg._poll_feed = lambda exchange, stop: None
+        m.subscribe_symbol("BTC")
+        m.subscribe_symbol("ETH")
+        agg.poll_once("coinbase")
+        agg.poll_once("coinbase")
+        stats = agg.feed_statistics("coinbase")
+        assert (stats.messages, stats.errors, stats.last_error) == (4, 0, "")
+        assert stats.uptime() is not None and stats.uptime() >= 0
+        agg.layer().exchanges[ExchangeType("coinbase")] = Failing(0, 0)
+        agg.poll_once("coinbase")
+        stats = agg.feed_statistics("coinbase")
+        assert stats.errors == 2 and stats.messages == 4
+        assert stats.last_error == "ConnectionError: no route to host"
+        assert stats.last_error_market in ("BTC-USD", "ETH-USD")
+    finally:
+        m.stop()
+    assert agg.feed_statistics("coinbase").uptime() is None  # stopped
+
+
+def test_the_overall_state_is_the_worst_of_the_feeds_in_use(tmp_path):
+    m = manager(tmp_path)
+    agg = m.aggregator
+    try:
+        agg._poll_feed = lambda exchange, stop: None
+        m.subscribe_symbol("BTC", ["coinbase"])
+        m.subscribe_symbol("ETH", ["kraken"])
+        agg.poll_once("coinbase")
+        agg.poll_once("kraken")
+        assert agg.overall_state() == rtmd.FEED_LIVE
+        agg.layer().exchanges[ExchangeType("kraken")] = Failing(0, 0)
+        agg.poll_once("kraken")
+        assert (agg.feed_state("coinbase"), agg.overall_state()) == (
+            rtmd.FEED_LIVE,
+            rtmd.FEED_ERROR,
+        )
+        m.unsubscribe_symbol("ETH")  # Kraken's feed is no longer in use
+        assert agg.overall_state() == rtmd.FEED_LIVE
     finally:
         m.stop()

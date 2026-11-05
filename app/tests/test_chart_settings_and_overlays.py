@@ -731,7 +731,8 @@ def test_the_axis_names_sit_in_the_corners(make_chart):
     ax, fig = boxes(chart)
     assert chart.ax.get_xlabel() == "" and chart.ax.get_ylabel() == ""
     price = chart._price_name
-    assert price.get_text() == "BTCUSD" and price.get_rotation() == 0
+    # the pair as the connected exchange writes it: Coinbase, the primary in Settings
+    assert price.get_text() == "BTC-USD" and price.get_rotation() == 0
     box = price.get_window_extent()
     assert box.x0 - fig.x0 < EDGE_PX and ax.y1 <= box.y0 and fig.y1 - box.y1 < EDGE_PX
     lo, hi = chart.ax.get_ylim()

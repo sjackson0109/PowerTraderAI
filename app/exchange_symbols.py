@@ -59,16 +59,18 @@ def _layer():
 def market_pairs(
     coins: Iterable[str], layer: Optional[Callable[[], Any]] = None
 ) -> List[MarketPair]:
-    """Each coin's market on the connected exchange (see the module docstring)."""
+    """Each coin's market on the connected exchange (see the module docstring).
+    ``layer`` gives a MultiExchangeManager or its ExchangeManager."""
     from pt_exchange_abstraction import ExchangeType, dollar_symbol
 
     connector, exchange = None, ""
     try:
         manager = (layer or _layer)()
-        names = manager.exchange_manager.exchange_names()
+        manager = getattr(manager, "exchange_manager", manager)
+        names = manager.exchange_names()
         if names:
             exchange = names[0]
-            connector = manager.exchange_manager.exchanges[ExchangeType(exchange)]
+            connector = manager.exchanges[ExchangeType(exchange)]
     except Exception:
         connector, exchange = None, ""
     out = []

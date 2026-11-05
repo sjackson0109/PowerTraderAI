@@ -37,6 +37,7 @@ if __name__ == "__main__":
     sys.dont_write_bytecode = True
 
 import chart_settings
+import exchange_symbols
 import order_management_view
 import paper_coins
 import position_sizing
@@ -1179,9 +1180,12 @@ class CandleChart(ttk.Frame):
         self._wait_after_id = None
         self._no_wait_key = None  # waited once already: draw without the labels
 
-        # axis names in the corners (owner, 2026-10-14): fit_layout() keeps room
+        # axis names in the corners (owner, 2026-10-14): fit_layout() keeps room. The
+        # price name is the coin's pair as the connected exchange writes it, the one
+        # format every pair in the app is shown in (exchange_symbols; with no exchange
+        # connected, the exchange layer's BTC-USD)
         self._price_name, self._time_name = _corner_axis_names(
-            self.fig, self.ax, f"{coin}USD", "Time"
+            self.fig, self.ax, exchange_symbols.market_pair(coin).pair, "Time"
         )
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self)
@@ -4197,8 +4201,10 @@ class PowerTraderHub(tk.Tk):
                 print("Real-time Market Data not available")
                 return
 
-            # Initialize the market data GUI
-            self.market_data_gui = MarketDataGUI(market_data_tab)
+            # Initialize the market data GUI: the coins in Settings by default
+            self.market_data_gui = MarketDataGUI(
+                market_data_tab, coins=lambda: list(getattr(self, "coins", []) or [])
+            )
 
             print("Real-time Market Data tab created successfully")
 

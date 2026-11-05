@@ -24,8 +24,11 @@ from pt_exchange_abstraction import (
     MarketData,
     MarketNotFound,
     MarketStatus,
+    OrderBookSnapshot,
     OrderResult,
     PriceQuote,
+    Ticker,
+    book_levels,
 )
 from market_data.timeframes import candle_timeframe_seconds
 
@@ -95,6 +98,26 @@ def _iso(seconds: int) -> str:
     )
 
 
+def _number(value) -> Optional[float]:
+    """A number from an exchange's answer (often sent as a string, sometimes empty
+    or null) as a float, or None."""
+    try:
+        if value is None or str(value).strip() == "":
+            return None
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and abs(number) != float("inf") else None
+
+
+def _item(values, index: int) -> Optional[float]:
+    """``values[index]`` as a number (Kraken's [today, last 24 hours] pairs)."""
+    try:
+        return _number(values[index])
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
 def _bar(open_ms, open_, high, low, close, volume) -> list:
     """One candle in the exchange layer's form."""
     return [
@@ -136,6 +159,7 @@ _BINANCE_CANDLE_TFS = frozenset(
 )
 _BINANCE_KLINES_PAGE = 1000
 _BINANCE_UNKNOWN_SYMBOL = -1121
+_BINANCE_DEPTH_LIMITS = (5, 10, 20, 50, 100, 500, 1000, 5000)  # /api/v3/depth limit
 
 _COINBASE_GRANULARITY = {
     "1m": 60,
@@ -415,6 +439,43 @@ class KrakenExchange(AbstractExchange):
             )
         except Exception:
             return None
+
+    def ticker(self, symbol: str) -> Optional[Ticker]:
+        """Kraken's ticker: the last trade (``c``), best bid and ask, and its last
+        24 hours' volume, high and low (the second of each ``v``/``h``/``l`` pair;
+        the first is today's, since 00:00 UTC). Its ``o`` is today's open, not the
+        price 24 hours ago, so the change is left to the exchange layer (the candle
+        cache)."""
+        pair = self._convert_symbol(symbol)
+        response = _public_get_for(
+            self, f"{self.base_url}/0/public/Ticker", params={"pair": pair}
+        )
+        info = list(self._kraken_result(response.json(), pair).values())[0]
+        return Ticker(
+            last=_item(info.get("c"), 0),
+            bid=_item(info.get("b"), 0),
+            ask=_item(info.get("a"), 0),
+            volume_24h=_item(info.get("v"), 1),
+            high_24h=_item(info.get("h"), 1),
+            low_24h=_item(info.get("l"), 1),
+            ticker_ts=_server_time(response),
+        )
+
+    def order_book(self, symbol: str, depth: int = 20) -> Optional[OrderBookSnapshot]:
+        """Kraken's public order book (``/0/public/Depth``, ``count`` levels a side,
+        each ``[price, volume, timestamp]``)."""
+        pair = self._convert_symbol(symbol)
+        response = _public_get_for(
+            self,
+            f"{self.base_url}/0/public/Depth",
+            params={"pair": pair, "count": max(1, min(int(depth), 500))},
+        )
+        book = list(self._kraken_result(response.json(), pair).values())[0]
+        return OrderBookSnapshot(
+            book_levels(book.get("bids"), depth, descending=True),
+            book_levels(book.get("asks"), depth, descending=False),
+            _server_time(response),
+        )
 
     def place_order(
         self, symbol: str, side: str, amount: float, price: Optional[float] = None
@@ -846,6 +907,59 @@ class BinanceExchange(AbstractExchange):
             )
         except Exception:
             return None
+
+    def ticker(self, symbol: str) -> Optional[Ticker]:
+        """Binance's rolling 24-hour ticker (``/api/v3/ticker/24hr``): last price,
+        best bid and ask, volume in the coin, high, low and change (its
+        ``priceChangePercent`` is in percent already)."""
+        pair = self._convert_symbol(symbol)
+        response = _public_get_for(
+            self, f"{self.base_url}/api/v3/ticker/24hr", params={"symbol": pair}
+        )
+        data = response.json()
+        if not isinstance(data, dict) or "code" in data:
+            code = data.get("code") if isinstance(data, dict) else None
+            if code == _BINANCE_UNKNOWN_SYMBOL:
+                raise MarketNotFound(f"Binance has no market {pair}")
+            message = data.get("msg", data) if isinstance(data, dict) else data
+            raise RuntimeError(f"Binance ticker for {pair}: {message}")
+        return Ticker(
+            last=_number(data.get("lastPrice")),
+            bid=_number(data.get("bidPrice")),
+            ask=_number(data.get("askPrice")),
+            volume_24h=_number(data.get("volume")),
+            high_24h=_number(data.get("highPrice")),
+            low_24h=_number(data.get("lowPrice")),
+            change_24h=_number(data.get("priceChange")),
+            change_24h_pct=_number(data.get("priceChangePercent")),
+            ticker_ts=_server_time(response),
+        )
+
+    def order_book(self, symbol: str, depth: int = 20) -> Optional[OrderBookSnapshot]:
+        """Binance's order book (``/api/v3/depth``), asked for the smallest of its
+        documented ``limit`` values that covers ``depth``."""
+        pair = self._convert_symbol(symbol)
+        limit = next(
+            (n for n in _BINANCE_DEPTH_LIMITS if n >= int(depth)),
+            _BINANCE_DEPTH_LIMITS[-1],
+        )
+        response = _public_get_for(
+            self,
+            f"{self.base_url}/api/v3/depth",
+            params={"symbol": pair, "limit": limit},
+        )
+        data = response.json()
+        if not isinstance(data, dict) or "bids" not in data:
+            code = data.get("code") if isinstance(data, dict) else None
+            if code == _BINANCE_UNKNOWN_SYMBOL:
+                raise MarketNotFound(f"Binance has no market {pair}")
+            message = data.get("msg", data) if isinstance(data, dict) else data
+            raise RuntimeError(f"Binance order book for {pair}: {message}")
+        return OrderBookSnapshot(
+            book_levels(data.get("bids"), depth, descending=True),
+            book_levels(data.get("asks"), depth, descending=False),
+            _server_time(response),
+        )
 
     def _get_symbol_filters(self, binance_symbol: str) -> Dict[str, Decimal]:
         """
@@ -1346,6 +1460,7 @@ class CoinbaseExchange(AbstractExchange):
     KEY_PERMISSIONS_PATH = BROKERAGE + "/key_permissions"
     ACCOUNTS_PAGE = 250  # the most accounts Coinbase returns per page
     PRODUCT_RULES_SECONDS = 3600.0  # product increments and flags are cached this long
+    STATS_SECONDS = 30.0  # a product's 24-hour stats are asked for at most this often
     BACKOFF_SECONDS = (1.0, 2.0, 4.0)  # waits after HTTP 429 (read-only calls only)
     # Coinbase order states -> the trader's lower-case states (a cancelled or
     # expired order that filled in part is handled in _order_result)
@@ -1368,6 +1483,7 @@ class CoinbaseExchange(AbstractExchange):
         # Public ticker host (unauthenticated market data only).
         self.base_url = "https://api.exchange.coinbase.com"
         self._product_rules: Dict[str, Tuple[float, dict]] = {}
+        self._stats: Dict[str, Tuple[float, Optional[dict]]] = {}
 
     def get_exchange_name(self) -> str:
         return "coinbase"
@@ -1603,6 +1719,70 @@ class CoinbaseExchange(AbstractExchange):
             )
         except Exception:
             return None
+
+    def ticker(self, symbol: str) -> Optional[Ticker]:
+        """Coinbase's ticker (last trade, best bid and ask, 24-hour volume in the
+        coin) with its 24-hour stats (open, high, low), both unauthenticated. The
+        change is the last price against the stats' open, the price 24 hours ago.
+        The stats move slowly: they are asked for at most every ``STATS_SECONDS``
+        per product; without them the change is left to the exchange layer."""
+        product = self._convert_symbol(symbol)
+        data, response = self._public_ticker_response(product)
+        stats = self._day_stats(product) or {}
+        ticker = Ticker(
+            last=_number(data.get("price")),
+            bid=_number(data.get("bid")),
+            ask=_number(data.get("ask")),
+            volume_24h=_number(data.get("volume")),
+            high_24h=_number(stats.get("high")),
+            low_24h=_number(stats.get("low")),
+            ticker_ts=_server_time(response) or _iso_seconds(data.get("time")),
+        )
+        if ticker.last is not None:
+            ticker.set_change_from(_number(stats.get("open")))
+        return ticker
+
+    def _day_stats(self, product: str) -> Optional[dict]:
+        """``/products/<id>/stats`` (open, high, low, last, volume over 24 hours),
+        kept ``STATS_SECONDS``; None when it cannot be read."""
+        now = time.monotonic()
+        kept = self._stats.get(product)
+        if kept is not None and now - kept[0] < self.STATS_SECONDS:
+            return kept[1]
+        try:
+            data = _public_get_for(
+                self, f"{self.base_url}/products/{product}/stats"
+            ).json()
+            stats = data if isinstance(data, dict) and "message" not in data else None
+        except Exception:
+            stats = None
+        self._stats[product] = (now, stats)
+        return stats
+
+    def order_book(self, symbol: str, depth: int = 20) -> Optional[OrderBookSnapshot]:
+        """Coinbase's public product book, ``depth`` levels a side
+        (``/api/v3/brokerage/market/product_book``: Advanced Trade's public market
+        data, no authentication; the Exchange API's level 2 book is the whole book).
+        """
+        product = self._convert_symbol(symbol)
+        response = _public_get_for(
+            self,
+            f"{self.AUTH_BASE_URL}{self.BROKERAGE}/market/product_book",
+            params={"product_id": product, "limit": max(1, int(depth))},
+        )
+        data = response.json()
+        book = data.get("pricebook") if isinstance(data, dict) else None
+        if not isinstance(book, dict):
+            error = data.get("error", "") if isinstance(data, dict) else ""
+            message = data.get("message", data) if isinstance(data, dict) else data
+            if getattr(response, "status_code", 200) == 404 or error == "NOT_FOUND":
+                raise MarketNotFound(f"Coinbase has no market {product} ({message})")
+            raise RuntimeError(f"Coinbase order book for {product}: {message}")
+        return OrderBookSnapshot(
+            book_levels(book.get("bids"), depth, descending=True),
+            book_levels(book.get("asks"), depth, descending=False),
+            _server_time(response) or _iso_seconds(book.get("time")),
+        )
 
     # -- orders -------------------------------------------------------------------------
 
@@ -2170,6 +2350,59 @@ class KuCoinExchange(AbstractExchange):
             )
         except Exception:
             return None
+
+    def ticker(self, symbol: str) -> Optional[Ticker]:
+        """KuCoin's 24-hour statistics (``/api/v1/market/stats``): last price, best
+        bid (``buy``) and ask (``sell``), volume in the coin (``vol``), high, low and
+        change (``changeRate`` is a fraction: 0.0141 is 1.41%)."""
+        pair = self._convert_symbol(symbol)
+        response = _public_get_for(
+            self, f"{self.base_url}/api/v1/market/stats", params={"symbol": pair}
+        )
+        data = response.json()
+        code = str(data.get("code"))
+        if code in _KUCOIN_UNKNOWN_PAIR:
+            raise MarketNotFound(f"KuCoin has no market {pair} ({data.get('msg')})")
+        if code != "200000":
+            raise RuntimeError(f"KuCoin ticker for {pair}: {data.get('msg', code)}")
+        info = data.get("data") or {}
+        rate = _number(info.get("changeRate"))
+        stamp = _number(info.get("time"))
+        return Ticker(
+            last=_number(info.get("last")),
+            bid=_number(info.get("buy")),
+            ask=_number(info.get("sell")),
+            volume_24h=_number(info.get("vol")),
+            high_24h=_number(info.get("high")),
+            low_24h=_number(info.get("low")),
+            change_24h=_number(info.get("changePrice")),
+            change_24h_pct=rate * 100.0 if rate is not None else None,
+            ticker_ts=_server_time(response) or (stamp / 1000.0 if stamp else None),
+        )
+
+    def order_book(self, symbol: str, depth: int = 20) -> Optional[OrderBookSnapshot]:
+        """KuCoin's public part order book: ``level2_20``, or ``level2_100`` for more
+        than 20 levels a side."""
+        pair = self._convert_symbol(symbol)
+        size = 20 if int(depth) <= 20 else 100
+        response = _public_get_for(
+            self,
+            f"{self.base_url}/api/v1/market/orderbook/level2_{size}",
+            params={"symbol": pair},
+        )
+        data = response.json()
+        code = str(data.get("code"))
+        if code in _KUCOIN_UNKNOWN_PAIR:
+            raise MarketNotFound(f"KuCoin has no market {pair} ({data.get('msg')})")
+        if code != "200000":
+            raise RuntimeError(f"KuCoin order book for {pair}: {data.get('msg', code)}")
+        book = data.get("data") or {}
+        stamp = _number(book.get("time"))
+        return OrderBookSnapshot(
+            book_levels(book.get("bids"), depth, descending=True),
+            book_levels(book.get("asks"), depth, descending=False),
+            _server_time(response) or (stamp / 1000.0 if stamp else None),
+        )
 
     def place_order(
         self, symbol: str, side: str, amount: float, price: Optional[float] = None

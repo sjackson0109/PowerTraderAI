@@ -11,6 +11,8 @@
   weights to the holdings' target %, after a confirmation with the old and new
   targets, and Long-term Holdings' Rebalancing shows the drift from them, each
   trade with its fee at the exchange layer's taker rate (0.6% when it gives none).
+* Analysis: the efficient frontier, the composition and the risk-return scatter
+  come from that data, and the frontier marks the current portfolio.
 
 Real Tk widgets and a real hub, under the isolation guard (app/conftest.py); the
 exchanges are fakes behind a real ExchangeManager, so no request is sent; every
@@ -801,6 +803,104 @@ def test_with_no_rate_from_the_exchange_layer_fees_are_at_the_default_rate(
     cells = {r[0]: r for r in rows(lt.suggestions_tree)}
     assert cells["BTC"][5:] == ("$10,000.00", "$60.00", "$9,940.00")
     assert trade_totals(lt)["rate"] == "0.60% (default rate)"
+
+
+# ---- the Analysis sub-tab: the real data, the current portfolio marked ----
+
+
+def chart_lines(g):
+    (ax,) = g.analysis_fig.axes
+    return {line.get_label(): line for line in ax.get_lines()}
+
+
+def test_the_frontier_is_the_data_s_and_marks_the_current_portfolio(
+    root, manager, dialogs
+):
+    import matplotlib.pyplot as plt
+
+    figures = len(plt.get_fignums())
+    pension_holdings(manager)
+    manager.add_holding(holding("ETH", 2, 2000.0, 2000.0, tags=["Steve"]))
+    lt = holdings_gui(root, manager)
+    lt.set_tag_selection(["Pension"])
+    g = optimizer_gui(root, holdings=lt)
+    g.notebook.select(g.analysis_tab)
+    assert g.view_var.get() == "Efficient Frontier"
+    assert g.chart_note.winfo_manager() and not g.analysis_widget.winfo_manager()
+    assert g.chart_note.cget("text") == "Optimize the portfolio first"
+
+    g.optimize_portfolio()
+    g.wait()
+    root.update()
+    assert g.analysis_widget.winfo_manager() and not g.chart_note.winfo_manager()
+    lines = chart_lines(g)
+    assert list(lines) == [
+        "Efficient frontier",
+        "Max Sharpe ratio",
+        "Optimised",
+        "Current portfolio",
+    ]
+    frontier = g.frontier_data
+    np.testing.assert_allclose(
+        lines["Efficient frontier"].get_xdata(), frontier["Volatility"] * 100
+    )
+    np.testing.assert_allclose(
+        lines["Efficient frontier"].get_ydata(), frontier["Return"] * 100
+    )
+    # the current portfolio: BTC and ETH, half each, over the same data
+    ret, vol, _sharpe = g.portfolio_figures({"BTC": 0.5, "ETH": 0.5})
+    data = g.result_data
+    w = np.array([0.5, 0.5, 0.0, 0.0])
+    assert ret == pytest.approx(float(data.expected_returns().values @ w))
+    assert vol == pytest.approx(float(np.sqrt(w @ data.covariance().values @ w)))
+    current = lines["Current portfolio"]
+    assert (current.get_xdata()[0], current.get_ydata()[0]) == pytest.approx(
+        (vol * 100, ret * 100)
+    )
+    result = g.optimization_result
+    assert g.analysis_points["Optimised"] == pytest.approx(
+        (result["volatility"], result["expected_return"])
+    )
+    # it follows the tag filter: of Steve's holdings, only ETH's coin has data
+    lt.set_tag_selection(["Steve"])
+    eth = (data.volatilities()["ETH"], data.expected_returns()["ETH"])
+    assert g.analysis_points["Current portfolio"] == pytest.approx(eth)
+    assert len(plt.get_fignums()) == figures  # one figure, not one per drawing
+
+
+def test_the_composition_and_the_risk_return_scatter_use_the_data(
+    root, manager, dialogs
+):
+    pension_holdings(manager)
+    lt = holdings_gui(root, manager)
+    lt.set_tag_selection(["Pension"])
+    g = optimizer_gui(root, holdings=lt)
+    g.view_var.set("Risk-Return Scatter")
+    g.draw_analysis()
+    assert g.chart_note.cget("text") == "Load the data first"
+    g.optimize_portfolio()
+    g.wait()
+
+    (ax,) = g.analysis_fig.axes  # the scatter: each coin, and both portfolios
+    data = g.result_data
+    (coins,) = ax.collections
+    np.testing.assert_allclose(
+        coins.get_offsets(),
+        np.column_stack([data.volatilities() * 100, data.expected_returns() * 100]),
+    )
+    assert [t.get_text() for t in ax.texts] == list(COINS)
+    assert set(chart_lines(g)) == {"Optimised", "Current portfolio"}
+
+    g.view_var.set("Portfolio Composition")
+    g.draw_analysis()
+    assert g.analysis_weights == {
+        "Optimised": g.optimization_result["weights"],
+        "Current portfolio": pytest.approx({"BTC": 0.5, "ETH": 0.5}),
+    }
+    (ax,) = g.analysis_fig.axes
+    assert len(ax.patches) == 2 * len(COINS)  # two bars a coin
+    widths = sorted(p.get_width() for p in ax.patches)
+    assert widths[-1] == pytest.approx(50.0)  # BTC and ETH: 50% of the current
 
 
 # ---- jobs off the Tk thread ----

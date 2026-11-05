@@ -19,7 +19,10 @@ Modern Portfolio Theory over the coins in Settings (portfolio_optimizer). Sub-ta
   writes the optimised weights to the target % of the holdings the tag filter
   keeps, after a confirmation that lists each old and new target; Long-term
   Holdings' Rebalancing (the one rebalancing) then shows the drift from them.
-* Analysis.
+* Analysis: one chart at a time, from the data and the result: the efficient
+  frontier with its max Sharpe ratio point and the optimised and current
+  portfolios on it; the composition, each coin's optimised and current weight;
+  and each coin's annual return against its volatility, with both portfolios.
 
 The current portfolio is Long-term Holdings' (``holdings``: its window, a
 HoldingsManagementGUI): the holdings its tag filter keeps, each coin's share of
@@ -52,10 +55,12 @@ except ImportError:
     OPTIMIZER_AVAILABLE = False
 
 try:
-    import matplotlib.pyplot as plt
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    from matplotlib.figure import Figure
+    from matplotlib.ticker import FuncFormatter
 
     PLOTTING_AVAILABLE = True
+    PERCENT = FuncFormatter(lambda v, _pos: f"{v:.0f}%")
 except ImportError:
     PLOTTING_AVAILABLE = False
 
@@ -112,6 +117,24 @@ METRICS = (
 )
 PORTFOLIOS = (("current", "Current portfolio"), ("optimised", "Optimised"))
 
+# ---- Analysis ----
+
+VIEWS = ("Efficient Frontier", "Portfolio Composition", "Risk-Return Scatter")
+NO_FRONTIER = "Optimize the portfolio first"
+NO_DATA_CHART = "Load the data first"
+NO_CHARTS = "Charts need matplotlib"
+FRONTIER_TITLE = "Efficient frontier"
+COMPOSITION_TITLE = "Weights, optimised and current"
+RISK_RETURN_TITLE = "Annual return and volatility"
+VOLATILITY_AXIS = "Volatility (annual)"
+RETURN_AXIS = "Expected return (annual)"
+WEIGHT_AXIS = "Weight"
+FRONTIER_LABEL = "Efficient frontier"
+MAX_SHARPE_LABEL = "Max Sharpe ratio"
+OPTIMISED_LABEL = "Optimised"
+CURRENT_LABEL = "Current portfolio"
+COINS_LABEL = "Coins"
+
 
 def _money(value: float) -> str:
     return f"${value:,.2f}"
@@ -123,6 +146,15 @@ def _price(value: float) -> str:
 
 def _pct(fraction: float, places: int = 2) -> str:
     return f"{fraction * 100:.{places}f}%"
+
+
+def _show(widget: tk.Widget, shown: bool) -> None:
+    """Pack ``widget`` to fill its parent, or take it out."""
+    if shown:
+        if not widget.winfo_manager():
+            widget.pack(fill="both", expand=True)
+    elif widget.winfo_manager():
+        widget.pack_forget()
 
 
 def _number(text: str) -> Optional[float]:
@@ -451,42 +483,43 @@ class PortfolioOptimizerGUI:
         self.results_tree = self.result_table.tree
 
     def setup_analysis_tab(self):
-        """Setup the analysis and visualization tab."""
-        analysis_frame = ttk.Frame(self.notebook)
-        self.notebook.add(analysis_frame, text=SUB_TABS[2])
+        """The view buttons over one chart (or the message why there is none)."""
+        gap = ui_tokens.SPACE["sm"]
+        self.analysis_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.analysis_tab, text=SUB_TABS[2])
+        tab = self.analysis_tab
 
-        if not PLOTTING_AVAILABLE:
-            tk.Label(
-                analysis_frame,
-                text="Install matplotlib and seaborn for visualization features",
-                font=ui_tokens.font("title"),
-            ).pack(pady=50)
-            return
+        bar = self._toolbar(tab)
+        ttk.Label(bar, text="Chart").pack(side="left", padx=(0, gap))
+        self.view_var = tk.StringVar(master=bar, value=VIEWS[0])
+        for view in VIEWS:
+            ttk.Radiobutton(
+                bar,
+                text=view,
+                value=view,
+                variable=self.view_var,
+                command=self.draw_analysis,
+            ).pack(side="left", padx=(0, gap))
 
-        # Visualization controls
-        viz_frame = ttk.LabelFrame(analysis_frame, text="Visualization")
-        viz_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        viz_buttons = tk.Frame(viz_frame)
-        viz_buttons.pack(padx=5, pady=5)
-
-        ttk.Button(
-            viz_buttons,
-            text="Plot Efficient Frontier",
-            command=self.plot_efficient_frontier,
-        ).pack(side=tk.LEFT)
-        ttk.Button(
-            viz_buttons,
-            text="Portfolio Composition",
-            command=self.plot_portfolio_composition,
-        ).pack(side=tk.LEFT, padx=10)
-        ttk.Button(
-            viz_buttons, text="Risk-Return Scatter", command=self.plot_risk_return
-        ).pack(side=tk.LEFT)
-
-        # Chart area
-        self.chart_frame = tk.Frame(analysis_frame)
-        self.chart_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.chart_area = ttk.Frame(tab)
+        self.chart_area.pack(side="top", fill="both", expand=True, padx=gap, pady=gap)
+        self.chart_note = ttk.Label(
+            self.chart_area, text="", style="Muted.TLabel", anchor="center"
+        )
+        if PLOTTING_AVAILABLE:
+            # a small first size: the canvas takes the room it is given
+            self.analysis_fig = Figure(
+                figsize=(5, 3),
+                facecolor=ui_tokens.CHART["figure"],
+                layout="constrained",
+            )
+            self.analysis_canvas = FigureCanvasTkAgg(self.analysis_fig, self.chart_area)
+            self.analysis_widget = self.analysis_canvas.get_tk_widget()
+        # what the chart shows (tests): {label: (volatility, return)} of the
+        # portfolios marked, and {series: {coin: weight}} of the composition
+        self.analysis_points: Dict[str, Tuple[float, float]] = {}
+        self.analysis_weights: Dict[str, Dict[str, float]] = {}
+        self.draw_analysis()
 
     # ---- jobs off the Tk thread ----
 
@@ -717,6 +750,7 @@ class PortfolioOptimizerGUI:
         if self.market_data is not None:
             self.show_data()
         self.show_result()
+        self.draw_analysis()
 
     def current_text(self) -> str:
         """The current portfolio in one line."""
@@ -1021,176 +1055,201 @@ class PortfolioOptimizerGUI:
         return True
 
     def save_portfolio(self):
-        """Save optimized portfolio."""
+        """Save the optimised weights, by name, in portfolio_optimization.db."""
+        title = "Save Portfolio"
         if not self.optimization_result:
-            messagebox.showerror("Error", "No optimization result to save")
+            messagebox.showerror(title, "Optimize the portfolio first.")
             return
 
-        # Simple dialog for portfolio name
-        name = simpledialog.askstring("Save Portfolio", "Enter portfolio name:")
+        name = simpledialog.askstring(title, "Portfolio name:")
         if name and OPTIMIZER_AVAILABLE:
             try:
                 portfolio_id = self.optimizer.save_optimized_portfolio(
                     name, self.optimization_result, self.opt_type()
                 )
-                messagebox.showinfo(
-                    "Success", f"Portfolio saved with ID {portfolio_id}"
-                )
+                messagebox.showinfo(title, f"Saved as portfolio {portfolio_id}.")
             except Exception as e:
-                messagebox.showerror("Error", f"Failed to save portfolio: {str(e)}")
+                messagebox.showerror(title, f"The portfolio was not saved: {e}")
 
     # ---- Analysis ----
 
-    def plot_efficient_frontier(self):
-        """Plot efficient frontier."""
-        if not PLOTTING_AVAILABLE:
-            messagebox.showerror("Error", "Matplotlib not available for plotting")
+    def _show_chart(self, message: str = "") -> None:
+        """The chart, or ``message`` in its place."""
+        if message or not PLOTTING_AVAILABLE:
+            self.chart_note.configure(text=message or NO_CHARTS)
+            if PLOTTING_AVAILABLE:
+                self.analysis_fig.clear()
+                _show(self.analysis_widget, False)
+            _show(self.chart_note, True)
             return
+        _show(self.chart_note, False)
+        _show(self.analysis_widget, True)
 
-        if self.frontier_data is None or self.frontier_data.empty:
-            messagebox.showerror("Error", "Optimize the portfolio first")
+    def draw_analysis(self) -> None:
+        """The chart chosen, from the data and the result now."""
+        self.analysis_points, self.analysis_weights = {}, {}
+        view = self.view_var.get()
+        draw = {
+            VIEWS[0]: self.plot_efficient_frontier,
+            VIEWS[1]: self.plot_portfolio_composition,
+            VIEWS[2]: self.plot_risk_return,
+        }.get(view, self.plot_efficient_frontier)
+        try:
+            draw()
+        except Exception as e:
+            print(f"Error drawing the {view} chart: {e}")
+
+    def _portfolio_points(self) -> Dict[str, Tuple[float, float]]:
+        """The optimised and current portfolios' (volatility, return)."""
+        points: Dict[str, Tuple[float, float]] = {}
+        result = self.optimization_result
+        if result:
+            points[OPTIMISED_LABEL] = (
+                float(result["volatility"]),
+                float(result["expected_return"]),
+            )
+        held = self.current.weights if self.current is not None else {}
+        figures = self.portfolio_figures(held)
+        if figures is not None:
+            points[CURRENT_LABEL] = (figures[1], figures[0])
+        return points
+
+    def _axes(self, title: str, xlabel: str, ylabel: str):
+        chart, size = ui_tokens.CHART, ui_tokens.CHART_FONT_PT
+        self.analysis_fig.clear()
+        ax = self.analysis_fig.add_subplot(111)
+        ax.set_title(title, fontsize=size + 1)
+        ax.set_xlabel(xlabel, fontsize=size)
+        ax.set_ylabel(ylabel, fontsize=size)
+        ax.tick_params(labelsize=size)
+        ax.grid(True, color=chart["grid"], alpha=0.5)
+        return ax
+
+    def _finish(self, ax, legend: bool = True) -> None:
+        if legend and ax.get_legend_handles_labels()[0]:
+            ax.legend(fontsize=ui_tokens.CHART_FONT_PT, loc="best")
+        ui_theme.theme_figure(self.analysis_fig)
+        self.analysis_canvas.draw_idle()
+
+    def plot_efficient_frontier(self) -> None:
+        """The efficient frontier, its max Sharpe ratio point, and the optimised and
+        current portfolios on it."""
+        frontier = self.frontier_data
+        if frontier is None or frontier.empty:
+            self._show_chart(NO_FRONTIER)
             return
-
-        # Clear previous charts
-        for widget in self.chart_frame.winfo_children():
-            widget.destroy()
-
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-        # Plot efficient frontier
+        self._show_chart()
+        chart, status = ui_tokens.CHART, ui_tokens.STATUS
+        ax = self._axes(FRONTIER_TITLE, VOLATILITY_AXIS, RETURN_AXIS)
         ax.plot(
-            self.frontier_data["Volatility"],
-            self.frontier_data["Return"],
+            frontier["Volatility"] * 100,
+            frontier["Return"] * 100,
             "-",
-            color=ui_tokens.CHART["series"],
+            color=chart["series"],
             linewidth=2,
-            label="Efficient Frontier",
+            label=FRONTIER_LABEL,
         )
-
-        # Highlight max Sharpe ratio portfolio
-        max_sharpe_idx = self.frontier_data["Sharpe_Ratio"].idxmax()
-        ax.plot(
-            self.frontier_data.loc[max_sharpe_idx, "Volatility"],
-            self.frontier_data.loc[max_sharpe_idx, "Return"],
-            "o",
-            color=ui_tokens.CHART["text"],
-            markersize=10,
-            label="Max Sharpe Ratio",
-        )
-
-        # Mark current optimization if available
-        if self.optimization_result:
+        best = frontier.loc[frontier["Sharpe_Ratio"].idxmax()]
+        marks = {MAX_SHARPE_LABEL: (float(best["Volatility"]), float(best["Return"]))}
+        marks.update(self._portfolio_points())
+        styles = {
+            MAX_SHARPE_LABEL: ("o", chart["text"]),
+            OPTIMISED_LABEL: ("*", chart["series2"]),
+            CURRENT_LABEL: ("D", status["warn"]),
+        }
+        for label, (vol, ret) in marks.items():
+            marker, colour = styles[label]
             ax.plot(
-                self.optimization_result["volatility"],
-                self.optimization_result["expected_return"],
-                "o",
-                color=ui_tokens.CHART["series2"],
-                markersize=10,
-                label="Current Optimization",
+                vol * 100,
+                ret * 100,
+                marker,
+                color=colour,
+                markersize=12 if marker == "*" else 8,
+                linestyle="none",
+                label=label,
             )
+        ax.xaxis.set_major_formatter(PERCENT)
+        ax.yaxis.set_major_formatter(PERCENT)
+        self.analysis_points = marks
+        self._finish(ax)
 
-        ax.set_xlabel("Volatility (Risk)")
-        ax.set_ylabel("Expected Return")
-        ax.set_title("Efficient Frontier")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        ui_theme.theme_figure(fig)
-
-        canvas = FigureCanvasTkAgg(fig, self.chart_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-    def plot_portfolio_composition(self):
-        """Plot portfolio composition pie chart."""
-        if not PLOTTING_AVAILABLE:
-            messagebox.showerror("Error", "Matplotlib not available for plotting")
+    def plot_portfolio_composition(self) -> None:
+        """Each coin's weight in the optimised and the current portfolio, side by
+        side."""
+        result = self.optimization_result
+        if not result:
+            self._show_chart(NO_FRONTIER)
             return
-
-        if not self.optimization_result:
-            messagebox.showerror("Error", "Please optimize portfolio first")
-            return
-
-        # Clear previous charts
-        for widget in self.chart_frame.winfo_children():
-            widget.destroy()
-
-        fig, ax = plt.subplots(figsize=(8, 8))
-
-        weights = self.optimization_result["weights"]
-        assets = list(weights.keys())
-        values = list(weights.values())
-
-        colors = plt.cm.Set3(np.arange(len(assets)))
-        wedges, texts, autotexts = ax.pie(
-            values, labels=assets, autopct="%1.1f%%", colors=colors, startangle=90
+        self._show_chart()
+        chart, status = ui_tokens.CHART, ui_tokens.STATUS
+        optimised = dict(result["weights"])
+        held = dict(self.current.weights) if self.current is not None else {}
+        series = {OPTIMISED_LABEL: optimised}
+        if held:
+            series[CURRENT_LABEL] = held
+        coins = sorted(
+            set(optimised) | set(held),
+            key=lambda c: (-optimised.get(c, 0.0), -held.get(c, 0.0), c),
         )
-        for autotext in autotexts:  # dark on the pale wedges
-            autotext.set_color(ui_tokens.CHART["figure"])
+        ax = self._axes(COMPOSITION_TITLE, WEIGHT_AXIS, "")
+        height = 0.8 / len(series)
+        colours = {OPTIMISED_LABEL: chart["series2"], CURRENT_LABEL: status["warn"]}
+        positions = np.arange(len(coins))
+        for i, (label, weights) in enumerate(series.items()):
+            ax.barh(
+                positions + i * height,
+                [weights.get(c, 0.0) * 100 for c in coins],
+                height=height,
+                color=colours[label],
+                label=label,
+            )
+        ax.set_yticks(positions + height * (len(series) - 1) / 2)
+        ax.set_yticklabels(coins, fontsize=ui_tokens.CHART_FONT_PT)
+        ax.invert_yaxis()  # the largest weight on top
+        ax.xaxis.set_major_formatter(PERCENT)
+        self.analysis_weights = series
+        self._finish(ax)
 
-        ax.set_title(
-            f"Portfolio Composition\n"
-            f'Expected Return: {self.optimization_result["expected_return"]:.2%}, '
-            f'Volatility: {self.optimization_result["volatility"]:.2%}'
-        )
-        ui_theme.theme_figure(fig)
-
-        canvas = FigureCanvasTkAgg(fig, self.chart_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-    def plot_risk_return(self):
-        """Plot risk-return scatter of individual assets."""
-        if not PLOTTING_AVAILABLE:
-            messagebox.showerror("Error", "Matplotlib not available for plotting")
-            return
-
-        data = self.market_data
+    def plot_risk_return(self) -> None:
+        """Each coin's annual volatility and return, and the two portfolios."""
+        data = self.result_data if self.result_data is not None else self.market_data
         if data is None or data.prices.empty:
-            messagebox.showerror("Error", "Please load data first")
+            self._show_chart(NO_DATA_CHART)
             return
-
-        # Clear previous charts
-        for widget in self.chart_frame.winfo_children():
-            widget.destroy()
-
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-        returns, volatilities = data.expected_returns(), data.volatilities()
-
-        # Plot individual assets
-        ax.scatter(volatilities, returns, s=100, alpha=0.7, c=ui_tokens.CHART["series"])
-
-        # Add labels
-        for i, asset in enumerate(returns.index):
+        self._show_chart()
+        chart, status = ui_tokens.CHART, ui_tokens.STATUS
+        size = ui_tokens.CHART_FONT_PT
+        returns, vols = data.expected_returns() * 100, data.volatilities() * 100
+        ax = self._axes(RISK_RETURN_TITLE, VOLATILITY_AXIS, RETURN_AXIS)
+        ax.scatter(vols, returns, s=40, color=chart["series"], label=COINS_LABEL)
+        for coin in data.coins:
             ax.annotate(
-                asset,
-                (volatilities.iloc[i], returns.iloc[i]),
-                xytext=(5, 5),
+                coin,
+                (vols[coin], returns[coin]),
+                xytext=(4, 4),
                 textcoords="offset points",
+                fontsize=size,
             )
-
-        # Add portfolio if optimized
-        if self.optimization_result:
-            ax.scatter(
-                self.optimization_result["volatility"],
-                self.optimization_result["expected_return"],
-                s=200,
-                c=ui_tokens.CHART["series2"],
-                marker="*",
-                label="Optimized Portfolio",
+        marks = self._portfolio_points()
+        styles = {
+            OPTIMISED_LABEL: ("*", chart["series2"]),
+            CURRENT_LABEL: ("D", status["warn"]),
+        }
+        for label, (vol, ret) in marks.items():
+            marker, colour = styles[label]
+            ax.plot(
+                vol * 100,
+                ret * 100,
+                marker,
+                color=colour,
+                markersize=12 if marker == "*" else 8,
+                linestyle="none",
+                label=label,
             )
-
-        ax.set_xlabel("Volatility (Risk)")
-        ax.set_ylabel("Expected Return")
-        ax.set_title("Risk-Return Profile of Assets")
-        ax.grid(True, alpha=0.3)
-        if self.optimization_result:
-            ax.legend()
-        ui_theme.theme_figure(fig)
-
-        canvas = FigureCanvasTkAgg(fig, self.chart_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        ax.xaxis.set_major_formatter(PERCENT)
+        ax.yaxis.set_major_formatter(PERCENT)
+        self.analysis_points = marks
+        self._finish(ax)
 
 
 def main():

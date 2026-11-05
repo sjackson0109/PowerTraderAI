@@ -873,12 +873,11 @@ class OrderDialog(tk.Toplevel):
         self.update_estimate()
 
     def _trail_mode_changed(self) -> None:
-        if self.trail_mode_var.get() == TRAIL_ATR:
-            self.trail_var.set("2")
-            if self.atr is None and self.quote is not None:
-                self._look_up_atr()
-        else:
-            self.trail_var.set("2")
+        """A new trail mode starts at 2 (percent, or ATR multiple); the ATR is looked
+        up the first time it is needed."""
+        self.trail_var.set("2")
+        if self.trail_mode_var.get() == TRAIL_ATR and self.atr is None and self.quote:
+            self._look_up_atr()
         self.update_estimate()
 
     # ---- the order ----

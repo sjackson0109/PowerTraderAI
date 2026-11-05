@@ -95,15 +95,21 @@ TAG = "MANUAL"  # the trade history's tag for these fills (Trade History: Manual
 SEND_WITHIN_S = 120.0
 
 SIDES = ("buy", "sell")
-# an exchange's words for an order that will not fill any more
+# an exchange's words for an order that will not fill any more -> its OrderStatus
 _ENDED = {
-    "cancelled": OrderStatus.CANCELLED,
-    "canceled": OrderStatus.CANCELLED,
-    "expired": OrderStatus.EXPIRED,
-    "expired_in_match": OrderStatus.EXPIRED,
-    "rejected": OrderStatus.REJECTED,
-    "failed": OrderStatus.REJECTED,
+    "cancelled": "CANCELLED",
+    "canceled": "CANCELLED",
+    "expired": "EXPIRED",
+    "expired_in_match": "EXPIRED",
+    "rejected": "REJECTED",
+    "failed": "REJECTED",
 }
+
+
+def _ended(status: str):
+    """The OrderStatus of an exchange's word for an order that will not fill any
+    more."""
+    return OrderStatus[_ENDED[status]]
 
 
 def _utcnow() -> datetime:
@@ -1177,7 +1183,7 @@ class OrderExecutor:
             return "filled"
         if status in _ENDED:
             self._end(
-                item, _ENDED[status], result.reason or f"The exchange says {status}"
+                item, _ended(status), result.reason or f"The exchange says {status}"
             )
             return status
         if status == "partially_filled" and item.status != "partial":
@@ -1282,7 +1288,7 @@ class OrderExecutor:
                     return "filled"
             ended = [str(results[leg.role].status).lower() for leg in (tp, sl)]
             if all(s in _ENDED for s in ended):
-                self._end_group(group, _ENDED[ended[0]], "The exchange ended the order")
+                self._end_group(group, _ended(ended[0]), "The exchange ended the order")
                 return ended[0]
             return ""
         if not group.exchange_order_id:
@@ -1300,7 +1306,7 @@ class OrderExecutor:
             return "filled"
         if status in _ENDED:
             self._end_group(
-                group, _ENDED[status], result.reason or "The exchange ended it"
+                group, _ended(status), result.reason or "The exchange ended it"
             )
             return status
         return ""

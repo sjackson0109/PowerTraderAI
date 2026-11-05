@@ -717,3 +717,27 @@ def test_the_dialog_says_how_each_type_is_carried_out():
     assert ome.MANAGED_TEXT in ome.handling_text(
         spec(ome.BRACKET), True, broker, "Coinbase"
     )
+
+
+# ---- without SQLAlchemy the hub still starts ----
+
+
+def test_the_modules_import_without_sqlalchemy(monkeypatch):
+    """pt_hub imports the view and this module at start-up; without SQLAlchemy the
+    hub shows Order Management as not available, so neither may need it to load."""
+    import importlib
+
+    for name in list(sys.modules):
+        if name == "sqlalchemy" or name.startswith("sqlalchemy."):
+            monkeypatch.setitem(sys.modules, name, None)
+    monkeypatch.setitem(sys.modules, "sqlalchemy", None)
+    for name in (
+        "order_management_models",
+        "order_management_execution",
+        "order_management_view",
+    ):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    execution = importlib.import_module("order_management_execution")
+    view = importlib.import_module("order_management_view")
+    assert execution.Order is None and execution.KINDS
+    assert view.ORDER_TYPES[0] == "Market"

@@ -12,10 +12,12 @@ Settings > Risk: the limits that protect the account.
   coin %, DCA multiplier and Max DCA buys per coin in 24 hours, with the dollar
   amounts at the last account value.
 
-Save writes the ``risk`` keys of ``pt_config.json`` (``SettingsManager.set_risk``),
-which the trader reads before every drawdown check, and the limits through
-``save_limits`` (the hub's settings, which the trader re-reads when they change).
-Reset peak and Resume trading
+Save checks every field first and shows what is wrong beside the field: a refused
+save changes nothing. It writes the ``risk`` keys of ``pt_config.json``
+(``SettingsManager.set_risk``), which the trader reads before every drawdown check,
+and the limits through ``save_limits`` (the hub's settings, which the trader re-reads
+when they change). The window says when each change applies. Reset peak and Resume
+trading
 are requests the trader applies (``risk_state``). The window is built like Settings
 > Strategy (``strategy_settings_ui``): a scrolling body, a status line, Save and
 Cancel. ``HaltBanner`` is the hub's TRADING HALTED banner.
@@ -28,7 +30,7 @@ import time
 import tkinter as tk
 from tkinter import messagebox as _messagebox
 from tkinter import ttk
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 import position_sizing
 import risk_state
@@ -136,6 +138,17 @@ def limit_hint(key: str, pct: Optional[float], account: Optional[float]) -> str:
     return ""
 
 
+# When the trader uses a change (how pt_trader reads each one)
+APPLY_TEXT = (
+    "Saved levels and limits apply from the trader's next cycle: it reads them "
+    "again every cycle, so a running trader needs no restart. Reset peak applies at "
+    "the trader's next cycle, or when it next starts. After an emergency stop the "
+    "trader has stopped; after Resume trading it trades again when it is next "
+    "started."
+)
+FIX_TEXT = "Nothing was saved: correct the values marked in red."
+
+
 def money(value: float) -> str:
     return f"${value:,.2f}"
 
@@ -193,9 +206,9 @@ class RiskSettingsWindow(tk.Toplevel):
     folder for the trading mode (where the peak is kept); ``account_value()`` the
     last account value the trader reported (None before it has). ``limits`` are the
     position and DCA limits as saved, ``save_limits(values)`` saves them (without
-    it the window shows no limits). ``on_saved()``
-    runs after a save, ``on_changed()`` after Reset peak or Resume trading (the hub
-    refreshes its Settings line and banner)."""
+    it the window shows no limits). ``on_saved()`` runs after a save,
+    ``on_changed()`` after Reset peak or Resume trading (the hub refreshes its
+    Settings line and banner)."""
 
     def __init__(
         self,
@@ -236,9 +249,11 @@ class RiskSettingsWindow(tk.Toplevel):
         self.account_var = tk.StringVar(master=self)
         self.drawdown_var = tk.StringVar(master=self)
         self.halt_var = tk.StringVar(master=self)
-        # per setting key: the field's text and its hint
+        # per setting key: the field's text, its hint, and what is wrong with it
         self.vars: Dict[str, tk.StringVar] = {}
         self.hints: Dict[str, tk.StringVar] = {}
+        self.errors: Dict[str, tk.StringVar] = {}
+        self._error_labels: Dict[str, ttk.Label] = {}
         for key, _label, _bounds, default, _help in LEVELS:
             self.vars[key] = tk.StringVar(
                 master=self, value=_number(saved.get(key, default))
@@ -260,6 +275,7 @@ class RiskSettingsWindow(tk.Toplevel):
             raise
         for key in self.vars:
             self.vars[key].trace_add("write", lambda *_: self._show_hints())
+            self.vars[key].trace_add("write", lambda *_, k=key: self._show_error(k, ""))
         self.refresh()
         self.transient(parent)
 
@@ -387,48 +403,56 @@ class RiskSettingsWindow(tk.Toplevel):
 
     # -- saving ----------------------------------------------------------------------
 
-    def collect(self) -> Dict[str, float]:
-        """What Save writes to the ``risk`` section; ValueError says, in plain
-        words, which value is wrong."""
+    def check(self) -> Tuple[Dict[str, float], Dict[str, Any], Dict[str, str]]:
+        """Every field checked: the ``risk`` values, the limits, and what is wrong
+        with each field that is (in plain words, by setting key)."""
+        problems: Dict[str, str] = {}
         values: Dict[str, float] = {}
-        for key, label, (lo, hi), _default, _help in LEVELS:
+        for key, _label, (lo, hi), _default, _help in LEVELS:
             number = parse_number(self.vars[key].get())
-            name = label.rstrip(":")
             if number is None or not lo <= number <= hi:
-                raise ValueError(f"{name} must be a number from {lo:g} to {hi:g}.")
-            values[key] = number
-        if not values["drawdown_warning_pct"] < values["drawdown_critical_pct"]:
-            raise ValueError("Warning % must be below Critical %.")
-        if not values["drawdown_critical_pct"] < values["emergency_drawdown_pct"]:
-            raise ValueError("Critical % must be below Emergency stop %.")
-        return values
-
-    def collect_limits(self) -> Dict[str, Any]:
-        """What Save writes through ``save_limits``: ValueError says which value is
-        wrong."""
-        values: Dict[str, Any] = {}
-        for key, label, (lo, hi), _default, whole, _help in LIMITS:
+                problems[key] = f"Must be a number from {lo:g} to {hi:g}."
+            else:
+                values[key] = number
+        warning = values.get("drawdown_warning_pct")
+        critical = values.get("drawdown_critical_pct")
+        emergency = values.get("emergency_drawdown_pct")
+        if warning is not None and critical is not None and not warning < critical:
+            problems["drawdown_warning_pct"] = "Must be below Critical %."
+        if critical is not None and emergency is not None and not critical < emergency:
+            problems["drawdown_critical_pct"] = "Must be below Emergency stop %."
+        limits: Dict[str, Any] = {}
+        for key, _label, (lo, hi), _default, whole, _help in LIMITS:
             if key not in self._limit_keys:
                 continue
             number = parse_number(self.vars[key].get())
-            name = label.rstrip(":")
-            kind = "a whole number" if whole else "a number"
             if (
                 number is None
                 or not lo <= number <= hi
                 or (whole and not float(number).is_integer())
             ):
-                raise ValueError(f"{name} must be {kind} from {lo:g} to {hi:g}.")
-            values[key] = int(number) if whole else float(number)
-        return values
+                kind = "a whole number" if whole else "a number"
+                problems[key] = f"Must be {kind} from {lo:g} to {hi:g}."
+            else:
+                limits[key] = int(number) if whole else float(number)
+        return values, limits, problems
+
+    def _show_error(self, key: str, message: str) -> None:
+        """``message`` beside the field (none: the field's error is hidden)."""
+        self.errors[key].set(message)
+        label = self._error_labels.get(key)
+        if label is not None:
+            if message:
+                label.grid()
+            else:
+                label.grid_remove()
 
     def save(self) -> bool:
-        try:
-            values = self.collect()
-            limits = self.collect_limits()
-        except ValueError as exc:
-            self.status_var.set(str(exc))
-            self._box.showerror(TITLE, str(exc), parent=self)
+        values, limits, problems = self.check()
+        for key in self.vars:
+            self._show_error(key, problems.get(key, ""))
+        if problems:
+            self.status_var.set(FIX_TEXT)
             return False
         if not self._factory().set_risk(values):
             message = "The risk settings could not be saved."
@@ -499,7 +523,11 @@ class RiskSettingsWindow(tk.Toplevel):
         r = self._build_halt(body, 0)
         r = self._build_drawdown(body, r)
         if self._limit_keys:
-            self._build_limits(body, r)
+            r = self._build_limits(body, r)
+        ttk.Label(body, text="When changes apply", style="Header.TLabel").grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(14, 0)
+        )
+        self._help(body, r + 1, APPLY_TEXT)
 
         ttk.Label(
             self, textvariable=self.status_var, wraplength=HELP_WRAP, justify="left"
@@ -573,7 +601,7 @@ class RiskSettingsWindow(tk.Toplevel):
             frm,
             text="sets the peak to the account value above",
             style="Muted.TLabel",
-        ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(6, 0))
+        ).grid(row=r, column=1, columnspan=2, sticky="w", pady=(6, 0))
         r += 1
 
         for key, label, bounds, default, help_text in LEVELS:
@@ -610,6 +638,18 @@ class RiskSettingsWindow(tk.Toplevel):
         ttk.Label(frm, textvariable=self.hints[key]).grid(
             row=r, column=2, sticky="w", padx=(10, 0), pady=(10, 0)
         )
+        r += 1
+        self.errors[key] = tk.StringVar(master=self)
+        error = ttk.Label(
+            frm,
+            textvariable=self.errors[key],
+            style="Bad.TLabel",
+            wraplength=HELP_WRAP,
+            justify="left",
+        )
+        error.grid(row=r, column=1, columnspan=2, sticky="w")
+        error.grid_remove()  # shown with a message only
+        self._error_labels[key] = error
         r += 1
         lo, hi = bounds
         self._help(

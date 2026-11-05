@@ -169,17 +169,25 @@ def test_save_writes_what_the_trader_reads(root, folder):
 
 
 @pytest.mark.parametrize(
-    "warning, critical, emergency, said",
+    "warning, critical, emergency, wrong",
     [
-        ("5", "5", "8", "Warning % must be below Critical %."),
-        ("3", "9", "8", "Critical % must be below Emergency stop %."),
-        ("3", "5", "60", "Emergency stop % must be a number from 1 to 50."),
-        ("0.1", "5", "8", "Warning % must be a number from 0.5 to 50."),
-        ("abc", "5", "8", "Warning % must be a number from 0.5 to 50."),
+        ("5", "5", "8", {"drawdown_warning_pct": "Must be below Critical %."}),
+        ("3", "9", "8", {"drawdown_critical_pct": "Must be below Emergency stop %."}),
+        ("3", "5", "60", {"emergency_drawdown_pct": "Must be a number from 1 to 50."}),
+        ("0.1", "5", "8", {"drawdown_warning_pct": "Must be a number from 0.5 to 50."}),
+        (
+            "abc",
+            "",
+            "8",
+            {
+                "drawdown_warning_pct": "Must be a number from 0.5 to 50.",
+                "drawdown_critical_pct": "Must be a number from 0.5 to 50.",
+            },
+        ),
     ],
 )
-def test_a_wrong_level_is_refused_and_nothing_is_saved(
-    root, folder, warning, critical, emergency, said
+def test_a_wrong_level_is_refused_beside_its_field_and_nothing_is_saved(
+    root, folder, warning, critical, emergency, wrong
 ):
     box = Box()
     win = open_window(root, folder, box=box)
@@ -187,8 +195,40 @@ def test_a_wrong_level_is_refused_and_nothing_is_saved(
     win.vars["drawdown_critical_pct"].set(critical)
     win.vars["emergency_drawdown_pct"].set(emergency)
     assert not win.save()
-    assert box.errors == [said] and win.status_var.get() == said
+    shown = {k: v.get() for k, v in win.errors.items() if v.get()}
+    assert shown == wrong
+    for key in win.vars:  # only a field with a problem shows one
+        assert bool(win._error_labels[key].winfo_manager()) == (key in wrong)
+    assert win.status_var.get() == ui.FIX_TEXT and box.errors == []
     assert on_disk(folder) == {} and win.saved_calls == []
+    win.destroy()
+
+
+def test_an_error_goes_when_its_field_is_corrected(root, folder):
+    win = open_window(root, folder)
+    win.vars["emergency_drawdown_pct"].set("0")
+    assert not win.save()
+    assert win.errors["emergency_drawdown_pct"].get()
+    win.vars["emergency_drawdown_pct"].set("9")
+    assert win.errors["emergency_drawdown_pct"].get() == ""
+    assert not win._error_labels["emergency_drawdown_pct"].winfo_manager()
+    assert win.save()
+    assert on_disk(folder)["emergency_drawdown_pct"] == 9.0
+
+
+def test_the_window_says_when_changes_apply(root, folder):
+    win = open_window(root, folder)
+    shown = texts(win)
+    assert "When changes apply" in shown and ui.APPLY_TEXT in shown
+    assert "next cycle" in ui.APPLY_TEXT and "no restart" in ui.APPLY_TEXT
+    win.destroy()
+
+
+def test_the_words_name_no_spec_key_or_data_provider(root, folder):
+    win = limits_window(root, folder)
+    for text in texts(win) + [ui.APPLY_TEXT, ui.FIX_TEXT]:
+        for banned in ("FDS", "_pct", "pt_config", "json", "Binance", "KuCoin"):
+            assert banned not in text, (banned, text)
     win.destroy()
 
 
@@ -523,8 +563,10 @@ def test_a_wrong_limit_is_refused_and_nothing_is_saved(root, folder, key, typed,
     win = limits_window(root, folder, box=box)
     win.vars[key].set(typed)
     assert not win.save()
-    assert said in box.errors
-    assert win.written == [] and on_disk(folder) == {}
+    name = [spec[1] for spec in ui.LIMITS if spec[0] == key][0].rstrip(":")
+    assert f"{name} m{win.errors[key].get()[1:]}" == said  # beside the field
+    assert {k for k, v in win.errors.items() if v.get()} == {key}
+    assert win.written == [] and on_disk(folder) == {}  # the levels are not saved
     win.destroy()
 
 

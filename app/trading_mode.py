@@ -28,6 +28,7 @@ import shutil
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
@@ -562,6 +563,11 @@ class PaperExchange(AbstractExchange):
     ``trading_fees``; "" for the exchanges in Settings, primary first). With no
     rates from the feed, that exchange's stored standard rates; with none at all,
     the paper account's own rate, logged at WARNING.
+
+    With ``state_path`` the book is shared: the trader and the hub's Order
+    Management each have an account on the same file. Every order and balance read
+    takes the book's lock file and first reads the book again when another process
+    saved it since this account last read or wrote it (``_book``).
     """
 
     # Offline fallback spread around the simulator price.
@@ -594,8 +600,13 @@ class PaperExchange(AbstractExchange):
         self.last_quotes: Dict[str, PricedQuote] = {}
         # (exchange, base) -> (when read, the fee rates a fill pays)
         self._fees: Dict[Tuple[str, str], Tuple[float, TradingFees]] = {}
+        # the saved book as this account last read or wrote it (None: not read). Its
+        # contents, not its time: a file time can repeat within a clock tick
+        self._book_seen: Optional[bytes] = None
         # False when there is no saved book or it could not be read
         self.state_loaded = bool(state_path) and self.load_state(state_path)
+        if self.state_loaded:
+            self._book_seen = self._book_bytes()
 
     def get_exchange_name(self) -> str:
         return "paper"
@@ -736,7 +747,7 @@ class PaperExchange(AbstractExchange):
         order_side = OrderSide.BUY if side_l == "buy" else OrderSide.SELL
         base = _base_asset(symbol)
 
-        with self._lock:
+        with self._book():
             priced: Optional[PricedQuote] = None
             if price is None:
                 # Market order: fill at the ask when buying, the bid when selling,
@@ -770,6 +781,42 @@ class PaperExchange(AbstractExchange):
                     price=Decimal(str(price)),
                     commission_rate=Decimal(str(rate)),
                 )
+            self._stamp_provenance(order_id, priced)
+            self._stamp_fees(order_id, fees, fee_type)
+            self._save_state()
+            return self._order_result(order_id)
+
+    def fill_limit_order(
+        self, symbol: str, side: str, amount: float, price: float
+    ) -> OrderResult:
+        """A limit order the market has reached (Order Management watches it): it
+        fills at its own limit ``price`` and pays the maker rate of the exchange
+        whose quote reached it. That quote is the one a market order would use now,
+        so it must be live as for a market order (else rejected with
+        PRICE_UNAVAILABLE under the pause policy)."""
+        side_l = str(side).lower().strip()
+        if side_l not in ("buy", "sell"):
+            raise ValueError(f"Invalid order side: {side!r}")
+        base = _base_asset(symbol)
+        with self._book():
+            try:
+                priced = self._priced_quote(base)
+            except PriceUnavailable:
+                return self._reject(symbol, side_l, amount, PRICE_UNAVAILABLE)
+            limit = Decimal(str(price))
+            self._simulator.anchors[base] = limit
+            fees = self._fees_for(base, priced.exchange)
+            fee_type, rate = fees.for_order("limit")
+            order_id = self.account.place_order(
+                symbol=base,
+                order_type=OrderType.LIMIT,
+                side=OrderSide.BUY if side_l == "buy" else OrderSide.SELL,
+                quantity=Decimal(str(amount)),
+                price=limit,
+                commission_rate=Decimal(str(rate)),
+            )
+            if self.account.orders[order_id].status is OrderStatus.PENDING:
+                self.account._execute_order(order_id)  # at its limit price
             self._stamp_provenance(order_id, priced)
             self._stamp_fees(order_id, fees, fee_type)
             self._save_state()
@@ -812,7 +859,7 @@ class PaperExchange(AbstractExchange):
                 break
 
     def get_balance(self) -> Dict[str, float]:
-        with self._lock:
+        with self._book():
             balances = {PAPER_BALANCE_ASSET: float(self.account.cash_balance)}
             for symbol, position in self.account.positions.items():
                 if position.quantity > 0:
@@ -865,6 +912,44 @@ class PaperExchange(AbstractExchange):
 
     # -- persistence (so the paper book survives a trader restart) --
 
+    def _book_bytes(self) -> Optional[bytes]:
+        try:
+            with open(self._state_path, "rb") as f:
+                return f.read()
+        except (OSError, TypeError):
+            return None
+
+    @contextmanager
+    def _book(self):
+        """One read or change of the book. With a saved book, its lock file is held
+        (every process takes it, so two never change the book at once) and the book
+        is read again first when it was saved since this account last read or wrote
+        it. A book that cannot be read then is left as this account has it (logged
+        by ``load_state``). When the lock cannot be had in a few seconds, the order
+        goes ahead without it (logged)."""
+        with self._lock:
+            if not self._state_path:
+                yield
+                return
+            # the cross-process lock the request pacing uses (one byte of a file)
+            from rate_limits import _Locked
+
+            held = _Locked(f"{self._state_path}.lock", self._clock)
+            try:
+                held.__enter__()
+            except OSError as exc:
+                logger.warning(f"Paper book lock not taken ({exc}); going ahead")
+                held = None
+            try:
+                seen = self._book_bytes()
+                if seen is not None and seen != self._book_seen:
+                    self.load_state(self._state_path)
+                    self._book_seen = seen
+                yield
+            finally:
+                if held is not None:
+                    held.__exit__(None, None, None)
+
     def _save_state(self) -> None:
         if not self._state_path:
             return
@@ -887,6 +972,8 @@ class PaperExchange(AbstractExchange):
             os.replace(tmp, self._state_path)
         except OSError:
             pass
+        else:
+            self._book_seen = self._book_bytes()  # this account's own write
 
     def load_state(self, path: str) -> bool:
         try:

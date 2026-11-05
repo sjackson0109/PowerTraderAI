@@ -148,6 +148,16 @@ def test_the_table_has_the_ten_columns_and_one_row_per_trade(view):
     )
 
 
+def test_a_fee_under_a_cent_shows_its_digits_not_zero(view):
+    """A $1 paper trade on a 0.1%-0.4% exchange pays a fraction of a cent."""
+    small = row(0, "buy", "ENTRY", "BTC-USD", 0.00001, 100000.0, fees_usd=0.004)
+    cells = dict(zip(thv.COLUMNS, view.cells(thv.trade_of(small))))
+    assert cells["fees"] == "$0.004"
+    free = row(0, "buy", "ENTRY", "BTC-USD", 0.00001, 100000.0, fees_usd=0.0)
+    assert dict(zip(thv.COLUMNS, view.cells(thv.trade_of(free))))["fees"] == "$0.00"
+    assert view.summary_text([thv.trade_of(small)]).startswith("1 trade, fees $0.004")
+
+
 @pytest.mark.parametrize(
     "tag, side, source, text",
     [

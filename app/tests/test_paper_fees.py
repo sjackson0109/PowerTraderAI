@@ -265,17 +265,24 @@ class TraderPaysPaperFees(PaperTraderCase):
         self.assertEqual(self.fees.asked, [("BTC", "coinbase")])
 
     def test_trade_history_shows_the_fee_not_na(self):
+        """Even a $1 trade's fee (Kraken's 0.4%: $0.004) shows, not N/A or $0.00."""
+        import pt_hub
+
+        self.fees.taker = 0.004
         trader = self.trader(dict(self.SETTINGS))
-        self.buy_then_sell(trader)
+        buy = trader.place_buy_order("id", "buy", "market", "BTC-USD", 1.0)
+        trader.place_sell_order("id2", "sell", "market", "BTC-USD", buy["quantity"])
+        view = types.SimpleNamespace(
+            _money=pt_hub._fmt_money, _price=pt_hub._fmt_price, _pct=str
+        )
+        view._fee = lambda v: trade_history_view.TradeHistoryView._fee(view, v)
+        fee_cell = trade_history_view.COLUMNS.index("fees")
         for row in self.ledger_rows():
             trade = trade_history_view.trade_of(row)
             self.assertAlmostEqual(trade.fees, row["fees_usd"])
-            fee_cell = trade_history_view.COLUMNS.index("fees")
-            view = types.SimpleNamespace(
-                _money=lambda v: f"${v:,.2f}", _price=str, _pct=str
-            )
             cell = trade_history_view.TradeHistoryView.cells(view, trade)[fee_cell]
-            self.assertNotEqual(cell, "N/A")
+            self.assertNotIn(cell, ("N/A", "$0.00"))
+            self.assertTrue(cell.startswith("$0.00"), cell)  # e.g. $0.004
 
     def test_fees_are_in_the_cost_basis_and_the_realised_profit(self):
         trader = self.trader(dict(self.SETTINGS))

@@ -740,13 +740,14 @@ class MarketDataAggregator:
         return None
 
     def get_spread_analysis(self, symbol: str) -> Dict[str, Any]:
-        """Analyze spreads across exchanges"""
+        """The bid, ask and spread on each exchange, and the best bid and ask
+        across them. No arbitrage is worked out from them: it would need each
+        exchange's trading and withdrawal fees and the transfer time."""
         symbol = _market(symbol)
         analysis = {
             "exchanges": {},
             "best_bid": None,
             "best_ask": None,
-            "arbitrage_opportunities": [],
         }
 
         best_bid_price = 0
@@ -778,20 +779,6 @@ class MarketDataAggregator:
 
         analysis["best_bid"] = {"price": best_bid_price, "exchange": best_bid_exchange}
         analysis["best_ask"] = {"price": best_ask_price, "exchange": best_ask_exchange}
-
-        # Find arbitrage opportunities
-        if best_bid_price > best_ask_price:
-            analysis["arbitrage_opportunities"].append(
-                {
-                    "buy_exchange": best_ask_exchange,
-                    "sell_exchange": best_bid_exchange,
-                    "buy_price": best_ask_price,
-                    "sell_price": best_bid_price,
-                    "profit_per_unit": best_bid_price - best_ask_price,
-                    "profit_pct": ((best_bid_price - best_ask_price) / best_ask_price)
-                    * 100,
-                }
-            )
 
         return analysis
 

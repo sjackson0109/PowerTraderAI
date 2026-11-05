@@ -311,11 +311,6 @@ class MarketDataGUI:
         self.notebook.add(self.orderbook_tab, text="Order\nBooks")
         self.setup_orderbook_tab()
 
-        # Arbitrage Tab
-        self.arbitrage_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.arbitrage_tab, text="Arbitrage\nMonitor")
-        self.setup_arbitrage_tab()
-
         # Data Feeds Tab
         self.feeds_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.feeds_tab, text="Data\nFeeds")
@@ -613,60 +608,6 @@ class MarketDataGUI:
         self.book_jobs = BackgroundJobs(self.orderbook_tab, name="market-data-book")
         self._book_request: Optional[tuple] = None
         self.book = None  # the order book shown (real_time_market_data.OrderBook)
-
-    def setup_arbitrage_tab(self):
-        """Setup arbitrage monitoring tab"""
-        # Arbitrage controls
-        arb_controls = ttk.LabelFrame(self.arbitrage_tab, text="Arbitrage Monitor")
-        arb_controls.pack(fill="x", padx=5, pady=5)
-
-        ttk.Label(arb_controls, text="Min Profit %:").pack(side="left")
-        self.min_profit_var = tk.StringVar(value="0.1")
-        ttk.Entry(arb_controls, textvariable=self.min_profit_var, width=10).pack(
-            side="left", padx=5
-        )
-
-        ttk.Button(
-            arb_controls, text="Scan for Opportunities", command=self.scan_arbitrage
-        ).pack(side="left", padx=10)
-
-        self.auto_scan_var = tk.BooleanVar()
-        ttk.Checkbutton(
-            arb_controls, text="Auto Scan", variable=self.auto_scan_var
-        ).pack(side="left", padx=5)
-
-        # Arbitrage opportunities table
-        arb_frame = ttk.LabelFrame(self.arbitrage_tab, text="Arbitrage Opportunities")
-        arb_frame.pack(fill="both", expand=True, padx=5, pady=5)
-
-        self.arb_table = ui_table.DataTable(
-            arb_frame,
-            (
-                "symbol",
-                "buy_exchange",
-                "sell_exchange",
-                "buy_price",
-                "sell_price",
-                "profit",
-                "profit_pct",
-                "updated",
-            ),
-            {
-                "symbol": "Symbol",
-                "buy_exchange": "Buy Exchange",
-                "sell_exchange": "Sell Exchange",
-                "buy_price": "Buy Price",
-                "sell_price": "Sell Price",
-                "profit": "Profit",
-                "profit_pct": "Profit Pct",
-                "updated": "Updated",
-            },
-            key="market_data.arbitrage",
-            numeric=("buy_price", "sell_price", "profit", "profit_pct"),
-            empty_text="No opportunities yet",
-        )
-        self.arb_table.pack(fill="both", expand=True)
-        self.arb_tree = self.arb_table.tree
 
     def setup_feeds_tab(self):
         """Setup data feeds monitoring tab"""
@@ -1121,62 +1062,6 @@ class MarketDataGUI:
         facts.append(f"Updated {book.timestamp.strftime('%H:%M:%S')}")
         self.ob_status_var.set("  ·  ".join(facts))
         self._after("book", self._book_interval_ms(), self._refresh_book)
-
-    def scan_arbitrage(self):
-        """Scan for arbitrage opportunities"""
-        if not self.market_manager:
-            self._box.showerror("Error", "Market data manager not available")
-            return
-
-        min_profit = float(self.min_profit_var.get() or 0.1)
-
-        # Clear existing opportunities
-        for item in self.arb_tree.get_children():
-            self.arb_tree.delete(item)
-
-        # Check each subscribed symbol
-        opportunities_found = 0
-        for symbol in self.subscribed():
-            try:
-                # Get spread analysis
-                if hasattr(self.market_manager.aggregator, "get_spread_analysis"):
-                    analysis = self.market_manager.aggregator.get_spread_analysis(
-                        symbol
-                    )
-
-                    if "arbitrage_opportunities" in analysis:
-                        for opportunity in analysis["arbitrage_opportunities"]:
-                            if opportunity["profit_pct"] >= min_profit:
-                                values = (
-                                    symbol,
-                                    opportunity["buy_exchange"],
-                                    opportunity["sell_exchange"],
-                                    f"{opportunity['buy_price']:.6f}",
-                                    f"{opportunity['sell_price']:.6f}",
-                                    f"{opportunity['profit_per_unit']:.6f}",
-                                    f"{opportunity['profit_pct']:.2f}%",
-                                    datetime.now().strftime("%H:%M:%S"),
-                                )
-
-                                self.arb_tree.insert(
-                                    "", "end", values=values, tags=["opportunity"]
-                                )
-                                opportunities_found += 1
-
-            except Exception as e:
-                print(f"Error checking arbitrage for {symbol}: {e}")
-
-        if opportunities_found == 0:
-            self._box.showinfo(
-                "Info", f"No arbitrage opportunities found above {min_profit}% profit"
-            )
-        else:
-            self._box.showinfo(
-                "Success", f"Found {opportunities_found} arbitrage opportunities"
-            )
-
-        # Configure tag colors
-        self.arb_tree.tag_configure("opportunity", foreground=ui_tokens.STATUS["good"])
 
     def cleanup(self):
         """Cleanup when closing (and when the tab is destroyed): the timers stop,

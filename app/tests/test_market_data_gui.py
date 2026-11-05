@@ -408,6 +408,30 @@ def test_no_not_yet_implemented_message_is_left():
         assert "not yet implemented" not in f.read().lower()
 
 
+# --- no Arbitrage Monitor ---------------------------------------------------------------
+
+
+def test_there_is_no_arbitrage_monitor(build):
+    """It compared the subscribed exchanges only (nothing, with one exchange) and
+    left out trading fees, withdrawal fees and transfer time."""
+    gui = build(coins=("ETH",), exchanges=("coinbase", "kraken"))
+    names = [
+        gui.notebook.tab(t, "text").replace("\n", " ") for t in gui.notebook.tabs()
+    ]
+    assert names == ["Market Overview", "Price Charts", "Order Books", "Data Feeds"]
+    for module in ("real_time_market_data_gui.py", "real_time_market_data.py"):
+        with open(os.path.join(APP_DIR, module), encoding="utf-8") as f:
+            source = f.read()
+        assert (
+            "arbitrage_opportunities" not in source and "scan_arbitrage" not in source
+        )
+    poll(gui)
+    assert (
+        "arbitrage_opportunities"
+        not in gui.market_manager.get_market_summary("ETH")["spread_analysis"]
+    )
+
+
 # --- nothing left running ---------------------------------------------------------------
 
 

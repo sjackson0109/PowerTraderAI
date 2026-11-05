@@ -9,6 +9,7 @@ the existing PowerTrader architecture and provides ORM operations.
 
 import logging
 import os
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -56,13 +57,18 @@ class OrderManagementDB:
         self.database_url = database_url
         self.engine = None
         self.SessionLocal = None
+        # SQLite keeps one connection for the engine (StaticPool), shared by the
+        # Tk thread and Order Management's worker: one session at a time on it
+        self._session_lock = threading.RLock()
         self._setup_database()
 
     def close(self) -> None:
         """Close the engine's connections. SQLite keeps one connection open for
-        the engine's life (StaticPool), which holds the file open on Windows."""
+        the engine's life (StaticPool), which holds the file open on Windows. A
+        session still open on another thread finishes first."""
         if self.engine is not None:
-            self.engine.dispose()
+            with self._session_lock:
+                self.engine.dispose()
 
     def _setup_database(self):
         """Set up database engine and session factory."""
@@ -108,17 +114,18 @@ class OrderManagementDB:
 
     @contextmanager
     def get_session(self):
-        """Get a database session with automatic cleanup."""
-        session = self.SessionLocal()
-        try:
-            yield session
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Database session error: {e}")
-            raise
-        finally:
-            session.close()
+        """Get a database session with automatic cleanup (one at a time)."""
+        with self._session_lock:
+            session = self.SessionLocal()
+            try:
+                yield session
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Database session error: {e}")
+                raise
+            finally:
+                session.close()
 
     def create_order(
         self,
@@ -132,8 +139,12 @@ class OrderManagementDB:
         tag: Optional[str] = None,
         user_id: Optional[str] = None,
         expires_at: Optional[datetime] = None,
+        parent_order_id=None,
+        notify: bool = True,
     ) -> Order:
-        """Create a new order."""
+        """Create a new order. ``parent_order_id`` makes it a leg of that order (an
+        OCO or Bracket order's); ``notify=False`` adds no "Order Created"
+        notification (a leg: its group has one)."""
         with self.get_session() as session:
             order = Order(
                 symbol=symbol.upper(),
@@ -147,20 +158,22 @@ class OrderManagementDB:
                 tag=tag,
                 user_id=user_id,
                 expires_at=expires_at,
+                parent_order_id=parent_order_id,
             )
 
             session.add(order)
             session.flush()  # Get the ID
 
             # Create notification for new order
-            create_notification(
-                session,
-                order.id,
-                NotificationType.ORDER_FILLED,  # Will be updated when actually filled
-                f"Order Created: {side.value.upper()} {symbol}",
-                f"Created {order_type.value} order for {quantity} {symbol} at {price or 'market price'}",
-                user_id=user_id,
-            )
+            if notify:
+                create_notification(
+                    session,
+                    order.id,
+                    NotificationType.ORDER_FILLED,  # Will be updated when actually filled
+                    f"Order Created: {side.value.upper()} {symbol}",
+                    f"Created {order_type.value} order for {quantity} {symbol} at {price or 'market price'}",
+                    user_id=user_id,
+                )
 
             # Refresh the object to ensure all attributes are loaded
             session.refresh(order)
@@ -218,8 +231,9 @@ class OrderManagementDB:
         order_id: str,
         status: OrderStatus,
         exchange_order_id: Optional[str] = None,
+        notify: bool = True,
     ) -> bool:
-        """Update order status."""
+        """Update order status (``notify=False``: no notification of the change)."""
         with self.get_session() as session:
             order = session.query(Order).filter(Order.id == order_id).first()
             if not order:
@@ -243,7 +257,7 @@ class OrderManagementDB:
                 order.filled_at = datetime.utcnow()
 
             # Create notification for status change
-            if old_status != status:
+            if notify and old_status != status:
                 notification_type = {
                     OrderStatus.FILLED: NotificationType.ORDER_FILLED,
                     OrderStatus.CANCELLED: NotificationType.ORDER_CANCELLED,
@@ -423,8 +437,51 @@ class OrderManagementDB:
         return triggered_orders
 
     def cancel_order(self, order_id: str) -> bool:
-        """Cancel an order."""
-        return self.update_order_status(order_id, OrderStatus.CANCELLED)
+        """Cancel an order. An OCO or Bracket order is cancelled with all its legs,
+        and a leg with its whole group: one Cancel cancels them all."""
+        group = self.order_group(order_id)
+        if not group:
+            return False
+        done = False
+        open_ids = self._open_ids(group)
+        for member in group:
+            if member in open_ids:
+                done = (
+                    self.update_order_status(
+                        member, OrderStatus.CANCELLED, notify=member == group[0]
+                    )
+                    or done
+                )
+        return done
+
+    def order_group(self, order_id) -> List[Any]:
+        """The ids of ``order_id``'s group: its parent (an OCO or Bracket order) and
+        every leg of it, the parent first; just ``order_id`` for a single order;
+        [] when there is no such order."""
+        with self.get_session() as session:
+            order = session.query(Order).filter(Order.id == order_id).first()
+            if order is None:
+                return []
+            top = order
+            while top.parent_order_id is not None:
+                parent = (
+                    session.query(Order).filter(Order.id == top.parent_order_id).first()
+                )
+                if parent is None:
+                    break
+                top = parent
+            legs = (
+                session.query(Order)
+                .filter(Order.parent_order_id == top.id)
+                .order_by(Order.created_at)
+                .all()
+            )
+            return [top.id] + [leg.id for leg in legs]
+
+    def _open_ids(self, ids) -> set:
+        with self.get_session() as session:
+            rows = session.query(Order).filter(Order.id.in_(list(ids))).all()
+            return {o.id for o in rows if o.is_active}
 
     def expire_old_orders(self, age_hours: int = 24) -> int:
         """Expire orders older than specified age."""

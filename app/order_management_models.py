@@ -48,6 +48,7 @@ class OrderType(Enum):
     CONDITIONAL = "conditional"
     BRACKET = "bracket"
     OCO = "oco"  # One-Cancels-Other
+    TRAILING_STOP = "trailing_stop"
 
 
 class OrderSide(Enum):
@@ -344,6 +345,51 @@ class Notification(Base):
         Index("idx_notifications_user_unread", "user_id", "is_read"),
         Index("idx_notifications_type_created", "notification_type", "created_at"),
     )
+
+
+class ManagedOrder(Base):
+    """How Order Management carries out an order it created (order_management_
+    execution): one row per order, and per group and leg of an OCO or Bracket
+    order. Kept with the orders, so monitoring resumes when the app starts again.
+
+    ``account`` is the trading settings' key when the order was made ("paper",
+    "live:binance", ...) and ``books`` the folder of that account's books under the
+    hub folder (TradingSettings.data_subdir). ``exchange`` and ``pair`` are the
+    exchange whose market the order is on and that exchange's symbol. ``handling``
+    is "exchange" when the exchange holds the order as its own (``exchange_order_id``
+    on the order), "powertrader" when the app watches the price and places a market
+    order, or fills the paper account, when it is reached. ``role`` is "order" for
+    a single order, "group" for an OCO or Bracket order, and "entry",
+    "take_profit" or "stop" for its legs. ``state``: "new" (not sent yet),
+    "waiting" (a bracket's exits, until its entry fills), "working", "triggered" (a
+    stop-limit order whose stop was reached: its limit order works), "placing" (being
+    sent to the exchange) and "done". A trailing stop keeps its trail (a percent, or
+    a multiple of ``atr``, the average true range when it was made) and the best
+    price it has seen; ``note`` is the last thing that held the order up."""
+
+    __tablename__ = "managed_orders"
+
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), primary_key=True)
+    account = Column(String(60), nullable=False)
+    books = Column(String(120), nullable=False)
+    exchange = Column(String(30), nullable=False, default="")
+    pair = Column(String(30), nullable=False, default="")
+    coin = Column(String(20), nullable=False)
+    kind = Column(String(20), nullable=False)
+    role = Column(String(20), nullable=False, default="order")
+    handling = Column(String(12), nullable=False, default="powertrader")
+    state = Column(String(12), nullable=False, default="new")
+    trail_mode = Column(String(10), nullable=True)  # "percent" | "atr"
+    trail_value = Column(Numeric(20, 8), nullable=True)  # the percent or the multiple
+    atr = Column(Numeric(20, 8), nullable=True)
+    best_price = Column(Numeric(20, 8), nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    __table_args__ = (Index("idx_managed_account_state", "account", "state"),)
 
 
 class OrderTemplate(Base):

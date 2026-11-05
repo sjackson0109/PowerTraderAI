@@ -58,8 +58,15 @@ def test_settings_window_lists_config_data_and_log_folders():
     assert rows == [
         ("Config folder:", pt_paths.config_dir()),
         ("Data folder:", pt_paths.data_dir()),
+        ("Models folder:", pt_paths.models_dir()),
+        ("Hub data folder:", pt_paths.hub_dir()),
+        ("Cache folder:", pt_paths.cache_dir()),
         ("Log folder:", pt_paths.log_dir()),
     ]
+    # a folder chosen in an older release is the one shown, as it is still used
+    chosen = os.path.join(pt_paths.data_dir(), "my_models")
+    rows = dict(pt_hub.PowerTraderHub._user_folder_rows({"main_neural_dir": chosen}))
+    assert rows["Models folder:"] == chosen
     folder = pt_paths.log_dir()
     if os.name == "nt":
         with mock.patch.object(pt_hub.os, "startfile", create=True) as start:

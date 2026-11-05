@@ -140,3 +140,56 @@ def test_a_value_the_exchange_does_not_give_is_none_and_shown_as_n_a(tmp_path):
     assert _price(-2.5, signed=True) == "-2.5000"
     assert _percent(1.234, signed=True) == "+1.23%"
     assert _amount(53602.0394) == "53,602.04"
+
+
+class NotListed(Connector):
+    """An exchange with no market for these coins."""
+
+    def __init__(self, bid, ask, coins):
+        super().__init__(bid, ask)
+        self.coins = set(coins)
+
+    def ticker(self, symbol):
+        from pt_exchange_abstraction import MarketNotFound
+
+        if symbol.split("-")[0] in self.coins:
+            self.asked.append(symbol)
+            raise MarketNotFound(f"no market {symbol}")
+        return super().ticker(symbol)
+
+
+def test_a_coin_the_primary_does_not_list_moves_to_the_next_exchange(tmp_path):
+    """Subscribed without naming an exchange: the primary, else the next exchange
+    in Settings order that has a market for the coin."""
+    m = manager(tmp_path)
+    m.aggregator.layer().exchanges[ExchangeType("coinbase")] = NotListed(
+        100.0, 102.0, {"XMR"}
+    )
+    try:
+        m.subscribe_symbol("XMR")
+        m.subscribe_symbol("BTC")
+        m.aggregator.poll_once("coinbase")  # (its feed may have asked already)
+        assert m.aggregator.subscribed()["XMR-USD"] == ["kraken"]
+        assert m.aggregator.active_feeds["kraken"] is True
+        assert m.aggregator.poll_once("kraken") == 1
+        # named on an exchange that has no market: it is not moved anywhere
+        m.subscribe_symbol("XMR", ["coinbase"])
+        m.aggregator.not_listed.clear()
+        m.aggregator.poll_once("coinbase")
+        assert m.aggregator.subscribed()["XMR-USD"] == ["kraken"]
+    finally:
+        m.stop()
+    assert m.get_current_price("XMR", "kraken") == 100.0
+
+
+def test_a_feed_left_with_no_coin_stops_and_starts_again(tmp_path):
+    m = manager(tmp_path)
+    try:
+        m.subscribe_symbol("ETH", ["kraken"])
+        assert m.aggregator.active_feeds["kraken"] is True
+        m.unsubscribe_symbol("ETH")
+        assert m.aggregator.active_feeds["kraken"] is False
+        m.subscribe_symbol("ETH", ["kraken"])  # a stopped feed starts again
+        assert m.aggregator.active_feeds["kraken"] is True
+    finally:
+        m.stop()

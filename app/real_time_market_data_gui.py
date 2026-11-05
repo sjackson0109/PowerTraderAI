@@ -1,18 +1,25 @@
 """
 Real-time Market Data GUI (Item 24)
 User interface for monitoring real-time market data feeds
+
+Coins are the ones in Settings (subscribed by default, on the primary exchange) and
+any typed into a symbol box; every pair is shown in the connected exchange's own
+format (``exchange_symbols``), every exchange by its proper name. What the feed
+threads bring is shown from the Tk thread (a timer polls their queue); the timers
+stop, and the feeds with them, when the tab is destroyed.
 """
 
 import queue
-import threading
-import time
 import tkinter as tk
-from datetime import datetime, timedelta
-from tkinter import messagebox, ttk
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from tkinter import messagebox as _messagebox
+from tkinter import ttk
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
+import exchange_symbols
 import ui_table
 import ui_tokens
+from pt_exchange_abstraction import exchange_id, exchange_name
 
 try:
     from real_time_market_data import (
@@ -65,21 +72,41 @@ def _amount(value: Optional[float]) -> str:
     return f"{amount:,.2f}" if abs(amount) >= 1000 else f"{amount:,.4f}"
 
 
-class MarketDataGUI:
-    """GUI for real-time market data monitoring"""
+REFRESH_MS = 500  # how often the tab shows what the feeds brought
+COINS_MS = 5000  # how often the coins in Settings are compared with the subscriptions
 
-    def __init__(self, parent: tk.Widget):
+
+class MarketDataGUI:
+    """GUI for real-time market data monitoring.
+
+    ``coins`` gives the coins in Settings (default: ``exchange_symbols.
+    settings_coins``); ``manager`` is the MarketDataManager (default: the process's
+    own); ``messagebox`` stands in for tkinter's in tests."""
+
+    def __init__(
+        self,
+        parent: tk.Widget,
+        coins: Optional[Callable[[], Sequence[str]]] = None,
+        manager=None,
+        messagebox=None,
+        refresh_ms: int = REFRESH_MS,
+    ):
         self.parent = parent
         self.market_manager = None
         self.update_queue = queue.Queue()
-        self.subscriptions: Dict[str, Dict] = {}
-        self.price_data: Dict[str, List] = {}
-        self.is_updating = True
+        self._coins = coins or exchange_symbols.settings_coins
+        self._box = messagebox or _messagebox
+        self._refresh_ms = refresh_ms
+        self._afters: Dict[str, str] = {}
+        self._pairs: Dict[str, str] = {}  # coin -> its pair as shown
+        self._known: Dict[str, str] = {}  # a pair shown (upper case) -> its coin
+        self._default_coins: List[str] = []  # subscribed because they are in Settings
+        self.alive = True
 
         # Initialize market data manager if available
         if MARKET_DATA_AVAILABLE:
             try:
-                self.market_manager = get_market_data_manager()
+                self.market_manager = manager or get_market_data_manager()
                 self.market_manager.add_update_callback(self.on_market_update)
                 self.market_manager.start()
                 print("Market data manager initialized successfully")
@@ -92,11 +119,133 @@ class MarketDataGUI:
             print("Market data module not available")
 
         self.setup_ui()
-        self.start_update_thread()
+        if not MARKET_DATA_AVAILABLE:
+            return
+        self.main_frame.bind("<Destroy>", self._on_destroy, add="+")
 
-        # Start with some default subscriptions
+        # The coins in Settings, subscribed on the primary exchange
         if self.market_manager:
             self.add_default_subscriptions()
+        if refresh_ms:
+            self._after("refresh", refresh_ms, self._refresh)
+            self._after("coins", COINS_MS, self._follow_settings_coins)
+
+    # ---- timers and shutdown ----
+
+    def _after(self, name: str, ms: int, fn: Callable[[], None]) -> None:
+        self._cancel(name)
+        if not self.alive:
+            return
+        try:
+            self._afters[name] = self.main_frame.after(
+                int(ms), lambda: self._fire(name, fn)
+            )
+        except tk.TclError:
+            self._afters.pop(name, None)
+
+    def _fire(self, name: str, fn: Callable[[], None]) -> None:
+        self._afters.pop(name, None)
+        if self.alive:
+            fn()
+
+    def _cancel(self, name: str) -> None:
+        after_id = self._afters.pop(name, None)
+        if after_id is not None:
+            try:
+                self.main_frame.after_cancel(after_id)
+            except tk.TclError:
+                pass
+
+    def _on_destroy(self, event) -> None:
+        if event.widget is self.main_frame:
+            self.cleanup()
+
+    def _refresh(self) -> None:
+        """Show what the feeds brought, then again in ``refresh_ms``."""
+        self.process_updates()
+        self._after("refresh", self._refresh_ms, self._refresh)
+
+    def _follow_settings_coins(self) -> None:
+        """Subscribe the coins added in Settings, unsubscribe the ones removed."""
+        try:
+            coins = self.coins()
+            if coins != self._default_coins:
+                for coin in [c for c in self._default_coins if c not in coins]:
+                    self.market_manager.unsubscribe_symbol(coin)
+                    self._remove_rows(coin)
+                self._subscribe_defaults(
+                    [c for c in coins if c not in self._default_coins]
+                )
+                self._default_coins = coins
+                self.update_subscriptions_count()
+        except Exception as e:
+            print(f"Market data could not follow the coins in Settings: {e}")
+        self._after("coins", COINS_MS, self._follow_settings_coins)
+
+    # ---- coins, pairs and exchanges ----
+
+    def coins(self) -> List[str]:
+        """The coins in Settings, each once."""
+        out: List[str] = []
+        try:
+            given = list(self._coins() or [])
+        except Exception:
+            given = []
+        for raw in given:
+            coin = exchange_symbols.coin_of(raw)
+            if coin and coin not in out:
+                out.append(coin)
+        return out
+
+    def _learn_pairs(self, coins: Sequence[str]) -> None:
+        if self.market_manager:
+            pairs = self.market_manager.market_pairs(coins)
+        else:
+            pairs = exchange_symbols.market_pairs(coins)
+        for p in pairs:
+            self._pairs[p.coin] = p.pair
+            self._known[p.pair.upper()] = p.coin
+
+    def pair_of(self, coin: str) -> str:
+        """The coin's market as the connected exchange writes it (``BTC-USD`` on
+        Coinbase): one format for every pair the tab shows."""
+        coin = exchange_symbols.coin_of(coin)
+        if coin and coin not in self._pairs:
+            self._learn_pairs([coin])
+        return self._pairs.get(coin, coin)
+
+    def symbol_choices(self) -> List[str]:
+        """The pairs of the coins in Settings, for the symbol boxes."""
+        coins = self.coins()
+        self._learn_pairs(coins)
+        return [self._pairs[c] for c in coins if c in self._pairs]
+
+    def coin_from(self, text: str) -> str:
+        """The coin in a symbol box: a pair the tab showed, a coin, or any pair."""
+        found = exchange_symbols.parse_symbols(text, self._known)
+        return found[0] if found else ""
+
+    def _symbol_box(self, parent: tk.Widget, var: tk.StringVar) -> ttk.Combobox:
+        """A symbol box: the coins in Settings to choose from, any other typed in."""
+        box = ttk.Combobox(parent, textvariable=var, width=15)
+        box.configure(
+            values=self.symbol_choices(),
+            postcommand=lambda: box.configure(values=self.symbol_choices()),
+        )
+        if not var.get() and box.cget("values"):
+            var.set(box.cget("values")[0])
+        return box
+
+    def exchange_choices(self) -> List[str]:
+        """The exchanges in Settings by their proper names, primary first."""
+        return [exchange_name(n) for n in self.exchange_names()]
+
+    def _exchange_box(self, parent: tk.Widget, var: tk.StringVar) -> ttk.Combobox:
+        names = self.exchange_choices()
+        var.set(names[0] if names else "")
+        return ttk.Combobox(
+            parent, textvariable=var, width=15, values=names, state="readonly"
+        )
 
     def setup_ui(self):
         """Setup the user interface"""
@@ -189,20 +338,13 @@ class MarketDataGUI:
         symbol_frame.pack(fill="x", padx=5, pady=5)
 
         ttk.Label(symbol_frame, text="Symbol:").pack(side="left")
-        self.symbol_entry = ttk.Entry(symbol_frame, width=15)
-        self.symbol_entry.pack(side="left", padx=5)
-        self.symbol_entry.insert(0, "BTCUSDT")
+        self.symbol_var = tk.StringVar(master=self.overview_tab)
+        self.symbol_box = self._symbol_box(symbol_frame, self.symbol_var)
+        self.symbol_box.pack(side="left", padx=5)
 
         ttk.Label(symbol_frame, text="Exchange:").pack(side="left", padx=(10, 0))
-        names = self.exchange_names()
-        self.exchange_var = tk.StringVar(value=names[0] if names else "")
-        exchange_combo = ttk.Combobox(
-            symbol_frame,
-            textvariable=self.exchange_var,
-            width=15,
-            values=names,
-        )
-        exchange_combo.pack(side="left", padx=5)
+        self.exchange_var = tk.StringVar(master=self.overview_tab)
+        self._exchange_box(symbol_frame, self.exchange_var).pack(side="left", padx=5)
 
         ttk.Button(symbol_frame, text="Subscribe", command=self.subscribe_symbol).pack(
             side="left", padx=5
@@ -282,11 +424,10 @@ class MarketDataGUI:
         chart_controls.pack(fill="x", padx=5, pady=5)
 
         ttk.Label(chart_controls, text="Symbol:").pack(side="left")
-        self.chart_symbol_var = tk.StringVar(value="BTCUSDT")
-        symbol_entry = ttk.Entry(
-            chart_controls, textvariable=self.chart_symbol_var, width=15
+        self.chart_symbol_var = tk.StringVar(master=self.charts_tab)
+        self._symbol_box(chart_controls, self.chart_symbol_var).pack(
+            side="left", padx=5
         )
-        symbol_entry.pack(side="left", padx=5)
 
         ttk.Label(chart_controls, text="Timeframe:").pack(side="left", padx=(10, 0))
         self.timeframe_var = tk.StringVar(value="1h")
@@ -339,20 +480,12 @@ class MarketDataGUI:
         ob_controls.pack(fill="x", padx=5, pady=5)
 
         ttk.Label(ob_controls, text="Symbol:").pack(side="left")
-        self.ob_symbol_var = tk.StringVar(value="BTCUSDT")
-        ttk.Entry(ob_controls, textvariable=self.ob_symbol_var, width=15).pack(
-            side="left", padx=5
-        )
+        self.ob_symbol_var = tk.StringVar(master=self.orderbook_tab)
+        self._symbol_box(ob_controls, self.ob_symbol_var).pack(side="left", padx=5)
 
         ttk.Label(ob_controls, text="Exchange:").pack(side="left", padx=(10, 0))
-        names = self.exchange_names()
-        self.ob_exchange_var = tk.StringVar(value=names[0] if names else "")
-        ttk.Combobox(
-            ob_controls,
-            textvariable=self.ob_exchange_var,
-            width=15,
-            values=names,
-        ).pack(side="left", padx=5)
+        self.ob_exchange_var = tk.StringVar(master=self.orderbook_tab)
+        self._exchange_box(ob_controls, self.ob_exchange_var).pack(side="left", padx=5)
 
         ttk.Button(
             ob_controls, text="Load Order Book", command=self.load_orderbook
@@ -509,85 +642,82 @@ class MarketDataGUI:
             return []
 
     def subscribe_symbol(self):
-        """Subscribe to a symbol"""
-        symbol = self.symbol_entry.get().strip().upper()
-        exchange = self.exchange_var.get()
+        """Subscribe to the coin in the symbol box on the chosen exchange."""
+        coin = self.coin_from(self.symbol_var.get())
+        exchange = exchange_id(self.exchange_var.get())
 
-        if not symbol:
-            messagebox.showerror("Error", "Please enter a symbol")
+        if not coin:
+            self._box.showerror("Error", "Please enter a symbol")
             return
 
         if not self.market_manager:
-            messagebox.showerror(
+            self._box.showerror(
                 "Error",
                 "Market data manager not available.",
             )
             return
 
         try:
-            self.market_manager.subscribe_symbol(symbol, [exchange])
-            self.subscriptions[f"{symbol}_{exchange}"] = {
-                "symbol": symbol,
-                "exchange": exchange,
-                "subscribed_at": datetime.now(),
-            }
+            self.market_manager.subscribe_symbol(coin, [exchange])
             self.update_subscriptions_count()
-            messagebox.showinfo("Success", f"Subscribed to {symbol} on {exchange}")
+            self._box.showinfo(
+                "Success",
+                f"Subscribed to {self.pair_of(coin)} on {exchange_name(exchange)}",
+            )
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to subscribe: {e}")
+            self._box.showerror("Error", f"Failed to subscribe: {e}")
 
     def unsubscribe_symbol(self):
-        """Unsubscribe from a symbol"""
-        symbol = self.symbol_entry.get().strip().upper()
+        """Unsubscribe from the coin in the symbol box, on every exchange."""
+        coin = self.coin_from(self.symbol_var.get())
 
-        if not symbol:
-            messagebox.showerror("Error", "Please enter a symbol")
+        if not coin:
+            self._box.showerror("Error", "Please enter a symbol")
             return
 
         if not self.market_manager:
-            messagebox.showerror(
+            self._box.showerror(
                 "Error",
                 "Market data manager not available.",
             )
             return
 
         try:
-            self.market_manager.unsubscribe_symbol(symbol)
-
-            # Remove from local tracking
-            keys_to_remove = [
-                k for k in self.subscriptions.keys() if k.startswith(f"{symbol}_")
-            ]
-            for key in keys_to_remove:
-                del self.subscriptions[key]
-
+            self.market_manager.unsubscribe_symbol(coin)
+            self._remove_rows(coin)
             self.update_subscriptions_count()
-            messagebox.showinfo("Success", f"Unsubscribed from {symbol}")
+            self._box.showinfo("Success", f"Unsubscribed from {self.pair_of(coin)}")
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to unsubscribe: {e}")
+            self._box.showerror("Error", f"Failed to unsubscribe: {e}")
 
     def add_default_subscriptions(self):
-        """Add some default symbol subscriptions"""
-        names = self.exchange_names()
-        if not names:
-            return
-        primary = names[0]
-        for symbol in ("BTC", "ETH", "ADA"):
-            try:
-                self.market_manager.subscribe_symbol(symbol, [primary])
-                self.subscriptions[f"{symbol}_{primary}"] = {
-                    "symbol": symbol,
-                    "exchange": primary,
-                    "subscribed_at": datetime.now(),
-                }
-            except Exception as e:
-                print(f"Failed to subscribe to {symbol}: {e}")
-
+        """Subscribe the coins in Settings, each on the primary exchange (the next
+        exchange in Settings order where the primary has no market for it)."""
+        self._default_coins = self.coins()
+        self._subscribe_defaults(self._default_coins)
         self.update_subscriptions_count()
+
+    def _subscribe_defaults(self, coins: Sequence[str]) -> None:
+        if not self.exchange_names():
+            return
+        for coin in coins:
+            try:
+                self.market_manager.subscribe_symbol(coin)
+            except Exception as e:
+                print(f"Failed to subscribe to {coin}: {e}")
+
+    def subscribed(self) -> Dict[str, List[str]]:
+        """Each subscribed coin and the exchanges asked for it."""
+        if not self.market_manager:
+            return {}
+        return {
+            exchange_symbols.coin_of(market): names
+            for market, names in self.market_manager.aggregator.subscribed().items()
+        }
 
     def update_subscriptions_count(self):
         """Update subscriptions count display"""
-        count = len(self.subscriptions)
+        count = len(self.subscribed())
         self.subscriptions_count_label.config(text=str(count))
 
         if count > 0:
@@ -596,62 +726,44 @@ class MarketDataGUI:
             self.feed_status_label.config(text="Disconnected", style="Bad.TLabel")
 
     def on_market_update(self, data_type: str, data: Any):
-        """Handle market data updates"""
-        # Queue updates to be processed in GUI thread
+        """Handle market data updates (on a feed thread: queued for the Tk thread)"""
         self.update_queue.put((data_type, data))
 
-    def start_update_thread(self):
-        """Start the GUI update thread"""
+    def process_updates(self) -> int:
+        """Show the queued updates (on the Tk thread); returns how many there were."""
+        shown = 0
+        while True:
+            try:
+                data_type, data = self.update_queue.get_nowait()
+            except queue.Empty:
+                return shown
+            try:
+                if data_type == "ticker":
+                    self.update_ticker_display(data)
+                    shown += 1
+            except tk.TclError:
+                return shown  # the tab went
+            except Exception as e:
+                print(f"Error showing market data: {e}")
 
-        def update_worker():
-            while self.is_updating:
-                try:
-                    # Process queued updates
-                    while not self.update_queue.empty():
-                        data_type, data = self.update_queue.get_nowait()
-
-                        if data_type == "ticker":
-                            self.parent.after_idle(
-                                lambda d=data: self.update_ticker_display(d)
-                            )
-
-                    time.sleep(0.1)  # Small delay to prevent CPU overload
-
-                except queue.Empty:
-                    pass
-                except Exception as e:
-                    print(f"Error in update worker: {e}")
-
-        self.update_thread = threading.Thread(target=update_worker, daemon=True)
-        self.update_thread.start()
+    def _remove_rows(self, coin: str) -> None:
+        for iid in self.data_tree.get_children():
+            if str(iid).split("|", 1)[0] == coin:
+                self.data_tree.delete(iid)
 
     def update_ticker_display(self, ticker):
-        """Update ticker display in the data tree"""
+        """Update ticker display in the data tree: one row per coin and exchange,
+        the pair in the connected exchange's format, the exchange by its name."""
         if not MARKET_DATA_AVAILABLE or MarketTicker is None:
             return
 
-        key = f"{ticker.symbol}_{ticker.exchange}"
-
-        # Store price data for charts
-        if ticker.symbol not in self.price_data:
-            self.price_data[ticker.symbol] = []
-
-        self.price_data[ticker.symbol].append(
-            {
-                "timestamp": ticker.timestamp,
-                "price": ticker.last,
-                "volume": ticker.volume,
-            }
-        )
-
-        # Keep only last 1000 data points
-        if len(self.price_data[ticker.symbol]) > 1000:
-            self.price_data[ticker.symbol] = self.price_data[ticker.symbol][-1000:]
+        coin = exchange_symbols.coin_of(ticker.symbol)
+        iid = f"{coin}|{ticker.exchange}"
 
         # A value the exchange does not give shows as n/a, never as 0
         values = (
-            ticker.symbol,
-            ticker.exchange,
+            self.pair_of(coin),
+            exchange_name(ticker.exchange),
             _price(ticker.last),
             _price(ticker.change_24h, signed=True),
             _percent(ticker.change_24h_pct, signed=True),
@@ -664,23 +776,6 @@ class MarketDataGUI:
             ticker.timestamp.strftime("%H:%M:%S"),
         )
 
-        # Find existing item or create new one
-        existing_item = None
-        for item in self.data_tree.get_children():
-            item_values = self.data_tree.item(item)["values"]
-            if (
-                len(item_values) >= 2
-                and item_values[0] == ticker.symbol
-                and item_values[1] == ticker.exchange
-            ):
-                existing_item = item
-                break
-
-        if existing_item:
-            self.data_tree.item(existing_item, values=values)
-        else:
-            self.data_tree.insert("", "end", values=values)
-
         # Color coding based on change
         tags = []
         if ticker.change_24h_pct and ticker.change_24h_pct > 0:
@@ -688,8 +783,10 @@ class MarketDataGUI:
         elif ticker.change_24h_pct and ticker.change_24h_pct < 0:
             tags.append("negative")
 
-        if existing_item:
-            self.data_tree.item(existing_item, tags=tags)
+        if self.data_tree.exists(iid):
+            self.data_tree.item(iid, values=values, tags=tags)
+        else:
+            self.data_tree.insert("", "end", iid=iid, values=values, tags=tags)
 
         # Configure tag colors
         self.data_tree.tag_configure("positive", foreground=ui_tokens.STATUS["good"])
@@ -698,22 +795,28 @@ class MarketDataGUI:
     def update_chart(self):
         """Update price chart"""
         if not MATPLOTLIB_AVAILABLE:
-            messagebox.showwarning(
+            self._box.showwarning(
                 "Warning", "Charts not available - matplotlib not installed"
             )
             return
 
-        symbol = self.chart_symbol_var.get().upper()
+        coin = self.coin_from(self.chart_symbol_var.get())
+        symbol = self.pair_of(coin)
+        history = (
+            self.market_manager.aggregator.get_price_history(coin, minutes=24 * 60)
+            if self.market_manager and coin
+            else []
+        )
 
-        if symbol not in self.price_data or not self.price_data[symbol]:
-            messagebox.showwarning("Warning", f"No data available for {symbol}")
+        if not history:
+            self._box.showwarning("Warning", f"No data available for {symbol}")
             return
 
         # Get data for chart
-        data = self.price_data[symbol][-100:]  # Last 100 data points
+        data = history[-100:]  # Last 100 data points
 
         if len(data) < 2:
-            messagebox.showwarning("Warning", "Not enough data for chart")
+            self._box.showwarning("Warning", "Not enough data for chart")
             return
 
         timestamps = [d["timestamp"] for d in data]
@@ -753,12 +856,12 @@ class MarketDataGUI:
 
     def load_orderbook(self):
         """Load order book data"""
-        messagebox.showinfo("Info", "Order book loading not yet implemented")
+        self._box.showinfo("Info", "Order book loading not yet implemented")
 
     def scan_arbitrage(self):
         """Scan for arbitrage opportunities"""
         if not self.market_manager:
-            messagebox.showerror("Error", "Market data manager not available")
+            self._box.showerror("Error", "Market data manager not available")
             return
 
         min_profit = float(self.min_profit_var.get() or 0.1)
@@ -769,9 +872,7 @@ class MarketDataGUI:
 
         # Check each subscribed symbol
         opportunities_found = 0
-        for key, subscription in self.subscriptions.items():
-            symbol = subscription["symbol"]
-
+        for symbol in self.subscribed():
             try:
                 # Get spread analysis
                 if hasattr(self.market_manager.aggregator, "get_spread_analysis"):
@@ -802,11 +903,11 @@ class MarketDataGUI:
                 print(f"Error checking arbitrage for {symbol}: {e}")
 
         if opportunities_found == 0:
-            messagebox.showinfo(
+            self._box.showinfo(
                 "Info", f"No arbitrage opportunities found above {min_profit}% profit"
             )
         else:
-            messagebox.showinfo(
+            self._box.showinfo(
                 "Success", f"Found {opportunities_found} arbitrage opportunities"
             )
 
@@ -814,12 +915,18 @@ class MarketDataGUI:
         self.arb_tree.tag_configure("opportunity", foreground=ui_tokens.STATUS["good"])
 
     def cleanup(self):
-        """Cleanup when closing"""
-        self.is_updating = False
+        """Cleanup when closing (and when the tab is destroyed): the timers stop,
+        and the feeds."""
+        if not self.alive:
+            return
+        self.alive = False
+        for name in list(self._afters):
+            self._cancel(name)
         if self.market_manager:
             try:
+                self.market_manager.remove_update_callback(self.on_market_update)
                 self.market_manager.stop()
-            except:
+            except Exception:
                 pass
 
 
@@ -834,7 +941,7 @@ if not MARKET_DATA_AVAILABLE:
                 setattr(self, key, value)
 
     class MarketDataGUI:
-        def __init__(self, parent):
+        def __init__(self, parent, **kwargs):
             self.parent = parent
             self.setup_fallback_ui()
 

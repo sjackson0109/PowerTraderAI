@@ -294,6 +294,11 @@ class MarketDataAggregator:
             db_path = pt_paths.cache_file("market_data.db")
         self.db_path = db_path
         self.subscriptions: Dict[str, Set[str]] = defaultdict(set)
+        # coins subscribed without naming an exchange: an exchange with no market
+        # for one hands it to the next in Settings order (``_not_listed``)
+        self.fallback_markets: Set[str] = set()
+        self.not_listed: Dict[str, Set[str]] = defaultdict(set)  # market -> exchanges
+        self._lock = threading.RLock()  # the subscriptions, from the feed threads too
         self.data_handlers: Dict[DataType, List[Callable]] = defaultdict(list)
         self.latest_data: Dict[str, Any] = {}
         self.price_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
@@ -419,16 +424,30 @@ class MarketDataAggregator:
                 return connector
         return None
 
-    def subscribe(self, symbol: str, data_types: List[DataType], exchanges: List[str]):
+    def subscribe(
+        self,
+        symbol: str,
+        data_types: List[DataType],
+        exchanges: List[str],
+        fallback: bool = False,
+    ):
         """Subscribe to market data for a coin on the named exchanges, and start their
-        feeds."""
-        key = f"{_market(symbol)}_{','.join([dt.value for dt in data_types])}"
-        for exchange in exchanges:
-            self.subscriptions[key].add(exchange)
+        feeds. With ``fallback`` (a coin subscribed without naming an exchange), an
+        exchange that has no market for the coin hands it to the next exchange in
+        Settings order."""
+        market = _market(symbol)
+        key = f"{market}_{','.join([dt.value for dt in data_types])}"
+        with self._lock:
+            if fallback:
+                self.fallback_markets.add(market)
+            else:
+                self.fallback_markets.discard(market)
+            for exchange in exchanges:
+                self.subscriptions[key].add(exchange)
 
         # Start feeds if not already running
         for exchange in exchanges:
-            if exchange not in self.active_feeds:
+            if not self.active_feeds.get(exchange):
                 self.start_feed(exchange)
 
     def unsubscribe(
@@ -437,17 +456,71 @@ class MarketDataAggregator:
         data_types: List[DataType],
         exchanges: List[str] = None,
     ):
-        """Unsubscribe from market data"""
-        key = f"{_market(symbol)}_{','.join([dt.value for dt in data_types])}"
+        """Unsubscribe from market data; a feed left with no coin stops."""
+        market = _market(symbol)
+        key = f"{market}_{','.join([dt.value for dt in data_types])}"
 
-        if exchanges is None:
-            # Remove all subscriptions for this symbol/data type
-            if key in self.subscriptions:
-                del self.subscriptions[key]
-        else:
-            # Remove specific exchanges
-            for exchange in exchanges:
+        with self._lock:
+            if exchanges is None:
+                # Remove all subscriptions for this symbol/data type
+                exchanges = list(self.subscriptions.pop(key, ()))
+                self.fallback_markets.discard(market)
+                self.not_listed.pop(market, None)
+            else:
+                # Remove specific exchanges
+                for exchange in exchanges:
+                    self.subscriptions[key].discard(exchange)
+        self._stop_idle_feeds(exchanges)
+
+    def subscribed(self) -> Dict[str, List[str]]:
+        """Each subscribed coin's market and the exchanges asked for it, in Settings
+        order."""
+        order = {name: i for i, name in enumerate(self.exchange_names())}
+        out: Dict[str, List[str]] = {}
+        with self._lock:
+            for key, exchanges in self.subscriptions.items():
+                market = key.split("_", 1)[0]
+                names = set(out.get(market, ())) | set(exchanges)
+                if names:
+                    out[market] = sorted(names, key=lambda n: order.get(n, len(order)))
+        return out
+
+    def _stop_idle_feeds(self, exchanges) -> None:
+        """Stop the feeds among ``exchanges`` that no coin is subscribed on."""
+        for exchange in exchanges:
+            if self.active_feeds.get(exchange) and not self._subscribed_markets(
+                exchange
+            ):
+                self.stop_feed(exchange)
+
+    def _not_listed(self, market: str, exchange: str) -> None:
+        """``exchange`` has no market for ``market``: it is asked no more. A coin
+        subscribed without naming an exchange moves to the first exchange in
+        Settings order (the primary first) that has not said so too."""
+        with self._lock:
+            self.not_listed[market].add(exchange)
+            keys = [k for k in self.subscriptions if k.split("_", 1)[0] == market]
+            for key in keys:
                 self.subscriptions[key].discard(exchange)
+            served = any(self.subscriptions[k] for k in keys)
+            nxt = None
+            if market in self.fallback_markets and keys and not served:
+                nxt = next(
+                    (
+                        n
+                        for n in self.exchange_names()
+                        if n not in self.not_listed[market]
+                    ),
+                    None,
+                )
+                if nxt is not None:
+                    for key in keys:
+                        self.subscriptions[key].add(nxt)
+        if nxt is not None:
+            print(f"{exchange} has no market {market}; asking {nxt}")
+            if not self.active_feeds.get(nxt):
+                self.start_feed(nxt)
+        self._stop_idle_feeds([exchange])
 
     def add_data_handler(self, data_type: DataType, handler: Callable):
         """Add a handler for specific data type"""
@@ -491,11 +564,12 @@ class MarketDataAggregator:
 
     def _subscribed_markets(self, exchange: str) -> List[str]:
         markets = []
-        for key, exchanges in list(self.subscriptions.items()):
-            if exchange in exchanges:
-                market = key.split("_", 1)[0]
-                if market not in markets:
-                    markets.append(market)
+        with self._lock:
+            for key, exchanges in list(self.subscriptions.items()):
+                if exchange in exchanges:
+                    market = key.split("_", 1)[0]
+                    if market not in markets:
+                        markets.append(market)
         return markets
 
     def _poll_feed(self, exchange: str, stop: threading.Event):
@@ -507,12 +581,18 @@ class MarketDataAggregator:
         """Ask ``exchange`` once, through the exchange layer, for the ticker of every
         coin subscribed to it (``ExchangeManager.ticker``); returns how many tickers
         arrived."""
+        from pt_exchange_abstraction import MarketNotFound
+
         if self._connector(exchange) is None:
             return 0
         arrived = 0
         for market in self._subscribed_markets(exchange):
             try:
                 answer = self.layer().ticker(market, only=exchange)
+            except MarketNotFound as e:
+                print(f"{exchange} ticker for {market}: {e}")
+                self._not_listed(market, exchange)
+                continue
             except Exception as e:
                 print(f"{exchange} ticker for {market} failed: {e}")
                 continue
@@ -732,14 +812,28 @@ class MarketDataManager:
         """The exchanges in Settings, primary first."""
         return self.aggregator.exchange_names()
 
+    def market_pairs(self, coins) -> List[Any]:
+        """Each coin's market as the connected exchange writes it (``BTC-USD`` on
+        Coinbase, ``BTCUSDT`` on Binance): ``exchange_symbols.market_pairs``, the one
+        conversion for display, on this manager's exchanges (the primary first)."""
+        import exchange_symbols
+
+        return exchange_symbols.market_pairs(coins, self.aggregator.layer)
+
     def subscribe_symbol(self, symbol: str, exchanges: List[str] = None):
-        """Subscribe to real-time data for a coin (default: on the primary exchange)"""
+        """Subscribe to real-time data for a coin. Default: on the primary exchange,
+        and, should it have no market for the coin, on the next exchange in Settings
+        order that has."""
         symbol = _market(symbol)
+        fallback = exchanges is None
         if exchanges is None:
             exchanges = self.exchange_names()[:1]
 
         self.aggregator.subscribe(
-            symbol, [DataType.TICKER, DataType.ORDER_BOOK], list(exchanges)
+            symbol,
+            [DataType.TICKER, DataType.ORDER_BOOK],
+            list(exchanges),
+            fallback=fallback,
         )
 
         self.active_subscriptions[symbol] = {
@@ -751,6 +845,7 @@ class MarketDataManager:
 
     def unsubscribe_symbol(self, symbol: str):
         """Unsubscribe from symbol data"""
+        symbol = _market(symbol)
         self.aggregator.unsubscribe(symbol, [DataType.TICKER, DataType.ORDER_BOOK])
         if symbol in self.active_subscriptions:
             del self.active_subscriptions[symbol]
@@ -830,9 +925,11 @@ if __name__ == "__main__":
 
     manager.add_update_callback(on_market_update)
 
-    # Subscribe to coins on the primary exchange in Settings
-    manager.subscribe_symbol("BTC")
-    manager.subscribe_symbol("ETH")
+    # Subscribe to the coins in Settings on the primary exchange in Settings
+    import exchange_symbols
+
+    for coin in exchange_symbols.settings_coins():
+        manager.subscribe_symbol(coin)
 
     try:
         # Run for 30 seconds

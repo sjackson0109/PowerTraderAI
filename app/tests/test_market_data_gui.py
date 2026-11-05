@@ -1,0 +1,259 @@
+"""The hub's Market Data tab (real_time_market_data_gui): the coins in Settings
+subscribed by default, symbol boxes that offer them and take any other, every pair
+in the connected exchange's own format and every exchange by its proper name, and no
+timer or feed left running once the tab is gone.
+
+A real Tk window (alpha 0) under the isolation guard (app/conftest.py); the exchange
+layer holds fake connectors: no network.
+"""
+
+import os
+import re
+import sys
+import tkinter as tk
+from tkinter import ttk
+
+import pytest
+
+APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
+
+import real_time_market_data as rtmd  # noqa: E402
+import real_time_market_data_gui as gui_mod  # noqa: E402
+import ui_table  # noqa: E402
+from pt_exchange_abstraction import (  # noqa: E402
+    ExchangeManager,
+    ExchangeType,
+    MarketNotFound,
+    Ticker,
+)
+
+FORMATS = {  # each exchange's own name for a coin's dollar market
+    "coinbase": "{coin}-USD",
+    "binance": "{coin}USDT",
+    "kraken": "{coin}USD",
+}
+
+
+class Connector:
+    """An exchange: its pair format, a ticker for every coin it lists."""
+
+    def __init__(self, name, unlisted=()):
+        self.name = name
+        self.unlisted = set(unlisted)
+        self.asked = []
+
+    def market_symbol(self, symbol):
+        return FORMATS[self.name].format(coin=symbol.split("-")[0])
+
+    def ticker(self, symbol):
+        coin = symbol.split("-")[0]
+        self.asked.append(coin)
+        if coin in self.unlisted:
+            raise MarketNotFound(f"{self.name} has no market {symbol}")
+        return Ticker(
+            101.0,
+            100.0,
+            102.0,
+            volume_24h=8913.3,
+            high_24h=105.0,
+            low_24h=95.0,
+            change_24h=2.5,
+            change_24h_pct=2.54,
+        )
+
+
+def layer(*names, unlisted=None):
+    manager = ExchangeManager()
+    for name in names:
+        manager.exchanges[ExchangeType(name)] = Connector(
+            name, (unlisted or {}).get(name, ())
+        )
+    manager.primary_exchange = ExchangeType(names[0])
+    return manager
+
+
+class Box:
+    """Stands in for tkinter.messagebox."""
+
+    def __init__(self):
+        self.shown = []
+
+    def __getattr__(self, name):
+        if name.startswith("show"):
+            return lambda title, text, **kw: self.shown.append((name, text))
+        raise AttributeError(name)
+
+
+@pytest.fixture
+def root(tmp_path, monkeypatch):
+    import ui_theme
+    import ui_tokens
+
+    monkeypatch.setattr(ui_table, "LAYOUT_PATH", str(tmp_path / "table_layout.json"))
+    ui_table.forget_layouts()
+    win, error = None, None
+    for _ in range(10):  # Tk sometimes fails to read init.tcl on the first try
+        try:
+            win = tk.Tk()
+            break
+        except tk.TclError as exc:
+            error = exc
+    if win is None:
+        pytest.skip(f"Tk not available: {error}")
+    win.attributes("-alpha", 0.0)
+    win.geometry("1200x700+0+0")
+    ui_theme.apply_theme(win, ttk.Style(win), ui_tokens.DARK)
+    yield win
+    try:
+        win.destroy()
+    except tk.TclError:
+        pass
+    ui_table.forget_layouts()
+
+
+@pytest.fixture
+def build(root, tmp_path):
+    made = []
+
+    def make(coins=("ETH", "SOL", "DOGE"), exchanges=("coinbase",), **kw):
+        manager = rtmd.MarketDataManager(db_path=str(tmp_path / f"md{len(made)}.db"))
+        manager.aggregator._layer = layer(*exchanges, unlisted=kw.pop("unlisted", None))
+        manager.aggregator.poll_seconds = 3600  # the test polls by hand
+        settings = list(coins)
+        frame = ttk.Frame(root)
+        frame.pack(fill="both", expand=True)
+        gui = gui_mod.MarketDataGUI(
+            frame,
+            coins=lambda: settings,
+            manager=manager,
+            messagebox=Box(),
+            refresh_ms=kw.pop("refresh_ms", 0),
+        )
+        gui.settings = settings
+        made.append(gui)
+        root.update_idletasks()
+        return gui
+
+    yield make
+    for gui in made:
+        gui.cleanup()
+        for thread in gui.market_manager.aggregator.feed_threads.values():
+            thread.join(timeout=10)
+
+
+def poll(gui, *exchanges):
+    for name in exchanges or gui.exchange_names():
+        gui.market_manager.aggregator.poll_once(name)
+    gui.process_updates()
+    gui.data_table.settle()
+
+
+def rows(gui):
+    tree = gui.data_tree
+    return [tuple(str(v) for v in tree.item(i, "values")) for i in tree.get_children()]
+
+
+# --- the coins in Settings --------------------------------------------------------------
+
+
+def test_the_default_subscriptions_are_the_coins_in_settings(build):
+    gui = build(coins=("ETH", "sol", "DOGE"))
+    assert set(gui.subscribed()) == {"ETH", "SOL", "DOGE"}
+    assert all(names == ["coinbase"] for names in gui.subscribed().values())
+    assert gui.subscriptions_count_label.cget("text") == "3"
+
+
+def test_no_hard_coded_symbol_or_coin_is_left():
+    with open(
+        os.path.join(APP_DIR, "real_time_market_data_gui.py"), encoding="utf-8"
+    ) as f:
+        source = f.read()
+    assert "BTCUSDT" not in source
+    assert not re.search(r"[\"']ADA[\"']", source)
+
+
+def test_every_symbol_box_offers_the_coins_in_settings_and_takes_any_other(build):
+    gui = build(coins=("ETH", "SOL", "DOGE"))
+    for var in (gui.symbol_var, gui.chart_symbol_var, gui.ob_symbol_var):
+        assert var.get() == "ETH-USD"  # the first coin in Settings
+    assert isinstance(gui.symbol_box, ttk.Combobox)
+    assert str(gui.symbol_box.cget("state")) != "readonly"  # free entry
+    assert list(gui.symbol_box.cget("values")) == ["ETH-USD", "SOL-USD", "DOGE-USD"]
+    for typed, coin in (("ethusdt", "ETH"), ("SOL-USD", "SOL"), ("link", "LINK")):
+        assert gui.coin_from(typed) == coin
+    gui.symbol_var.set("link")
+    gui.subscribe_symbol()
+    assert gui.subscribed()["LINK"] == ["coinbase"]
+    assert gui._box.shown[-1] == ("showinfo", "Subscribed to LINK-USD on Coinbase")
+
+
+def test_the_coins_added_or_removed_in_settings_are_followed(build):
+    gui = build(coins=("ETH", "SOL"))
+    gui.settings[:] = ["ETH", "XRP"]
+    gui._follow_settings_coins()
+    assert set(gui.subscribed()) == {"ETH", "XRP"}
+    assert gui.subscriptions_count_label.cget("text") == "2"
+
+
+# --- one pair format, the exchanges by name ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "exchanges, pair, shown",
+    [(("coinbase",), "ETH-USD", "Coinbase"), (("binance",), "ETHUSDT", "Binance")],
+)
+def test_pairs_are_shown_as_the_connected_exchange_writes_them(
+    build, exchanges, pair, shown
+):
+    gui = build(coins=("ETH",), exchanges=exchanges)
+    poll(gui)
+    ((symbol, exchange, price, change, pct, volume, *_),) = rows(gui)
+    assert (symbol, exchange) == (pair, shown)
+    assert (price, change, pct, volume) == ("101.00", "+2.5000", "+2.54%", "8,913.30")
+    assert gui.symbol_var.get() == pair
+    assert list(gui.symbol_box.cget("values")) == [pair]
+
+
+def test_one_format_even_for_a_coin_another_exchange_serves(build):
+    """XMR is not on the primary: Kraken serves it, and it is still shown in the
+    primary's format, like every other pair."""
+    gui = build(
+        coins=("BTC", "XMR"),
+        exchanges=("coinbase", "kraken"),
+        unlisted={"coinbase": {"XMR"}},
+    )
+    poll(gui, "coinbase")  # Coinbase has no XMR market: it moves to Kraken
+    assert gui.subscribed()["XMR"] == ["kraken"]
+    poll(gui, "kraken")
+    assert sorted((r[0], r[1]) for r in rows(gui)) == [
+        ("BTC-USD", "Coinbase"),
+        ("XMR-USD", "Kraken"),
+    ]
+    assert list(gui.exchange_choices()) == ["Coinbase", "Kraken"]
+
+
+def test_unsubscribing_removes_the_coins_rows(build):
+    gui = build(coins=("ETH", "SOL"))
+    poll(gui)
+    gui.symbol_var.set("SOL-USD")
+    gui.unsubscribe_symbol()
+    assert [r[0] for r in rows(gui)] == ["ETH-USD"]
+    assert set(gui.subscribed()) == {"ETH"}
+
+
+# --- nothing left running ---------------------------------------------------------------
+
+
+def test_the_timers_and_feeds_stop_when_the_tab_is_destroyed(build, root):
+    gui = build(coins=("ETH",), refresh_ms=20)
+    assert set(gui._afters) == {"refresh", "coins"}
+    threads = list(gui.market_manager.aggregator.feed_threads.values())
+    assert threads and all(t.is_alive() for t in threads)
+    gui.main_frame.master.destroy()
+    root.update()
+    assert gui.alive is False and gui._afters == {}
+    for thread in threads:
+        thread.join(timeout=10)
+        assert not thread.is_alive()

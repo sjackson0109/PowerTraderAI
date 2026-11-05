@@ -60,3 +60,16 @@ def _no_llm_requests():
 
 
 _no_llm_requests()
+
+
+def _trainer_gate_not_enforced():
+    """The trainer publishes a model only when it passes the entry gate (deviation 13).
+    A model trained on a test's fixture candles has no reason to pass, and most tests
+    are about training, publishing and loading, so the gate is still run and recorded
+    but not enforced for the session; test_entry_gate.py switches it on."""
+    import pt_pattern_trainer
+
+    pt_pattern_trainer.ENFORCE_GATE = False
+
+
+_trainer_gate_not_enforced()

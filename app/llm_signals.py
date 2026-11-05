@@ -18,14 +18,18 @@ buy at ``price * (1 + slippage)``, a sell at ``price * (1 - slippage)``, and a f
 on each side. It ends at the first hourly bar that reaches the stop loss (the stop
 is taken first when one bar reaches both) or the price target, else at the close of
 the last bar within the time horizon (SHORT 1 day, MEDIUM 7 days, LONG 30 days). A
-signal wins when its return after fees and slippage is above zero, as in the model
-gate design ("a win means the net gain beats the fees"). HOLD signals are not
-scored: they say nothing to win or lose on.
+signal wins when its return after fees and slippage is above zero ("a win means the
+net gain beats the fees"); the hit rate is shown and decides nothing (the entry gate
+judges the return after fees against random entries: llm_gate, entry_gate). Its
+drawdown is the worst move against it from its price before it ended. HOLD signals
+are not scored: they say nothing to win or lose on.
 
-Fees: the taker rate of the connected exchange (primary first) from its connector's
-``trading_fees()`` when it has one; no connector has one yet, so the backtester's
-cost model is used (``backtest.engine.CostModel``: 0.10% a side, 0.05% slippage a
-fill).
+Fees (``trade_costs``): what the trader's orders on the coin pay, from
+``entry_gate.trading_fees``: the taker rate (the trader places market orders) of the
+primary exchange first, read from the account where its saved API key can, else the
+exchange's published standard rate. Slippage is the backtester's
+(``backtest.engine.CostModel``, 0.05% a fill); its fee (0.10% a side) is used only
+when no exchange states a rate.
 """
 
 from __future__ import annotations
@@ -132,6 +136,9 @@ class Costs:
     fee_rate: float  # a fraction, per side
     slippage_rate: float  # a fraction, per fill
     source: str  # where the fee came from
+    fees: Any = (
+        None  # the entry_gate.Fees they were made from, when an exchange gave them
+    )
 
     def text(self) -> str:
         return (
@@ -149,38 +156,38 @@ def backtest_costs() -> Costs:
     )
 
 
-def trade_costs(layer: Optional[Callable[[], Any]] = None) -> Costs:
-    """The taker fee of the connected exchange (primary first) when a connector
-    states one, else the backtester's costs; slippage is the backtester's."""
+def trade_costs(
+    layer: Optional[Callable[[], Any]],
+    coin: str,
+    fees: Optional[Callable[[str], Any]] = None,
+) -> Costs:
+    """What the trader's orders on ``coin`` pay (see the module docstring): the fee from
+    ``entry_gate.trading_fees`` and the backtester's slippage; the backtester's costs
+    when no exchange states a rate. ``layer`` returns the exchange layer the published
+    standard rates are read from (default: the shared one); ``fees`` stands in for
+    entry_gate.trading_fees (tests)."""
+    import entry_gate
+    from pt_exchange_abstraction import exchange_name
+
     base = backtest_costs()
+    public = None
+    if layer is not None:
+
+        def public(c: str) -> Any:
+            answer = layer().trading_fees(c)
+            return getattr(answer, "value", answer)
+
     try:
-        from pt_exchange_abstraction import ExchangeType
-
-        if layer is None:
-            from pt_multi_exchange import market_exchanges as layer
-        connected = layer().exchange_manager
-        ordered = [
-            (name, connected.exchanges[ExchangeType(name)])
-            for name in connected.exchange_names()
-        ]
+        found = fees(coin) if fees else entry_gate.trading_fees(coin, public=public)
     except Exception:
+        found = None
+    if found is None:
         return base
-    for exchange_type, connector in ordered:
-        fees = getattr(connector, "trading_fees", None)
-        if not callable(fees):
-            continue
-        try:
-            answer = fees()
-        except Exception:
-            continue
-        taker = _number(answer.get("taker")) if isinstance(answer, dict) else None
-        if taker is not None and 0.0 <= taker < 1.0:
-            from pt_exchange_abstraction import exchange_name
-
-            return Costs(
-                taker, base.slippage_rate, f"{exchange_name(exchange_type)} taker fee"
-            )
-    return base
+    who = exchange_name(found.exchange) if found.exchange else "an exchange"
+    why = entry_gate.SOURCE_WORDS.get(found.source, found.source)
+    return Costs(
+        found.rate, base.slippage_rate, f"{who} {found.order_type} rate, {why}", found
+    )
 
 
 # --- scoring -----------------------------------------------------------------------------
@@ -193,6 +200,7 @@ class Outcome:
     net_return: float  # after fees and slippage, a fraction
     hit: bool
     ended_ms: int
+    drawdown: float = 0.0  # the worst move against it from its price, a fraction (<= 0)
 
 
 def net_return(direction: str, entry: float, exit_price: float, costs: Costs) -> float:
@@ -232,6 +240,7 @@ def score_signal(
         target = target if target and target < entry else None
         stop = stop if stop and stop > entry else None
     last = None
+    worst = 0.0  # the worst move against the signal so far (a stop caps it)
     for bar in bars:
         opened = int(bar[0])
         if opened < signal_ms:
@@ -242,22 +251,32 @@ def score_signal(
         last = bar
         if direction == "BUY":
             if stop is not None and low <= stop:
-                return _outcome("stop", direction, entry, stop, costs, opened)
+                worst = min(worst, stop / entry - 1.0)
+                return _outcome("stop", direction, entry, stop, costs, opened, worst)
+            worst = min(worst, low / entry - 1.0)
             if target is not None and high >= target:
-                return _outcome("target", direction, entry, target, costs, opened)
+                return _outcome(
+                    "target", direction, entry, target, costs, opened, worst
+                )
         else:
             if stop is not None and high >= stop:
-                return _outcome("stop", direction, entry, stop, costs, opened)
+                worst = min(worst, 1.0 - stop / entry)
+                return _outcome("stop", direction, entry, stop, costs, opened, worst)
+            worst = min(worst, 1.0 - high / entry)
             if target is not None and low <= target:
-                return _outcome("target", direction, entry, target, costs, opened)
+                return _outcome(
+                    "target", direction, entry, target, costs, opened, worst
+                )
     if now_ms < end_ms or last is None:
         return None  # the horizon has not passed, or no bar covers it
-    return _outcome("horizon", direction, entry, float(last[4]), costs, int(last[0]))
+    return _outcome(
+        "horizon", direction, entry, float(last[4]), costs, int(last[0]), worst
+    )
 
 
-def _outcome(kind, direction, entry, exit_price, costs, ended_ms) -> Outcome:
+def _outcome(kind, direction, entry, exit_price, costs, ended_ms, worst=0.0) -> Outcome:
     net = net_return(direction, entry, exit_price, costs)
-    return Outcome(kind, float(exit_price), net, net > 0.0, int(ended_ms))
+    return Outcome(kind, float(exit_price), net, net > 0.0, int(ended_ms), worst)
 
 
 OUTCOME_WORDS = {

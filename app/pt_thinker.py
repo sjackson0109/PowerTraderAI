@@ -674,8 +674,33 @@ def _hold_unseparated_bounds(sym: str) -> None:
 
 
 def _coins_needed_for_ready(coins) -> int:
-    """How many coins must be ready: skipped coins never will be."""
-    return len([c for c in coins if c not in UNAVAILABLE_COINS])
+    """How many coins must be ready: skipped coins never will be, nor coins with no
+    model in use because none passed the entry gate."""
+    return len(
+        [c for c in coins if c not in UNAVAILABLE_COINS and c not in GATE_REFUSED_COINS]
+    )
+
+
+# Coins whose latest model did not pass the entry gate, with no earlier model in use
+# (pt_pattern_trainer deviation 13): held with no signals until a model passes.
+GATE_FILE = "model_gate.json"
+GATE_REFUSED_COINS = set()
+
+
+def _refused_by_gate(sym: str) -> bool:
+    """Whether the coin's latest training run left it with no model in use because its
+    model did not pass the entry gate (``model_gate.json`` in its folder)."""
+    try:
+        with open(os.path.join(coin_folder(sym), GATE_FILE), encoding="utf-8") as f:
+            record = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return (
+        isinstance(record, dict)
+        and record.get("coin") == sym
+        and record.get("published") is False
+        and not record.get("kept_model_id")
+    )
 
 
 # Track which coins have produced REAL predicted levels (not placeholder 1 / 99999999999999999)
@@ -828,8 +853,15 @@ def step_coin(sym: str):
             pass
         _write_signal_counts(sym, 0, 0)
         _reset_coin_state(sym)
+        refused = trained and _refused_by_gate(sym)
+        if refused:
+            GATE_REFUSED_COINS.add(sym)
+        else:
+            GATE_REFUSED_COINS.discard(sym)
         try:
-            if trained:
+            if refused:
+                held = "  (NO MODEL IN USE - its model did not pass the entry gate)"
+            elif trained:
                 held = "  (MODEL NOT VERIFIED - no matching manifest; retrain)"
             elif _training_in_progress(sym):
                 held = "  (TRAINING - no signals until the new model is saved)"
@@ -852,6 +884,7 @@ def step_coin(sym: str):
             pass
         return
 
+    GATE_REFUSED_COINS.discard(sym)
     # A new model starts from placeholders, as after a runner restart: its first
     # sweep writes no LONG/SHORT and does not mark the coin ready.
     model_id = (_verified_models.get(sym, (None, None))[1] or {}).get("model_id")

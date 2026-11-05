@@ -386,6 +386,47 @@ def find_published(
     return None
 
 
+def latest_published(coin: str) -> Optional[dict]:
+    """The verified manifest of ``coin``'s newest published trainer model (the newest
+    train_end, then the newest created_at), or None. A folder that fails verification
+    is passed over (its ERROR is logged)."""
+    store = pt_paths.strategy_models_dir(create=False)
+    names = os.listdir(store) if os.path.isdir(store) else []
+    by_end = {}
+    for name in names:
+        m = TRAINER_ID_RE.match(name)
+        if m is not None and m["coin"] == coin:
+            by_end.setdefault(m["end"], []).append(name)
+    for end in sorted(by_end, reverse=True):
+        found = []
+        for name in sorted(by_end[end]):
+            try:
+                manifest = verify_folder(os.path.join(store, name))
+            except ModelStoreError:
+                continue
+            if manifest.get("coin") == coin:
+                found.append(manifest)
+        if found:
+            return max(found, key=lambda m: str(m.get("created_at")))
+    return None
+
+
+def restore(model_id: str, folder: str) -> None:
+    """Copy published model ``model_id``'s 35 files into the coin folder ``folder``,
+    replacing what is there (each through a temporary file), and check every copy
+    against the manifest (``ModelStoreError`` when one differs)."""
+    source = model_dir(model_id)
+    manifest = verify_folder(source, model_id)
+    for name in model_file_names():
+        target = os.path.join(folder, name)
+        temporary = target + ".restore"
+        shutil.copyfile(os.path.join(source, name), temporary)
+        os.replace(temporary, target)
+    for name, digest in manifest["files"].items():
+        if sha256_file(os.path.join(folder, name)) != digest:
+            raise _refuse(f"model {model_id}: {name} did not copy back intact")
+
+
 def _matching(store, name, hashes, coin, folder) -> Optional[dict]:
     """The verified manifest of ``store/name`` if its files are ``hashes`` (and it was
     trained for ``coin``), else None."""

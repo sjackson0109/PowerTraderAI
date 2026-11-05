@@ -299,7 +299,7 @@ def test_a_live_run_that_finishes_records_its_market_trading(tmp_path, monkeypat
     listing.write_market_status(
         str(folder), "GONEUSDT", False, "an earlier refused run"
     )
-    monkeypatch.setattr(ppt, "provenance", lambda *a, **k: "model-1")
+    monkeypatch.setattr(ppt, "provenance", lambda *a, **k: ("model-1", None))
     end = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     iso = "%Y-%m-%dT%H:%M:%SZ"
     code = run_main(

@@ -1,5 +1,6 @@
 """Live exchange check (Settings > Check Exchanges): real requests to each
-exchange's public market data and, when asked, its read-only API key check.
+exchange's public market data and, when asked, its read-only API key check and the
+trading fees the account pays (read with the saved key; the standard rates without).
 
 For each exchange and coin it reads the market status and the best bid and ask
 (failing a quote older than the paper-trading limit); for each exchange, the last
@@ -139,6 +140,32 @@ def check_api_key(name: str) -> Result:
     )
 
 
+def check_fees(name: str) -> Result:
+    """The trading fees this account pays on the exchange, read with the API key saved
+    in PowerTrader (the exchange's published standard rates when they cannot be read:
+    no key, or no answer). The trader's market orders pay the taker rate."""
+    from pt_exchange_abstraction import usable_fees
+
+    try:
+        exchange = ExchangeFactory.get_exchange(ExchangeType(name))
+        fees = usable_fees(exchange.trading_fees("BTC-USD")) if exchange else None
+    except Exception as exc:
+        return Result(name, "trading fees", False, f"{type(exc).__name__}: {exc}")
+    if fees is None:
+        return Result(name, "trading fees", None, "not stated")
+    source = {
+        "exchange": "read from your account",
+        "default": "the published standard rates; your account's could not be read",
+    }.get(fees.source, fees.source)
+    return Result(
+        name,
+        "trading fees",
+        True,
+        f"maker {fees.maker:.2%}, taker {fees.taker:.2%} ({source}); market orders "
+        "pay the taker rate",
+    )
+
+
 def _failed(name: str, check: str, exc: Exception) -> Result:
     return Result(name, check, False, f"{type(exc).__name__}: {exc}")
 
@@ -170,7 +197,7 @@ def check_exchange(
                 add(_failed(name, f"{coin} quote", exc))
         add(check_candles(name, exchange), check_minimum(name, exchange))
     if auth:
-        add(check_api_key(name))
+        add(check_api_key(name), check_fees(name))
     return results
 
 

@@ -21,12 +21,14 @@ APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
+import entry_gate  # noqa: E402
 import llm_gate  # noqa: E402
 import trading_mode as tm  # noqa: E402
+import training_settings  # noqa: E402
 from helpers import PaperTraderCase  # noqa: E402
 from llm_store import LLMStore, SignalRecord  # noqa: E402
 
-TRAINING = {"holdout_min_signals": 20, "holdout_min_hit_rate": 0.55}
+TRAINING = training_settings.normalise({"holdout_min_signals": 20})
 
 
 @pytest.fixture
@@ -50,13 +52,39 @@ def record(store, direction="BUY", model="m", version=1, ts=None, mode="paper", 
     )
 
 
-def pass_gate(store, model="m", version=1, mode="paper", hits=12, n=20):
-    """``n`` scored signals of a provider/model/prompt version, ``hits`` of them won."""
+def judged(store, model="m", version=1, passed=True, training=TRAINING):
+    """The entry gate's decision on a provider/model/prompt version's scored paper
+    signals, kept as llm_gate.evaluate keeps it (here: passed or not, by hand)."""
+    settings = entry_gate.GateSettings.from_training(training)
+    scored = store.scored("ollama", model, version, llm_gate.GATE_MODE)
+    decision = entry_gate.Decision(
+        passed,
+        [] if passed else ["mean return after fees -1.00% is not above +0.00%"],
+        entry_gate.Score(len(scored), 0.01 if passed else -0.01, 0.01, -0.02, 0.6),
+        entry_gate.Fees(0.012, "taker", "coinbase", "default", 0.0005),
+        settings,
+    )
+    store.save_gate(
+        "ollama",
+        model,
+        version,
+        llm_gate.GATE_MODE,
+        len(scored),
+        settings.to_dict(),
+        decision.to_dict(),
+    )
+
+
+def pass_gate(store, model="m", version=1, mode="paper", hits=12, n=20, passed=True):
+    """``n`` scored signals of a provider/model/prompt version, ``hits`` of them won,
+    and (paper) the entry gate's decision on them."""
     for i in range(n):
         s = record(
             store, model=model, version=version, ts=1000.0 + i, mode=mode, coin="OLD"
         )
         store.set_outcome(s.id, "horizon", 0.01 if i < hits else -0.01, i < hits, 100.0)
+    if mode == llm_gate.GATE_MODE:
+        judged(store, model, version, passed)
 
 
 class FakeEngine:
@@ -153,15 +181,38 @@ def test_with_no_usable_signal_the_entry_goes_ahead(mode):
     )
 
 
-def test_the_gate_needs_enough_paper_signals_that_won_after_fees(store):
-    assert not llm_gate.gate_status(store, "ollama", "m", 1, TRAINING).passed
-    pass_gate(store, hits=10)  # 50%
+def test_the_gate_counts_its_kept_decision_while_it_still_holds(store):
     gate = llm_gate.gate_status(store, "ollama", "m", 1, TRAINING)
-    assert (gate.scored, gate.hits, gate.passed) == (20, 10, False)
-    assert gate.text() == "not passed: 50% after fees, 55% needed"
-    pass_gate(store, model="m2", hits=12)
+    assert not gate.passed and gate.text() == "not passed: 0 of 20 signals scored"
+    pass_gate(store, hits=20, passed=False)  # every signal won: the hit rate is 100%
+    gate = llm_gate.gate_status(store, "ollama", "m", 1, TRAINING)
+    assert (gate.scored, gate.hits, gate.hit_rate, gate.passed) == (20, 20, 1.0, False)
+    assert gate.text() == (
+        "not passed: mean return after fees -1.00% is not above +0.00%"
+    )
+    pass_gate(store, model="m2", hits=0)  # no signal won, and it passed
     gate = llm_gate.gate_status(store, "ollama", "m2", 1, TRAINING)
-    assert gate.passed and gate.text() == "passed: 12 of 20 won, 60% after fees"
+    assert gate.passed and gate.hit_rate == 0.0
+    assert gate.text() == "passed: +1.00% after fees" and gate.word() == "passed"
+    # a newly scored signal: the kept decision no longer counts until it is made again
+    s = record(store, model="m2", ts=5000.0, coin="OLD")
+    store.set_outcome(s.id, "horizon", 0.02, True, 100.0)
+    gate = llm_gate.gate_status(store, "ollama", "m2", 1, TRAINING)
+    assert not gate.passed and gate.word() == "not judged yet"
+    assert gate.text() == (
+        "not passed: not judged yet (signals were scored since it was judged)"
+    )
+    judged(store, "m2")
+    assert llm_gate.gate_status(store, "ollama", "m2", 1, TRAINING).passed
+    # other gate settings: made again first
+    stricter = dict(TRAINING, gate_baseline_percentile=99.0)
+    gate = llm_gate.gate_status(store, "ollama", "m2", 1, stricter)
+    assert not gate.passed and "the gate settings changed" in gate.text()
+    # no signals scored yet: not judged at all
+    gate = llm_gate.gate_status(
+        store, "ollama", "m3", 1, dict(TRAINING, holdout_min_signals=1)
+    )
+    assert gate.text() == "not passed: 0 of 1 signals scored"
 
 
 def test_live_signals_do_not_count_towards_the_gate(store):

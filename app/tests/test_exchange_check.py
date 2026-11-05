@@ -130,10 +130,43 @@ def test_the_key_check_runs_only_when_asked(fakes, monkeypatch):
     monkeypatch.setattr(
         exchange_check, "check_api_key", lambda name: Result(name, "API key", True, "")
     )
+    monkeypatch.setattr(
+        exchange_check,
+        "check_fees",
+        lambda name: Result(name, "trading fees", True, ""),
+    )
     assert "API key" not in [r.check for r in exchange_check.check(["kraken"], [])]
-    assert "API key" in [
-        r.check for r in exchange_check.check(["kraken"], [], auth=True)
-    ]
+    checks = [r.check for r in exchange_check.check(["kraken"], [], auth=True)]
+    assert "API key" in checks and "trading fees" in checks
+
+
+def test_the_fee_check_says_whether_the_account_rate_was_read(monkeypatch):
+    from pt_exchange_abstraction import ExchangeFactory, TradingFees
+
+    answers = {
+        "coinbase": TradingFees(0.004, 0.006, "coinbase", "exchange"),
+        "kraken": TradingFees(0.0025, 0.004, "kraken", "default"),
+    }
+    built = []
+
+    def get_exchange(exchange_type, *args, **kwargs):
+        built.append((exchange_type.value, args, kwargs))  # the saved key: no arguments
+        return type(
+            "C", (), {"trading_fees": lambda self, s: answers[exchange_type.value]}
+        )()
+
+    monkeypatch.setattr(ExchangeFactory, "get_exchange", staticmethod(get_exchange))
+    read = exchange_check.check_fees("coinbase")
+    assert (read.check, read.ok) == ("trading fees", True)
+    assert read.detail == (
+        "maker 0.40%, taker 0.60% (read from your account); market orders pay the "
+        "taker rate"
+    )
+    standard = exchange_check.check_fees("kraken")
+    assert "the published standard rates; your account's could not be read" in (
+        standard.detail
+    )
+    assert built == [("coinbase", (), {}), ("kraken", (), {})]
 
 
 def _config(tmp_path, primary, enabled):

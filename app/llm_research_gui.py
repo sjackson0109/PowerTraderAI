@@ -1209,7 +1209,8 @@ class ResearchEngineGUI:
             if count:
                 self.reload_signals()
 
-        self._submit(self.engine.score_pending, scored, lambda _exc: None)
+        # scoring, then the entry gate on what changed (llm_gate.evaluate)
+        self._submit(self.engine.score_and_judge, scored, lambda _exc: None)
         if self._score_ms:
             self._after("score", self._score_ms, self._tick_score)
 

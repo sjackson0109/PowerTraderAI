@@ -40,7 +40,7 @@ def test_the_new_defaults():
     [
         (10_000, 1.0, None, 100.0),
         (50, 1.0, None, 0.50),  # no fixed floor any more
-        (50, 1.0, 5.0, 5.0),  # raised to the exchange minimum
+        (50, 1.0, 5.0, 5.10),  # raised to the exchange minimum, plus the 2% margin
         (10_000, 1.0, 5.0, 100.0),  # already above it
         (10_000, 0.0, None, 0.0),
     ],
@@ -335,6 +335,13 @@ class TraderSizing(PaperTraderCase):
         (order,) = tm.get_paper_exchange().account.orders.values()
         return float(order.filled_quantity * order.filled_price)
 
+    def raised_to(self, trader, minimum):
+        """An entry raised to ``minimum``: plus the spread (bid 99.95, ask 100.05), a
+        market buy's and sell's fees and the 2% margin."""
+        fees = trader._trading_fees("BTC-USD")
+        round_trip = 2 * fees.taker if fees is not None else 0.0
+        return minimum * (1 + 0.1 / 99.95 + round_trip + 0.02)
+
     def test_an_entry_is_one_percent_of_the_account(self):
         trader = self.trader(dict(self.SETTINGS))
         self.long_signal()
@@ -346,7 +353,7 @@ class TraderSizing(PaperTraderCase):
         trader = self.trader(dict(self.SETTINGS))
         self.long_signal()
         trader.manage_trades()
-        assert self.entry_usd() == pytest.approx(250.0, rel=0.01)
+        assert self.entry_usd() == pytest.approx(self.raised_to(trader, 250.0))
         assert self.markets.asked[0] == "BTC-USD"
 
     def test_paper_asks_the_exchanges_in_settings_and_live_asks_the_broker(self):
@@ -369,10 +376,11 @@ class TraderSizing(PaperTraderCase):
         assert trader._minimum_order_usd("BTC-USD") is None
 
     def test_a_small_account_trades_at_the_exchange_minimum(self):
-        """1% of $50 is $0.50, under a $5 minimum order: the entry is $5, though the
-        coin's budget (Max per coin 5%) is $2.50. The old risk gate refused any order
-        over 1% of the account. (The paper book itself refuses an order over 10% of
-        the paper account, so $50 is the smallest account that takes $5.)"""
+        """1% of $50 is $0.50, under a $5 minimum order: the entry is $5 plus its room
+        for the spread, fees and margin, though the coin's budget (Max per coin 5%) is
+        $2.50. The old risk gate refused any order over 1% of the account. (The paper
+        book itself refuses an order over 10% of the paper account, so $50 is the
+        smallest account that takes $5.)"""
         self.markets.minimum = 5.0
         book = os.path.join(self.tmp.name, "paper", "paper_account.json")
         os.makedirs(os.path.dirname(book), exist_ok=True)
@@ -384,7 +392,7 @@ class TraderSizing(PaperTraderCase):
         self.long_signal()
         with mock.patch.object(self.pt_trader, "MAX_COIN_PCT", 5.0):
             trader.manage_trades()
-        assert self.entry_usd() == pytest.approx(5.0, rel=0.01)
+        assert self.entry_usd() == pytest.approx(self.raised_to(trader, 5.0))
 
     def test_a_position_worth_more_than_one_percent_can_be_sold(self):
         """The old risk gate capped sells at 1% of the account too: a 1% entry that

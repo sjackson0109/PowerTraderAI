@@ -4,7 +4,10 @@ Settings hints and the Account panel's DCA counts.
 * An entry is ``start_allocation_pct`` of the account value (default 1%). An amount
   below the exchange's minimum order is raised to that minimum (the broker's when
   trading live; in paper trading, the primary exchange's, else another enabled
-  exchange's).
+  exchange's), with room for the spread, a market buy's and sell's fees and
+  ``min_order_margin_pct`` (default 2%): a buy at the ask is worth less at the bid,
+  and one raised to exactly the minimum was then worth less than it, taken for a
+  remainder too small to sell, and bought again.
 * A coin may use at most ``max_coin_allocation_pct`` of the account (default 10%). A
   DCA buy that would take the coin past that budget is skipped, so the DCA ladder ends
   there instead of repeating its last level for ever. Each DCA buy is the position's
@@ -16,11 +19,14 @@ under $10,000 every entry was the floor, and $0.50 is below many exchanges' mini
 order.
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 DEFAULT_START_ALLOCATION_PCT = 1.0
 DEFAULT_MAX_COIN_ALLOCATION_PCT = 10.0
 UPSTREAM_START_ALLOCATION_PCT = 0.005
+# Room above the minimum order an entry raised to it keeps, besides the spread and fees
+DEFAULT_MIN_ORDER_MARGIN_PCT = 2.0
+MIN_ORDER_MARGIN_RANGE = (0.0, 20.0)
 
 # gui_settings.json records which defaults it was written with (see migrate_settings)
 DEFAULTS_VERSION_KEY = "allocation_defaults_version"
@@ -44,14 +50,59 @@ def migrate_settings(saved: dict) -> bool:
     return True
 
 
+def valid_min_order_margin_pct(value: Any) -> bool:
+    """Whether ``value`` is a usable ``min_order_margin_pct``: a number from 0 to 20."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    low, high = MIN_ORDER_MARGIN_RANGE
+    return low <= value <= high
+
+
+def quote_spread(ask: Any, bid: Any) -> float:
+    """How far the ask is above the bid, as a fraction of the bid ((ask - bid) / bid):
+    what a coin bought at the ask loses when valued at the bid. 0 when either price
+    is not known."""
+    try:
+        ask, bid = float(ask), float(bid)
+    except (TypeError, ValueError):
+        return 0.0
+    if not (bid > 0.0 and ask > bid):
+        return 0.0
+    return (ask - bid) / bid
+
+
+def minimum_entry_usd(
+    minimum_usd: Optional[float],
+    spread: float = 0.0,
+    round_trip_fee: float = 0.0,
+    margin_pct: float = DEFAULT_MIN_ORDER_MARGIN_PCT,
+) -> Optional[float]:
+    """The smallest entry still worth the exchange's minimum order (``minimum_usd``)
+    when valued at the bid after its fees: minimum x (1 + spread + round-trip fee +
+    margin). ``spread`` is (ask - bid) / bid and ``round_trip_fee`` the buy's and the
+    sell's fee rates added together, both fractions; ``margin_pct`` is a percentage.
+    None when there is no minimum."""
+    if not minimum_usd:
+        return None
+    room = max(0.0, float(spread)) + max(0.0, float(round_trip_fee))
+    return float(minimum_usd) * (1.0 + room + max(0.0, float(margin_pct)) / 100.0)
+
+
 def entry_usd(
-    account_value: float, start_pct: float, minimum_usd: Optional[float] = None
+    account_value: float,
+    start_pct: float,
+    minimum_usd: Optional[float] = None,
+    spread: float = 0.0,
+    round_trip_fee: float = 0.0,
+    margin_pct: float = DEFAULT_MIN_ORDER_MARGIN_PCT,
 ) -> float:
     """The amount for a new trade: ``start_pct`` of the account value, raised to the
-    exchange's minimum order (``minimum_usd``) when it is below it."""
+    exchange's minimum order (``minimum_usd``) with room for the spread, the fees and
+    the margin (``minimum_entry_usd``) when it is below that."""
     amount = max(0.0, float(account_value)) * max(0.0, float(start_pct)) / 100.0
-    if minimum_usd and amount < float(minimum_usd):
-        amount = float(minimum_usd)
+    floor = minimum_entry_usd(minimum_usd, spread, round_trip_fee, margin_pct)
+    if floor and amount < floor:
+        amount = floor
     return amount
 
 

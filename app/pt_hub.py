@@ -3430,9 +3430,7 @@ class PowerTraderHub(tk.Tk):
         # ----------------------------
         # RIGHT TOP: Charts (tabs)
         # ----------------------------
-        charts_frame = ttk.LabelFrame(
-            right_split, text="Charts (Signal lines overlaid)"
-        )
+        charts_frame = ttk.LabelFrame(right_split, text="Charts")
         self._charts_frame = charts_frame
 
         self._build_chart_tab_row(charts_frame)

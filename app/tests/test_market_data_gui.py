@@ -432,6 +432,85 @@ def test_there_is_no_arbitrage_monitor(build):
     )
 
 
+# --- Data Feeds -------------------------------------------------------------------------
+
+
+def stats_rows(gui):
+    tree = gui.stats_tree
+    return {
+        str(iid): tuple(str(v) for v in tree.item(iid, "values"))
+        for iid in tree.get_children()
+    }
+
+
+def test_data_feeds_shows_green_with_live_statistics_and_the_overview_connected(
+    build,
+):
+    import ui_tokens
+
+    gui = build(coins=("ETH", "SOL"), exchanges=("coinbase", "kraken"))
+    poll(gui, "coinbase")
+    gui.update_feed_view()
+    assert gui.feed_indicators["coinbase"].cget("foreground") == (
+        ui_tokens.STATUS["good"]
+    )
+    assert gui.feed_indicators["kraken"].cget("foreground") == ui_tokens.STATUS["bad"]
+    rows = stats_rows(gui)
+    exchange, status, messages, last, uptime, errors, last_error = rows["coinbase"]
+    assert (exchange, status, errors, last_error) == ("Coinbase", "Connected", "0", "")
+    assert int(messages) >= 2 and re.fullmatch(r"\d\d:\d\d:\d\d", last)
+    assert re.fullmatch(r"\d+s", uptime)
+    assert rows["kraken"][:3] == ("Kraken", "Stopped", "0")  # no coin on it
+    assert rows["kraken"][3:5] == ("n/a", "n/a")
+    assert gui.feed_status_label.cget("text") == "Connected"
+    assert str(gui.feed_status_label.cget("style")) == "Good.TLabel"
+
+
+def test_the_overview_and_data_feeds_follow_one_state(build):
+    """Stale and failing feeds: amber, red, and the Overview's label in step."""
+    from datetime import datetime, timedelta
+
+    import ui_tokens
+
+    gui = build(coins=("ETH",))
+    poll(gui)
+    later = datetime.now() + timedelta(hours=3)  # no ticker for six poll intervals
+    gui.market_manager.aggregator.poll_seconds = 5.0
+    gui.update_feed_view(later)
+    assert (
+        gui.feed_indicators["coinbase"].cget("foreground") == ui_tokens.STATUS["warn"]
+    )
+    assert (
+        stats_rows(gui)["coinbase"][1]
+        == gui.feed_status_label.cget("text")
+        == ("Stale")
+    )
+
+    class Down:
+        def market_symbol(self, symbol):
+            return symbol
+
+        def ticker(self, symbol):
+            raise ConnectionError("no route to host")
+
+    gui.market_manager.aggregator.layer().exchanges[ExchangeType.COINBASE] = Down()
+    poll(gui)
+    gui.update_feed_view()
+    row = stats_rows(gui)["coinbase"]
+    assert row[1] == gui.feed_status_label.cget("text") == "Error"
+    assert gui.feed_indicators["coinbase"].cget("foreground") == ui_tokens.STATUS["bad"]
+    assert int(row[5]) >= 1 and row[6].endswith(
+        "ETH-USD: ConnectionError: no route to host"
+    )
+    gui.market_manager.stop()
+    gui.update_feed_view()
+    assert (
+        stats_rows(gui)["coinbase"][1]
+        == gui.feed_status_label.cget("text")
+        == ("Stopped")
+    )
+
+
 # --- nothing left running ---------------------------------------------------------------
 
 

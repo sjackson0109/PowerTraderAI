@@ -10,6 +10,7 @@ named here.
 """
 
 import asyncio
+import dataclasses
 import threading
 import time
 from collections import defaultdict, deque
@@ -246,6 +247,37 @@ class Kline:
         return self.close > self.open
 
 
+# A feed's state (MarketDataAggregator.feed_state): the Data Feeds tab and the
+# Overview's "Data Feeds" label both show it, so the two never disagree
+FEED_LIVE = "live"  # tickers arrived in the last two poll intervals
+FEED_STALE = "stale"  # running, but no ticker for longer
+FEED_ERROR = "error"  # running, and its last poll brought no ticker but an error
+FEED_STOPPED = "stopped"  # not running
+
+
+@dataclass
+class FeedStats:
+    """One exchange's feed: when it started and stopped, the tickers received and
+    the last one's time (by this computer's clock), and the errors."""
+
+    exchange: str
+    started: Optional[datetime] = None
+    stopped: Optional[datetime] = None
+    messages: int = 0
+    last_message: Optional[datetime] = None
+    errors: int = 0
+    last_error: str = ""  # what the exchange layer said
+    last_error_market: str = ""  # the market it was asked for (BTC-USD)
+    last_error_at: Optional[datetime] = None
+    failing: bool = False  # the last poll brought no ticker but an error
+
+    def uptime(self, now: Optional[datetime] = None) -> Optional[float]:
+        """Seconds since the feed started; None while it is not running."""
+        if self.started is None or self.stopped is not None:
+            return None
+        return ((now or datetime.now()) - self.started).total_seconds()
+
+
 def _market(symbol: str) -> str:
     """A coin's market as the exchange layer takes it: BTC, BTCUSDT and BTC-USD are
     BTC-USD."""
@@ -305,6 +337,7 @@ class MarketDataAggregator:
         self.volume_history: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
         self.active_feeds: Dict[str, bool] = {}
         self.feed_threads: Dict[str, threading.Thread] = {}
+        self.feed_stats: Dict[str, FeedStats] = {}
         self.running = False
 
         self._setup_database()
@@ -532,13 +565,17 @@ class MarketDataAggregator:
             self.data_handlers[data_type].remove(handler)
 
     def start_feed(self, exchange: str):
-        """Start polling ``exchange``'s public quotes for the coins subscribed to it."""
+        """Start polling ``exchange``'s public tickers for the coins subscribed to
+        it."""
         if self.active_feeds.get(exchange):
             return  # Already running
         if self._connector(exchange) is None:
             print(f"{exchange} is not one of the exchanges in Settings; no feed")
             self.active_feeds[exchange] = False
             return
+        with self._lock:
+            stats = self.feed_stats.setdefault(exchange, FeedStats(exchange))
+            stats.started, stats.stopped, stats.failing = datetime.now(), None, False
         self.active_feeds[exchange] = True
         stop = self._stop_events[exchange] = threading.Event()
         thread = threading.Thread(
@@ -551,6 +588,10 @@ class MarketDataAggregator:
     def stop_feed(self, exchange: str):
         """Stop the market data feed of an exchange"""
         self.active_feeds[exchange] = False
+        with self._lock:
+            stats = self.feed_stats.get(exchange)
+            if stats is not None and stats.stopped is None:
+                stats.stopped = datetime.now()
         event = self._stop_events.get(exchange)
         if event is not None:
             event.set()
@@ -561,6 +602,55 @@ class MarketDataAggregator:
         self.running = False
         for exchange in list(self.active_feeds.keys()):
             self.stop_feed(exchange)
+
+    # -- the feeds' state: one answer for every view of it ----------------------------
+
+    def feed_statistics(self, exchange: str) -> FeedStats:
+        """A copy of ``exchange``'s feed statistics (zero for a feed never started)."""
+        with self._lock:
+            stats = self.feed_stats.get(exchange)
+            return dataclasses.replace(stats) if stats else FeedStats(exchange)
+
+    def feed_state(self, exchange: str, now: Optional[datetime] = None) -> str:
+        """``FEED_LIVE`` when tickers arrived in the last two poll intervals,
+        ``FEED_STALE`` when the feed runs but none did, ``FEED_ERROR`` when its last
+        poll brought no ticker but an error, ``FEED_STOPPED`` when it is not
+        running."""
+        stats = self.feed_statistics(exchange)
+        if not self.active_feeds.get(exchange):
+            return FEED_STOPPED
+        if stats.failing:
+            return FEED_ERROR
+        now = now or datetime.now()
+        if stats.last_message is not None and (
+            (now - stats.last_message).total_seconds() <= 2 * self.poll_seconds
+        ):
+            return FEED_LIVE
+        return FEED_STALE
+
+    def overall_state(self, now: Optional[datetime] = None) -> str:
+        """The state of the feeds the subscribed coins are polled on: the worst of
+        theirs (``FEED_STOPPED`` when no coin is subscribed)."""
+        names = {n for names in self.subscribed().values() for n in names}
+        if not names:
+            return FEED_STOPPED
+        states = {self.feed_state(name, now) for name in names}
+        for state in (FEED_ERROR, FEED_STOPPED, FEED_STALE):
+            if state in states:
+                return state
+        return FEED_LIVE
+
+    def _record_error(self, exchange: str, market: str, error: BaseException) -> None:
+        text = str(error)
+        prefix = f"{exchange}: "  # the exchange layer names the exchange it asked
+        if prefix in text:
+            text = text.split(prefix, 1)[1]
+        with self._lock:
+            stats = self.feed_stats.setdefault(exchange, FeedStats(exchange))
+            stats.errors += 1
+            stats.last_error = text[:300]
+            stats.last_error_market = market
+            stats.last_error_at = datetime.now()
 
     def _subscribed_markets(self, exchange: str) -> List[str]:
         markets = []
@@ -580,24 +670,36 @@ class MarketDataAggregator:
     def poll_once(self, exchange: str) -> int:
         """Ask ``exchange`` once, through the exchange layer, for the ticker of every
         coin subscribed to it (``ExchangeManager.ticker``); returns how many tickers
-        arrived."""
+        arrived. The feed's statistics count the tickers and the errors."""
         from pt_exchange_abstraction import MarketNotFound
 
         if self._connector(exchange) is None:
             return 0
-        arrived = 0
+        arrived = failed = 0
         for market in self._subscribed_markets(exchange):
             try:
                 answer = self.layer().ticker(market, only=exchange)
             except MarketNotFound as e:
                 print(f"{exchange} ticker for {market}: {e}")
+                self._record_error(exchange, market, e)
+                failed += 1
                 self._not_listed(market, exchange)
                 continue
             except Exception as e:
                 print(f"{exchange} ticker for {market} failed: {e}")
+                self._record_error(exchange, market, e)
+                failed += 1
                 continue
+            with self._lock:
+                stats = self.feed_stats.setdefault(exchange, FeedStats(exchange))
+                stats.messages += 1
+                stats.last_message = datetime.now()
             self._update_ticker(_market_ticker(market, exchange, answer.value))
             arrived += 1
+        if arrived or failed:
+            with self._lock:
+                stats = self.feed_stats.setdefault(exchange, FeedStats(exchange))
+                stats.failing = failed > 0 and arrived == 0
         return arrived
 
     def _update_ticker(self, ticker: MarketTicker):

@@ -24,6 +24,10 @@ from ui_jobs import BackgroundJobs
 
 try:
     from real_time_market_data import (
+        FEED_ERROR,
+        FEED_LIVE,
+        FEED_STALE,
+        FEED_STOPPED,
         MarketTicker,
         get_market_data_manager,
         initialize_market_data,
@@ -33,6 +37,12 @@ try:
 except ImportError:
     MARKET_DATA_AVAILABLE = False
     MarketTicker = None  # Define fallback
+    FEED_LIVE, FEED_STALE, FEED_ERROR, FEED_STOPPED = (
+        "live",
+        "stale",
+        "error",
+        "stopped",
+    )
     print("Warning: Real-time market data not available.")
 
 try:
@@ -53,6 +63,43 @@ NA = "n/a"
 # time span (120 hours of 1h candles, 120 days of 1d candles)
 CHART_BARS = 120
 CHART_TIMEFRAMES = ("5m", "15m", "30m", "1h", "4h", "1d")
+
+# A feed's state in words and colours: the Data Feeds tab and the Overview's Data
+# Feeds label show the same state (MarketDataAggregator.feed_state)
+STATE_TEXT = {
+    FEED_LIVE: "Connected",
+    FEED_STALE: "Stale",
+    FEED_ERROR: "Error",
+    FEED_STOPPED: "Stopped",
+}
+STATE_STYLES = {
+    FEED_LIVE: "Good.TLabel",
+    FEED_STALE: "Warn.TLabel",
+    FEED_ERROR: "Bad.TLabel",
+    FEED_STOPPED: "Bad.TLabel",
+}
+STATE_COLOURS = {
+    FEED_LIVE: ui_tokens.STATUS["good"],
+    FEED_STALE: ui_tokens.STATUS["warn"],
+    FEED_ERROR: ui_tokens.STATUS["bad"],
+    FEED_STOPPED: ui_tokens.STATUS["bad"],
+}
+
+
+def _duration(seconds: float) -> str:
+    """45s, 3m 05s, 2h 03m, 1d 04h."""
+    rest = int(max(0.0, seconds))
+    days, rest = divmod(rest, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, secs = divmod(rest, 60)
+    if days:
+        return f"{days}d {hours:02d}h"
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
 
 # Order Books: levels a side (the exchange's best bids and asks)
 BOOK_DEPTH = 20
@@ -196,8 +243,13 @@ class MarketDataGUI:
             self.cleanup()
 
     def _refresh(self) -> None:
-        """Show what the feeds brought, then again in ``refresh_ms``."""
+        """Show what the feeds brought and their state, then again in
+        ``refresh_ms``."""
         self.process_updates()
+        try:
+            self.update_feed_view()
+        except tk.TclError:
+            return  # the tab went
         self._after("refresh", self._refresh_ms, self._refresh)
 
     def _follow_settings_coins(self) -> None:
@@ -389,7 +441,9 @@ class MarketDataGUI:
 
         ttk.Label(status_frame, text="Data Feeds:").pack(side="left")
         self.feed_status_label = ttk.Label(
-            status_frame, text="Disconnected", style="Bad.TLabel"
+            status_frame,
+            text=STATE_TEXT[FEED_STOPPED],
+            style=STATE_STYLES[FEED_STOPPED],
         )
         self.feed_status_label.pack(side="left", padx=5)
 
@@ -610,30 +664,15 @@ class MarketDataGUI:
         self.book = None  # the order book shown (real_time_market_data.OrderBook)
 
     def setup_feeds_tab(self):
-        """Setup data feeds monitoring tab"""
+        """Setup data feeds monitoring tab: each exchange's feed with its state as a
+        dot (green: tickers in the last two poll intervals, amber: stale, red:
+        stopped or failing) and its statistics."""
         # Feed status
-        feed_status_frame = ttk.LabelFrame(self.feeds_tab, text="Feed Status")
-        feed_status_frame.pack(fill="x", padx=5, pady=5)
-
-        feeds = self.exchange_names()  # the exchanges in Settings, primary first
-        self.feed_indicators = {}
-
-        for i, feed in enumerate(feeds):
-            row = i // 2
-            col = i % 2
-
-            frame = ttk.Frame(feed_status_frame)
-            frame.grid(row=row, column=col, sticky="w", padx=10, pady=5)
-
-            self.feed_indicators[feed] = tk.Label(
-                frame,
-                text="●",
-                foreground=ui_tokens.STATUS["bad"],
-                font=ui_tokens.font("display"),
-            )
-            self.feed_indicators[feed].pack(side="left")
-
-            ttk.Label(frame, text=feed).pack(side="left", padx=5)
+        self.feed_status_frame = ttk.LabelFrame(self.feeds_tab, text="Feed Status")
+        self.feed_status_frame.pack(fill="x", padx=5, pady=5)
+        self.feed_indicators: Dict[str, tk.Label] = {}
+        self._indicator_names: List[str] = []
+        self._build_indicators()
 
         # Feed statistics
         stats_frame = ttk.LabelFrame(self.feeds_tab, text="Feed Statistics")
@@ -648,6 +687,7 @@ class MarketDataGUI:
                 "last_message",
                 "uptime",
                 "errors",
+                "last_error",
             ),
             {
                 "exchange": "Exchange",
@@ -656,6 +696,7 @@ class MarketDataGUI:
                 "last_message": "Last Message",
                 "uptime": "Uptime",
                 "errors": "Errors",
+                "last_error": "Last Error",
             },
             key="market_data.feed_statistics",
             numeric=("messages_received", "errors"),
@@ -663,6 +704,78 @@ class MarketDataGUI:
         )
         self.stats_table.pack(fill="both", expand=True)
         self.stats_tree = self.stats_table.tree
+        self.update_feed_view()
+
+    def _build_indicators(self) -> None:
+        """A dot per exchange in Settings, primary first (again when they change)."""
+        names = self.exchange_names()
+        if names == self._indicator_names:
+            return
+        for child in self.feed_status_frame.winfo_children():
+            child.destroy()
+        self.feed_indicators = {}
+        for i, feed in enumerate(names):
+            row = i // 2
+            col = i % 2
+
+            frame = ttk.Frame(self.feed_status_frame)
+            frame.grid(row=row, column=col, sticky="w", padx=10, pady=5)
+
+            self.feed_indicators[feed] = tk.Label(
+                frame,
+                text="●",
+                foreground=STATE_COLOURS[FEED_STOPPED],
+                font=ui_tokens.font("display"),
+            )
+            self.feed_indicators[feed].pack(side="left")
+
+            ttk.Label(frame, text=exchange_name(feed)).pack(side="left", padx=5)
+        self._indicator_names = names
+
+    def update_feed_view(self, now: Optional[datetime] = None) -> None:
+        """The feeds' dots and statistics and the Overview's Data Feeds label, all
+        from the feeds' state (``MarketDataAggregator.feed_state``)."""
+        if not self.market_manager:
+            return
+        aggregator = self.market_manager.aggregator
+        now = now or datetime.now()
+        self._build_indicators()
+        for name in self._indicator_names:
+            state = aggregator.feed_state(name, now)
+            dot = self.feed_indicators.get(name)
+            if dot is not None and str(dot.cget("foreground")) != STATE_COLOURS[state]:
+                dot.configure(foreground=STATE_COLOURS[state])
+            stats = aggregator.feed_statistics(name)
+            uptime = stats.uptime(now)
+            values = (
+                exchange_name(name),
+                STATE_TEXT[state],
+                str(stats.messages),
+                (
+                    stats.last_message.strftime("%H:%M:%S")
+                    if stats.last_message is not None
+                    else NA
+                ),
+                _duration(uptime) if uptime is not None else NA,
+                str(stats.errors),
+                (
+                    f"{stats.last_error_at:%H:%M:%S} "
+                    f"{self.pair_of(stats.last_error_market)}: {stats.last_error}"
+                    if stats.last_error and stats.last_error_at is not None
+                    else ""
+                ),
+            )
+            if not self.stats_tree.exists(name):
+                self.stats_tree.insert("", "end", iid=name, values=values)
+            elif tuple(str(v) for v in self.stats_tree.item(name, "values")) != values:
+                self.stats_tree.item(name, values=values)
+        for iid in self.stats_tree.get_children():
+            if iid not in self._indicator_names:
+                self.stats_tree.delete(iid)
+        overall = aggregator.overall_state(now)
+        self.feed_status_label.config(
+            text=STATE_TEXT[overall], style=STATE_STYLES[overall]
+        )
 
     def exchange_names(self) -> List[str]:
         """The exchanges in Settings, primary first ([] without a market manager)."""
@@ -746,14 +859,10 @@ class MarketDataGUI:
         }
 
     def update_subscriptions_count(self):
-        """Update subscriptions count display"""
+        """Update subscriptions count display, and the feeds' state with it"""
         count = len(self.subscribed())
         self.subscriptions_count_label.config(text=str(count))
-
-        if count > 0:
-            self.feed_status_label.config(text="Connected", style="Good.TLabel")
-        else:
-            self.feed_status_label.config(text="Disconnected", style="Bad.TLabel")
+        self.update_feed_view()
 
     def on_market_update(self, data_type: str, data: Any):
         """Handle market data updates (on a feed thread: queued for the Tk thread)"""

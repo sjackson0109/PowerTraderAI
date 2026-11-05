@@ -193,3 +193,84 @@ def test_a_feed_left_with_no_coin_stops_and_starts_again(tmp_path):
         assert m.aggregator.active_feeds["kraken"] is True
     finally:
         m.stop()
+
+
+class Failing(Connector):
+    """An exchange that cannot be reached."""
+
+    def ticker(self, symbol):
+        raise ConnectionError("no route to host")
+
+
+def test_a_feed_is_live_stale_failing_or_stopped(tmp_path):
+    from datetime import timedelta
+
+    m = manager(tmp_path)
+    agg = m.aggregator
+    agg.poll_seconds = 5.0
+    assert agg.feed_state("coinbase") == rtmd.FEED_STOPPED  # never started
+    try:
+        agg._poll_feed = lambda exchange, stop: None  # the test polls by hand
+        m.subscribe_symbol("BTC")
+        assert agg.feed_state("coinbase") == rtmd.FEED_STALE  # nothing arrived yet
+        agg.poll_once("coinbase")
+        arrived = agg.feed_statistics("coinbase").last_message
+        assert agg.feed_state("coinbase", arrived + timedelta(seconds=10)) == (
+            rtmd.FEED_LIVE
+        )  # within two poll intervals
+        assert agg.feed_state("coinbase", arrived + timedelta(seconds=11)) == (
+            rtmd.FEED_STALE
+        )
+        agg.layer().exchanges[ExchangeType("coinbase")] = Failing(0, 0)
+        agg.poll_once("coinbase")
+        assert agg.feed_state("coinbase") == rtmd.FEED_ERROR
+        assert agg.overall_state() == rtmd.FEED_ERROR
+    finally:
+        m.stop()
+    assert agg.feed_state("coinbase") == rtmd.FEED_STOPPED
+    assert agg.overall_state() == rtmd.FEED_STOPPED
+
+
+def test_feed_statistics_count_messages_and_errors(tmp_path):
+    m = manager(tmp_path)
+    agg = m.aggregator
+    try:
+        agg._poll_feed = lambda exchange, stop: None
+        m.subscribe_symbol("BTC")
+        m.subscribe_symbol("ETH")
+        agg.poll_once("coinbase")
+        agg.poll_once("coinbase")
+        stats = agg.feed_statistics("coinbase")
+        assert (stats.messages, stats.errors, stats.last_error) == (4, 0, "")
+        assert stats.uptime() is not None and stats.uptime() >= 0
+        agg.layer().exchanges[ExchangeType("coinbase")] = Failing(0, 0)
+        agg.poll_once("coinbase")
+        stats = agg.feed_statistics("coinbase")
+        assert stats.errors == 2 and stats.messages == 4
+        assert stats.last_error == "ConnectionError: no route to host"
+        assert stats.last_error_market in ("BTC-USD", "ETH-USD")
+    finally:
+        m.stop()
+    assert agg.feed_statistics("coinbase").uptime() is None  # stopped
+
+
+def test_the_overall_state_is_the_worst_of_the_feeds_in_use(tmp_path):
+    m = manager(tmp_path)
+    agg = m.aggregator
+    try:
+        agg._poll_feed = lambda exchange, stop: None
+        m.subscribe_symbol("BTC", ["coinbase"])
+        m.subscribe_symbol("ETH", ["kraken"])
+        agg.poll_once("coinbase")
+        agg.poll_once("kraken")
+        assert agg.overall_state() == rtmd.FEED_LIVE
+        agg.layer().exchanges[ExchangeType("kraken")] = Failing(0, 0)
+        agg.poll_once("kraken")
+        assert (agg.feed_state("coinbase"), agg.overall_state()) == (
+            rtmd.FEED_LIVE,
+            rtmd.FEED_ERROR,
+        )
+        m.unsubscribe_symbol("ETH")  # Kraken's feed is no longer in use
+        assert agg.overall_state() == rtmd.FEED_LIVE
+    finally:
+        m.stop()

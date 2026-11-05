@@ -54,6 +54,10 @@ NA = "n/a"
 CHART_BARS = 120
 CHART_TIMEFRAMES = ("5m", "15m", "30m", "1h", "4h", "1d")
 
+# Order Books: levels a side (the exchange's best bids and asks)
+BOOK_DEPTH = 20
+BOOK_DEPTHS = (10, 20, 50)
+
 
 def _candle_style():
     """The candle colours and style chosen in Chart settings (gui_settings.json, read
@@ -72,13 +76,21 @@ def _candle_style():
     return chart_settings.palette(cfg), cfg["candle_style"] == "hollow_up"
 
 
-def _price(value: Optional[float], signed: bool = False) -> str:
-    """A price (or a change in price): more decimals the smaller it is."""
+def _digits(reference: Optional[float]) -> int:
+    """Decimals for prices the size of ``reference``: more the smaller it is."""
+    size = abs(float(reference or 0.0))
+    return 2 if size >= 100 else 4 if size >= 1 else 8
+
+
+def _price(
+    value: Optional[float], signed: bool = False, digits: Optional[int] = None
+) -> str:
+    """A price (or a change in price), with ``digits`` decimals (default: for its
+    own size; prices shown together share the decimals of one of them)."""
     if value is None:
         return NA
-    size = abs(float(value))
-    digits = 2 if size >= 100 else 4 if size >= 1 else 8
-    return f"{float(value):{'+' if signed else ''},.{digits}f}"
+    places = _digits(value) if digits is None else digits
+    return f"{float(value):{'+' if signed else ''},.{places}f}"
 
 
 def _percent(value: Optional[float], signed: bool = False, digits: int = 2) -> str:
@@ -509,56 +521,98 @@ class MarketDataGUI:
             self.update_chart()
 
     def setup_orderbook_tab(self):
-        """Setup order book tab"""
+        """Setup order book tab: the chosen exchange's public order book for a coin,
+        through the exchange layer, refreshed on the feed interval while shown."""
         # Symbol selection
         ob_controls = ttk.LabelFrame(self.orderbook_tab, text="Order Book Controls")
         ob_controls.pack(fill="x", padx=5, pady=5)
 
         ttk.Label(ob_controls, text="Symbol:").pack(side="left")
         self.ob_symbol_var = tk.StringVar(master=self.orderbook_tab)
-        self._symbol_box(ob_controls, self.ob_symbol_var).pack(side="left", padx=5)
+        ob_symbol = self._symbol_box(ob_controls, self.ob_symbol_var)
+        ob_symbol.pack(side="left", padx=5)
+        ob_symbol.bind("<<ComboboxSelected>>", lambda e: self.load_orderbook(), add="+")
+        ob_symbol.bind("<Return>", lambda e: self.load_orderbook(), add="+")
 
         ttk.Label(ob_controls, text="Exchange:").pack(side="left", padx=(10, 0))
         self.ob_exchange_var = tk.StringVar(master=self.orderbook_tab)
-        self._exchange_box(ob_controls, self.ob_exchange_var).pack(side="left", padx=5)
+        ob_exchange = self._exchange_box(ob_controls, self.ob_exchange_var)
+        ob_exchange.pack(side="left", padx=5)
+        ob_exchange.bind(
+            "<<ComboboxSelected>>", lambda e: self.load_orderbook(), add="+"
+        )
+
+        ttk.Label(ob_controls, text="Levels:").pack(side="left", padx=(10, 0))
+        self.ob_depth_var = tk.StringVar(
+            master=self.orderbook_tab, value=str(BOOK_DEPTH)
+        )
+        ob_depth = ttk.Combobox(
+            ob_controls,
+            textvariable=self.ob_depth_var,
+            width=5,
+            values=[str(n) for n in BOOK_DEPTHS],
+            state="readonly",
+        )
+        ob_depth.pack(side="left", padx=5)
+        ob_depth.bind("<<ComboboxSelected>>", lambda e: self.load_orderbook(), add="+")
 
         ttk.Button(
             ob_controls, text="Load Order Book", command=self.load_orderbook
         ).pack(side="left", padx=5)
 
+        # the book's spread, middle price and time, or why there is none
+        self.ob_status_var = tk.StringVar(master=self.orderbook_tab)
+        ttk.Label(
+            self.orderbook_tab, textvariable=self.ob_status_var, style="Muted.TLabel"
+        ).pack(fill="x", padx=5)
+
         # Order book display, split into asks and bids
         ob_paned = ttk.PanedWindow(self.orderbook_tab, orient="horizontal")
         ob_paned.pack(fill="both", expand=True)
 
-        # Asks (sells)
+        columns = ("price", "quantity", "total")
+        headings = {
+            "price": "Price",
+            "quantity": "Quantity",
+            "total": "Cumulative Quantity",
+        }
+
+        # Asks (sells), the lowest price first
         asks_frame = ttk.LabelFrame(ob_paned, text="Asks (Sellers)")
         ob_paned.add(asks_frame, weight=1)
 
         self.asks_table = ui_table.DataTable(
             asks_frame,
-            ("price", "quantity", "total"),
-            {"price": "Price", "quantity": "Quantity", "total": "Total"},
+            columns,
+            headings,
             key="market_data.asks",
-            numeric=("price", "quantity", "total"),
+            numeric=columns,
             empty_text="No asks yet",
+            sortable=False,  # best price first: the cumulative quantity's order
         )
         self.asks_table.pack(fill="both", expand=True)
         self.asks_tree = self.asks_table.tree
 
-        # Bids (buys)
+        # Bids (buys), the highest price first
         bids_frame = ttk.LabelFrame(ob_paned, text="Bids (Buyers)")
         ob_paned.add(bids_frame, weight=1)
 
         self.bids_table = ui_table.DataTable(
             bids_frame,
-            ("price", "quantity", "total"),
-            {"price": "Price", "quantity": "Quantity", "total": "Total"},
+            columns,
+            headings,
             key="market_data.bids",
-            numeric=("price", "quantity", "total"),
+            numeric=columns,
             empty_text="No bids yet",
+            sortable=False,
         )
         self.bids_table.pack(fill="both", expand=True)
         self.bids_tree = self.bids_table.tree
+
+        # read off the Tk thread
+        self.book_jobs = BackgroundJobs(self.orderbook_tab, name="market-data-book")
+        self._book_request: Optional[tuple] = None
+        self.book = None  # the order book shown (real_time_market_data.OrderBook)
 
     def setup_arbitrage_tab(self):
         """Setup arbitrage monitoring tab"""
@@ -795,18 +849,20 @@ class MarketDataGUI:
         coin = exchange_symbols.coin_of(ticker.symbol)
         iid = f"{coin}|{ticker.exchange}"
 
-        # A value the exchange does not give shows as n/a, never as 0
+        # A value the exchange does not give shows as n/a, never as 0; the row's
+        # prices share the decimals of its price
+        places = _digits(ticker.last)
         values = (
             self.pair_of(coin),
             exchange_name(ticker.exchange),
-            _price(ticker.last),
-            _price(ticker.change_24h, signed=True),
+            _price(ticker.last, digits=places),
+            _price(ticker.change_24h, signed=True, digits=places),
             _percent(ticker.change_24h_pct, signed=True),
             _amount(ticker.volume),
-            _price(ticker.high_24h),
-            _price(ticker.low_24h),
-            _price(ticker.bid),
-            _price(ticker.ask),
+            _price(ticker.high_24h, digits=places),
+            _price(ticker.low_24h, digits=places),
+            _price(ticker.bid, digits=places),
+            _price(ticker.ask, digits=places),
             _percent(ticker.spread_pct, digits=3),
             ticker.timestamp.strftime("%H:%M:%S"),
         )
@@ -966,8 +1022,105 @@ class MarketDataGUI:
         self.canvas.draw_idle()
 
     def load_orderbook(self):
-        """Load order book data"""
-        self._box.showinfo("Info", "Order book loading not yet implemented")
+        """Load the chosen coin's order book from the chosen exchange, then refresh
+        it every feed interval while the Order Books tab is shown."""
+        if not self.market_manager:
+            self._box.showerror("Error", "Market data manager not available")
+            return
+        coin = self.coin_from(self.ob_symbol_var.get())
+        exchange = exchange_id(self.ob_exchange_var.get())
+        if not coin or not exchange:
+            self.ob_status_var.set("Choose a symbol and an exchange")
+            return
+        try:
+            depth = int(self.ob_depth_var.get())
+        except ValueError:
+            depth = BOOK_DEPTH
+        self._book_request = (coin, exchange, depth)
+        self.ob_status_var.set(
+            f"{self.pair_of(coin)} on {exchange_name(exchange)}: loading"
+        )
+        self._fetch_book()
+
+    def _fetch_book(self) -> None:
+        request = self._book_request
+        if request is None or self.book_jobs.busy:
+            return
+        coin, exchange, depth = request
+        self.book_jobs.submit(
+            lambda: self.market_manager.get_order_book(coin, exchange, depth),
+            on_done=lambda book: self._show_book(request, book),
+            on_error=lambda exc: self._book_failed(request, exc),
+        )
+
+    def _book_interval_ms(self) -> int:
+        seconds = getattr(self.market_manager.aggregator, "poll_seconds", 5.0)
+        return max(1000, int(float(seconds) * 1000))
+
+    def _refresh_book(self) -> None:
+        """The feed interval's refresh: only while the book can be seen."""
+        try:
+            shown = bool(self.orderbook_tab.winfo_ismapped())
+        except tk.TclError:
+            return
+        if shown:
+            self._fetch_book()
+        self._after("book", self._book_interval_ms(), self._refresh_book)
+
+    def _book_failed(self, request: tuple, exc: BaseException) -> None:
+        from pt_exchange_abstraction import MarketNotFound
+
+        if not self.alive:
+            return
+        if request != self._book_request:
+            self._fetch_book()  # the one asked for since
+            return
+        coin, exchange, _depth = request
+        print(f"Order book {coin} on {exchange}: {exc}")
+        pair, name = self.pair_of(coin), exchange_name(exchange)
+        if isinstance(exc, MarketNotFound):
+            self.ob_status_var.set(f"{name} has no market for {pair}")
+            return  # asked again only when loaded again
+        self.ob_status_var.set(f"No order book for {pair} from {name}")
+        self._after("book", self._book_interval_ms(), self._refresh_book)
+
+    def _show_book(self, request: tuple, book) -> None:
+        """Both sides from the best price out, each level's quantity and the
+        quantity up to and including it."""
+        if not self.alive:
+            return
+        if request != self._book_request:
+            self._fetch_book()  # the one asked for since
+            return
+        coin, exchange, _depth = request
+        self.book = book
+        best = book.best_ask or book.best_bid
+        places = _digits(best.price if best else None)  # one set of decimals
+        for tree, levels in ((self.asks_tree, book.asks), (self.bids_tree, book.bids)):
+            tree.delete(*tree.get_children())
+            total = 0.0
+            for level in levels:
+                total += level.quantity
+                tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        _price(level.price, digits=places),
+                        _amount(level.quantity),
+                        _amount(total),
+                    ),
+                )
+        facts = [f"{self.pair_of(coin)} on {exchange_name(exchange)}"]
+        if book.best_bid and book.best_ask:
+            spread = book.spread
+            facts.append(
+                f"Spread {_price(spread, digits=places)} "
+                f"({_percent(spread / book.best_ask.price * 100, digits=3)})"
+            )
+            facts.append(f"Mid price {_price(book.mid_price, digits=places)}")
+        facts.append(f"Updated {book.timestamp.strftime('%H:%M:%S')}")
+        self.ob_status_var.set("  ·  ".join(facts))
+        self._after("book", self._book_interval_ms(), self._refresh_book)
 
     def scan_arbitrage(self):
         """Scan for arbitrage opportunities"""
@@ -1033,7 +1186,10 @@ class MarketDataGUI:
         self.alive = False
         for name in list(self._afters):
             self._cancel(name)
-        for jobs in (getattr(self, "chart_jobs", None),):
+        for jobs in (
+            getattr(self, "chart_jobs", None),
+            getattr(self, "book_jobs", None),
+        ):
             if jobs is not None:
                 jobs.stop()
         if self.market_manager:

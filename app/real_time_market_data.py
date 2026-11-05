@@ -677,6 +677,25 @@ class MarketDataAggregator:
                         best_ticker = ticker
             return best_ticker
 
+    def order_book(self, symbol: str, exchange: str, depth: int = 20) -> OrderBook:
+        """``exchange``'s order book for a coin, its ``depth`` best levels a side,
+        through the exchange layer (``ExchangeManager.order_book``). Raises
+        MarketNotFound when the exchange has no market for the coin, otherwise
+        MarketDataUnavailable with the exchange's answer."""
+        market = _market(symbol)
+        book = self.layer().order_book(market, depth, only=exchange).value
+        return OrderBook(
+            symbol=market,
+            exchange=exchange,
+            timestamp=(
+                datetime.fromtimestamp(book.book_ts)
+                if book.book_ts is not None
+                else datetime.now()
+            ),
+            bids=[OrderBookLevel(price, quantity) for price, quantity in book.bids],
+            asks=[OrderBookLevel(price, quantity) for price, quantity in book.asks],
+        )
+
     def get_price_history(
         self, symbol: str, exchange: str = None, minutes: int = 60
     ) -> List[Dict]:
@@ -850,6 +869,17 @@ class MarketDataManager:
         if symbol in self.active_subscriptions:
             del self.active_subscriptions[symbol]
         print(f"Unsubscribed from {symbol}")
+
+    def get_order_book(
+        self, symbol: str, exchange: str = None, depth: int = 20
+    ) -> OrderBook:
+        """A coin's order book on ``exchange`` (default: the primary exchange)."""
+        if exchange is None:
+            names = self.exchange_names()
+            if not names:
+                raise RuntimeError("No exchange in Settings is connected")
+            exchange = names[0]
+        return self.aggregator.order_book(symbol, exchange, depth)
 
     def get_current_price(self, symbol: str, exchange: str = None) -> Optional[float]:
         """Get current price for symbol"""

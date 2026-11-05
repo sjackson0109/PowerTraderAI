@@ -124,6 +124,35 @@ class Ticker:
 
 
 @dataclass
+class OrderBookSnapshot:
+    """An exchange's order book for one market, as (price, quantity) levels: bids
+    from the highest price down, asks from the lowest up."""
+
+    bids: List[Tuple[float, float]]
+    asks: List[Tuple[float, float]]
+    book_ts: Optional[float] = None  # epoch seconds (UTC) by the exchange's clock
+
+
+def book_levels(rows, depth: int, descending: bool) -> List[Tuple[float, float]]:
+    """(price, quantity) levels from an exchange's rows (``[price, quantity, ...]``
+    lists, or ``{"price", "size"}`` objects): positive quantities only, best price
+    first, at most ``depth``."""
+    levels = []
+    for row in rows or ():
+        try:
+            if isinstance(row, dict):
+                price, quantity = float(row["price"]), float(row["size"])
+            else:
+                price, quantity = float(row[0]), float(row[1])
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+        if price > 0 and quantity > 0:
+            levels.append((price, quantity))
+    levels.sort(key=lambda level: level[0], reverse=descending)
+    return levels[: max(0, int(depth))]
+
+
+@dataclass
 class Sourced:
     """A market-data answer from the exchange layer, and where it came from."""
 
@@ -473,6 +502,13 @@ class AbstractExchange(abc.ABC):
         if quote is None:
             return None
         return Ticker(None, quote.bid, quote.ask, ticker_ts=quote.quote_ts)
+
+    def order_book(self, symbol: str, depth: int = 20) -> Optional[OrderBookSnapshot]:
+        """The ``depth`` best bids and asks of ``symbol``'s order book, from the
+        exchange's public order book; None when this connector reads none. Raises
+        MarketNotFound when the exchange has no market for the coin, and passes on
+        any other error."""
+        return None
 
     @abc.abstractmethod
     def get_exchange_name(self) -> str:
@@ -961,6 +997,44 @@ class ExchangeManager:
             logger.debug(f"No {DAY_AGO_TF} bar a day ago from {name}: {exc}")
         self._day_ago[(name, symbol)] = (opened, price)
         return price
+
+    def order_book(
+        self, symbol: str, depth: int = 20, only: Optional[str] = None
+    ) -> Sourced:
+        """The ``depth`` best bids and asks of ``symbol`` (an OrderBookSnapshot), from
+        the primary exchange, else the next that gives them; ``only`` asks that one
+        exchange and no other.
+
+        Raises MarketNotFound when no exchange asked has a market for the coin,
+        otherwise MarketDataUnavailable with each exchange's answer."""
+        symbol = dollar_symbol(symbol)
+        reasons: List[str] = []
+        not_found = 0
+        for exchange_type, exchange in self._ordered():
+            name = exchange_type.value
+            if only is not None and name != only:
+                continue
+            try:
+                book = exchange.order_book(symbol, depth)
+            except MarketNotFound as exc:
+                not_found += 1
+                reasons.append(f"{name}: {exc}")
+                continue
+            except Exception as exc:
+                reasons.append(f"{name}: {type(exc).__name__}: {exc}")
+                continue
+            if book is None:
+                reasons.append(f"{name}: reads no order book")
+                continue
+            return self._sourced(book, exchange_type, exchange, symbol)
+        if reasons and not_found == len(reasons):
+            raise MarketNotFound(
+                f"No exchange has a market for {symbol}: " + "; ".join(reasons)
+            )
+        raise MarketDataUnavailable(
+            f"No exchange gave an order book for {symbol}: "
+            + ("; ".join(reasons) or "no exchange connected")
+        )
 
     def get_best_price(
         self, symbol: str, side: str = "buy"

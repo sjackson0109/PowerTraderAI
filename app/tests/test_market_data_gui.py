@@ -26,6 +26,7 @@ from pt_exchange_abstraction import (  # noqa: E402
     ExchangeManager,
     ExchangeType,
     MarketNotFound,
+    OrderBookSnapshot,
     Ticker,
 )
 
@@ -49,6 +50,17 @@ class Connector:
 
     def market_symbol(self, symbol):
         return FORMATS[self.name].format(coin=symbol.split("-")[0])
+
+    def order_book(self, symbol, depth=20):
+        coin = symbol.split("-")[0]
+        self.asked.append(("book", coin, depth))
+        if coin in self.unlisted:
+            raise MarketNotFound(f"{self.name} has no market {symbol}")
+        return OrderBookSnapshot(
+            [(100.0 - i, 1.0 + i) for i in range(depth)],
+            [(101.0 + i, 0.5 * (i + 1)) for i in range(depth)],
+            1_800_000_000.0,
+        )
 
     def candle_timeframes(self):
         return frozenset(gui_mod.CHART_TIMEFRAMES)
@@ -233,7 +245,7 @@ def test_pairs_are_shown_as_the_connected_exchange_writes_them(
     poll(gui)
     ((symbol, exchange, price, change, pct, volume, *_),) = rows(gui)
     assert (symbol, exchange) == (pair, shown)
-    assert (price, change, pct, volume) == ("101.00", "+2.5000", "+2.54%", "8,913.30")
+    assert (price, change, pct, volume) == ("101.00", "+2.50", "+2.54%", "8,913.30")
     assert gui.symbol_var.get() == pair
     assert list(gui.symbol_box.cget("values")) == [pair]
 
@@ -328,6 +340,72 @@ def test_a_coin_with_no_candles_says_so(build):
     connector.candle_error = MarketNotFound("Coinbase has no market ETH-USD")
     chart(gui, "1h")
     assert [t.get_text() for t in gui.price_ax.texts] == ["ETH-USD (1h): no candles"]
+
+
+# --- Order Books ------------------------------------------------------------------------
+
+
+def book_rows(tree):
+    return [tuple(str(v) for v in tree.item(i, "values")) for i in tree.get_children()]
+
+
+def test_the_order_book_shows_both_sides_with_their_cumulative_quantity(build, root):
+    gui = build(coins=("ETH",), exchanges=("coinbase", "kraken"))
+    gui.ob_exchange_var.set("Kraken")
+    gui.ob_depth_var.set("10")
+    gui.load_orderbook()
+    gui.book_jobs.drain()
+    kraken = gui.market_manager.aggregator.layer().exchanges[ExchangeType.KRAKEN]
+    assert ("book", "ETH", 10) in kraken.asked
+    asks, bids = book_rows(gui.asks_tree), book_rows(gui.bids_tree)
+    assert len(asks) == len(bids) == 10
+    assert asks[:3] == [
+        ("101.00", "0.5000", "0.5000"),
+        ("102.00", "1.0000", "1.5000"),
+        ("103.00", "1.5000", "3.0000"),
+    ]  # the lowest ask first, the quantity up to each price
+    assert bids[:2] == [("100.00", "1.0000", "1.0000"), ("99.00", "2.0000", "3.0000")]
+    status = gui.ob_status_var.get()
+    assert status.startswith("ETH-USD on Kraken")
+    assert "Spread 1.00 (0.990%)" in status and "Mid price 100.50" in status
+    headings = [
+        gui.asks_tree.heading(c, "text") for c in ("price", "quantity", "total")
+    ]
+    assert headings == ["Price", "Quantity", "Cumulative Quantity"]
+
+
+def test_the_order_book_refreshes_on_the_feed_interval_while_shown(build, root):
+    gui = build(coins=("ETH",))
+    gui.market_manager.aggregator.poll_seconds = 5.0
+    gui.load_orderbook()
+    gui.book_jobs.drain()
+    assert "book" in gui._afters and gui._book_interval_ms() == 5000
+    coinbase = gui.market_manager.aggregator.layer().exchanges[ExchangeType.COINBASE]
+    asked = len([a for a in coinbase.asked if a[0] == "book"])
+    gui._refresh_book()  # hidden (the Overview is the tab shown): not asked
+    gui.book_jobs.drain()
+    assert len([a for a in coinbase.asked if a[0] == "book"]) == asked
+    gui.notebook.select(gui.orderbook_tab)
+    root.update()
+    gui._refresh_book()
+    gui.book_jobs.drain()
+    assert len([a for a in coinbase.asked if a[0] == "book"]) == asked + 1
+
+
+def test_a_coin_the_exchange_does_not_list_says_so(build):
+    gui = build(coins=("XMR",), unlisted={"coinbase": {"XMR"}})
+    gui.load_orderbook()
+    gui.book_jobs.drain()
+    assert gui.ob_status_var.get() == "Coinbase has no market for XMR-USD"
+    assert "book" not in gui._afters  # not asked again until loaded again
+    assert book_rows(gui.asks_tree) == []
+
+
+def test_no_not_yet_implemented_message_is_left():
+    with open(
+        os.path.join(APP_DIR, "real_time_market_data_gui.py"), encoding="utf-8"
+    ) as f:
+        assert "not yet implemented" not in f.read().lower()
 
 
 # --- nothing left running ---------------------------------------------------------------

@@ -1,11 +1,13 @@
-"""24-hour tickers through the exchange layer (the Market Data tab): last price, bid,
-ask, and the last 24 hours' volume, high, low and change, from each exchange's own
-24-hour ticker; the change from the candle cache where the exchange's ticker has
-none. A value the exchange does not give is None, never 0.
+"""24-hour tickers and order books through the exchange layer (the Market Data tab):
+last price, bid, ask, and the last 24 hours' volume, high, low and change, from each
+exchange's own 24-hour ticker; the change from the candle cache where the exchange's
+ticker has none. A value the exchange does not give is None, never 0. Order books:
+each exchange's public book, best price first.
 
-The payloads are the examples in each exchange's public API documentation (Coinbase
-Exchange products ticker and stats, Binance spot ticker/24hr, Kraken Ticker, KuCoin
-market stats); none was checked against the live exchanges here. No test touches
+The payloads follow each exchange's public API documentation (Coinbase Exchange
+products ticker and stats, Coinbase Advanced Trade public product book, Binance spot
+ticker/24hr and depth, Kraken Ticker and Depth, KuCoin market stats and part order
+book); none was checked against the live exchanges here. No test touches
 the network; everything runs under the isolation guard (app/conftest.py).
 """
 
@@ -26,6 +28,7 @@ from pt_exchange_abstraction import (  # noqa: E402
     ExchangeType,
     MarketDataUnavailable,
     MarketNotFound,
+    OrderBookSnapshot,
     PriceQuote,
     Ticker,
 )
@@ -280,6 +283,147 @@ def test_a_connector_without_a_ticker_gives_its_quote_alone(monkeypatch):
     assert ticker == Ticker(None, 99.0, 101.0, ticker_ts=5.0)
     assert ticker.price == 100.0  # no last trade: the middle of bid and ask
     assert connector("RobinhoodExchange").ticker("BTC-USD") is None  # no quote
+
+
+# --- order books ------------------------------------------------------------------------
+
+
+def test_coinbase_order_book_is_its_public_product_book(get):
+    fake = get(
+        product_book=_Response(
+            {
+                "pricebook": {
+                    "product_id": "BTC-USD",
+                    "bids": [
+                        {"price": "100.4", "size": "1.5"},
+                        {"price": "100.5", "size": "2"},
+                    ],
+                    "asks": [
+                        {"price": "100.7", "size": "3"},
+                        {"price": "100.6", "size": "0.5"},
+                    ],
+                    "time": "2026-10-25T23:08:46Z",
+                },
+                "last": "100.55",
+                "mid_market": "100.55",
+                "spread_bps": "9.94",
+                "spread_absolute": "0.1",
+            }
+        )
+    )
+    book = connector("CoinbaseExchange").order_book("BTCUSDT", 2)
+    url, params = fake.calls[0]
+    assert url == "https://api.coinbase.com/api/v3/brokerage/market/product_book"
+    assert params == {"product_id": "BTC-USD", "limit": 2}
+    assert book == OrderBookSnapshot(
+        [(100.5, 2.0), (100.4, 1.5)], [(100.6, 0.5), (100.7, 3.0)], DATE_TS
+    )
+    get(
+        product_book=_Response(
+            {"error": "NOT_FOUND", "message": "ProductID is invalid"}, 404
+        )
+    )
+    with pytest.raises(MarketNotFound):
+        connector("CoinbaseExchange").order_book("NOPE-USD")
+
+
+def test_binance_order_book_asks_for_a_documented_limit(get):
+    fake = get(
+        depth=_Response(
+            {
+                "lastUpdateId": 1027024,
+                "bids": [["4.00000000", "431.00000000"], ["3.9", "0.00000000"]],
+                "asks": [["4.00000200", "12.00000000"]],
+            },
+            headers=DATE,
+        )
+    )
+    book = connector("BinanceExchange").order_book("BTC-USD", 25)
+    assert fake.calls[0][1] == {"symbol": "BTCUSDT", "limit": 50}
+    # a level with no quantity left is not a level
+    assert book == OrderBookSnapshot([(4.0, 431.0)], [(4.000002, 12.0)], DATE_TS)
+    get(depth=_Response({"code": -1121, "msg": "Invalid symbol."}, 400))
+    with pytest.raises(MarketNotFound):
+        connector("BinanceExchange").order_book("NOPE-USD")
+
+
+def test_kraken_order_book_is_its_depth(get):
+    fake = get(
+        Depth=_Response(
+            {
+                "error": [],
+                "result": {
+                    "XXBTZUSD": {
+                        "asks": [
+                            ["30384.10000", "2.059", 1688671659],
+                            ["30387.90000", "1.500", 1688671380],
+                        ],
+                        "bids": [
+                            ["30297.00000", "1.115", 1688671636],
+                            ["30296.70000", "2.002", 1688671674],
+                        ],
+                    }
+                },
+            }
+        )
+    )
+    book = connector("KrakenExchange").order_book("BTC-USD", 2)
+    assert fake.calls[0][1] == {"pair": "XBTUSD", "count": 2}
+    assert book.bids == [(30297.0, 1.115), (30296.7, 2.002)]
+    assert book.asks == [(30384.1, 2.059), (30387.9, 1.5)]
+    get(Depth=_Response({"error": ["EQuery:Unknown asset pair"]}))
+    with pytest.raises(MarketNotFound):
+        connector("KrakenExchange").order_book("NOPE-USD")
+
+
+def test_kucoin_order_book_is_its_part_order_book(get):
+    data = {
+        "code": "200000",
+        "data": {
+            "time": 1729176273859,
+            "sequence": "14610502970",
+            "bids": [["66976.4", "0.69109872"], ["66976.3", "0.14377"]],
+            "asks": [["66976.5", "0.23432758"], ["66976.6", "0.0111"]],
+        },
+    }
+    fake = get(level2_20=_Response(data), level2_100=_Response(data))
+    book = connector("KuCoinExchange").order_book("BTC-USD", 20)
+    assert "level2_20" in fake.calls[0][0] and fake.calls[0][1] == {
+        "symbol": "BTC-USDT"
+    }
+    assert book.bids[0] == (66976.4, 0.69109872) and book.asks[0] == (
+        66976.5,
+        0.23432758,
+    )
+    assert book.book_ts == 1729176273.859
+    connector("KuCoinExchange").order_book("BTC-USD", 50)
+    assert "level2_100" in fake.calls[1][0]
+
+
+def test_the_order_book_comes_from_the_primary_else_the_next():
+    class Booked(FakeExchange):
+        def __init__(self, name, book=None, error=None):
+            super().__init__(name, error=error)
+            self.book = book
+
+        def order_book(self, symbol, depth=20):
+            self.asked.append(("book", symbol, depth))
+            if self.error:
+                raise self.error
+            return self.book
+
+    book = OrderBookSnapshot([(99.0, 1.0)], [(101.0, 2.0)])
+    coinbase = Booked("coinbase", error=MarketNotFound("no XMR-USD"))
+    kraken = Booked("kraken", book)
+    manager = layer("coinbase", coinbase, kraken)
+    answer = manager.order_book("XMR", 10)
+    assert (answer.exchange, answer.value) == ("kraken", book)
+    assert kraken.asked == [("book", "XMR-USD", 10)]
+    with pytest.raises(MarketNotFound):
+        manager.order_book("XMR", only="coinbase")
+    none = Booked("kraken", None)  # a connector that reads no order book
+    with pytest.raises(MarketDataUnavailable, match="reads no order book"):
+        layer("kraken", none).order_book("BTC")
 
 
 # --- the layer: primary first; the change from the candle cache ------------------------

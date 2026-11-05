@@ -24,9 +24,11 @@ from pt_exchange_abstraction import (
     MarketData,
     MarketNotFound,
     MarketStatus,
+    OrderBookSnapshot,
     OrderResult,
     PriceQuote,
     Ticker,
+    book_levels,
 )
 from market_data.timeframes import candle_timeframe_seconds
 
@@ -157,6 +159,7 @@ _BINANCE_CANDLE_TFS = frozenset(
 )
 _BINANCE_KLINES_PAGE = 1000
 _BINANCE_UNKNOWN_SYMBOL = -1121
+_BINANCE_DEPTH_LIMITS = (5, 10, 20, 50, 100, 500, 1000, 5000)  # /api/v3/depth limit
 
 _COINBASE_GRANULARITY = {
     "1m": 60,
@@ -456,6 +459,22 @@ class KrakenExchange(AbstractExchange):
             high_24h=_item(info.get("h"), 1),
             low_24h=_item(info.get("l"), 1),
             ticker_ts=_server_time(response),
+        )
+
+    def order_book(self, symbol: str, depth: int = 20) -> Optional[OrderBookSnapshot]:
+        """Kraken's public order book (``/0/public/Depth``, ``count`` levels a side,
+        each ``[price, volume, timestamp]``)."""
+        pair = self._convert_symbol(symbol)
+        response = _public_get_for(
+            self,
+            f"{self.base_url}/0/public/Depth",
+            params={"pair": pair, "count": max(1, min(int(depth), 500))},
+        )
+        book = list(self._kraken_result(response.json(), pair).values())[0]
+        return OrderBookSnapshot(
+            book_levels(book.get("bids"), depth, descending=True),
+            book_levels(book.get("asks"), depth, descending=False),
+            _server_time(response),
         )
 
     def place_order(
@@ -914,6 +933,32 @@ class BinanceExchange(AbstractExchange):
             change_24h=_number(data.get("priceChange")),
             change_24h_pct=_number(data.get("priceChangePercent")),
             ticker_ts=_server_time(response),
+        )
+
+    def order_book(self, symbol: str, depth: int = 20) -> Optional[OrderBookSnapshot]:
+        """Binance's order book (``/api/v3/depth``), asked for the smallest of its
+        documented ``limit`` values that covers ``depth``."""
+        pair = self._convert_symbol(symbol)
+        limit = next(
+            (n for n in _BINANCE_DEPTH_LIMITS if n >= int(depth)),
+            _BINANCE_DEPTH_LIMITS[-1],
+        )
+        response = _public_get_for(
+            self,
+            f"{self.base_url}/api/v3/depth",
+            params={"symbol": pair, "limit": limit},
+        )
+        data = response.json()
+        if not isinstance(data, dict) or "bids" not in data:
+            code = data.get("code") if isinstance(data, dict) else None
+            if code == _BINANCE_UNKNOWN_SYMBOL:
+                raise MarketNotFound(f"Binance has no market {pair}")
+            message = data.get("msg", data) if isinstance(data, dict) else data
+            raise RuntimeError(f"Binance order book for {pair}: {message}")
+        return OrderBookSnapshot(
+            book_levels(data.get("bids"), depth, descending=True),
+            book_levels(data.get("asks"), depth, descending=False),
+            _server_time(response),
         )
 
     def _get_symbol_filters(self, binance_symbol: str) -> Dict[str, Decimal]:
@@ -1714,6 +1759,31 @@ class CoinbaseExchange(AbstractExchange):
         self._stats[product] = (now, stats)
         return stats
 
+    def order_book(self, symbol: str, depth: int = 20) -> Optional[OrderBookSnapshot]:
+        """Coinbase's public product book, ``depth`` levels a side
+        (``/api/v3/brokerage/market/product_book``: Advanced Trade's public market
+        data, no authentication; the Exchange API's level 2 book is the whole book).
+        """
+        product = self._convert_symbol(symbol)
+        response = _public_get_for(
+            self,
+            f"{self.AUTH_BASE_URL}{self.BROKERAGE}/market/product_book",
+            params={"product_id": product, "limit": max(1, int(depth))},
+        )
+        data = response.json()
+        book = data.get("pricebook") if isinstance(data, dict) else None
+        if not isinstance(book, dict):
+            error = data.get("error", "") if isinstance(data, dict) else ""
+            message = data.get("message", data) if isinstance(data, dict) else data
+            if getattr(response, "status_code", 200) == 404 or error == "NOT_FOUND":
+                raise MarketNotFound(f"Coinbase has no market {product} ({message})")
+            raise RuntimeError(f"Coinbase order book for {product}: {message}")
+        return OrderBookSnapshot(
+            book_levels(book.get("bids"), depth, descending=True),
+            book_levels(book.get("asks"), depth, descending=False),
+            _server_time(response) or _iso_seconds(book.get("time")),
+        )
+
     # -- orders -------------------------------------------------------------------------
 
     # Balances, market orders and order status are implemented, and the gate, the
@@ -2308,6 +2378,30 @@ class KuCoinExchange(AbstractExchange):
             change_24h=_number(info.get("changePrice")),
             change_24h_pct=rate * 100.0 if rate is not None else None,
             ticker_ts=_server_time(response) or (stamp / 1000.0 if stamp else None),
+        )
+
+    def order_book(self, symbol: str, depth: int = 20) -> Optional[OrderBookSnapshot]:
+        """KuCoin's public part order book: ``level2_20``, or ``level2_100`` for more
+        than 20 levels a side."""
+        pair = self._convert_symbol(symbol)
+        size = 20 if int(depth) <= 20 else 100
+        response = _public_get_for(
+            self,
+            f"{self.base_url}/api/v1/market/orderbook/level2_{size}",
+            params={"symbol": pair},
+        )
+        data = response.json()
+        code = str(data.get("code"))
+        if code in _KUCOIN_UNKNOWN_PAIR:
+            raise MarketNotFound(f"KuCoin has no market {pair} ({data.get('msg')})")
+        if code != "200000":
+            raise RuntimeError(f"KuCoin order book for {pair}: {data.get('msg', code)}")
+        book = data.get("data") or {}
+        stamp = _number(book.get("time"))
+        return OrderBookSnapshot(
+            book_levels(book.get("bids"), depth, descending=True),
+            book_levels(book.get("asks"), depth, descending=False),
+            _server_time(response) or (stamp / 1000.0 if stamp else None),
         )
 
     def place_order(

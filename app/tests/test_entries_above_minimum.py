@@ -227,20 +227,73 @@ class SmallPaperAccount(PaperTraderCase):
         self.assertFalse(restarted._open_trade("BTC"))
         self.assertTrue(restarted._is_dust("BTC-USD", self.btc_held(), self.quotes.bid))
 
-    def test_the_margin_comes_from_settings(self):
-        trader = self.trader(dict(self.SETTINGS))
-        self.signal(3)
-        gui = {"mtime": 1.0, "coins": ["BTC"], "min_order_margin_pct": 10.0}
+    def keep_settings_globals(self) -> None:
+        """Put back afterwards every global a settings reload sets."""
         names = (
             "crypto_symbols main_dir base_paths TRADE_START_LEVEL START_ALLOC_PCT "
             "MAX_COIN_PCT MIN_ORDER_MARGIN_PCT DCA_MULTIPLIER DCA_LEVELS "
             "MAX_DCA_BUYS_PER_24H TRAILING_GAP_PCT PM_START_PCT_NO_DCA "
             "PM_START_PCT_WITH_DCA _last_settings_mtime"
         ).split()
-        for name in names:  # every global a reload sets is put back afterwards
+        for name in names:
             p = mock.patch.object(self.pt_trader, name, getattr(self.pt_trader, name))
             p.start()
             self.addCleanup(p.stop)
+
+    def test_a_saved_margin_reaches_the_trader_through_the_settings_file(self):
+        """gui_settings.json as Settings saves it, read the way the trader reads it
+        (the path check, then InputValidator.validate_config_data, which passes on
+        only the keys it knows): the entry has the saved margin, a change is used
+        from the next cycle, and an out-of-range value is refused (the last good
+        settings stay)."""
+        import pt_paths
+
+        self.keep_settings_globals()
+        path = pt_paths.gui_settings_file()
+        for p in (
+            mock.patch.object(self.pt_trader, "_GUI_SETTINGS_PATH", path),
+            mock.patch.dict(self.pt_trader._gui_settings_cache, {"mtime": None}),
+        ):
+            p.start()
+            self.addCleanup(p.stop)
+
+        def save(margin, mtime):
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "coins": ["BTC"],
+                        "main_neural_dir": self.folder,
+                        "min_order_margin_pct": margin,
+                    },
+                    f,
+                )
+            os.utime(path, (mtime, mtime))
+
+        save(7.5, 1_000_000)
+        trader = self.trader(dict(self.SETTINGS))
+        self.signal(3)
+        trader.manage_trades()  # reads the settings file first
+        self.assertEqual(self.pt_trader.MIN_ORDER_MARGIN_PCT, 7.5)
+        (buy,) = self.buys()
+        fees = trader._trading_fees("BTC-USD")
+        room = 0.2 / 99.9 + 2 * fees.taker + 0.075
+        bought = float(buy.filled_quantity * buy.filled_price)  # 8-decimal quantity
+        self.assertAlmostEqual(bought, 1 + room, places=6)
+
+        save(0, 1_000_100)  # changed in Settings: used from the next cycle
+        trader.manage_trades()
+        self.assertEqual(self.pt_trader.MIN_ORDER_MARGIN_PCT, 0.0)
+
+        save(25, 1_000_200)  # out of range: the file is refused, 0 stays
+        with self.assertLogs(level="ERROR"):
+            trader.manage_trades()
+        self.assertEqual(self.pt_trader.MIN_ORDER_MARGIN_PCT, 0.0)
+
+    def test_the_margin_comes_from_settings(self):
+        trader = self.trader(dict(self.SETTINGS))
+        self.signal(3)
+        gui = {"mtime": 1.0, "coins": ["BTC"], "min_order_margin_pct": 10.0}
+        self.keep_settings_globals()
         with mock.patch.object(self.pt_trader, "_load_gui_settings", lambda: gui):
             self.pt_trader._refresh_paths_and_symbols()
             self.assertEqual(self.pt_trader.MIN_ORDER_MARGIN_PCT, 10.0)

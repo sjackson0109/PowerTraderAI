@@ -99,7 +99,7 @@ that the app has been run from both working directories.
 | `<coin>_training_results.json` in trainer `data_dir` (`<repo>/data` or `app/data`) | pt_trainer.py:199-204; BTC/pt_trainer.py:79-84; *_standalone.py:69-74 | mkdir, W | training summary | **T** (`app/*_training_results.json`, `app/<SYM>/*_training_results.json`) | yes |
 | `app/order_management.db` (+ `-wal`/`-shm`) | order_management_db.py:49-52, 63-93, 562-567; order_management_integration.py:85, 540-545; pt_hub.py:3851 | RW | orders, conditions, notifications | I | yes |
 | `sqlite:///order_management.db` (**CWD**) — a second, separate DB | llm_research_engine.py:659, 676-680, 1022-1030; llm_research_gui.py:50; pt_hub.py:4439 | RW | same schema | I | yes |
-| `data/automation.db` (**CWD**) | advanced_order_automation.py:181-183, 209, 805-907; pt_hub.py:4562 | mkdir, RW | advanced/OCO/bracket orders | I | yes |
+| `data/automation.db` (**CWD**) | archive/legacy/advanced_order_automation.py:181-183, 209, 805-907 (moved to the archive with advanced_order_gui.py on 2026-11-05; the hub has no Advanced Orders tab, and the file is left on disk as it is) | mkdir, RW | advanced/OCO/bracket orders | I | no |
 | `data/holdings.db` (**CWD**) | long_term_holdings.py:73-74, 79-211, 237-240, 411; pt_hub.py:4480 | mkdir, RW | holdings | I | yes |
 | `portfolio_optimization.db` (**CWD**) | portfolio_optimizer.py:40-41, 74, 478-554; pt_hub.py:4647 | RW | optimisation results | I | yes |
 | `app/institutional_trading.db` | institutional_trading.py:399-402, 682-686; pt_hub.py:4774 | RW | institutional orders | I | yes |

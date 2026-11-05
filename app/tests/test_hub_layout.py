@@ -372,11 +372,10 @@ def test_the_module_tabs_follow_the_one_order_list(hub):
     assert names[:2] == ["Current Trades", "Trade History"]
     assert nb.select() == nb.tabs()[0]
     order = list(pt_hub.MODULE_TAB_ORDER)
-    for after, first in (
-        ("Advanced Orders", "Order Management"),
-        ("Holdings Management", "Long-term Holdings"),
-    ):
-        assert order.index(after) == order.index(first) + 1
+    assert order.index("Holdings Management") == order.index("Long-term Holdings") + 1
+    # Order Management has the order types; there is no Advanced Orders tab (owner,
+    # 2026-11-05)
+    assert "Advanced Orders" not in order and "Advanced Orders" not in names
 
 
 def test_the_tab_order_skips_missing_tabs_and_keeps_unlisted_ones_last(hub):

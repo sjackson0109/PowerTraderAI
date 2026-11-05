@@ -163,15 +163,6 @@ except ImportError:
     HOLDINGS_MANAGEMENT_AVAILABLE = False
     print("Warning: Long-term Holdings not available.")
 
-# Advanced Order Types imports
-try:
-    from advanced_order_gui import AdvancedOrderGUI
-
-    ADVANCED_ORDER_AVAILABLE = True
-except ImportError:
-    ADVANCED_ORDER_AVAILABLE = False
-    print("Warning: Advanced Order Types not available.")
-
 # Real-time Market Data imports
 try:
     from real_time_market_data_gui import MarketDataGUI
@@ -301,13 +292,13 @@ CHART_STATUS_ROW_PADY = SPACE["sm"]
 MIN_TAB_BUTTONS_W = 60
 
 # The bottom panel's module tabs, left to right (owner, 2026-11-04): change the
-# order here. Advanced Orders follows Order Management and Holdings Management
-# follows Long-term Holdings while they exist; a tab not built is skipped.
+# order here. Holdings Management follows Long-term Holdings while it exists; a tab
+# not built is skipped. Order Management has the order types Advanced Orders had
+# (owner, 2026-11-05).
 MODULE_TAB_ORDER = (
     "Current Trades",
     "Trade History",
     "Order Management",
-    "Advanced Orders",
     "Market Data",
     "Long-term Holdings",
     "Holdings Management",
@@ -3665,32 +3656,27 @@ class PowerTraderHub(tk.Tk):
         self._create_llm_research_tab()
 
         # ----------------------------
-        # TAB 6: Advanced Order Types
-        # ----------------------------
-        self._create_advanced_order_tab()
-
-        # ----------------------------
-        # TAB 7: Real-time Market Data
+        # TAB 6: Real-time Market Data
         # ----------------------------
         self._create_market_data_tab()
 
         # ----------------------------
-        # TAB 8: Portfolio Optimization
+        # TAB 7: Portfolio Optimization
         # ----------------------------
         self._create_portfolio_optimization_tab()
 
         # ----------------------------
-        # TAB 9: Backtesting Framework
+        # TAB 8: Backtesting Framework
         # ----------------------------
         self._create_backtesting_tab()
 
         # ----------------------------
-        # TAB 10: Performance Attribution
+        # TAB 9: Performance Attribution
         # ----------------------------
         self._create_performance_attribution_tab()
 
         # ----------------------------
-        # TAB 11: Institutional Trading
+        # TAB 10: Institutional Trading
         # ----------------------------
         self._create_institutional_trading_tab()
 
@@ -4079,47 +4065,6 @@ class PowerTraderHub(tk.Tk):
                 anchor="center",
             ).pack(expand=True, fill="both", padx=20, pady=20)
             print(f"Error creating the Long-term Holdings tab: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    def _create_advanced_order_tab(self):
-        """Create the Advanced Order Types tab for sophisticated order management."""
-        try:
-            # Always create the tab first
-            advanced_order_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(advanced_order_tab, text="Advanced\nOrders")
-
-            if not ADVANCED_ORDER_AVAILABLE:
-                # Show a message about unavailability
-                ttk.Label(
-                    advanced_order_tab,
-                    text="Advanced Order Types Not Available\n\nRequired dependencies missing.\nPlease install advanced order automation module.",
-                    font=ui_tokens.font("body"),
-                    anchor="center",
-                ).pack(expand=True, fill="both", padx=20, pady=20)
-                print("Advanced Order Types not available")
-                return
-
-            # Initialize the advanced order GUI
-            self.advanced_order_gui = AdvancedOrderGUI(advanced_order_tab)
-
-            print("Advanced Order Types tab created successfully")
-
-        except Exception as e:
-            # If there's an error after tab creation, show error message in the tab
-            try:
-                for widget in advanced_order_tab.winfo_children():
-                    widget.destroy()
-                ttk.Label(
-                    advanced_order_tab,
-                    text=f"Advanced Orders Error\n\n{str(e)}\n\nPlease check console for details.",
-                    font=ui_tokens.font("body"),
-                    anchor="center",
-                ).pack(expand=True, fill="both", padx=20, pady=20)
-            except Exception:
-                pass
-            print(f"Error creating Advanced Order Types tab: {e}")
             import traceback
 
             traceback.print_exc()

@@ -610,6 +610,15 @@ def test_a_market_buy_is_confirmed_then_fills_the_paper_account(
     (trade,) = history(world)
     assert (trade["tag"], trade["qty"], trade["price"]) == ("MANUAL", 0.01, 3500.4)
     assert trade["fees_usd"] == pytest.approx(0.01 * 3500.4 * 0.006)
+    # the Trade History tab shows it: a manual buy, with its fee
+    import trade_history_view
+
+    shown = trade_history_view.TradeHistoryView(root)
+    shown.load(history(world))
+    (t,) = shown.trades
+    assert (t.source, t.side, t.pair, t.qty) == ("Manual", "Buy", "ETH-USD", 0.01)
+    assert t.fees == pytest.approx(0.01 * 3500.4 * 0.006)
+    shown.destroy()
 
 
 def test_answering_no_creates_nothing(root, manager, world, dialogs):

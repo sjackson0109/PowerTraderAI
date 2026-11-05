@@ -22,7 +22,17 @@ Modern Portfolio Theory over the coins in Settings (portfolio_optimizer). Sub-ta
 * Analysis: one chart at a time, from the data and the result: the efficient
   frontier with its max Sharpe ratio point and the optimised and current
   portfolios on it; the composition, each coin's optimised and current weight;
-  and each coin's annual return against its volatility, with both portfolios.
+  each coin's annual return against its volatility, with both portfolios; and a
+  Monte Carlo simulation of the current and optimised portfolios' value
+  (portfolio_optimizer.simulate_portfolios): N paths (5,000) over a horizon (30
+  days) from a starting value (blank: the holdings' value), drawn by resampling
+  the window's days (Historical bootstrap, the default) or as correlated normal
+  draws, with the same draws for both portfolios. It shows the paths' 5th, 25th,
+  50th, 75th and 95th percentiles day by day, the expected final value, the Value
+  at Risk at 95% and the chance of a drawdown reaching the emergency stop % in
+  Settings (risk.emergency_drawdown_pct), labelled as a model based on past data,
+  not a forecast. A fixed seed draws the same paths again; without one, the seed
+  drawn is shown.
 
 The current portfolio is Long-term Holdings' (``holdings``: its window, a
 HoldingsManagementGUI): the holdings its tag filter keeps, each coin's share of
@@ -34,6 +44,7 @@ the result when the job ends. A job still running when the window is destroyed i
 stopped (between coins, frontier points ...).
 """
 
+import secrets
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -119,7 +130,13 @@ PORTFOLIOS = (("current", "Current portfolio"), ("optimised", "Optimised"))
 
 # ---- Analysis ----
 
-VIEWS = ("Efficient Frontier", "Portfolio Composition", "Risk-Return Scatter")
+MONTE_CARLO = "Monte Carlo"
+VIEWS = (
+    "Efficient Frontier",
+    "Portfolio Composition",
+    "Risk-Return Scatter",
+    MONTE_CARLO,
+)
 NO_FRONTIER = "Optimize the portfolio first"
 NO_DATA_CHART = "Load the data first"
 NO_CHARTS = "Charts need matplotlib"
@@ -134,6 +151,20 @@ MAX_SHARPE_LABEL = "Max Sharpe ratio"
 OPTIMISED_LABEL = "Optimised"
 CURRENT_LABEL = "Current portfolio"
 COINS_LABEL = "Coins"
+NO_SIMULATION = "Run the simulation first"
+MODEL_NOTE = "A model based on past data, not a forecast"
+METHOD_TEXT = {  # how the paths' daily returns were drawn, in the note
+    "bootstrap": "days resampled from",
+    "normal": "correlated normal draws fitted to",
+}
+DEFAULT_START_VALUE = 10_000.0  # the starting value with no holdings' value
+DEFAULT_SEED = 42
+MC_ROWS = (
+    ("Expected final value", "expected"),
+    ("Median final value", "median"),
+    ("Value at Risk (95%)", "var"),
+    ("Drawdown reaches the emergency stop", "drawdown"),
+)
 
 
 def _money(value: float) -> str:
@@ -209,6 +240,13 @@ def read_data(request: Tuple, load_candles: Callable, job: _Job) -> "po.MarketDa
     )
 
 
+def _emergency_drawdown_pct() -> float:
+    """The emergency stop % in Settings (risk.emergency_drawdown_pct)."""
+    from trading_mode import read_emergency_drawdown_pct
+
+    return read_emergency_drawdown_pct()
+
+
 class PortfolioOptimizerGUI:
     """The Portfolio Optimization tab's sub-tabs; see the module docstring.
 
@@ -216,7 +254,8 @@ class PortfolioOptimizerGUI:
     window (None: no current portfolio); ``optimizer`` a PortfolioOptimizer;
     ``load_candles(coins, days, should_stop=..., progress=...)`` reads the daily
     closes (portfolio_optimizer.load_candle_data); ``money`` and ``price`` format
-    amounts and prices."""
+    amounts and prices; ``drawdown_pct()`` gives the emergency stop % (the Risk
+    settings)."""
 
     def __init__(
         self,
@@ -228,6 +267,7 @@ class PortfolioOptimizerGUI:
         load_candles: Optional[Callable[..., "po.MarketData"]] = None,
         money: Callable[[float], str] = _money,
         price: Callable[[float], str] = _price,
+        drawdown_pct: Optional[Callable[[], float]] = None,
     ):
         if parent is None:
             self.root = ui_theme.themed_root()
@@ -242,6 +282,9 @@ class PortfolioOptimizerGUI:
         self._coins = coins
         self.holdings = holdings
         self._money, self._price = money, price
+        # the emergency stop % (Settings: risk.emergency_drawdown_pct)
+        self._drawdown_pct = drawdown_pct or _emergency_drawdown_pct
+        self.simulation: Optional["po.Simulation"] = None
 
         self.optimizer = optimizer
         if self.optimizer is None and OPTIMIZER_AVAILABLE:
@@ -282,7 +325,7 @@ class PortfolioOptimizerGUI:
         if not OPTIMIZER_AVAILABLE:
             for widget in self._busy_widgets:
                 widget.state(["disabled"])
-            self._say("The optimizer could not be loaded.")
+            self._say("The optimizer could not be loaded.", everywhere=True)
         holdings_frame = getattr(self.holdings, "main_frame", None)
         if holdings_frame is not None:
             holdings_frame.bind(TAG_FILTER_EVENT, self._on_tag_filter, add="+")
@@ -501,6 +544,27 @@ class PortfolioOptimizerGUI:
                 command=self.draw_analysis,
             ).pack(side="left", padx=(0, gap))
 
+        self.setup_simulation_bar(self._toolbar(tab))
+        self.mc_note = ttk.Label(tab, text="", anchor="w")
+        # under the chart in the Monte Carlo view (packed ahead of the chart: the
+        # chart takes the room left)
+        self.mc_stats = ttk.Frame(tab)
+        self.mc_labels: Dict[Tuple[str, str], ttk.Label] = {}
+        self.mc_headings: Dict[str, ttk.Label] = {}
+        for column, (key, title) in enumerate(PORTFOLIOS, start=1):
+            heading = ttk.Label(self.mc_stats, text=title, style="Muted.TLabel")
+            heading.grid(row=0, column=column, sticky="e", padx=(gap * 3, 0))
+            self.mc_headings[key] = heading
+        self.mc_row_titles: Dict[str, ttk.Label] = {}
+        for row, (title, key) in enumerate(MC_ROWS, start=1):
+            label = ttk.Label(self.mc_stats, text=title)
+            label.grid(row=row, column=0, sticky="w")
+            self.mc_row_titles[key] = label
+            for column, (portfolio, _title) in enumerate(PORTFOLIOS, start=1):
+                value = ttk.Label(self.mc_stats, text="")
+                value.grid(row=row, column=column, sticky="e", padx=(gap * 3, 0))
+                self.mc_labels[(portfolio, key)] = value
+
         self.chart_area = ttk.Frame(tab)
         self.chart_area.pack(side="top", fill="both", expand=True, padx=gap, pady=gap)
         self.chart_note = ttk.Label(
@@ -521,13 +585,56 @@ class PortfolioOptimizerGUI:
         self.analysis_weights: Dict[str, Dict[str, float]] = {}
         self.draw_analysis()
 
+    def setup_simulation_bar(self, bar: ttk.Frame) -> None:
+        """The Monte Carlo settings and Run Simulation, in a toolbar."""
+        gap = ui_tokens.SPACE["sm"]
+        self.mc_method_var = tk.StringVar(master=bar, value=po.MC_METHODS[0][0])
+        self.mc_paths_var = tk.StringVar(master=bar, value=str(po.DEFAULT_MC_PATHS))
+        self.mc_days_var = tk.StringVar(master=bar, value=str(po.DEFAULT_MC_DAYS))
+        self.mc_start_var = tk.StringVar(master=bar, value="")  # blank: holdings
+        self.mc_fixed_seed_var = tk.BooleanVar(master=bar, value=False)
+        self.mc_seed_var = tk.StringVar(master=bar, value=str(DEFAULT_SEED))
+
+        def field(label: str, widget: tk.Widget) -> None:
+            ttk.Label(bar, text=label).pack(
+                side="left", padx=(0, ui_tokens.SPACE["xs"])
+            )
+            widget.pack(side="left", padx=(0, gap * 2))
+
+        ttk.Label(bar, text=MONTE_CARLO, style="Muted.TLabel").pack(
+            side="left", padx=(0, gap * 2)
+        )
+        field(
+            "Method",
+            ttk.Combobox(
+                bar,
+                textvariable=self.mc_method_var,
+                values=[label for label, _key in po.MC_METHODS],
+                state="readonly",
+                width=19,
+            ),
+        )
+        field("Paths", ttk.Entry(bar, textvariable=self.mc_paths_var, width=8))
+        field("Days", ttk.Entry(bar, textvariable=self.mc_days_var, width=5))
+        field(
+            "Starting Value ($, blank: holdings)",
+            ttk.Entry(bar, textvariable=self.mc_start_var, width=10),
+        )
+        ttk.Checkbutton(bar, text="Fixed seed", variable=self.mc_fixed_seed_var).pack(
+            side="left", padx=(0, ui_tokens.SPACE["xs"])
+        )
+        ttk.Entry(bar, textvariable=self.mc_seed_var, width=10).pack(
+            side="left", padx=(0, gap * 2)
+        )
+        self._button(bar, "Run Simulation", self.run_simulation)
+
     # ---- jobs off the Tk thread ----
 
     def _start(self, name: str, work: Callable[[_Job], Any], done: Callable) -> bool:
         """Run ``work`` off the Tk thread and ``done(result)`` on it once it ends;
         False (nothing started) while another job runs."""
         if self.job is not None:
-            self._say("Busy: wait for the current job to end.")
+            self._say("Busy: wait for the current job to end.", everywhere=True)
             return False
         self.job, self._done = _Job(name, work), done
         self._set_busy(True)
@@ -542,7 +649,7 @@ class PortfolioOptimizerGUI:
             return
         if job.thread.is_alive():
             if job.progress:
-                self._say(job.progress)
+                self._say(job.progress, everywhere=True)
             try:
                 self._after = self.main_frame.after(POLL_MS, self._poll)
             except tk.TclError:
@@ -552,6 +659,7 @@ class PortfolioOptimizerGUI:
         self._set_busy(False)
         if job.stop.is_set() or isinstance(job.error, po.Stopped):
             return
+        self.data_status.configure(text=self.data_summary())  # not the progress
         if job.error is not None:
             self._failed(job.error)
         else:
@@ -595,16 +703,23 @@ class PortfolioOptimizerGUI:
             except tk.TclError:
                 pass
 
-    def _say(self, text: str) -> None:
-        """A line of status, on the Data and Optimization sub-tabs."""
-        for label in (self.data_status, self.status_label):
+    def _say(self, text: str, everywhere: bool = False) -> None:
+        """A line of status on the Optimization sub-tab; ``everywhere``: on the
+        Data sub-tab too (a job's progress, an error), which otherwise shows the
+        data's own line."""
+        labels = (
+            (self.status_label, self.data_status)
+            if everywhere
+            else (self.status_label,)
+        )
+        for label in labels:
             try:
                 label.configure(text=text)
             except tk.TclError:
                 pass
 
     def _failed(self, error: BaseException) -> None:
-        self._say(f"Not done: {error}")
+        self._say(f"Not done: {error}", everywhere=True)
         messagebox.showerror("Portfolio Optimization", str(error))
 
     # ---- the data ----
@@ -638,7 +753,7 @@ class PortfolioOptimizerGUI:
         )
 
     def browse_file(self):
-        """Pick a price file (and read prices from it)."""
+        """Pick a price file: it becomes the source."""
         filename = filedialog.askopenfilename(
             title="Select Price Data File",
             filetypes=[
@@ -670,6 +785,7 @@ class PortfolioOptimizerGUI:
         # a result worked out from other data no longer applies
         self.optimization_result, self.frontier_data = None, None
         self.result_data = None
+        self.simulation = None
         self.refresh_current()
         self.show_data()
 
@@ -683,9 +799,13 @@ class PortfolioOptimizerGUI:
         days = len(data.prices)
         first, last = data.first_day, data.last_day
         span = f"{first:%Y-%m-%d} to {last:%Y-%m-%d}"
-        where = "price file" if data.source == po.SOURCE_FILE else "daily candles"
+        where = (
+            "from the price file"
+            if data.source == po.SOURCE_FILE
+            else "of daily candles"
+        )
         n = len(data.coins)
-        return f"{n} coin{'' if n == 1 else 's'}, {days} days of {where}, {span}"
+        return f"{n} coin{'' if n == 1 else 's'}, {days} days {where}, {span}"
 
     def show_data(self) -> None:
         """The coins' table and the coins left out."""
@@ -789,12 +909,17 @@ class PortfolioOptimizerGUI:
         def refuse(message: str) -> None:
             messagebox.showerror("Portfolio Optimization", message)
 
+        kind = self.opt_type()
         try:
             risk_free = _number(self.risk_free_var.get()) or 0.0
             top = _number(self.max_weight_var.get())
             bottom = _number(self.min_weight_var.get()) or 0.0
             max_vol = _number(self.max_vol_var.get())
-            target = _number(self.target_return_var.get())
+            target = (
+                _number(self.target_return_var.get())
+                if kind == "target_return"
+                else None
+            )
         except ValueError:
             refuse("Enter numbers in the number fields.")
             return None
@@ -807,7 +932,6 @@ class PortfolioOptimizerGUI:
         if max_vol is not None and max_vol <= 0.0:
             refuse("Max volatility must be above 0%, or blank for none.")
             return None
-        kind = self.opt_type()
         if kind == "target_return" and target is None:
             refuse("Enter the target return.")
             return None
@@ -853,6 +977,15 @@ class PortfolioOptimizerGUI:
             problem = po.data_problem(used)
             if problem is None:
                 problem = po.constraint_problem(len(used.coins), params["constraints"])
+            if problem is None and params["target_return"] is not None:
+                low, high = po.reachable_returns(
+                    used.expected_returns(), params["constraints"]
+                )
+                if not low - 1e-9 <= params["target_return"] <= high + 1e-9:
+                    problem = (
+                        f"With these weight limits the target return must be from "
+                        f"{low * 100:.2f}% to {high * 100:.2f}%."
+                    )
             if problem is not None:
                 if held is not None:
                     problem = f"Of the coins held: {problem[0].lower()}{problem[1:]}"
@@ -891,6 +1024,7 @@ class PortfolioOptimizerGUI:
         result["weights"] = {c: float(w) for c, w in result["weights"].items()}
         self.optimization_result = result
         self.result_data = used  # the coins and days the result is over
+        self.simulation = None  # of the result before
         self.frontier_data = frontier
         self.refresh_current()
         self._say(self.result_summary())
@@ -1071,6 +1205,202 @@ class PortfolioOptimizerGUI:
             except Exception as e:
                 messagebox.showerror(title, f"The portfolio was not saved: {e}")
 
+    # ---- Monte Carlo ----
+
+    def read_simulation_settings(self) -> Optional[Dict[str, Any]]:
+        """The Monte Carlo settings typed; None, after saying why, when they are
+        not numbers in range."""
+        title = MONTE_CARLO
+
+        def whole(text: str) -> Optional[int]:
+            number = _number(text)
+            if number is None or number != int(number):
+                raise ValueError(text)
+            return int(number)
+
+        try:
+            paths = whole(self.mc_paths_var.get())
+            days = whole(self.mc_days_var.get())
+            start = _number(self.mc_start_var.get())
+            seed = (
+                whole(self.mc_seed_var.get()) if self.mc_fixed_seed_var.get() else None
+            )
+        except ValueError:
+            messagebox.showerror(
+                title, "Enter whole numbers for the paths, days and seed."
+            )
+            return None
+        problem = po.simulation_problem(paths, days)
+        if problem is None and start is not None and start <= 0:
+            problem = "The starting value must be above $0, or blank for the holdings'."
+        if problem is None and seed is not None and not 0 <= seed < 2**32:
+            problem = "The seed must be from 0 to 4,294,967,295."
+        if problem is not None:
+            messagebox.showerror(title, problem)
+            return None
+        return {
+            "method": dict(po.MC_METHODS).get(
+                self.mc_method_var.get(), po.MC_BOOTSTRAP
+            ),
+            "paths": paths,
+            "days": days,
+            "start": start,
+            "seed": seed,
+        }
+
+    def run_simulation(self) -> bool:
+        """Simulate the current and optimised portfolios' value off the Tk thread,
+        with the same draws for both, and show the Monte Carlo chart when done."""
+        title = MONTE_CARLO
+        data = self.result_data if self.result_data is not None else self.market_data
+        if data is None or data.prices.empty:
+            messagebox.showerror(title, "Load the data first.")
+            return False
+        settings = self.read_simulation_settings()
+        if settings is None:
+            return False
+        portfolios: Dict[str, Dict[str, float]] = {}
+        held = self.current.weights if self.current is not None else {}
+        if po.weights_vector(held, data.coins).sum() > 0:
+            portfolios["current"] = dict(held)
+        if self.optimization_result:
+            portfolios["optimised"] = dict(self.optimization_result["weights"])
+        if not portfolios:
+            messagebox.showerror(
+                title,
+                "Nothing to simulate: optimize the portfolio, or hold coins with data.",
+            )
+            return False
+        start = settings["start"]
+        if start is None:
+            value = self.current.value if self.current is not None else 0.0
+            start = value if value > 0 else DEFAULT_START_VALUE
+        seed = settings["seed"]
+        if seed is None:
+            seed = secrets.randbelow(2**32)  # shown, so the paths can be drawn again
+        try:
+            limit = float(self._drawdown_pct()) / 100.0
+        except Exception as e:
+            print(f"Error reading the emergency stop %: {e}")
+            limit = 0.08
+        returns = data.returns.copy()
+
+        def work(job: _Job):
+            job.progress = "Simulating"
+            return po.simulate_portfolios(
+                returns,
+                portfolios,
+                start_value=start,
+                days=settings["days"],
+                paths=settings["paths"],
+                method=settings["method"],
+                seed=seed,
+                drawdown_limit=limit,
+                should_stop=job.stop.is_set,
+            )
+
+        return self._start("simulate", work, self._simulated)
+
+    def _simulated(self, simulation: "po.Simulation") -> None:
+        self.simulation = simulation
+        self.view_var.set(MONTE_CARLO)
+        self.draw_analysis()
+        self._say(self.simulation_text())
+
+    def simulation_text(self) -> str:
+        """What the simulation is: the note shown over its chart."""
+        sim = self.simulation
+        if sim is None:
+            return ""
+        span = ""
+        if sim.first_day is not None:
+            span = f" {sim.first_day:%Y-%m-%d} to {sim.last_day:%Y-%m-%d}"
+        how = METHOD_TEXT.get(sim.method, sim.method)
+        return (
+            f"{MODEL_NOTE}: {sim.paths:,} paths of {sim.days} days, "
+            f"{how} the daily returns of{span}; seed {sim.seed}."
+        )
+
+    def _show_simulation_parts(self, shown: bool) -> None:
+        """The note and the figures of the simulation, in the Monte Carlo view."""
+        gap = ui_tokens.SPACE["sm"]
+        shown = shown and self.simulation is not None
+        for widget, side in ((self.mc_note, "top"), (self.mc_stats, "bottom")):
+            if shown and not widget.winfo_manager():
+                widget.pack(
+                    side=side, fill="x", padx=gap, pady=(gap, 0), before=self.chart_area
+                )
+            elif not shown and widget.winfo_manager():
+                widget.pack_forget()
+
+    def plot_monte_carlo(self) -> None:
+        """A fan chart for each portfolio simulated: the 5th to 95th and 25th to 75th
+        percentiles of its value day by day, its median and its starting value; the
+        figures under it."""
+        sim = self.simulation
+        if sim is None:
+            self._show_chart(NO_SIMULATION)
+            return
+        self._show_chart()
+        chart = ui_tokens.CHART
+        size = ui_tokens.CHART_FONT_PT
+        fig = self.analysis_fig
+        fig.clear()
+        names = [key for key, _title in PORTFOLIOS if key in sim.portfolios]
+        titles = dict(PORTFOLIOS)
+        money = FuncFormatter(lambda v, _pos: f"${v:,.0f}")
+        axes = fig.subplots(1, len(names), sharey=True, squeeze=False)[0]
+        days = np.arange(sim.days + 1)
+        for ax, name in zip(axes, names):
+            stats = sim.portfolios[name]
+            p = stats.percentiles
+            colour = chart["series2"] if name == "optimised" else chart["series"]
+            ax.fill_between(
+                days, p[5], p[95], color=colour, alpha=0.2, label="5th-95th"
+            )
+            ax.fill_between(
+                days, p[25], p[75], color=colour, alpha=0.4, label="25th-75th"
+            )
+            ax.plot(days, p[50], color=colour, linewidth=2, label="Median")
+            ax.axhline(stats.start_value, color=chart["grid"], linewidth=1)
+            ax.set_title(titles[name], fontsize=size + 1)
+            ax.set_xlabel("Days", fontsize=size)
+            ax.tick_params(labelsize=size)
+            ax.yaxis.set_major_formatter(money)
+            ax.grid(True, color=chart["grid"], alpha=0.5)
+            ax.legend(fontsize=size, loc="upper left")
+        axes[0].set_ylabel("Portfolio value", fontsize=size)
+        fig.suptitle(MODEL_NOTE, fontsize=size + 1, color=chart["text"])
+        ui_theme.theme_figure(fig)
+        self.analysis_canvas.draw_idle()
+        self.show_simulation_stats()
+
+    def show_simulation_stats(self) -> None:
+        """The figures under the fan charts, for each portfolio simulated."""
+        sim = self.simulation
+        self.mc_note.configure(text=self.simulation_text())
+        self.mc_row_titles["drawdown"].configure(
+            text=f"Drawdown reaches {sim.drawdown_limit * 100:g}% (emergency stop)"
+        )
+        for portfolio, _title in PORTFOLIOS:
+            stats = sim.portfolios.get(portfolio)
+            for _row, key in MC_ROWS:
+                text = ""
+                if stats is not None:
+                    start = stats.start_value
+                    if key == "expected":
+                        change = stats.expected_final / start - 1.0
+                        text = f"{self._money(stats.expected_final)} ({change:+.1%})"
+                    elif key == "median":
+                        change = stats.median_final / start - 1.0
+                        text = f"{self._money(stats.median_final)} ({change:+.1%})"
+                    elif key == "var":
+                        loss = max(0.0, stats.var_95)
+                        text = f"{self._money(loss)} ({loss / start:.1%})"
+                    else:
+                        text = f"{stats.drawdown_probability:.1%}"
+                self.mc_labels[(portfolio, key)].configure(text=text)
+
     # ---- Analysis ----
 
     def _show_chart(self, message: str = "") -> None:
@@ -1093,7 +1423,9 @@ class PortfolioOptimizerGUI:
             VIEWS[0]: self.plot_efficient_frontier,
             VIEWS[1]: self.plot_portfolio_composition,
             VIEWS[2]: self.plot_risk_return,
+            MONTE_CARLO: self.plot_monte_carlo,
         }.get(view, self.plot_efficient_frontier)
+        self._show_simulation_parts(view == MONTE_CARLO)
         try:
             draw()
         except Exception as e:

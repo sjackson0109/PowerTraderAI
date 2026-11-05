@@ -16,6 +16,10 @@ The current portfolio (``current_portfolio``) is Long-term Holdings': each coin'
 share of the current value of the holdings given. ``targets_from_weights`` turns
 optimised weights into each holding's target % (Long-term Holdings' Rebalancing
 works from those).
+
+Monte Carlo (simulate_portfolios): paths of portfolios' value over a horizon,
+drawn from the window's daily returns, by resampling whole days (the default) or
+as correlated normal draws: a model based on past data, not a forecast.
 """
 
 import json
@@ -320,6 +324,185 @@ def greedy_weights(score: np.ndarray, low: float, high: float) -> np.ndarray:
         weights[i] += add
         left -= add
     return weights
+
+
+def reachable_returns(expected_returns, constraints: Dict) -> Tuple[float, float]:
+    """The lowest and highest expected return of weights within the max_weight and
+    min_weight of ``constraints`` (feasible limits: constraint_problem gives
+    None)."""
+    mu = np.asarray(expected_returns, dtype=float)
+    low, high = float(constraints["min_weight"]), float(constraints["max_weight"])
+    return (
+        float(np.dot(greedy_weights(-mu, low, high), mu)),
+        float(np.dot(greedy_weights(mu, low, high), mu)),
+    )
+
+
+# ---- Monte Carlo ----
+
+# How the daily returns of a path are drawn: resampled from the window's own days
+# (each day's returns of every coin together), or correlated normal draws with the
+# window's mean and covariance. The bootstrap keeps the fat tails of crypto
+# returns, which normal draws understate: it is the default.
+MC_BOOTSTRAP, MC_NORMAL = "bootstrap", "normal"
+MC_METHODS = (("Historical bootstrap", MC_BOOTSTRAP), ("Normal", MC_NORMAL))
+DEFAULT_MC_PATHS = 5000
+DEFAULT_MC_DAYS = 30
+MC_PERCENTILES = (5, 25, 50, 75, 95)  # the fan chart's bands and median
+VAR_PERCENTILE = 5  # Value at Risk at 95%: the loss at the 5th percentile
+MAX_MC_PATHS = 100_000
+MAX_MC_DAYS = 1095
+MAX_MC_CELLS = 10_000_000  # paths x days kept per portfolio (float32: 40 MB)
+MC_CHUNK_CELLS = 2_000_000  # draws (paths x days x coins) made at a time
+
+
+@dataclass
+class PathStats:
+    """One portfolio's simulated values: ``percentiles[p]`` is the p-th percentile
+    of the value on each day, day 0 (the start) to the horizon."""
+
+    start_value: float
+    percentiles: Dict[int, np.ndarray]
+    finals: np.ndarray  # each path's value at the horizon
+    expected_final: float  # the mean of the final values
+    median_final: float
+    var_95: float  # start value - the 5th percentile of the final value
+    drawdown_probability: float  # share of paths whose drawdown reached the limit
+
+
+@dataclass
+class Simulation:
+    """Monte Carlo paths of portfolios' value: a model based on past daily
+    returns, not a forecast."""
+
+    method: str
+    paths: int
+    days: int
+    seed: int
+    drawdown_limit: float  # a fraction: 0.08 for an 8% drawdown
+    first_day: Optional[pd.Timestamp]  # the days the returns came from
+    last_day: Optional[pd.Timestamp]
+    portfolios: Dict[str, PathStats] = field(default_factory=dict)
+
+
+def max_drawdowns(values: np.ndarray) -> np.ndarray:
+    """Each path's (row's) largest drawdown, a fraction: its largest fall from the
+    highest value before it (the first value counts), as the trader's emergency
+    stop measures an account's."""
+    peaks = np.maximum.accumulate(values, axis=1)
+    return (1.0 - values / np.where(peaks > 0, peaks, 1.0)).max(axis=1)
+
+
+def _correlated(cov: np.ndarray) -> np.ndarray:
+    """A matrix L with L @ L.T == cov: its Cholesky factor, or (cov not positive
+    definite, e.g. two coins moving as one) from its eigenvalues, the negative ones
+    taken as 0."""
+    try:
+        return np.linalg.cholesky(cov)
+    except np.linalg.LinAlgError:
+        values, vectors = np.linalg.eigh(cov)
+        return vectors * np.sqrt(np.clip(values, 0.0, None))
+
+
+def simulate_portfolios(
+    returns: pd.DataFrame,
+    portfolios: Dict[str, Dict[str, float]],
+    *,
+    start_value: float,
+    days: int = DEFAULT_MC_DAYS,
+    paths: int = DEFAULT_MC_PATHS,
+    method: str = MC_BOOTSTRAP,
+    seed: int = 0,
+    drawdown_limit: float = 0.08,
+    should_stop: Callable[[], bool] = lambda: False,
+) -> Simulation:
+    """``paths`` paths of each portfolio's value over ``days`` days from
+    ``start_value``, from the daily ``returns`` (one column per coin, one row per
+    day). ``portfolios`` maps a name to its weights (coin -> fraction, rescaled to
+    sum 1); the coins are bought at the start and held (no rebalancing on the way).
+
+    Each day of a path draws one return per coin: ``MC_BOOTSTRAP`` resamples a day
+    of ``returns`` (with replacement; the coins' moves on that day stay together),
+    ``MC_NORMAL`` draws correlated normal returns with the window's mean and
+    covariance (normal draws times its Cholesky factor). Every portfolio gets the
+    same draws, so their differences come from the weights alone; ``seed`` makes
+    the draws again. A path's drawdown on a day is its fall from its highest value
+    so far (the start counts); ``drawdown_probability`` is the share of paths whose
+    drawdown reached ``drawdown_limit`` on any day. Stopped is raised once
+    ``should_stop()`` is true between batches of paths."""
+    coins = [str(c) for c in returns.columns]
+    history = returns.to_numpy(dtype=float)
+    if history.ndim != 2 or len(history) < 2 or not coins:
+        raise ValueError("The simulation needs at least two days of returns.")
+    weights = {}
+    for name, w in portfolios.items():
+        vector = weights_vector(w, coins)
+        if vector.sum() > 0:
+            weights[name] = vector / vector.sum()
+    if not weights:
+        raise ValueError("No portfolio has a weight in the coins with returns.")
+    days, paths = int(days), int(paths)
+    n_coins = len(coins)
+    rng = np.random.default_rng(int(seed))
+    if method == MC_NORMAL:
+        mean = history.mean(axis=0)
+        factor = _correlated(np.atleast_2d(np.cov(history, rowvar=False)))
+    elif method != MC_BOOTSTRAP:
+        raise ValueError(f"Unknown simulation method: {method}")
+    values = {name: np.empty((paths, days + 1), dtype=np.float32) for name in weights}
+    batch = max(1, MC_CHUNK_CELLS // max(1, days * n_coins))
+    for first in range(0, paths, batch):
+        if should_stop():
+            raise Stopped()
+        count = min(batch, paths - first)
+        if method == MC_BOOTSTRAP:
+            draws = history[rng.integers(0, len(history), size=(count, days))]
+        else:
+            normal = rng.standard_normal((count, days, n_coins))
+            draws = mean + normal @ factor.T
+        # each coin's value multiple, day by day (a coin cannot fall below 0)
+        growth = np.cumprod(1.0 + np.maximum(draws, -1.0), axis=1)
+        for name, w in weights.items():
+            block = values[name][first : first + count]
+            block[:, 0] = start_value
+            block[:, 1:] = start_value * (growth @ w)
+    simulation = Simulation(
+        method,
+        paths,
+        days,
+        int(seed),
+        float(drawdown_limit),
+        returns.index[0] if len(returns) else None,
+        returns.index[-1] if len(returns) else None,
+    )
+    for name, v in values.items():
+        v = v.astype(float)
+        finals = v[:, -1]
+        simulation.portfolios[name] = PathStats(
+            start_value=float(start_value),
+            percentiles=dict(
+                zip(MC_PERCENTILES, np.percentile(v, MC_PERCENTILES, axis=0))
+            ),
+            finals=finals,
+            expected_final=float(finals.mean()),
+            median_final=float(np.median(finals)),
+            var_95=float(start_value - np.percentile(finals, VAR_PERCENTILE)),
+            drawdown_probability=float(
+                (max_drawdowns(v) >= drawdown_limit - 1e-12).mean()
+            ),
+        )
+    return simulation
+
+
+def simulation_problem(paths: int, days: int) -> Optional[str]:
+    """Why ``paths`` paths of ``days`` days are not simulated (None when they are)."""
+    if not 1 <= days <= MAX_MC_DAYS:
+        return f"The horizon must be from 1 to {MAX_MC_DAYS} days."
+    if not 100 <= paths <= MAX_MC_PATHS:
+        return f"The paths must be from 100 to {MAX_MC_PATHS:,}."
+    if paths * days > MAX_MC_CELLS:
+        return f"Paths times days can be at most {MAX_MC_CELLS:,}."
+    return None
 
 
 class PortfolioOptimizer:
@@ -673,16 +856,21 @@ class PortfolioOptimizer:
                 }
             )
 
-        # Define return range: the returns weights within the limits can reach (a
-        # target outside it only fails, slowly)
+        # Define return range: from the minimum-variance portfolio's return (below
+        # it, a portfolio with the same volatility returns more: not efficient) to
+        # the highest return weights within the limits can reach (a target outside
+        # the reachable returns only fails, slowly)
         active = {**self.default_constraints, **(constraints or {})}
         mu = np.asarray(expected_returns, dtype=float)
-        bounds = (float(active["min_weight"]), float(active["max_weight"]))
         if constraint_problem(len(mu), active) is None:
-            min_ret = float(np.dot(greedy_weights(-mu, *bounds), mu))
-            max_ret = float(np.dot(greedy_weights(mu, *bounds), mu))
+            min_ret, max_ret = reachable_returns(mu, active)
         else:
             min_ret, max_ret = float(mu.min()), float(mu.max())
+        lowest = self.optimize_portfolio(
+            expected_returns, cov_matrix, "min_variance", constraints=constraints
+        )
+        if lowest["success"]:
+            min_ret = min(max(min_ret, float(lowest["expected_return"])), max_ret)
         target_returns = np.linspace(min_ret, max_ret, num_points)
 
         frontier_results = []

@@ -13,6 +13,12 @@
   trade with its fee at the exchange layer's taker rate (0.6% when it gives none).
 * Analysis: the efficient frontier, the composition and the risk-return scatter
   come from that data, and the frontier marks the current portfolio.
+* Monte Carlo: 5,000 paths of 30 days by default, drawn by resampling the window's
+  days (the default) or as correlated normal draws, the same draws for the current
+  and optimised portfolios; the fan chart's percentiles, the expected final value,
+  the Value at Risk at 95% and the chance of a drawdown reaching the emergency stop
+  % (Settings); a fixed seed draws the same paths again; labelled as a model based
+  on past data, not a forecast.
 
 Real Tk widgets and a real hub, under the isolation guard (app/conftest.py); the
 exchanges are fakes behind a real ExchangeManager, so no request is sent; every
@@ -250,7 +256,9 @@ def holdings_gui(win, manager, fees=lambda symbol: (0.005, True)):
     )
 
 
-def optimizer_gui(win, frames=None, coins=COINS, holdings=None, **kw):
+def optimizer_gui(
+    win, frames=None, coins=COINS, holdings=None, drawdown_pct=None, **kw
+):
     from tkinter import ttk
 
     frame = ttk.Frame(win)
@@ -260,6 +268,7 @@ def optimizer_gui(win, frames=None, coins=COINS, holdings=None, **kw):
         coins=lambda: list(coins),
         holdings=holdings,
         load_candles=loader(daily_frames() if frames is None else frames, **kw),
+        drawdown_pct=drawdown_pct,
     )
     win.update()
     return g
@@ -471,6 +480,32 @@ def test_weight_limits_no_portfolio_can_keep_to_are_refused(root, dialogs):
     g.optimize_portfolio()
     g.wait()
     assert g.optimization_result["success"]
+
+
+def test_a_target_return_is_met_or_refused_with_the_reachable_range(root, dialogs):
+    g = optimizer_gui(root)
+    g.opt_type_var.set("Target return")
+    g.on_opt_type_change()
+    g.load_data()
+    g.wait()
+    low, high = po.reachable_returns(
+        g.market_data.expected_returns(), {"min_weight": 0.01, "max_weight": 0.4}
+    )
+    g.target_return_var.set(f"{(high + 0.05) * 100:.2f}")
+    g.optimize_portfolio()
+    g.wait()
+    assert g.optimization_result is None
+    assert dialogs.calls[-1][2] == (
+        "With these weight limits the target return must be from "
+        f"{low * 100:.2f}% to {high * 100:.2f}%."
+    )
+    target = (low + high) / 2
+    g.target_return_var.set(f"{target * 100:.4f}")
+    g.optimize_portfolio()
+    g.wait()
+    result = g.optimization_result
+    assert result["success"] and result["method"] == "target_return"
+    assert result["expected_return"] == pytest.approx(target, abs=1e-5)
 
 
 def test_a_price_file_stays_an_optional_source(root, dialogs, tmp_path):
@@ -901,6 +936,282 @@ def test_the_composition_and_the_risk_return_scatter_use_the_data(
     assert len(ax.patches) == 2 * len(COINS)  # two bars a coin
     widths = sorted(p.get_width() for p in ax.patches)
     assert widths[-1] == pytest.approx(50.0)  # BTC and ETH: 50% of the current
+
+
+# ---- Monte Carlo ----
+
+
+def fat_tailed_returns(days=500, seed=3):
+    """Daily returns of two correlated coins with fat tails (Student's t, 3
+    degrees of freedom)."""
+    rng = np.random.default_rng(seed)
+    common = rng.standard_t(3, days) * 0.02
+    return pd.DataFrame(
+        {
+            "BTC": common + rng.normal(0.0, 0.01, days),
+            "ETH": 1.3 * common + rng.normal(0.0, 0.015, days),
+        },
+        index=pd.date_range("2025-01-01", periods=days, freq="D", tz="UTC"),
+    )
+
+
+def one_day(returns, method, paths=20000, seed=1):
+    """The simulated one-day returns of each coin held alone, path by path."""
+    sim = po.simulate_portfolios(
+        returns,
+        {c: {c: 1.0} for c in returns.columns},
+        start_value=1.0,
+        days=1,
+        paths=paths,
+        method=method,
+        seed=seed,
+    )
+    return np.column_stack([sim.portfolios[c].finals - 1.0 for c in returns.columns])
+
+
+def test_the_simulation_defaults_to_5000_paths_of_30_days_by_historical_bootstrap():
+    import inspect
+
+    assert (po.DEFAULT_MC_PATHS, po.DEFAULT_MC_DAYS) == (5000, 30)
+    assert po.MC_METHODS == (
+        ("Historical bootstrap", po.MC_BOOTSTRAP),
+        ("Normal", po.MC_NORMAL),
+    )
+    defaults = inspect.signature(po.simulate_portfolios).parameters
+    assert defaults["method"].default == po.MC_BOOTSTRAP
+    assert (defaults["paths"].default, defaults["days"].default) == (5000, 30)
+
+
+def test_the_bootstrap_resamples_whole_days_so_the_coins_move_together():
+    returns = fat_tailed_returns()
+    drawn = one_day(returns, po.MC_BOOTSTRAP, paths=2000)
+    # every simulated day is a day of the window: both coins' returns from it
+    gaps = np.abs(drawn[:, None, :] - returns.values[None, :, :]).max(axis=2)
+    assert gaps.min(axis=1).max() < 1e-6
+    assert len({tuple(np.round(d, 5)) for d in drawn}) > 400  # many days drawn
+
+
+def test_normal_draws_are_correlated_with_the_window_s_mean_and_covariance():
+    returns = fat_tailed_returns()
+    drawn = one_day(returns, po.MC_NORMAL, paths=100000)
+    np.testing.assert_allclose(
+        np.cov(drawn, rowvar=False), np.cov(returns.values, rowvar=False), rtol=0.03
+    )
+    assert np.corrcoef(drawn, rowvar=False)[0, 1] == pytest.approx(
+        returns.corr().iloc[0, 1], abs=0.01
+    )
+    error = 4 * returns.std().max() / np.sqrt(len(drawn))  # four standard errors
+    np.testing.assert_allclose(drawn.mean(axis=0), returns.mean(), atol=error)
+    # the window's fat tails: its worst days are worse than normal draws give
+    resampled = one_day(returns, po.MC_BOOTSTRAP, paths=100000)
+    assert np.percentile(resampled[:, 1], 0.5) < np.percentile(drawn[:, 1], 0.5)
+
+
+def test_a_fixed_seed_draws_the_same_paths_and_both_portfolios_share_them():
+    returns = fat_tailed_returns()
+    same = {"BTC": 0.5, "ETH": 0.5}
+
+    def run(seed, method=po.MC_BOOTSTRAP):
+        return po.simulate_portfolios(
+            returns,
+            {"a": same, "b": dict(same), "btc": {"BTC": 1.0}},
+            start_value=1000.0,
+            seed=seed,
+            method=method,
+        )
+
+    for method in (po.MC_BOOTSTRAP, po.MC_NORMAL):
+        first, again, other = run(7, method), run(7, method), run(8, method)
+        a = first.portfolios["a"].finals
+        np.testing.assert_array_equal(a, again.portfolios["a"].finals)
+        assert not np.array_equal(a, other.portfolios["a"].finals)
+        # the same draws for every portfolio: equal weights, equal paths
+        np.testing.assert_array_equal(a, first.portfolios["b"].finals)
+        assert first.seed == 7 and first.paths == 5000 and first.days == 30
+
+
+def test_the_fan_the_expected_value_and_the_value_at_risk_come_from_the_paths():
+    returns = fat_tailed_returns()
+    sim = po.simulate_portfolios(
+        returns, {"p": {"BTC": 0.7, "ETH": 0.3}}, start_value=10000.0, seed=3
+    )
+    stats = sim.portfolios["p"]
+    p = stats.percentiles
+    assert sorted(p) == [5, 25, 50, 75, 95]
+    assert all(len(p[k]) == 31 and p[k][0] == pytest.approx(10000.0) for k in p)
+    assert np.all(p[5] <= p[25]) and np.all(p[25] <= p[50])
+    assert np.all(p[50] <= p[75]) and np.all(p[75] <= p[95])
+    assert stats.expected_final == pytest.approx(stats.finals.mean())
+    # Value at Risk at 95%: the start less the 5th percentile of the final value
+    assert stats.var_95 == pytest.approx(10000.0 - np.percentile(stats.finals, 5))
+    assert stats.var_95 == pytest.approx(10000.0 - p[5][-1], rel=1e-5)
+    assert (sim.first_day, sim.last_day) == (returns.index[0], returns.index[-1])
+
+
+def test_the_drawdown_is_the_fall_from_the_highest_value_before():
+    paths = np.array(
+        [
+            [100.0, 120.0, 108.0, 115.0],  # 10% under its 120 peak, above the start
+            [100.0, 95.0, 97.0, 99.0],  # 5%
+            [100.0, 101.0, 102.0, 103.0],  # none
+        ]
+    )
+    np.testing.assert_allclose(po.max_drawdowns(paths), [0.10, 0.05, 0.0])
+
+
+def test_the_drawdown_probability_counts_the_paths_reaching_the_emergency_stop():
+    index = pd.date_range("2025-01-01", periods=50, freq="D", tz="UTC")
+
+    def chance(daily, days):
+        returns = pd.DataFrame({"BTC": daily, "ETH": daily}, index=index)
+        sim = po.simulate_portfolios(
+            returns,
+            {"p": {"BTC": 0.5, "ETH": 0.5}},
+            start_value=1000.0,
+            days=days,
+            paths=200,
+            drawdown_limit=0.08,
+        )
+        return sim.portfolios["p"].drawdown_probability
+
+    assert chance(-0.01, 8) == 0.0  # 1 - 0.99^8: 7.7%
+    assert chance(-0.01, 9) == 1.0  # 8.6%
+    assert chance(0.01, 30) == 0.0
+    # up or down 2% a day: some paths fall 8% from a peak within 30 days, some not
+    halves = np.where(np.arange(50) % 2 == 0, 0.02, -0.02)
+    assert 0.0 < chance(halves, 30) < 1.0
+
+
+def test_paths_days_and_seed_are_checked(root, dialogs):
+    g = optimizer_gui(root)
+    g.load_data()
+    g.wait()
+    for paths, days, message in (
+        ("50", "30", "The paths must be from 100 to 100,000."),
+        ("5000", "2000", "The horizon must be from 1 to 1095 days."),
+        ("100000", "1000", "Paths times days can be at most 10,000,000."),
+        ("5.5", "30", "Enter whole numbers for the paths, days and seed."),
+    ):
+        g.mc_paths_var.set(paths)
+        g.mc_days_var.set(days)
+        assert not g.run_simulation()
+        assert dialogs.calls[-1][2] == message
+    assert g.job is None
+
+
+def test_monte_carlo_compares_the_current_and_optimised_portfolios(
+    root, manager, dialogs
+):
+    pension_holdings(manager)
+    lt = holdings_gui(root, manager)
+    lt.set_tag_selection(["Pension"])
+    g = optimizer_gui(root, holdings=lt, drawdown_pct=lambda: 12.0)
+    assert g.mc_method_var.get() == "Historical bootstrap"
+    assert (g.mc_paths_var.get(), g.mc_days_var.get()) == ("5000", "30")
+    assert not g.mc_fixed_seed_var.get()
+    g.optimize_portfolio()
+    g.wait()
+    assert g.run_simulation()
+    g.wait()
+    sim = g.simulation
+    assert set(sim.portfolios) == {"current", "optimised"}
+    assert (sim.method, sim.paths, sim.days) == (po.MC_BOOTSTRAP, 5000, 30)
+    assert sim.drawdown_limit == pytest.approx(0.12)
+    # the starting value: the Pension holdings' value in the coins with data
+    assert sim.portfolios["current"].start_value == pytest.approx(60000.0)
+    assert g.view_var.get() == "Monte Carlo"
+
+    # the fan charts, labelled as a model
+    axes = g.analysis_fig.axes
+    assert [ax.get_title() for ax in axes] == ["Current portfolio", "Optimised"]
+    assert g.analysis_fig.get_suptitle() == (
+        "A model based on past data, not a forecast"
+    )
+    median = next(line for line in axes[1].get_lines() if line.get_label() == "Median")
+    np.testing.assert_allclose(
+        median.get_ydata(), sim.portfolios["optimised"].percentiles[50]
+    )
+    data = g.result_data
+    assert g.mc_note.winfo_manager()
+    assert g.mc_note.cget("text") == (
+        "A model based on past data, not a forecast: 5,000 paths of 30 days, days "
+        f"resampled from the daily returns of {data.returns.index[0]:%Y-%m-%d} to "
+        f"{data.returns.index[-1]:%Y-%m-%d}; seed {sim.seed}."
+    )
+    # the figures, for both
+    assert g.mc_row_titles["drawdown"].cget("text") == (
+        "Drawdown reaches 12% (emergency stop)"
+    )
+    for name in ("current", "optimised"):
+        stats = sim.portfolios[name]
+        change = stats.expected_final / 60000.0 - 1.0
+        assert g.mc_labels[(name, "expected")].cget("text") == (
+            f"${stats.expected_final:,.2f} ({change:+.1%})"
+        )
+        loss = max(0.0, stats.var_95)
+        assert g.mc_labels[(name, "var")].cget("text") == (
+            f"${loss:,.2f} ({loss / 60000.0:.1%})"
+        )
+        assert g.mc_labels[(name, "drawdown")].cget("text") == (
+            f"{stats.drawdown_probability:.1%}"
+        )
+    # another chart: the simulation's parts go
+    g.view_var.set("Efficient Frontier")
+    g.draw_analysis()
+    assert not g.mc_note.winfo_manager() and not g.mc_stats.winfo_manager()
+
+    # the seed shown draws the same paths again
+    g.mc_fixed_seed_var.set(True)
+    g.mc_seed_var.set(str(sim.seed))
+    g.run_simulation()
+    g.wait()
+    np.testing.assert_array_equal(
+        g.simulation.portfolios["optimised"].finals,
+        sim.portfolios["optimised"].finals,
+    )
+    # the normal method
+    g.mc_method_var.set("Normal")
+    g.run_simulation()
+    g.wait()
+    assert g.simulation.method == po.MC_NORMAL
+    assert "correlated normal draws fitted to" in g.mc_note.cget("text")
+
+
+def test_without_holdings_the_optimised_portfolio_alone_starts_at_10000(root, dialogs):
+    g = optimizer_gui(root)
+    assert not g.run_simulation()
+    assert dialogs.calls[-1][2] == "Load the data first."
+    g.optimize_portfolio()
+    g.wait()
+    g.mc_days_var.set("10")
+    assert g.run_simulation()
+    g.wait()
+    assert set(g.simulation.portfolios) == {"optimised"}
+    assert g.simulation.portfolios["optimised"].start_value == 10000.0
+    assert [ax.get_title() for ax in g.analysis_fig.axes] == ["Optimised"]
+    assert g.mc_labels[("current", "expected")].cget("text") == ""
+
+
+def test_the_emergency_stop_comes_from_the_risk_settings(monkeypatch):
+    import trading_mode
+
+    assert pog._emergency_drawdown_pct() == 8.0  # no settings: the default
+    monkeypatch.setattr(trading_mode, "read_emergency_drawdown_pct", lambda: 15.0)
+    assert pog._emergency_drawdown_pct() == 15.0
+
+
+def test_a_simulation_still_running_stops_when_the_window_is_destroyed(root, dialogs):
+    g = optimizer_gui(root)
+    g.load_data()
+    g.wait()
+    g.mc_paths_var.set("100000")
+    g.mc_days_var.set("100")
+    g.optimize_portfolio()
+    g.wait()
+    assert g.run_simulation()
+    assert optimizer_threads()
+    g.main_frame.master.destroy()
+    assert not optimizer_threads()
 
 
 # ---- jobs off the Tk thread ----

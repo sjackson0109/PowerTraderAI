@@ -359,6 +359,46 @@ def test_each_coin_field_has_its_own_tooltip(hub):
     assert not cell.bind("<Enter>")  # not a second tooltip on the frame itself
 
 
+# --- the bottom panel's module tabs (owner, 2026-11-04) -------------------------------
+
+
+def test_the_module_tabs_follow_the_one_order_list(hub):
+    """The tabs under the charts sit as MODULE_TAB_ORDER lists them, whatever order
+    they were built in, and Current Trades is the one shown at start-up."""
+    nb = hub.bottom_notebook
+    names = [pt_hub.module_tab_name(nb.tab(t, "text")) for t in nb.tabs()]
+    assert set(names) <= set(pt_hub.MODULE_TAB_ORDER)  # every tab is in the list
+    assert names == [n for n in pt_hub.MODULE_TAB_ORDER if n in names]
+    assert names[:2] == ["Current Trades", "Trade History"]
+    assert nb.select() == nb.tabs()[0]
+    order = list(pt_hub.MODULE_TAB_ORDER)
+    for after, first in (
+        ("Advanced Orders", "Order Management"),
+        ("Holdings Management", "Long-term Holdings"),
+    ):
+        assert order.index(after) == order.index(first) + 1
+
+
+def test_the_tab_order_skips_missing_tabs_and_keeps_unlisted_ones_last(hub):
+    """Built in any order, with a listed tab missing and one the list does not name:
+    the listed ones come first in the list's order, the other keeps its place after."""
+    nb = ttk.Notebook(hub)
+    try:
+        built = ["LLM Research", "Spare", "Market Data", "Current Trades"]
+        for name in built:
+            nb.add(ttk.Frame(nb), text=name.replace(" ", "\n", 1))
+        real = hub.bottom_notebook
+        hub.bottom_notebook = nb
+        try:
+            hub._order_module_tabs()
+        finally:
+            hub.bottom_notebook = real
+        names = [pt_hub.module_tab_name(nb.tab(t, "text")) for t in nb.tabs()]
+        assert names == ["Current Trades", "Market Data", "LLM Research", "Spare"]
+    finally:
+        nb.destroy()
+
+
 # --- the chart tab row (owner, 2026-10-14) -------------------------------------------
 
 

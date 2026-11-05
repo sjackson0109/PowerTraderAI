@@ -62,7 +62,8 @@ def walk(widget):
 def test_no_tab_repeats_its_name_and_every_table_is_a_data_table(hub):
     nb = hub.bottom_notebook
     names = [nb.tab(t, "text").replace("\n", " ") for t in nb.tabs()]
-    assert names[:3] == ["Current Trades", "Long-term Holdings", "Trade History"]
+    # in the order pt_hub.MODULE_TAB_ORDER sets (test_hub_layout)
+    assert {"Current Trades", "Long-term Holdings", "Trade History"} <= set(names)
     tables = 0
     for tab, name in zip(nb.tabs(), names):
         for w in walk(hub.nametowidget(tab)):

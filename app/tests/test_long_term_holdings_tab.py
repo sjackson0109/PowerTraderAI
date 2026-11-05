@@ -211,12 +211,25 @@ def hub(monkeypatch, layout_file):
     ht.close_hub(hub)
 
 
+def holdings_tab(hub):
+    """The Long-term Holdings tab, found by its name (the hub sets the tab order,
+    pt_hub.MODULE_TAB_ORDER)."""
+    import pt_hub
+
+    nb = hub.bottom_notebook
+    return next(
+        t
+        for t in nb.tabs()
+        if pt_hub.module_tab_name(nb.tab(t, "text")) == "Long-term Holdings"
+    )
+
+
 def show_hub(hub, geometry="1500x950+0+0"):
     hub.attributes("-alpha", 0.0)
     hub.geometry(geometry)
     hub.deiconify()
     nb = hub.bottom_notebook
-    nb.select(nb.tabs()[1])
+    nb.select(holdings_tab(hub))
     for _ in range(6):
         hub.update()
         hub.holdings_gui.holdings_table.settle()
@@ -232,12 +245,12 @@ def test_one_holdings_tab_named_long_term_holdings_with_four_sub_tabs(hub):
 
     nb = hub.bottom_notebook
     names = [nb.tab(t, "text").replace("\n", " ") for t in nb.tabs()]
-    assert names[:3] == ["Current Trades", "Long-term Holdings", "Trade History"]
+    assert "Long-term Holdings" in names
     assert [n for n in names if "Holdings" in n] == ["Long-term Holdings"]
 
     g = hub.holdings_gui
     assert isinstance(g, ltg.HoldingsManagementGUI)
-    tab = hub.nametowidget(nb.tabs()[1])
+    tab = hub.nametowidget(holdings_tab(hub))
     assert g.main_frame in list(walk(tab))
     assert [g.notebook.tab(t, "text") for t in g.notebook.tabs()] == [
         "Holdings",
@@ -274,7 +287,7 @@ def test_without_the_holdings_window_the_tab_says_so(monkeypatch, layout_file):
         assert hub.holdings_gui is None
         texts = [
             str(w.cget("text"))
-            for w in walk(hub.nametowidget(nb.tabs()[1]))
+            for w in walk(hub.nametowidget(holdings_tab(hub)))
             if w.winfo_class() == "TLabel"
         ]
         assert texts == [
@@ -442,7 +455,7 @@ def test_one_border_and_scrollbars_only_while_the_rows_overflow(hub):
     from tkinter import ttk
 
     g = hub.holdings_gui
-    tab = hub.nametowidget(hub.bottom_notebook.tabs()[1])
+    tab = hub.nametowidget(holdings_tab(hub))
     assert str(g.notebook.cget("style")) == "Inner.TNotebook"
     widgets = list(walk(tab))
     assert not [

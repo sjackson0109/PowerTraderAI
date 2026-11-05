@@ -203,7 +203,13 @@ def test_the_signal_settings_and_the_gate_are_shown_and_saved(
         )
         for i in win.signal_table.tree.get_children()
     }
-    assert rows["local:7b"][3:] == ("3", "67%", "not passed", "no")
+    # scored, return after fees vs random (not judged yet), gate, hit rate, use
+    assert rows["local:7b"][3:] == ("3", "", "3 of 20 scored", "67%", "no")
+    headings = [
+        win.signal_table.tree.heading(c, "text")
+        for c in win.signal_table.tree["columns"]
+    ]
+    assert headings.index("Return after fees vs random") < headings.index("Hit rate")
     win.mode_var.set(llm_settings.SIGNAL_MODE_NAMES["veto"])
     win._show_mode_help()
     assert "does not open when the signal says sell" in str(win.mode_help.cget("text"))
@@ -265,18 +271,29 @@ def test_settings_has_llm_providers_and_the_training_gate(hub):
     for text in (
         "LLM Providers...",
         "Minimum scored signals:",
-        "Minimum hit rate after fees %:",
+        "Minimum mean return after fees %:",
+        "Random-entry baselines:",
+        "Beat this percentile of random entries:",
+        "Check the models in use...",
     ):
         assert text in texts
+    assert "Minimum hit rate after fees %:" not in texts  # it decides nothing now
     (notebook,) = [w for w in widgets(win) if isinstance(w, ttk.Notebook)]
     tabs = [notebook.tab(t, "text") for t in notebook.tabs()]
     assert "Training" in tabs and "LLM" in tabs
     type_into(win, "Minimum scored signals:", "40")
-    type_into(win, "Minimum hit rate after fees %:", "60")
+    type_into(win, "Minimum mean return after fees %:", "0.5")
+    type_into(win, "Random-entry baselines:", "2000")
+    type_into(win, "Beat this percentile of random entries:", "97.5")
     press(win, "Save")
     with open(pt_paths.settings_file(), encoding="utf-8") as f:
         training = json.load(f)["training"]
-    assert training == {"holdout_min_signals": 40, "holdout_min_hit_rate": 0.6}
+    assert training == {
+        "holdout_min_signals": 40,
+        "gate_min_return_after_fees": 0.005,
+        "gate_baseline_runs": 2000,
+        "gate_baseline_percentile": 97.5,
+    }
     llm_win = hub.open_llm_settings()
     try:
         assert isinstance(llm_win, LLMProvidersWindow)

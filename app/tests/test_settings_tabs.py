@@ -22,6 +22,7 @@ if APP_DIR not in sys.path:
 import pt_hub  # noqa: E402
 import pt_paths  # noqa: E402
 import trading_mode  # noqa: E402
+import training_settings  # noqa: E402
 
 Hub = pt_hub.PowerTraderHub
 
@@ -246,6 +247,29 @@ def test_paper_trading_refuses_a_price_age_out_of_range(hub, age):
     win.destroy()
 
 
+@pytest.mark.parametrize(
+    "label, value",
+    [
+        ("Random-entry baselines:", "50"),
+        ("Random-entry baselines:", "1500.5"),
+        ("Beat this percentile of random entries:", "100"),
+        ("Minimum mean return after fees %:", "lots"),
+        ("Minimum scored signals:", "0"),
+    ],
+)
+def test_the_entry_gate_settings_refuse_a_value_out_of_range(hub, label, value):
+    from test_trainer_launch import press, type_into
+
+    win = open_settings(hub)
+    type_into(win, label, value)
+    type_into(win, "Trade start level (1-7):", "5")
+    press(win, "Save")
+    assert any(d[0] == "showerror" for d in hub.test_dialogs)
+    assert training_settings.read_training_settings() == training_settings.normalise({})
+    assert hub._load_settings().get("trade_start_level", 3) != 5  # nothing saved
+    win.destroy()
+
+
 def test_save_paper_settings_checks_both_rules():
     manager = mock.Mock()
     assert trading_mode.save_paper_settings("never", 30) is False
@@ -321,7 +345,7 @@ class EndedProc:
         return self.returncode
 
 
-def notice_hub(code, notify=True):
+def notice_hub(code, notify=True, gate=None):
     hub = types.SimpleNamespace(
         settings={"training_notifications": notify},
         trainers={
@@ -334,8 +358,60 @@ def notice_hub(code, notify=True):
         _mark_training_ended=mock.Mock(),
         _show_notice=mock.Mock(),
         _training_ended_text=Hub._training_ended_text,
+        _gate_record=lambda coin: gate,
     )
     return hub
+
+
+def gate_record(published, kept=None):
+    """A model_gate.json record, as the trainer writes it."""
+    import entry_gate
+
+    decision = entry_gate.Decision(
+        published,
+        [] if published else ["forced"],
+        entry_gate.Score(25, 0.02 if published else -0.01, 0.02, -0.05, 0.9),
+        entry_gate.Fees(0.012, "taker", "coinbase", "default", 0.0005),
+        entry_gate.GateSettings(),
+        baseline={
+            "runs": 1000,
+            "seed": 0,
+            "entries": 25,
+            "median": -0.02,
+            "percentile": 95.0,
+            "at_percentile": 0.01,
+            "rank": 99.0 if published else 40.0,
+            "median_drawdown": -0.1,
+            "short": [],
+        },
+    )
+    return {
+        "coin": "ETH",
+        "published": published,
+        "model_id": "ETH-20260101T0000Z-0123456789ab" if published else None,
+        "kept_model_id": kept,
+        "gate": decision.to_dict(),
+    }
+
+
+def test_a_notice_says_whether_the_new_model_passed_the_entry_gate():
+    hub = notice_hub(0, gate=gate_record(True))
+    Hub._monitor_trainer_process(hub, "ETH")
+    hub._show_notice.assert_called_once_with(
+        "ETH: training finished; its new model passed the entry gate (return after "
+        "fees vs random: +2.00% vs -2.00% (99th percentile)) and is in use."
+    )
+    hub = notice_hub(0, gate=gate_record(False, kept="ETH-20251201T0000Z-aaaaaaaaaaaa"))
+    Hub._monitor_trainer_process(hub, "ETH")
+    hub._show_notice.assert_called_once_with(
+        "ETH: training finished, but the new model did not pass the entry gate "
+        "(return after fees vs random: -1.00% vs -2.00% (40th percentile)); the model "
+        "in use is kept."
+    )
+    hub = notice_hub(0, gate=gate_record(False))
+    Hub._monitor_trainer_process(hub, "ETH")
+    (text,), _ = hub._show_notice.call_args
+    assert text.endswith("ETH has no model in use until one passes.")
 
 
 def test_a_finished_training_run_shows_a_notice():

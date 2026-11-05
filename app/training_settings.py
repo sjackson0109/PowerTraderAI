@@ -1,15 +1,18 @@
 """
-Trainer settings that decide whether something has earned its place in trading
-(``pt_config.json``'s ``training`` section; Settings, Training).
+The entry gate's settings: what a source of trade entries (a trained model, an LLM
+provider/model/prompt version, an entry filter) must show before it is used in trading
+(``pt_config.json``'s ``training`` section; Settings, Training). entry_gate applies them.
 
-``holdout_min_signals``   the fewest scored signals a source needs (20)
-``holdout_min_hit_rate``  the share of them that must win after fees (0.55)
+``holdout_min_signals``         the fewest entries it must have made (20)
+``gate_min_return_after_fees``  its mean return after fees per trade must be above this,
+                                a fraction (0.0)
+``gate_baseline_runs``          random-entry baselines to compare it with (1000)
+``gate_baseline_percentile``    its mean return after fees must be above this percentile
+                                of the baselines' (95)
 
-The LLM signal gate (llm_gate) reads them now; the planned model gate is to read the
-same two. The defaults are the figures in the owner's model-gate design of
-2026-11-03, kept until the owner decides otherwise: note that 11 hits in 20 (55%) is
-not enough to tell a source from a coin toss, so a stricter pair (more signals) is
-the safer choice. Other keys of the section are kept as they are.
+A hit rate decides nothing (random entries with the trader's exits win about 91% of the
+time), so ``holdout_min_hit_rate``, which an earlier release saved, is no longer read;
+it is kept in the file as it is, like the section's other keys.
 """
 
 from __future__ import annotations
@@ -18,8 +21,19 @@ import math
 from typing import Any, Dict, Mapping
 
 SECTION = "training"
-DEFAULTS: Dict[str, Any] = {"holdout_min_signals": 20, "holdout_min_hit_rate": 0.55}
-BOUNDS = {"holdout_min_signals": (1, 100000), "holdout_min_hit_rate": (0.0, 1.0)}
+DEFAULTS: Dict[str, Any] = {
+    "holdout_min_signals": 20,
+    "gate_min_return_after_fees": 0.0,
+    "gate_baseline_runs": 1000,
+    "gate_baseline_percentile": 95.0,
+}
+BOUNDS = {
+    "holdout_min_signals": (1, 100000),
+    "gate_min_return_after_fees": (-1.0, 1.0),
+    "gate_baseline_runs": (100, 100000),
+    "gate_baseline_percentile": (50.0, 99.9),
+}
+WHOLE = ("holdout_min_signals", "gate_baseline_runs")
 
 
 def _bounded(value: Any, name: str):
@@ -33,11 +47,28 @@ def _bounded(value: Any, name: str):
         return DEFAULTS[name]
     low, high = BOUNDS[name]
     number = min(high, max(low, number))
-    return int(number) if name == "holdout_min_signals" else number
+    return int(number) if name in WHOLE else number
+
+
+def problem(name: str, value: Any) -> str:
+    """Why ``value`` cannot be saved as ``name`` ("" when it can): Settings refuses
+    such a value instead of clamping it."""
+    low, high = BOUNDS[name]
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "not a number"
+    if not math.isfinite(number):
+        return "not a number"
+    if name in WHOLE and not number.is_integer():
+        return "not a whole number"
+    if not low <= number <= high:
+        return f"outside {low:g} .. {high:g}"
+    return ""
 
 
 def normalise(raw: Any) -> Dict[str, Any]:
-    """The section with both settings usable (others kept as they are)."""
+    """The section with every gate setting usable (others kept as they are)."""
     out = dict(raw) if isinstance(raw, Mapping) else {}
     for name in DEFAULTS:
         out[name] = _bounded(out.get(name, DEFAULTS[name]), name)
@@ -56,7 +87,7 @@ def read_training_settings(source: Any = None) -> Dict[str, Any]:
 
 
 def save_training_settings(values: Mapping[str, Any], manager: Any = None) -> bool:
-    """Write the two settings, keeping the section's other keys."""
+    """Write the gate settings, keeping the section's other keys."""
     if manager is None:
         from pt_settings_manager import SettingsManager
 

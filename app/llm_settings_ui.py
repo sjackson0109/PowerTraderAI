@@ -28,6 +28,7 @@ from tkinter import messagebox as _messagebox
 from tkinter import ttk
 from typing import Any, Callable, Dict, List, Optional
 
+import entry_gate
 import llm_gate
 import llm_settings
 import training_settings
@@ -634,9 +635,12 @@ class LLMProvidersWindow(tk.Toplevel):
             text=(
                 f"Gate: a provider, model and prompt version may confirm or veto "
                 f"entries once at least {t['holdout_min_signals']} of the signals it "
-                f"made in paper trading are scored and at least "
-                f"{t['holdout_min_hit_rate']:.0%} of them won after fees (Settings, "
-                "Training). Live trading uses only those that passed in paper trading."
+                "made in paper trading are scored and their mean return after fees is "
+                f"above {t['gate_min_return_after_fees']:+.2%} and above the "
+                f"{entry_gate.ordinal(t['gate_baseline_percentile'])} percentile of "
+                f"{t['gate_baseline_runs']} sets of random signals on the same coins "
+                "and months (Settings, Training). The hit rate is shown only. Live "
+                "trading uses only those that passed in paper trading."
             ),
             style="Muted.TLabel",
             wraplength=WRAP,
@@ -646,7 +650,16 @@ class LLMProvidersWindow(tk.Toplevel):
         holder = ttk.Frame(body, height=190)
         holder.grid(row=r, column=0, sticky="ew", pady=(4, 0))
         holder.pack_propagate(False)
-        cols = ("provider", "model", "prompt", "scored", "hit_rate", "gate", "use")
+        cols = (
+            "provider",
+            "model",
+            "prompt",
+            "scored",
+            "vs_random",
+            "gate",
+            "hit_rate",
+            "use",
+        )
         self.signal_table = ui_table.DataTable(
             holder,
             cols,
@@ -655,8 +668,9 @@ class LLMProvidersWindow(tk.Toplevel):
                 "model": "Model",
                 "prompt": "Prompt",
                 "scored": "Scored",
-                "hit_rate": "Hit rate",
+                "vs_random": "Return after fees vs random",
                 "gate": "Gate",
+                "hit_rate": "Hit rate",
                 "use": "Use in trading",
             },
             key="llm_settings.signal_gate",
@@ -872,13 +886,14 @@ class LLMProvidersWindow(tk.Toplevel):
                     self.store, p, model, version, self.training
                 )
                 rate = gate.hit_rate
-                scored, rate_text, gate_text = (
+                scored, vs_random, gate_text, rate_text = (
                     str(gate.scored),
+                    gate.headline(),
+                    gate.word(),
                     "" if rate is None else f"{rate:.0%}",
-                    "passed" if gate.passed else "not passed",
                 )
             except Exception:
-                scored, rate_text, gate_text = "", "", ""
+                scored, vs_random, gate_text, rate_text = "", "", "", ""
             use = "yes" if self.working["signal_use"].get(use_key(p, model)) else "no"
             tree.insert(
                 "",
@@ -889,8 +904,9 @@ class LLMProvidersWindow(tk.Toplevel):
                     model,
                     f"v{version}",
                     scored,
-                    rate_text,
+                    vs_random,
                     gate_text,
+                    rate_text,
                     use,
                 ),
             )

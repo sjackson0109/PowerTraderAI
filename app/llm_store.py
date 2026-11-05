@@ -10,6 +10,9 @@ What the LLM layer keeps: ``llm_research.db`` (SQLite) in the user data folder.
 * ``signals``   each trade signal (from the LLM Research tab or from the trader at
                 an entry), with its outcome and score once known.
 * ``decisions`` each confirm or veto the trader's entry hook made, and why.
+* ``gate_results`` the entry gate's latest decision on each provider, model and
+                prompt version (llm_gate.evaluate), with the scored-signal count and
+                the gate settings it was made with.
 * ``provider_status`` / ``models`` the last connection test and the last model
                 list fetched for each provider.
 
@@ -57,6 +60,10 @@ _SCHEMA = (
     "ts REAL, ok INTEGER, message TEXT)",
     "CREATE TABLE IF NOT EXISTS models (provider TEXT PRIMARY KEY, fetched_at REAL, "
     "ids TEXT)",
+    "CREATE TABLE IF NOT EXISTS gate_results (provider TEXT NOT NULL, "
+    "model TEXT NOT NULL, prompt_version INTEGER NOT NULL, trading_mode TEXT NOT NULL, "
+    "scored INTEGER, settings TEXT, result TEXT, computed_at REAL, "
+    "PRIMARY KEY (provider, model, prompt_version, trading_mode))",
     "CREATE INDEX IF NOT EXISTS signals_by_key ON signals "
     "(provider, model, prompt_version)",
     "CREATE INDEX IF NOT EXISTS signals_by_coin ON signals (coin, ts)",
@@ -543,6 +550,59 @@ class LLMStore:
                 (provider, model, int(prompt_version), trading_mode),
             )
         ]
+
+    # ---- the entry gate's decisions (llm_gate.evaluate) ----
+
+    def save_gate(
+        self,
+        provider: str,
+        model: str,
+        prompt_version: int,
+        trading_mode: str,
+        scored: int,
+        settings: Dict[str, Any],
+        result: Dict[str, Any],
+        ts=None,
+    ) -> None:
+        """The gate's latest decision on a provider/model/prompt version, made from
+        ``scored`` scored signals with ``settings`` (the gate settings then)."""
+        self._run(
+            "INSERT OR REPLACE INTO gate_results (provider, model, prompt_version, "
+            "trading_mode, scored, settings, result, computed_at) VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                provider,
+                model,
+                int(prompt_version),
+                trading_mode,
+                int(scored),
+                json.dumps(settings, sort_keys=True),
+                json.dumps(result, sort_keys=True),
+                time.time() if ts is None else ts,
+            ),
+        )
+
+    def gate_result(
+        self, provider: str, model: str, prompt_version: int, trading_mode: str
+    ) -> Optional[Dict[str, Any]]:
+        """``{"scored", "settings", "result", "computed_at"}`` as saved, or None."""
+        rows = self._rows(
+            "SELECT * FROM gate_results WHERE provider = ? AND model = ? AND "
+            "prompt_version = ? AND trading_mode = ?",
+            (provider, model, int(prompt_version), trading_mode),
+        )
+        if not rows:
+            return None
+        r = rows[0]
+        try:
+            return {
+                "scored": int(r["scored"] or 0),
+                "settings": json.loads(r["settings"] or "{}"),
+                "result": json.loads(r["result"] or "{}"),
+                "computed_at": r["computed_at"],
+            }
+        except ValueError:
+            return None
 
     def keys(self) -> List[tuple]:
         """Every (provider, model, prompt version) with a signal."""

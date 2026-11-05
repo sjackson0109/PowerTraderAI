@@ -97,6 +97,17 @@ Deviations from upstream, each with its reason:
     trained. Each step uses its own bar rather than rebuilding the changes of every bar
     seen so far, and a memory's text is split once. The oracle test checks the files
     are byte-identical to upstream's with ``--upstream-rows``.
+13. The entry gate (owner, 2026-11-05). Upstream used every model it trained; a model is
+    now published only when its entries pass the gate (model_gate, entry_gate): on its
+    held-out bars, the validation fit's entries replayed with the trader's rules must
+    earn more after fees than random entries with the same rules, and more than the
+    current model did on its own held-out bars. Otherwise the coin's current model (its
+    newest published one) is copied back into the folder and stays in use; a coin with
+    none keeps the new files unpublished, so the neural runner gives it no signals. The
+    decision is printed, recorded in ``model_gate.json`` in the coin's folder and in the
+    training summary, and, for a published model, in its manifest. ``--check-gate``
+    runs the gate again on the coin's current model (its validation fit is refitted from
+    the manifest) and changes nothing.
 
 Inputs (command line, else environment, else default):
 
@@ -109,7 +120,9 @@ Inputs (command line, else environment, else default):
 * ``--train-end`` / ``POWERTRADER_TRAIN_END`` (default: the last full hour, UTC);
 * ``--seed`` / ``POWERTRADER_TRAIN_SEED`` (default 0);
 * ``--offline`` / ``POWERTRADER_CANDLES_OFFLINE=1``: read the candle cache only, never the
-  network.
+  network;
+* ``--check-gate``: run the entry gate on the coin's current model and report it; nothing
+  is trained, published or written in the coin's folder.
 """
 
 import argparse
@@ -258,6 +271,12 @@ def parse_args(argv=None, environ=None, now=None):
         "primary first)",
     )
     parser.add_argument(
+        "--check-gate",
+        action="store_true",
+        help="run the entry gate on the coin's current model and report it; nothing is "
+        "trained, published or changed",
+    )
+    parser.add_argument(
         "--upstream-flush-only",
         action="store_true",
         help="testing only: flush and write the threshold exactly as upstream did "
@@ -326,6 +345,7 @@ def parse_args(argv=None, environ=None, now=None):
         "exchanges": [str(args.exchange).strip().lower()] if args.exchange else None,
         "upstream_flush_only": bool(args.upstream_flush_only),
         "upstream_rows": bool(args.upstream_rows),
+        "check_gate": bool(args.check_gate),
         "window": window,
         "sources": {
             "train_start": start_src,
@@ -1131,8 +1151,25 @@ VALIDATION_METHOD = (
 )
 # a validation folder no file of which changed for this long belongs to a stopped run
 STALE_VALIDATION_SECONDS = 3600
-# the code a model and its validation metrics come from (hashed into the manifest)
-CODE_FILES = ("pt_pattern_trainer.py", "pattern_model.py", "model_store.py")
+# the code a model, its validation metrics and its gate decision come from (hashed into
+# the manifest)
+CODE_FILES = (
+    "pt_pattern_trainer.py",
+    "pattern_model.py",
+    "model_store.py",
+    "model_gate.py",
+    "entry_gate.py",
+)
+# A model is published only when it passes the entry gate (deviation 13). Tests that
+# are not about the gate switch this off for the session (app/conftest.py), since a
+# model trained on their fixture candles has no reason to pass.
+ENFORCE_GATE = True
+# the gate's bars start this long before the held-out hours, so that every timeframe
+# has the bar that closed last before the first held-out hour: a 1-week bar that closed
+# just under a week before it opened up to 14 days before it
+GATE_LOOKBACK = timedelta(days=15)
+# the fee rates the gate uses (entry_gate.trading_fees; tests stand in for it)
+gate_fees = None
 # The trainer's fixed settings (it has no tunable parameters; FDS-MDL 7: nothing tuned).
 TRAINER_PARAMS = {
     "flush_every_steps": FLUSH_EVERY,
@@ -1170,12 +1207,35 @@ def validate(
     cache_dir=None,
     log=print,
     exchanges=None,
+    fit=None,
 ):
     """FDS-MDL Phase 2 validation metrics: a separate fit on the first 80% of
     ``[train_start, train_end)``, scored, frozen, on the last 20%. The published model is
     the whole-window fit (owner decision, 2026-10-06), so the metrics describe this
     sibling fit, which never saw the held-out bars. Raises TrainerError when the fit
-    cannot be trained."""
+    cannot be trained. ``fit``, a dict, receives the fit itself (validation_fit's
+    sibling: the entry gate replays its entries)."""
+    window, metrics, sibling = validation_fit(
+        coin, train_start, train_end, seed, offline, cache_dir, log, exchanges
+    )
+    if fit is not None:
+        fit.update(sibling)
+    return window, metrics
+
+
+def validation_fit(
+    coin,
+    train_start,
+    train_end,
+    seed,
+    offline,
+    cache_dir=None,
+    log=print,
+    exchanges=None,
+):
+    """``validate``, and the fit itself: ``(window, metrics, sibling)``, where sibling
+    holds the fitted ``model``, its window (``start``, ``cut``, ``end``), its
+    ``exchange`` and its ``files``' SHA-256 (the entry gate replays its entries)."""
     from market_data.timeframes import candle_timeframe_seconds
     from pattern_model import PatternModel, model_file_names, score_timeframe
 
@@ -1238,7 +1298,15 @@ def validate(
         "holdout_end": _iso(train_end),
         "holdout_candles": holdout.reports,
     }
-    return window, metrics
+    sibling = {
+        "model": model,
+        "start": train_start,
+        "cut": cut,
+        "end": train_end,
+        "exchange": fit["exchange"],
+        "files": fit_files,
+    }
+    return window, metrics, sibling
 
 
 def _clear_stale(parent, now=None):
@@ -1321,9 +1389,115 @@ def _text_sha256(path):
         return hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
 
 
+# --- the entry gate (deviation 13) ------------------------------------------------------
+
+GATE_FILE = "model_gate.json"  # the coin folder's latest gate decision
+
+
+def _empty_frame():
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "open_time": pd.Series([], dtype="datetime64[ns, UTC]"),
+            "open": pd.Series([], dtype=float),
+            "close": pd.Series([], dtype=float),
+        }
+    )
+
+
+def gate_mean(manifest):
+    """A published model's own mean return after fees on its held-out bars, from its
+    manifest's gate record (None: none recorded, e.g. published before the gate)."""
+    gate = (manifest or {}).get("gate") or {}
+    value = (gate.get("candidate") or {}).get("mean_return")
+    return float(value) if isinstance(value, (int, float)) else None
+
+
+def check_gate(
+    coin, sibling, offline, cache_dir=None, log=print, current=None, checking=False
+):
+    """The entry gate's decision on the validation fit ``sibling`` (validation_fit's;
+    None when there was none), against ``current`` (the coin's current manifest).
+    ``checking``: the fit is the model in use's own (``--check-gate``)."""
+    import entry_gate
+    import model_gate
+    import training_settings
+
+    settings = entry_gate.GateSettings.from_training(
+        training_settings.read_training_settings()
+    )
+    rules = model_gate.read_trade_rules()
+    current_mean = gate_mean(current)
+    notes = []
+    if checking:
+        notes.append("a check of the model in use (it is not compared with itself)")
+    elif current is None:
+        notes.append("no current model, so it is not compared with one")
+    elif current_mean is None:
+        notes.append(
+            f"the current model {current.get('model_id')} has no recorded gate score "
+            "(published before the gate), so it is not compared with it"
+        )
+    fees = (gate_fees or entry_gate.trading_fees)(coin)
+    if sibling is None:
+        notes.append("no validation fit: there are no held-out bars to judge it on")
+        decision = entry_gate.decide(
+            [], {}, {}, settings, fees, current=current_mean, note="; ".join(notes)
+        )
+        return model_gate.ModelGateResult(decision, 0, 0, 0, rules)
+    start = max(sibling["start"], sibling["cut"] - GATE_LOOKBACK)
+    loader = BarLoader(
+        coin, start, sibling["end"], offline, cache_dir, exchanges=[sibling["exchange"]]
+    )
+    frames = {}
+    for tf_choice in TF_CHOICES:
+        tf = CANDLE_TF[tf_choice]
+        try:
+            loader.bars(tf_choice)
+            frames[tf] = loader.frames[tf]
+        except TrainerError as exc:
+            log(f"entry gate: no {tf} bars ({exc}); hours that need them are undecided")
+            frames[tf] = _empty_frame()
+    hours = model_gate.hourly_signals(
+        sibling["model"],
+        frames,
+        int(sibling["cut"].timestamp()),
+        int(sibling["end"].timestamp()),
+    )
+    return model_gate.evaluate(
+        hours, rules, fees, settings, coin, current_mean, note="; ".join(notes)
+    )
+
+
+def current_model(coin):
+    """The coin's current model: its newest published one (manifest), or None."""
+    import model_store
+
+    try:
+        return model_store.latest_published(coin)
+    except model_store.ModelStoreError:
+        return None
+
+
+def _write_gate_file(folder, coin, gate, published_id, kept_id):
+    record = {
+        "coin": coin,
+        "checked_at": int(time.time()),
+        "published": published_id is not None,
+        "model_id": published_id,
+        "kept_model_id": kept_id,
+        "gate": gate.to_dict(),
+    }
+    _write_text(os.path.join(folder, GATE_FILE), json.dumps(record, indent=2))
+    return record
+
+
 def provenance(coin, folder, cfg, result, log=print):
     """Publish the model just written to ``folder`` into the model store, with its
-    manifest (FDS-MDL Phase 2). Returns the model_id."""
+    manifest (FDS-MDL Phase 2), when it passes the entry gate. Returns ``(model_id,
+    gate)``: model_id is None when it was not published (the gate's ``decision`` says
+    why)."""
     import model_store
     from pattern_model import METRIC_DEFINITIONS, model_file_names
 
@@ -1334,6 +1508,7 @@ def provenance(coin, folder, cfg, result, log=print):
     first_bar = _parse_time(hourly["first_open"], "first_open")
     last_close = _parse_time(hourly["last_open"], "last_open") + timedelta(hours=1)
     data_start, data_end = max(start, first_bar), min(end, last_close)
+    fit = {}
     try:
         validation, metrics = validate(
             coin,
@@ -1343,6 +1518,7 @@ def provenance(coin, folder, cfg, result, log=print):
             cfg["offline"],
             log=log,
             exchanges=[result["exchange"]],
+            fit=fit,
         )
     except TrainerError as exc:
         # too little data before the cut for a fit: published without metrics, and
@@ -1408,9 +1584,40 @@ def provenance(coin, folder, cfg, result, log=print):
         "training": result["timeframes"],
         "files": files,
     }
+    gate = check_gate(
+        coin, fit or None, cfg["offline"], log=log, current=current_model(coin)
+    )
+    for line in gate.lines():
+        log(f"entry gate for {coin}: {line}")
+    manifest["gate"] = gate.to_dict()
+    if not gate.decision.passed and ENFORCE_GATE:
+        log(f"model not published: {coin}'s new model did not pass the entry gate")
+        return None, gate
     model_store.publish(folder, manifest, trainer_root=None)
     log(f"model published: {model_id}")
-    return model_id
+    return model_id, gate
+
+
+def keep_current_model(coin, folder, log=print):
+    """After a model that did not pass: put the coin's current model's files back in
+    ``folder`` (the hub deleted them before training). Returns its model_id, or None
+    when the coin has no published model (the new files stay, unpublished, and the
+    neural runner gives the coin no signals)."""
+    import model_store
+
+    current = current_model(coin)
+    if current is None:
+        log(
+            f"{coin} has no published model: the new one is kept unpublished, and the "
+            "neural runner gives it no signals until a model passes the gate"
+        )
+        return None
+    model_store.restore(current["model_id"], folder)
+    log(
+        f"{coin}'s current model {current['model_id']} (trained to "
+        f"{current.get('train_end')}) is put back and stays in use"
+    )
+    return current["model_id"]
 
 
 # --- process --------------------------------------------------------------------------
@@ -1462,6 +1669,8 @@ def main(argv=None) -> int:
     print(f"window: {cfg['window']} ({cfg['sources']['window']})")
     print(f"seed: {cfg['seed']} ({cfg['sources']['seed']})")
     print(f"offline: {cfg['offline']} ({cfg['sources']['offline']})")
+    if cfg.get("check_gate"):
+        return check_current_model(coin, cfg["offline"])
     existing = _existing_model_files(folder)
     if existing:
         print(
@@ -1484,11 +1693,15 @@ def main(argv=None) -> int:
             exchanges=cfg.get("exchanges"),
             upstream_rows=cfg.get("upstream_rows", False),
         )
+        gate_record = None
         if cfg["upstream_flush_only"] or cfg.get("upstream_rows"):
             # test mode: the incomplete upstream files are not published
             model_id = None
         else:
-            model_id = provenance(coin, folder, cfg, result)
+            model_id, gate = provenance(coin, folder, cfg, result)
+            kept_id = None if model_id else keep_current_model(coin, folder)
+            if gate is not None:
+                gate_record = _write_gate_file(folder, coin, gate, model_id, kept_id)
     except MarketClosedError as exc:
         # Not a crash: say why. A confirmed closure is recorded, so the
         # trader makes no buys in the coin; an unconfirmed one is only refused.
@@ -1546,6 +1759,9 @@ def main(argv=None) -> int:
         "model_id": model_id,
         **result,
     }
+    if gate_record is not None:
+        summary["gate"] = gate_record["gate"]
+        summary["kept_model_id"] = gate_record["kept_model_id"]
     _write_text(
         pt_paths.data_file("training_results", f"{coin.lower()}_training_results.json"),
         json.dumps(summary, indent=2),
@@ -1572,6 +1788,77 @@ def main(argv=None) -> int:
         os.path.join(folder, "trainer_last_training_time.txt"), str(finished_at)
     )
     print(f"Training completed for {coin} in {summary['runtime_seconds']} s")
+    if gate_record is not None and not gate_record["published"]:
+        kept = gate_record["kept_model_id"]
+        print(
+            f"The new model was not published: it did not pass the entry gate. "
+            + (
+                f"The current model {kept} stays in use."
+                if kept
+                else f"{coin} has no model in use until one passes."
+            )
+        )
+    return 0
+
+
+def check_current_model(coin, offline, log=print):
+    """``--check-gate``: the entry gate on the coin's current model. Its validation fit
+    is trained again from its manifest (window, seed, exchange) in a scratch folder and
+    replayed on its own held-out bars; nothing in the coin's folder or the model store
+    changes. The result is printed and written to
+    ``<data>/training_results/<coin>_gate_check.json``. Exit code 0 when the check ran
+    (passed or not), 1 when it could not."""
+    manifest = current_model(coin)
+    if manifest is None:
+        print(f"ERROR: {coin} has no published model to check")
+        return 1
+    model_id = manifest["model_id"]
+    validation = manifest.get("validation") or {}
+    record = {"coin": coin, "model_id": model_id, "checked_at": int(time.time())}
+    try:
+        if validation.get("status") != "ok":
+            raise TrainerError(
+                f"its manifest records no validation fit ({validation.get('reason')})"
+            )
+        fit_start = _parse_time(validation["fit_start"], "fit_start")
+        holdout_end = _parse_time(validation["holdout_end"], "holdout_end")
+        log(
+            f"checking {coin}'s current model {model_id}: refitting its validation fit "
+            f"{validation['fit_start']} .. {validation['fit_end']}"
+        )
+        _window, _metrics, sibling = validation_fit(
+            coin,
+            fit_start,
+            holdout_end,
+            int(manifest.get("seed", 0)),
+            offline,
+            log=log,
+            exchanges=[manifest.get("exchange")] if manifest.get("exchange") else None,
+        )
+        recorded = validation.get("fit_files_sha256")
+        same = recorded == sibling["files"] if recorded else None
+        record["refit_matches_record"] = same
+        if same is False:
+            log(
+                "WARNING: the refitted validation fit's files differ from the ones its "
+                "manifest records (the code or the candles changed since)"
+            )
+        gate = check_gate(coin, sibling, offline, log=log, checking=True)
+    except (TrainerError, OSError, KeyError, ValueError) as exc:
+        print(f"ERROR: the entry gate could not be run on {coin}'s model: {exc}")
+        record["error"] = str(exc)
+        _write_text(
+            pt_paths.data_file("training_results", f"{coin.lower()}_gate_check.json"),
+            json.dumps(record, indent=2),
+        )
+        return 1
+    for line in gate.lines():
+        print(f"entry gate for {coin} ({model_id}): {line}")
+    record["gate"] = gate.to_dict()
+    _write_text(
+        pt_paths.data_file("training_results", f"{coin.lower()}_gate_check.json"),
+        json.dumps(record, indent=2),
+    )
     return 0
 
 

@@ -334,7 +334,8 @@ _LOG_LINE_RULES = (
         "log_warn",
         re.compile(
             r"\bWARNING\b|WAITING FOR PRICE DATA|SKIPPED|Skipping [A-Z0-9]+:"
-            r"|NOT TRAINED|MODEL NOT VERIFIED|TRAINING - |skipped this pass"
+            r"|NOT TRAINED|MODEL NOT VERIFIED|NO MODEL IN USE|TRAINING - "
+            r"|did not pass the entry gate|skipped this pass"
             r"|RISK (BLOCK|WARNING)|ORDER REJECTED|log lost|training data issue"
             r"|refused|[Ff]ailed"
         ),
@@ -730,6 +731,10 @@ SYSTEM_SCRIPTS = {
     "script_neural_runner2": "pt_thinker.py",
     "script_trader": "pt_trader.py",
 }
+# A coin folder's latest training run's entry gate decision (pt_pattern_trainer.GATE_FILE)
+GATE_FILE = "model_gate.json"
+# Settings > Training, "Check the models in use...": the longest one coin's check may take
+GATE_CHECK_TIMEOUT_S = 3600
 
 # Settings > System, Start ... when the hub opens: after the window is up
 AUTO_START_DELAY_MS = 1500
@@ -4834,10 +4839,30 @@ Platform: {sys.platform}
             pass
 
     @staticmethod
-    def _training_ended_text(coin: str, code) -> str:
-        """The notice for a training run that ended with exit code ``code``."""
+    def _training_ended_text(coin: str, code, gate: Optional[dict] = None) -> str:
+        """The notice for a training run that ended with exit code ``code``; ``gate``
+        is its model_gate.json record, when it wrote one."""
         if code == 0:
-            return f"{coin}: training finished; its new model is saved."
+            if not gate or not isinstance(gate.get("gate"), dict):
+                return f"{coin}: training finished; its new model is saved."
+            import entry_gate
+
+            decision = entry_gate.Decision.from_dict(gate["gate"])
+            figures = decision.short() or "no entries"
+            if gate.get("published"):
+                return (
+                    f"{coin}: training finished; its new model passed the entry gate "
+                    f"(return after fees vs random: {figures}) and is in use."
+                )
+            kept = (
+                "the model in use is kept."
+                if gate.get("kept_model_id")
+                else f"{coin} has no model in use until one passes."
+            )
+            return (
+                f"{coin}: training finished, but the new model did not pass the entry "
+                f"gate (return after fees vs random: {figures}); {kept}"
+            )
         return (
             f"{coin}: training ended without a model (exit code {code}); the "
             f"Neural Runner gives {coin} no signals until it is trained."
@@ -4949,6 +4974,80 @@ Platform: {sys.platform}
             else:
                 out[c] = "❌"
         return out
+
+    # ---- the entry gate (pt_pattern_trainer deviation 13, entry_gate) ----
+
+    def _gate_record(self, coin: str) -> Optional[dict]:
+        """The coin's latest training run's gate decision (``model_gate.json`` in its
+        folder), or None."""
+        folder = self.coin_folders.get(coin, "")
+        if not folder:
+            return None
+        data = _safe_read_json(os.path.join(folder, GATE_FILE))
+        return data if isinstance(data, dict) and data.get("coin") == coin else None
+
+    def run_gate_check(self, coin: str) -> dict:
+        """``pt_pattern_trainer.py COIN --check-gate`` (off the Tk thread): the entry
+        gate on the coin's model in use. Returns its exit code, its record
+        (``<coin>_gate_check.json``, None when it wrote none) and its last lines."""
+        record_path = pt_paths.data_file(
+            "training_results", f"{coin.lower()}_gate_check.json"
+        )
+        started = time.time()
+        folder = (
+            self.coin_folders.get(coin)
+            or build_coin_folders(self.settings["main_neural_dir"], [coin])[coin]
+        )
+        os.makedirs(folder, exist_ok=True)
+        env = _child_env(self.hub_dir)
+        env["PYTHONIOENCODING"] = "utf-8"
+        done = subprocess.run(
+            [
+                sys.executable,
+                "-u",
+                "-W",
+                "ignore",
+                self.proc_trainer_path,
+                coin,
+                "--check-gate",
+            ],
+            cwd=folder,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=GATE_CHECK_TIMEOUT_S,
+        )
+        record = _safe_read_json(record_path)
+        if not isinstance(record, dict) or record.get("checked_at", 0) < int(started):
+            record = None
+        output = (done.stdout or "") + (done.stderr or "")
+        return {
+            "code": done.returncode,
+            "record": record,
+            "output": "\n".join(output.splitlines()[-20:]),
+        }
+
+    def check_models_against_gate(self, parent=None) -> None:
+        """Settings > Training, "Check the models in use...": gate_check_ui's window,
+        one at a time."""
+        from gate_check_ui import GateCheckWindow
+
+        win = getattr(self, "_gate_check_window", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                return
+        except tk.TclError:
+            pass
+        coins = [c for c in (self.coins or []) if c]
+        if not coins:
+            messagebox.showinfo(
+                "Check the models in use",
+                "There are no coins in Settings.",
+                parent=parent,
+            )
+            return
+        self._gate_check_window = GateCheckWindow(self, coins, self.run_gate_check)
 
     def train_selected_coin(self) -> None:
         print(f"DEBUG: train_selected_coin() called")
@@ -5180,6 +5279,7 @@ Platform: {sys.platform}
                 "trainer_last_training_time.txt",
                 "trainer_status.json",
                 "trainer_last_start_time.txt",
+                GATE_FILE,
                 "killer.txt",
                 "memories_*.txt",
                 "memory_weights_*.txt",
@@ -5320,7 +5420,9 @@ Platform: {sys.platform}
                         self._mark_training_ended(coin, proc.returncode)
                     if self.settings.get("training_notifications", True):
                         self._show_notice(
-                            self._training_ended_text(coin, proc.returncode)
+                            self._training_ended_text(
+                                coin, proc.returncode, self._gate_record(coin)
+                            )
                         )
 
                     # Try to get any remaining output
@@ -6733,6 +6835,31 @@ Platform: {sys.platform}
                 level,
             )
 
+    def _gate_tooltip_line(self, coin: str) -> str:
+        """The last training run's entry gate result, as tooltip lines ("" when the
+        run wrote none)."""
+        record = self._gate_record(coin)
+        if not record or not isinstance(record.get("gate"), dict):
+            return ""
+        try:
+            import entry_gate
+
+            decision = entry_gate.Decision.from_dict(record["gate"])
+        except Exception:
+            return ""
+        figures = decision.short() or "no entries"
+        if record.get("published"):
+            return f"Return after fees vs random: {figures}; passed the entry gate.\n"
+        kept = (
+            f"the model in use ({record['kept_model_id']}) is kept"
+            if record.get("kept_model_id")
+            else "no model is in use"
+        )
+        return (
+            f"Last training: return after fees vs random {figures}; the new model "
+            f"did not pass the entry gate, so {kept}.\n"
+        )
+
     def _coin_tooltip(self, coin: str, field: str) -> str:
         """What a coin cell's field means, with this coin's current values."""
         status = (getattr(self, "_training_status", None) or {}).get(coin, "❌")
@@ -6752,10 +6879,22 @@ Platform: {sys.platform}
                     "Click to stop the training run."
                 )
             if trained:
+                record = self._gate_record(coin) or {}
+                unused = "gate" in record and not (
+                    record.get("published") or record.get("kept_model_id")
+                )
                 return (
                     f"{coin}: trained (green dot).\n"
-                    "Its model is less than 14 days old, so the neural runner uses it.\n"
-                    "Click to retrain (this replaces the model)."
+                    + (
+                        "Its model did not pass the entry gate and none did before, so "
+                        f"the neural runner gives {coin} no signals.\n"
+                        if unused
+                        else "Its model is less than 14 days old, so the neural "
+                        "runner uses it.\n"
+                    )
+                    + self._gate_tooltip_line(coin)
+                    + "Click to retrain (this replaces the model if the new one "
+                    "passes the entry gate)."
                 )
             return (
                 f"{coin}: not trained (grey dot).\n"
@@ -7668,14 +7807,20 @@ Platform: {sys.platform}
         )
 
         # --- Training: when a model may be used, and when coins retrain -----------
-        # (training_settings; the LLM signal gate reads the first two)
+        # (training_settings: the entry gate the trainer and the LLM signal gate use)
         page = new_page("Training")
         _training = training_settings.read_training_settings()
         min_signals_var = tk.StringVar(
             master=win, value=str(_training["holdout_min_signals"])
         )
-        min_hit_rate_var = tk.StringVar(
-            master=win, value=f"{_training['holdout_min_hit_rate'] * 100:g}"
+        min_return_var = tk.StringVar(
+            master=win, value=f"{_training['gate_min_return_after_fees'] * 100:g}"
+        )
+        baseline_runs_var = tk.StringVar(
+            master=win, value=str(_training["gate_baseline_runs"])
+        )
+        baseline_percentile_var = tk.StringVar(
+            master=win, value=f"{_training['gate_baseline_percentile']:g}"
         )
         auto_retrain_var = tk.BooleanVar(
             master=win, value=bool(self.settings.get("training_auto_enabled", True))
@@ -7691,7 +7836,34 @@ Platform: {sys.platform}
         r = 0
         add_row(page, r, "Minimum scored signals:", min_signals_var)
         r += 1
-        add_row(page, r, "Minimum hit rate after fees %:", min_hit_rate_var)
+        add_row(page, r, "Minimum mean return after fees %:", min_return_var)
+        r += 1
+        add_row(page, r, "Random-entry baselines:", baseline_runs_var)
+        r += 1
+        add_row(
+            page, r, "Beat this percentile of random entries:", baseline_percentile_var
+        )
+        r += 1
+        ttk.Label(
+            page,
+            text=(
+                "A new model is used, and an LLM model may confirm or veto entries, "
+                "only when its entries' mean return after fees on bars it never saw "
+                "is above both figures, its return over all the capital it committed "
+                "is above 0%, and its worst drawdown is no worse than the random "
+                "entries' median. A new model must also do as well as the model in "
+                "use. The hit rate is shown only."
+            ),
+            style="Muted.TLabel",
+            wraplength=560,
+            justify="left",
+        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=(2, 6))
+        r += 1
+        ttk.Button(
+            page,
+            text="Check the models in use...",
+            command=lambda: self.check_models_against_gate(win),
+        ).grid(row=r, column=0, sticky="w", pady=(0, 6))
         r += 1
         add_check(page, r, "Retrain each trained coin automatically", auto_retrain_var)
         r += 1
@@ -8017,13 +8189,52 @@ Platform: {sys.platform}
                 )
                 return
             try:
-                # Training: read first, so a value that is not a number saves nothing
-                min_signals = int(float(min_signals_var.get().strip()))
-                min_hit_rate = float(min_hit_rate_var.get().strip().replace("%", ""))
-                if min_signals < 1 or not 0.0 <= min_hit_rate <= 100.0:
-                    raise ValueError(
-                        "Minimum scored signals is at least 1, and the minimum hit "
-                        "rate between 0 and 100 %"
+                # Training: read first, so a value that is not allowed saves nothing
+                gate_values = {}
+                for name, label, var, scale in (
+                    (
+                        "holdout_min_signals",
+                        "Minimum scored signals",
+                        min_signals_var,
+                        1,
+                    ),
+                    (
+                        "gate_min_return_after_fees",
+                        "Minimum mean return after fees %",
+                        min_return_var,
+                        100,
+                    ),
+                    (
+                        "gate_baseline_runs",
+                        "Random-entry baselines",
+                        baseline_runs_var,
+                        1,
+                    ),
+                    (
+                        "gate_baseline_percentile",
+                        "Beat this percentile of random entries",
+                        baseline_percentile_var,
+                        1,
+                    ),
+                ):
+                    text = var.get().strip().replace("%", "")
+                    try:
+                        value = float(text) / scale
+                    except ValueError:
+                        value = text
+                    problem = training_settings.problem(name, value)
+                    if problem:
+                        low, high = training_settings.BOUNDS[name]
+                        raise ValueError(
+                            f"{label} must be from {low * scale:g} to {high * scale:g}"
+                            + (
+                                " (a whole number)"
+                                if name in training_settings.WHOLE
+                                else ""
+                            )
+                        )
+                    gate_values[name] = (
+                        int(value) if name in training_settings.WHOLE else value
                     )
                 retrain_hours = float(retrain_hours_var.get().strip())
                 if (
@@ -8140,12 +8351,7 @@ Platform: {sys.platform}
                 if not save_paper_settings(price_rule, quote_age):
                     raise ValueError("the paper-trading price rules were not saved")
                 self._save_settings()
-                training_settings.save_training_settings(
-                    {
-                        "holdout_min_signals": min_signals,
-                        "holdout_min_hit_rate": min_hit_rate / 100.0,
-                    }
-                )
+                training_settings.save_training_settings(gate_values)
                 # the runner, trainers and trader read the exchange choice from
                 # trading_config.json, not from gui_settings.json
                 self._sync_exchange_choice()

@@ -2,13 +2,23 @@
 The LLM signal gate: when a provider, model and prompt version may move beyond
 "log only".
 
-A (provider, model, prompt version) passes once the signals it made while trading
-was in paper mode include at least ``holdout_min_signals`` scored ones (a buy or a
-sell whose outcome is known, llm_signals.score_signal), and at least
-``holdout_min_hit_rate`` of them won after fees (training_settings). Only paper
-signals count, so live trading uses one only after it has passed in paper mode. A
-new prompt version, or a model that answered after a fallback, starts with no
-scored signals: it is logged only until it passes.
+A (provider, model, prompt version) passes when the entry gate (entry_gate) passes
+the signals it made while trading was in paper mode: a buy or a sell whose outcome is
+known (llm_signals.score_signal). ``evaluate`` judges them: each is scored again at
+the fee the trader's orders pay now, and compared with random signals on the same
+coins over the same months, each made with the same direction, horizon, and target
+and stop at the same distances from its price, scored by the same rules. The pass
+rule is entry_gate's (at least ``holdout_min_signals``, a mean return after fees
+above ``gate_min_return_after_fees`` and above the ``gate_baseline_percentile`` of
+``gate_baseline_runs`` random runs, and so on: training_settings). The hit rate is
+shown and decides nothing.
+
+``evaluate`` runs when signals are scored (the LLM Research tab) and keeps its
+decision (``llm_store.gate_results``); ``gate_status`` reads it. A decision made from
+fewer scored signals than there are now, or with other gate settings, does not count
+until it is made again. Only paper signals count, so live trading uses one only
+after it has passed in paper mode. A new prompt version, or a model that answered
+after a fallback, starts with no scored signals: it is logged only until it passes.
 
 The trader's entry hook (``EntryHook.check``)
 ---------------------------------------------
@@ -48,17 +58,21 @@ so no trader test asks a provider for anything.
 
 from __future__ import annotations
 
+import bisect
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+import entry_gate
 import llm_settings
+import llm_signals
 import training_settings
 from llm_settings import provider_name, use_key
 
 GATE_MODE = "paper"  # the signals the gate counts
 REQUESTS_ENABLED = True  # tests switch it off (app/conftest.py)
+HOUR_MS = 3600 * 1000
 
 
 @dataclass(frozen=True)
@@ -69,32 +83,47 @@ class GateStatus:
     scored: int
     hits: int
     min_signals: int
-    min_hit_rate: float
+    decision: Optional[entry_gate.Decision] = None  # the latest kept
+    stale: str = ""  # why the kept decision does not count ("" when it does)
 
     @property
     def hit_rate(self) -> Optional[float]:
+        """Shown only: it decides nothing."""
         return self.hits / self.scored if self.scored else None
 
     @property
+    def judged(self) -> bool:
+        return self.decision is not None and not self.stale
+
+    @property
     def passed(self) -> bool:
-        rate = self.hit_rate
-        return (
-            self.scored >= self.min_signals
-            and rate is not None
-            and rate >= self.min_hit_rate
-        )
+        return self.judged and self.decision.passed
+
+    def headline(self) -> str:
+        """ "Return after fees vs random" (Settings, LLM Providers)."""
+        if self.judged and self.decision.candidate.entries:
+            return self.decision.short()
+        return ""
+
+    def word(self) -> str:
+        """The gate in a word or two (Settings, LLM Providers)."""
+        if self.passed:
+            return "passed"
+        if self.scored < self.min_signals:
+            return f"{self.scored} of {self.min_signals} scored"
+        return "not passed" if self.judged else "not judged yet"
 
     def text(self) -> str:
         """One line for Settings and the decision log."""
-        rate = self.hit_rate
-        rate_text = "no hit rate yet" if rate is None else f"{rate:.0%} after fees"
-        if self.passed:
-            return f"passed: {self.hits} of {self.scored} won, {rate_text}"
         if self.scored < self.min_signals:
-            return f"not passed: {self.scored} of {self.min_signals} signals scored" + (
-                "" if rate is None else f", {rate_text}"
+            return f"not passed: {self.scored} of {self.min_signals} signals scored"
+        if not self.judged:
+            return "not passed: not judged yet" + (
+                f" ({self.stale})" if self.stale else ""
             )
-        return f"not passed: {rate_text}, {self.min_hit_rate:.0%} needed"
+        if self.passed:
+            return f"passed: {self.decision.headline()}"
+        return f"not passed: {'; '.join(self.decision.failed)}"
 
 
 def gate_status(
@@ -104,19 +133,188 @@ def gate_status(
     prompt_version: int,
     training: Optional[dict] = None,
 ) -> GateStatus:
-    """The gate for one provider/model/prompt version, from the paper signals
-    scored so far. ``training`` is the training section (read fresh when None)."""
+    """The gate for one provider/model/prompt version: its kept decision, which counts
+    only when it was made from the paper signals scored so far with the gate settings
+    in use now. ``training`` is the training section (read fresh when None)."""
     training = training or training_settings.read_training_settings()
+    settings = entry_gate.GateSettings.from_training(training)
     scored = store.scored(provider, model, int(prompt_version), GATE_MODE)
+    kept = store.gate_result(provider, model, int(prompt_version), GATE_MODE)
+    decision, stale = None, ""
+    if kept is None:
+        stale = "the gate has not been run on its signals"
+    else:
+        try:
+            decision = entry_gate.Decision.from_dict(kept["result"])
+        except (KeyError, TypeError, ValueError):
+            decision, stale = None, "its kept decision is unreadable"
+        if decision is not None and kept["scored"] != len(scored):
+            stale = "signals were scored since it was judged"
+        elif decision is not None and kept["settings"] != settings.to_dict():
+            stale = "the gate settings changed since it was judged"
     return GateStatus(
         provider=provider,
         model=model,
         prompt_version=int(prompt_version),
         scored=len(scored),
         hits=sum(1 for s in scored if s.hit),
-        min_signals=int(training["holdout_min_signals"]),
-        min_hit_rate=float(training["holdout_min_hit_rate"]),
+        min_signals=settings.min_entries,
+        decision=decision,
+        stale=stale,
     )
+
+
+# --- judging a provider/model/prompt version (entry_gate) ---------------------------
+
+
+def _trade(outcome: Optional[llm_signals.Outcome]) -> Optional[entry_gate.Trade]:
+    """A scored signal as one trade of one unit of capital."""
+    if outcome is None:
+        return None
+    return entry_gate.Trade(outcome.net_return, 1.0, outcome.drawdown, outcome.hit)
+
+
+def _from(bars: Sequence[Sequence[float]], ms: int) -> int:
+    """The index of the first bar that opens at or after ``ms``."""
+    return bisect.bisect_left([int(b[0]) for b in bars], int(ms))
+
+
+def signal_trade(
+    signal: Any, bars: Sequence[Sequence[float]], costs: llm_signals.Costs, now_ms: int
+) -> Optional[entry_gate.Trade]:
+    """``signal`` scored again from ``bars`` (hourly, its coin's) at ``costs``."""
+    start = int(signal.ts * 1000)
+    k = _from(bars, start)
+    hours = llm_signals.HORIZON_HOURS.get(signal.time_horizon, 24 * 7)
+    return _trade(
+        llm_signals.score_signal(
+            signal.direction,
+            signal.price,
+            start,
+            signal.time_horizon,
+            signal.price_target,
+            signal.stop_loss,
+            bars[k : k + hours + 1],
+            costs,
+            now_ms,
+        )
+    )
+
+
+def random_slots(
+    signal: Any,
+    bars: Sequence[Sequence[float]],
+    start_ms: int,
+    now_ms: int,
+    costs: llm_signals.Costs,
+) -> entry_gate.Slots:
+    """The signals a random entry could have made instead of ``signal``: one at the
+    open of each hourly bar from ``start_ms`` on, at the previous bar's close, with the
+    same direction and horizon, and the target and stop at the same distance from that
+    price as ``signal``'s from its own; scored by the same rules."""
+    opens = [int(b[0]) for b in bars]
+    moments = [
+        k for k in range(1, len(bars)) if start_ms <= opens[k] <= now_ms - HOUR_MS
+    ]
+    hours = llm_signals.HORIZON_HOURS.get(signal.time_horizon, 24 * 7)
+    price = float(signal.price)
+    target = signal.price_target / price if signal.price_target else None
+    stop = signal.stop_loss / price if signal.stop_loss else None
+
+    def trade(i: int) -> Optional[entry_gate.Trade]:
+        k = moments[i]
+        entry = float(bars[k - 1][4])
+        if entry <= 0:
+            return None
+        return _trade(
+            llm_signals.score_signal(
+                signal.direction,
+                entry,
+                opens[k],
+                signal.time_horizon,
+                entry * target if target else None,
+                entry * stop if stop else None,
+                bars[k : k + hours + 1],
+                costs,
+                now_ms,
+            )
+        )
+
+    return entry_gate.Slots(len(moments), trade)
+
+
+def evaluate(
+    store: Any,
+    provider: str,
+    model: str,
+    prompt_version: int,
+    bars_for: Callable[[str, int, int], Sequence[Sequence[float]]],
+    costs_for: Callable[[str], llm_signals.Costs],
+    training: Optional[dict] = None,
+    now: Optional[float] = None,
+    seed: int = entry_gate.DEFAULT_SEED,
+) -> entry_gate.Decision:
+    """Judge one provider/model/prompt version's scored paper signals with the entry
+    gate, and keep the decision. ``bars_for(coin, start_ms, end_ms)`` gives the coin's
+    closed hourly bars ([open_ms, open, high, low, close, volume], oldest first) and
+    ``costs_for(coin)`` what its orders pay (llm_signals.trade_costs)."""
+    training = training or training_settings.read_training_settings()
+    settings = entry_gate.GateSettings.from_training(training)
+    now = time.time() if now is None else float(now)
+    now_ms = int(now * 1000)
+    scored = store.scored(provider, model, int(prompt_version), GATE_MODE)
+    signals = [s for s in scored if s.direction in ("BUY", "SELL") and s.price]
+    trades: List[entry_gate.Trade] = []
+    slots: Dict[str, entry_gate.Slots] = {}
+    counts: Dict[str, int] = {}
+    notes: List[str] = []
+    fees = None
+    if signals:
+        start_ms = (int(min(s.ts for s in signals) * 1000) // HOUR_MS) * HOUR_MS
+        bars: Dict[str, Sequence[Sequence[float]]] = {}
+        costs: Dict[str, llm_signals.Costs] = {}
+        for coin in sorted({s.coin for s in signals}):
+            try:
+                bars[coin] = list(bars_for(coin, start_ms - HOUR_MS, now_ms) or [])
+            except Exception as exc:
+                notes.append(
+                    f"no {coin} bars ({type(exc).__name__}): its signals are left out"
+                )
+                continue
+            costs[coin] = costs_for(coin)
+        rates = {c.fees.to_dict()["rate"] for c in costs.values() if c.fees is not None}
+        if len(rates) > 1:
+            notes.append(
+                "the coins' fee rates differ; each signal is scored at its own"
+            )
+        fees = next((c.fees for c in costs.values() if c.fees is not None), None)
+        for s in sorted(signals, key=lambda s: (s.ts, s.id or 0)):
+            if s.coin not in bars:
+                continue
+            trade = signal_trade(s, bars[s.coin], costs[s.coin], now_ms)
+            if trade is None:
+                notes.append(f"signal {s.id} could not be scored again from the bars")
+                continue
+            group = f"{s.coin} signal {s.id}"
+            trades.append(trade)
+            slots[group] = random_slots(
+                s, bars[s.coin], start_ms, now_ms, costs[s.coin]
+            )
+            counts[group] = 1
+    decision = entry_gate.decide(
+        trades, slots, counts, settings, fees, seed, note="; ".join(notes[:5])
+    )
+    store.save_gate(
+        provider,
+        model,
+        int(prompt_version),
+        GATE_MODE,
+        len(scored),
+        settings.to_dict(),
+        decision.to_dict(),
+        now,
+    )
+    return decision
 
 
 # --- the trader's entry hook ----------------------------------------------------------

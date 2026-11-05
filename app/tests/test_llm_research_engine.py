@@ -176,18 +176,27 @@ def test_a_buy_is_scored_after_fees_like_the_backtester():
     )
 
 
-def test_the_fees_are_the_backtesters_until_an_exchange_states_its_own():
+def test_the_fee_is_what_the_traders_orders_pay():
+    """entry_gate.trading_fees: the taker rate (market orders), the account's where
+    its saved key can read it; the backtester's costs only when no exchange states a
+    rate."""
+    import entry_gate
     from backtest.engine import CostModel
 
-    costs = ls.trade_costs(FakeLayer())
+    costs = ls.trade_costs(FakeLayer(), "SYN", fees=lambda coin: None)
     assert (costs.fee_rate, costs.slippage_rate) == (
         CostModel().fee_bps / 1e4,
         CostModel().slippage_bps / 1e4,
     )
-    layer = FakeLayer()
-    layer.connector.trading_fees = lambda: {"taker": 0.006, "maker": 0.004}
-    assert ls.trade_costs(layer).fee_rate == 0.006
-    assert "Coinbase taker fee" in ls.trade_costs(layer).source
+    asked = []
+
+    def account(coin):
+        asked.append(coin)
+        return entry_gate.Fees(0.006, "taker", "coinbase", "exchange", 0.0005)
+
+    costs = ls.trade_costs(FakeLayer(), coin="ETH", fees=account)
+    assert asked == ["ETH"] and costs.fee_rate == 0.006
+    assert costs.source == "Coinbase taker rate, read from the account"
 
 
 def test_pending_signals_are_scored_once_their_outcome_is_known(store, http):

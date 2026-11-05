@@ -298,17 +298,20 @@ def test_the_counts_are_read_from_each_coins_signal_files(tmp_path):
 
 
 def tooltip_hub(
-    status="✅", signal=(3, 0, None, 3), engine="catalogue", trained_at=None
+    status="✅", signal=(3, 0, None, 3), engine="catalogue", trained_at=None, gate=None
 ):
     import time
 
-    return types.SimpleNamespace(
+    hub = types.SimpleNamespace(
         _training_status={"ZEC": status},
         last_training_times={"ZEC": trained_at or time.time() - 2 * 3600},
         settings={"training_auto_enabled": True, "training_auto_interval_hours": 6},
         _training_signal_info={"ZEC": signal},
         _signals_engine=engine,
+        _gate_record=lambda coin: gate,
     )
+    hub._gate_tooltip_line = lambda coin: Hub._gate_tooltip_line(hub, coin)
+    return hub
 
 
 def test_the_status_dot_explains_each_colour():
@@ -318,6 +321,28 @@ def test_the_status_dot_explains_each_colour():
     assert "training now (amber dot)" in tip and "skips ZEC" in tip
     tip = Hub._coin_tooltip(tooltip_hub("❌"), "ZEC", "status")
     assert "not trained (grey dot)" in tip and "no signals" in tip
+
+
+def test_the_status_dot_gives_the_last_training_runs_entry_gate_result():
+    from test_settings_tabs import gate_record
+
+    def record(published, kept=None):
+        return dict(gate_record(published, kept), coin="ZEC")
+
+    tip = Hub._coin_tooltip(tooltip_hub(gate=record(True)), "ZEC", "status")
+    assert (
+        "Return after fees vs random: +2.00% vs -2.00% (99th percentile); passed the "
+        "entry gate." in tip
+    )
+    kept = record(False, kept="ZEC-20251201T0000Z-aaaaaaaaaaaa")
+    tip = Hub._coin_tooltip(tooltip_hub(gate=kept), "ZEC", "status")
+    assert "less than 14 days old, so the neural runner uses it" in tip
+    assert (
+        "the new model did not pass the entry gate, so the model in use "
+        "(ZEC-20251201T0000Z-aaaaaaaaaaaa) is kept" in tip
+    )
+    tip = Hub._coin_tooltip(tooltip_hub(gate=record(False)), "ZEC", "status")
+    assert "none did before, so the neural runner gives ZEC no signals" in tip
 
 
 def test_the_trained_for_time_says_when_and_how_long_it_lasts():

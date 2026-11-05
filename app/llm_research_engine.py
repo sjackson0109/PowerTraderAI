@@ -443,7 +443,7 @@ class LLMResearchEngine:
         pending = self.store.unscored_signals()
         if not pending:
             return 0
-        costs = costs or llm_signals.trade_costs(self.market.layer)
+        costs_for = self._costs_for(costs)
         done = 0
         for s in pending:
             if s.direction not in ("BUY", "SELL") or not s.price:
@@ -471,7 +471,7 @@ class LLMResearchEngine:
                 s.price_target,
                 s.stop_loss,
                 list(sourced.value or []),
-                costs,
+                costs_for(s.coin),
                 now_ms,
             )
             if outcome is None:
@@ -485,6 +485,67 @@ class LLMResearchEngine:
                 self.clock(),
             )
             done += 1
+        return done
+
+    def _costs_for(self, costs: Optional[llm_signals.Costs] = None):
+        """``coin -> Costs``: ``costs`` for every coin when given, else what the
+        trader's orders on each coin pay (llm_signals.trade_costs), asked once a coin.
+        """
+        found: Dict[str, llm_signals.Costs] = {}
+
+        def costs_for(coin: str) -> llm_signals.Costs:
+            if costs is not None:
+                return costs
+            if coin not in found:
+                found[coin] = llm_signals.trade_costs(self.market.layer, coin)
+            return found[coin]
+
+        return costs_for
+
+    def judge_gates(
+        self, costs: Optional[llm_signals.Costs] = None, training=None
+    ) -> int:
+        """The entry gate (llm_gate.evaluate) on every provider/model/prompt version
+        whose kept decision does not count any more (signals scored since, other gate
+        settings) and that has scored paper signals. Returns how many were judged."""
+        import llm_gate
+
+        costs_for = self._costs_for(costs)
+        fetched: Dict[tuple, list] = {}
+
+        def bars_for(coin: str, start_ms: int, end_ms: int) -> list:
+            key = (coin, start_ms, end_ms)
+            if key not in fetched:
+                fetched[key] = list(
+                    self.market.bars(coin, start_ms, end_ms).value or []
+                )
+            return fetched[key]
+
+        judged = 0
+        for provider, model, version in self.store.keys():
+            status = llm_gate.gate_status(
+                self.store, provider, model, version, training
+            )
+            if status.scored == 0 or status.judged:
+                continue
+            llm_gate.evaluate(
+                self.store,
+                provider,
+                model,
+                version,
+                bars_for,
+                costs_for,
+                training,
+                now=self.clock(),
+            )
+            judged += 1
+        return judged
+
+    def score_and_judge(self) -> int:
+        """``score_pending``, then ``judge_gates``; returns how many signals were
+        scored."""
+        done = self.score_pending()
+        self.judge_gates()
         return done
 
     # ---- reports ----

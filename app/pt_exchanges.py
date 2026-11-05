@@ -28,6 +28,7 @@ from pt_exchange_abstraction import (
     OrderResult,
     PriceQuote,
     Ticker,
+    TradingFees,
     book_levels,
 )
 from market_data.timeframes import candle_timeframe_seconds
@@ -408,6 +409,26 @@ class KrakenExchange(AbstractExchange):
             for r in rows
             if start_ms <= int(r[0]) * 1000 <= end_ms
         ]
+
+    def trading_fees(self, symbol: str) -> Optional[TradingFees]:
+        """Kraken's rates for ``symbol``: the first tier (no 30-day volume) of the
+        pair's fee schedules in the public AssetPairs answer, ``fees_maker`` and
+        ``fees`` ([volume, percent fee] pairs; a pair with no maker schedule charges
+        ``fees`` either way). The standard rates when they cannot be read."""
+        pair = self._convert_symbol(symbol)
+        try:
+            data = _public_get_for(
+                self, f"{self.base_url}/0/public/AssetPairs", params={"pair": pair}
+            ).json()
+            info = list(self._kraken_result(data, pair).values())[0]
+            taker = float(info["fees"][0][1]) / 100.0
+            maker_tiers = info.get("fees_maker") or []
+            maker = float(maker_tiers[0][1]) / 100.0 if maker_tiers else taker
+        except Exception:
+            return super().trading_fees(symbol)
+        return TradingFees(
+            maker=maker, taker=taker, exchange="kraken", source="exchange"
+        )
 
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         pair = self._convert_symbol(symbol)
@@ -872,6 +893,30 @@ class BinanceExchange(AbstractExchange):
                 break
             cursor = int(data[-1][0]) + step_ms
         return rows
+
+    def trading_fees(self, symbol: str) -> Optional[TradingFees]:
+        """This account's rates for ``symbol`` (signed ``GET /api/v3/account/commission``,
+        which needs the API key): the standard, tax and special commission rates
+        added together, as fractions. The standard rates without a key, or when they
+        cannot be read."""
+        if not self.api_key or not self.api_secret:
+            return super().trading_fees(symbol)
+        try:
+            data = self._signed_request(
+                "GET",
+                "/api/v3/account/commission",
+                {"symbol": self._convert_symbol(symbol)},
+            )
+            parts = [data["standardCommission"]] + [
+                data.get(k) or {} for k in ("taxCommission", "specialCommission")
+            ]
+            maker = sum(float(p.get("maker") or 0) for p in parts)
+            taker = sum(float(p.get("taker") or 0) for p in parts)
+        except Exception:
+            return super().trading_fees(symbol)
+        return TradingFees(
+            maker=maker, taker=taker, exchange="binance", source="exchange"
+        )
 
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         pair = self._convert_symbol(symbol)
@@ -1689,6 +1734,27 @@ class CoinbaseExchange(AbstractExchange):
                     int(t) * 1000, open_, high, low, close, volume
                 )
         return [bars[t] for t in sorted(bars) if start_ms <= t <= end_ms]
+
+    def trading_fees(self, symbol: str) -> Optional[TradingFees]:
+        """This account's spot rates (``fee_tier`` in ``GET /transaction_summary``,
+        fractions), which need the API key; the same for every product. The standard
+        rates without a key, or when they cannot be read."""
+        if not self.api_key or not self.api_secret:
+            return super().trading_fees(symbol)
+        try:
+            data = self._brokerage_request(
+                "GET", "/transaction_summary", params={"product_type": "SPOT"}
+            )
+            tier = data.get("fee_tier") or {}
+            maker = _coinbase_number(tier.get("maker_fee_rate"))
+            taker = _coinbase_number(tier.get("taker_fee_rate"))
+        except Exception:
+            return super().trading_fees(symbol)
+        if maker is None or taker is None:
+            return super().trading_fees(symbol)
+        return TradingFees(
+            maker=maker, taker=taker, exchange="coinbase", source="exchange"
+        )
 
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         product = self._convert_symbol(symbol)

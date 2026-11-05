@@ -163,6 +163,78 @@ class Sourced:
     built_from: str = ""  # candles only: the size they were built from, e.g. "1h"
 
 
+@dataclass(frozen=True)
+class TradingFees:
+    """An exchange's trading fee rates for one market, as fractions of an order's
+    value (0.006 is 0.6%). A maker order adds to the order book and a taker order takes
+    from it: a market order pays the taker rate, and a limit order is counted as a
+    maker order. ``exchange`` is whose rates they are (an ExchangeType value; "" when
+    no exchange is known) and ``source`` where they came from: "exchange" (read from
+    the exchange), "default" (its published standard rates, DEFAULT_TRADING_FEES) or
+    "paper" (the paper account's own rate, when no exchange gave any)."""
+
+    maker: float
+    taker: float
+    exchange: str
+    source: str
+
+    def for_order(self, order_type: str = "market") -> Tuple[str, float]:
+        """("maker", rate) for a limit order; ("taker", rate) for a market order and
+        any other."""
+        if str(order_type).strip().lower() == "limit":
+            return "maker", self.maker
+        return "taker", self.taker
+
+
+def usable_fees(value: Any) -> Optional[TradingFees]:
+    """``value`` as trading fees: a TradingFees whose two rates are numbers from 0 up
+    to (not including) 1, else None (a connector may answer anything)."""
+    if not isinstance(value, TradingFees):
+        return None
+    for rate in (value.maker, value.taker):
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+            return None
+        if not 0.0 <= rate < 1.0:
+            return None
+    return value
+
+
+# Each exchange's published standard-tier rates (maker, taker): the tier of an account
+# with no 30-day trading volume. Used when its own rates cannot be read from it (no API
+# key, or no answer), with a warning. Sources, spot trading:
+#   coinbase: help.coinbase.com, "Coinbase Advanced trading fees", $0-1K tier
+#   kraken:   kraken.com/features/fee-schedule, Kraken Pro, $0-10K tier
+#   binance:  binance.com/en/fee/schedule, Regular User (VIP 0)
+#   kucoin:   kucoin.com/vip/privilege, LV 0, class A coins
+DEFAULT_TRADING_FEES: Dict[str, Tuple[float, float]] = {
+    "coinbase": (0.0060, 0.0120),
+    "kraken": (0.0025, 0.0040),
+    "binance": (0.0010, 0.0010),
+    "kucoin": (0.0010, 0.0010),
+}
+# The warning that standard rates are used is logged once an hour per exchange
+DEFAULT_FEES_WARNING_SECONDS = 3600.0
+_default_fees_warned: Dict[str, float] = {}
+
+
+def default_trading_fees(exchange: Any) -> Optional[TradingFees]:
+    """``exchange``'s published standard rates (DEFAULT_TRADING_FEES) as TradingFees
+    with source "default", or None when none are stored. Logs a warning that they are
+    used in place of the exchange's own rates (once an hour per exchange)."""
+    key = str(getattr(exchange, "value", exchange) or "").strip().lower()
+    rates = DEFAULT_TRADING_FEES.get(key)
+    if rates is None:
+        return None
+    now = time.time()
+    if now - _default_fees_warned.get(key, 0.0) >= DEFAULT_FEES_WARNING_SECONDS:
+        _default_fees_warned[key] = now
+        logger.warning(
+            f"{exchange_name(key)} trading fees could not be read from the exchange; "
+            f"using its standard rates: maker {rates[0]:.2%}, taker {rates[1]:.2%}"
+        )
+    return TradingFees(maker=rates[0], taker=rates[1], exchange=key, source="default")
+
+
 class ExchangeType(Enum):
     """Supported exchange types"""
 
@@ -375,6 +447,15 @@ class OrderResult:
     # True when a "filled" order stopped part-way (a market IOC order can): only
     # ``amount`` filled and the rest of the order was cancelled.
     partial: bool = False
+    # How the fee was worked out, where the exchange says (paper fills do): its
+    # currency, the rate charged (a fraction of ``filled_value``), "maker" or
+    # "taker", and whose rates they were and from where (TradingFees.exchange and
+    # .source).
+    fee_currency: str = ""
+    fee_rate: Optional[float] = None
+    fee_type: str = ""
+    fee_exchange: str = ""
+    fee_source: str = ""
 
 
 class ConnectionStatus(str, Enum):
@@ -480,6 +561,16 @@ class AbstractExchange(abc.ABC):
         may be included (the exchange layer drops it). Raises MarketNotFound when the
         exchange has no market for the coin."""
         raise NotImplementedError(f"{self.get_exchange_name()} reads no candles")
+
+    # --- trading fees ----------------------------------------------------------------
+
+    def trading_fees(self, symbol: str) -> Optional[TradingFees]:
+        """The maker and taker fee rates an order on ``symbol`` pays (TradingFees).
+        Here: the exchange's published standard rates (``default_trading_fees``, which
+        logs a warning), or None when none are stored. A connector that can read its
+        exchange's rates overrides this, and falls back to it when they cannot be
+        read."""
+        return default_trading_fees(self.get_exchange_name())
 
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         """Whether the exchange's market for ``symbol`` is trading; None when this
@@ -888,6 +979,29 @@ class ExchangeManager:
             f"No exchange gave {tf} candles for {symbol}: "
             + ("; ".join(reasons) or "no exchange connected")
         )
+
+    def trading_fees(
+        self, symbol: str, only: Optional[str] = None
+    ) -> Optional[Sourced]:
+        """The maker and taker fee rates for ``symbol`` (a TradingFees), from the primary
+        exchange, else the next that gives them; ``only`` asks that one exchange (the
+        one whose quote priced a fill, say). Each exchange answers with the rates it
+        reads from the exchange, else its published standard rates
+        (``TradingFees.source`` says which). None when no exchange has either."""
+        symbol = dollar_symbol(symbol)
+        for exchange_type, exchange in self._ordered():
+            name = exchange_type.value
+            if only is not None and name != only:
+                continue
+            try:
+                fees = usable_fees(exchange.trading_fees(symbol))
+            except Exception as exc:
+                logger.debug(f"No trading fees from {name}: {exc}")
+                fees = None
+            fees = fees or default_trading_fees(name)
+            if fees is not None:
+                return self._sourced(fees, exchange_type, exchange, symbol)
+        return None
 
     def market_status(self, symbol: str) -> Optional[Sourced]:
         """Whether ``symbol``'s market is trading, from the primary exchange; when the

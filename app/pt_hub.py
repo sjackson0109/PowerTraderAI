@@ -309,6 +309,31 @@ CHART_STATUS_ROW_PADY = SPACE["sm"]
 # Short of room, the coin buttons narrow to this (and scroll) before the status line
 MIN_TAB_BUTTONS_W = 60
 
+# The bottom panel's module tabs, left to right (owner, 2026-11-04): change the
+# order here. Advanced Orders follows Order Management and Holdings Management
+# follows Long-term Holdings while they exist; a tab not built is skipped.
+MODULE_TAB_ORDER = (
+    "Current Trades",
+    "Trade History",
+    "Order Management",
+    "Advanced Orders",
+    "Market Data",
+    "Long-term Holdings",
+    "Holdings Management",
+    "Portfolio Analytics",
+    "Performance Attribution",
+    "Backtesting Framework",
+    "Portfolio Optimization",
+    "LLM Research",
+    "Institutional Trading",
+)
+
+
+def module_tab_name(text: str) -> str:
+    """A bottom tab's name as MODULE_TAB_ORDER spells it (its label is on two lines)."""
+    return " ".join(str(text).split())
+
+
 # Live-output colouring: the first rule that matches a line picks its tag.
 _LOG_LINE_RULES = (
     ("log_state", re.compile(r"stopped from the hub")),
@@ -3666,6 +3691,11 @@ class PowerTraderHub(tk.Tk):
         # ----------------------------
         self._create_institutional_trading_tab()
 
+        # Left to right as MODULE_TAB_ORDER says, whatever order they were built in;
+        # Current Trades is the one shown at start-up
+        self._order_module_tabs()
+        self.bottom_notebook.select(trades_tab)
+
         # Assemble right side
         right_split.add(charts_frame, weight=3)
         right_split.add(self.bottom_notebook, weight=2)
@@ -3907,6 +3937,18 @@ class PowerTraderHub(tk.Tk):
             p.proc.terminate()
         except Exception:
             pass
+
+    def _order_module_tabs(self) -> None:
+        """Put the bottom panel's tabs in MODULE_TAB_ORDER. A tab that is not built
+        is skipped; one the list does not name keeps its place after the rest."""
+        nb = self.bottom_notebook
+        by_name = {module_tab_name(nb.tab(t, "text")): t for t in nb.tabs()}
+        position = 0
+        for name in MODULE_TAB_ORDER:
+            tab = by_name.get(name)
+            if tab is not None:
+                nb.insert(position, tab)
+                position += 1
 
     def _create_order_management_tab(self):
         """The Order Management tab: a toolbar over the orders, and the Order

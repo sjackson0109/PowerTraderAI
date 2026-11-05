@@ -10,19 +10,21 @@ sub-tabs:
   in the shared table (ui_table.DataTable), with their tags and each holding's
   share of the current value of the holdings the tag filter keeps ("% of
   Holdings"); under the table, the totals of the rows shown.
-* Portfolio Overview: the holdings' totals beside the allocation, a pie of each
-  holding's share of their current value. With no holdings, only "No holdings to
-  display".
-* Rebalancing: the holdings whose share is further from their target % than their
-  rebalance threshold, worked out again whenever the holdings change, in the shared
-  table; Export CSV and a search.
+* Portfolio Overview: the tag filter over the totals of the holdings it keeps,
+  beside their allocation, a pie of each one's share of their current value. With
+  no holdings, only "No holdings to display".
+* Rebalancing: of the holdings the tag filter keeps, those whose share of their
+  current value is further from their target % than their rebalance threshold,
+  worked out again whenever the holdings or the filter change, in the shared
+  table; Export CSV, the tag filter and a search.
 * Analytics, from holdings.db: each holding's unrealised P&L % (its current price
   against its average cost) and the prices recorded with Update Prices, as the
   change since each coin's first recorded price. With no holdings, "No data yet".
+  The tag filter does not apply: every holding is charted.
 
 The tag filter (TagFilter) keeps every holding (All), the untagged ones, or those
-with any of the tags chosen; it is one choice for every sub-tab that has it, read
-and set from outside with ``tag_selection()``, ``filtered_holdings()`` and
+with any of the tags chosen; it is one choice for the three sub-tabs that have it,
+read and set from outside with ``tag_selection()``, ``filtered_holdings()`` and
 ``set_tag_selection()`` (main_frame gets TAG_FILTER_EVENT when it changes).
 
 Add Holding and Edit open HoldingDialog: the coin from the hub's coins (Settings),
@@ -501,9 +503,11 @@ class HoldingsManagementGUI:
         self.holdings_tree.bind("<<TreeviewSelect>>", self.on_holding_select)
 
     def setup_portfolio_tab(self):
-        """The totals beside the allocation chart; with no holdings, one message."""
+        """The tag filter over the totals and the allocation chart of the holdings it
+        keeps; with none, one message."""
         gap = ui_tokens.SPACE["sm"]
         tab = self.portfolio_tab
+        self.overview_filter = self._tag_filter(self._toolbar(tab))
         self.overview_empty = ttk.Label(
             tab, text=NO_OVERVIEW, style="Muted.TLabel", anchor="center"
         )
@@ -534,12 +538,13 @@ class HoldingsManagementGUI:
             self.portfolio_widget = self.portfolio_canvas.get_tk_widget()
 
     def setup_rebalancing_tab(self):
-        """A toolbar over the suggestions table."""
+        """A toolbar (with the tag filter) over the suggestions table."""
         gap = ui_tokens.SPACE["sm"]
         bar = self._toolbar(self.rebalancing_tab)
         ttk.Button(bar, text="Export CSV", command=self.export_suggestions).pack(
             side="left", padx=(0, gap)
         )
+        self.suggestions_filter = self._tag_filter(bar)
         self.suggestions_search = ui_table.SearchBox(bar, self.show_suggestions)
 
         self.suggestions_table = ui_table.DataTable(
@@ -670,6 +675,8 @@ class HoldingsManagementGUI:
     def show_filtered(self) -> None:
         """Show again what the tag filter applies to."""
         self.show_holdings()
+        self.update_portfolio_summary()
+        self.show_suggestions()
 
     # ---- Holdings ----
 
@@ -774,15 +781,19 @@ class HoldingsManagementGUI:
     # ---- Portfolio Overview ----
 
     def update_portfolio_summary(self):
-        """The totals and the allocation; with no holdings, only the message."""
-        holdings = self._holdings()
+        """The totals and the allocation of the holdings the tag filter keeps; with
+        none, only the message."""
+        holdings = self.filtered_holdings()
+        self.overview_empty.configure(
+            text=NO_TAG_MATCH if self._holdings() and not holdings else NO_OVERVIEW
+        )
         _show(self.overview_empty, not holdings)
         _show(self.overview_body, bool(holdings))
         if not holdings:
             if MATPLOTLIB_AVAILABLE:
                 self.portfolio_fig.clear()
             return
-        summary = self.holdings_manager.get_portfolio_summary()
+        summary = self.holdings_manager.get_portfolio_summary(holdings)
         labels = self.summary_labels
         labels["holdings_count"].config(text=f"{summary['holdings_count']}")
         labels["total_cost"].config(text=self._money(summary["total_cost"]))
@@ -813,12 +824,13 @@ class HoldingsManagementGUI:
         ]
 
     def update_portfolio_chart(self):
-        """The allocation pie: each holding's share of the holdings' current value."""
+        """The allocation pie: each holding's share of the current value of the
+        holdings the tag filter keeps."""
         if not MATPLOTLIB_AVAILABLE:
             self.chart_note.configure(text=NO_CHARTS)
             _show(self.chart_note, True)
             return
-        priced = [h for h in self._holdings() if h.current_value > 0]
+        priced = [h for h in self.filtered_holdings() if h.current_value > 0]
         self.portfolio_fig.clear()
         if not priced:
             self.chart_note.configure(text=NO_PRICES)
@@ -860,14 +872,17 @@ class HoldingsManagementGUI:
         )
 
     def show_suggestions(self) -> None:
-        """The holdings to buy or sell to reach their target %, as the search keeps
-        them; worked out from the holdings each time they change."""
+        """The holdings the tag filter keeps to buy or sell to reach their target %
+        of those holdings' current value, as the search keeps them; worked out each
+        time the holdings or the filter change."""
         tree = self.suggestions_tree
         tree.delete(*tree.get_children())
-        holdings = self._holdings()
+        holdings = self.filtered_holdings()
         try:
             suggestions = (
-                self.holdings_manager.get_rebalancing_suggestions() if holdings else []
+                self.holdings_manager.get_rebalancing_suggestions(holdings)
+                if holdings
+                else []
             )
         except Exception as e:
             print(f"Error generating suggestions: {e}")
@@ -878,8 +893,10 @@ class HoldingsManagementGUI:
                 continue
             tag = "buy" if str(s["action"]).upper() == "BUY" else "sell"
             tree.insert("", "end", values=cells, tags=(tag,))
-        if not holdings:
+        if not self._holdings():
             empty = NO_HOLDINGS
+        elif not holdings:
+            empty = NO_TAG_MATCH
         elif suggestions:
             empty = NO_SUGGESTIONS_MATCH
         elif not any(h.target_percentage > 0 for h in holdings):

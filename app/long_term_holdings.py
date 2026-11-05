@@ -443,15 +443,20 @@ class HoldingsManager:
             "holdings_count": len(holdings),
         }
 
-    def get_rebalancing_suggestions(self) -> List[Dict[str, Any]]:
-        """Generate rebalancing suggestions based on target allocations"""
+    def get_rebalancing_suggestions(
+        self, holdings: Optional[Sequence[Holding]] = None
+    ) -> List[Dict[str, Any]]:
+        """Generate rebalancing suggestions based on target allocations: each
+        holding's share of the current value of ``holdings`` (e.g. filter_by_tags;
+        None: every holding) against its target %"""
+        holdings = self._chosen(holdings)
         suggestions = []
-        portfolio_value = sum(h.current_value for h in self.holdings)
+        portfolio_value = sum(h.current_value for h in holdings)
 
         if portfolio_value == 0:
             return suggestions
 
-        for holding in self.holdings:
+        for holding in holdings:
             if holding.target_percentage > 0:
                 current_percentage = (holding.current_value / portfolio_value) * 100
                 target_value = (holding.target_percentage / 100) * portfolio_value

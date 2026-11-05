@@ -768,6 +768,91 @@ def test_the_filter_says_when_it_keeps_nothing_and_drops_tags_gone(
     assert changes == [(ltg.UNTAGGED,), ("Steve",), ()]
 
 
+# ---- the tag filter: Portfolio Overview and Rebalancing ----
+
+
+def overview(g):
+    """Portfolio Overview: its totals, and the pie's (label, share) wedges."""
+    totals = {k: label.cget("text") for k, label in g.summary_labels.items()}
+    (ax,) = g.portfolio_fig.axes
+    texts = [t.get_text() for t in ax.texts]  # the wedges' labels, then shares
+    half = len(ax.patches)
+    assert len(texts) == 2 * half
+    return totals, list(zip(texts[:half], texts[half:]))
+
+
+def test_overview_and_rebalancing_follow_the_tag_filter(root, manager):
+    """Acceptance: the totals and the allocation change with the tag filter, and
+    % of Holdings is worked out within the holdings it keeps."""
+    for h in (
+        holding("BTC", 0.5, 40000.0, 60000.0, tags=["Steve"], target_percentage=50),
+        holding(
+            "ETH", 2, 3000.0, 2500.0, tags=["Steve", "Pension"], target_percentage=50
+        ),
+        holding("SOL", 10, 100.0, 150.0, tags=["Pension"], target_percentage=50),
+    ):
+        manager.add_holding(h)
+    g = gui(root, manager)
+    tabs = g.notebook.tabs()
+    filters = (g.holdings_filter, g.overview_filter, g.suggestions_filter)
+    assert len(g.tag_filters) == 3 and set(filters) == set(g.tag_filters)
+    assert shown(g.overview_filter.button, root, g, tabs[1])
+    assert shown(g.suggestions_filter.button, root, g, tabs[2])
+
+    totals, wedges = overview(g)
+    assert totals["holdings_count"] == "3" and totals["total_value"] == "$36,500.00"
+    assert wedges == [("BTC", "82.2%"), ("ETH", "13.7%"), ("SOL", "4.1%")]
+    suggestions = {r[0]: r[1:3] for r in rows(g.suggestions_tree)}
+    assert suggestions == {
+        "BTC": ("Sell", "82.19%"),
+        "ETH": ("Buy", "13.70%"),
+        "SOL": ("Buy", "4.11%"),
+    }
+
+    # chosen in Rebalancing: every sub-tab with the filter follows
+    g.suggestions_filter._on_pick("Pension")
+    settle(root, g)
+    assert [f.text for f in filters] == ["Pension"] * 3
+    assert sorted(rows(g.holdings_tree, 0)) == ["ETH", "SOL"]
+    totals, wedges = overview(g)
+    assert totals == {
+        "holdings_count": "2",
+        "total_cost": "$7,000.00",
+        "total_value": "$6,500.00",
+        "total_pnl": "-$500.00",
+        "total_pnl_pct": "-7.14%",
+    }
+    assert wedges == [("ETH", "76.9%"), ("SOL", "23.1%")]
+    suggestions = {r[0]: r[1:3] for r in rows(g.suggestions_tree)}
+    assert suggestions == {"ETH": ("Sell", "76.92%"), "SOL": ("Buy", "23.08%")}
+
+    g.overview_filter._on_pick("Steve")  # both tags: all three again
+    settle(root, g)
+    assert [f.text for f in filters] == ["Pension, Steve"] * 3
+    assert overview(g)[0]["holdings_count"] == "3"
+
+    # Analytics charts every holding, whatever the filter
+    assert [label for label, _pct in g.analytics_pnl] == ["BTC", "ETH", "SOL"]
+
+
+def test_overview_and_rebalancing_say_when_the_filter_keeps_nothing(root, manager):
+    manager.add_holding(holding("BTC", 1, 10.0, 12.0, tags=["Steve"]))
+    g = gui(root, manager)
+    tabs = g.notebook.tabs()
+    g.set_tag_selection([ltg.UNTAGGED])
+    settle(root, g)
+    assert shown(g.overview_empty, root, g, tabs[1])
+    assert g.overview_empty.cget("text") == ltg.NO_TAG_MATCH
+    assert not g.overview_body.winfo_manager() and g.portfolio_fig.axes == []
+    assert shown(g.overview_filter.button, root, g, tabs[1])  # to choose again
+    assert shown(g.suggestions_table.empty, root, g, tabs[2])
+    assert g.suggestions_table.empty.cget("text") == ltg.NO_TAG_MATCH
+    g.set_tag_selection([])
+    settle(root, g)
+    assert g.overview_body.winfo_manager()
+    assert g.suggestions_table.empty.cget("text") == ltg.NO_TARGETS
+
+
 def test_widths_and_sort_are_kept_between_sessions(root, manager):
     g = gui(root, manager)
     g.holdings_table.sort_by("current_value", descending=True)

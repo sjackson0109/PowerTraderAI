@@ -715,6 +715,21 @@ def _now_str() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _clock(ts: float) -> str:
+    """HH:MM:SS for a time later today, with the date for any other day."""
+    at = time.localtime(ts)
+    if time.strftime("%Y-%m-%d", at) == time.strftime("%Y-%m-%d"):
+        return time.strftime("%H:%M:%S", at)
+    return time.strftime("%d %b %H:%M:%S", at)
+
+
+# A retrain that fell due while the hub was closed waits this long after start-up,
+# so the window is up before trainers start
+OVERDUE_RETRAIN_DELAY_S = 60.0
+# Settings > Training, Retrain every: a model counts as trained for 14 days
+RETRAIN_HOURS_RANGE = (1.0, 336.0)
+
+
 # -----------------------------
 # Neural folder detection
 # -----------------------------
@@ -2593,6 +2608,9 @@ class PowerTraderHub(tk.Tk):
         # NOTE: API server auto-start is handled inside _init_api_server() above.
         # No second toggle here — that would risk a double-bind on the same port.
 
+        # the retrain timers live in memory: set them again from the saved times
+        self._resume_auto_retrains()
+
         self.after(250, self._tick)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -3237,6 +3255,7 @@ class PowerTraderHub(tk.Tk):
 
         # Training automation: auto-retrain timers
         self.auto_retrain_timers = {}  # coin -> timer for auto retraining
+        self.auto_retrain_due = {}  # coin -> when its timer fires (epoch seconds)
 
         # (Duplicate Account section removed - using the one in top_sections_row)
 
@@ -5214,13 +5233,21 @@ Platform: {sys.platform}
         except Exception as e:
             print(f"DEBUG: Error monitoring {coin}: {e}")
 
-    def _schedule_auto_retrain(self, coin: str) -> None:
-        """Schedule automatic re-training for a coin after the configured interval."""
+    def _auto_retrain_hours(self) -> float:
+        """Hours between a coin's successful training and its retrain; 0 means off."""
         if not self.settings.get("training_auto_enabled", True):
-            return
+            return 0.0
+        try:
+            hours = float(self.settings.get("training_auto_interval_hours", 6))
+        except (TypeError, ValueError):
+            return 0.0
+        return hours if math.isfinite(hours) and hours > 0 else 0.0
 
-        interval_hours = self.settings.get("training_auto_interval_hours", 6)
-        if interval_hours <= 0:
+    def _schedule_auto_retrain(self, coin: str, due: Optional[float] = None) -> None:
+        """Schedule automatic re-training for a coin after the configured interval,
+        or at ``due`` (epoch seconds; one already past fires in a minute)."""
+        interval_hours = self._auto_retrain_hours()
+        if not interval_hours:
             return
 
         # Get the Tk root widget for scheduling
@@ -5235,10 +5262,11 @@ Platform: {sys.platform}
 
         self._cancel_auto_retrain(coin)  # an earlier timer for this coin
 
-        # Schedule new auto-retrain
-        interval_ms = int(
-            interval_hours * 60 * 60 * 1000
-        )  # Convert hours to milliseconds
+        now = time.time()
+        if due is None:
+            due = now + interval_hours * 3600
+        due = max(float(due), now + OVERDUE_RETRAIN_DELAY_S)
+        interval_ms = int((due - now) * 1000)
 
         def auto_retrain():
             try:
@@ -5279,11 +5307,49 @@ Platform: {sys.platform}
                 # Remove from timers dict when done
                 if coin in self.auto_retrain_timers:
                     del self.auto_retrain_timers[coin]
+                self.auto_retrain_due.pop(coin, None)
 
         timer_id = root_widget.after(interval_ms, auto_retrain)
         self.auto_retrain_timers[coin] = timer_id
+        self.auto_retrain_due[coin] = due
 
-        print(f"DEBUG: Scheduled auto-retrain for {coin} in {interval_hours} hours")
+        print(f"DEBUG: Scheduled auto-retrain for {coin} at {_clock(due)}")
+
+    def _resume_auto_retrains(self) -> None:
+        """Each trained coin's retrain falls due its interval after its model was
+        saved, so the schedule survives a restart; an overdue coin retrains in a
+        minute. Run at start-up and after Settings change the interval."""
+        hours = self._auto_retrain_hours()
+        if not hours:
+            self.cancel_all_auto_retrains()
+            return
+        for coin in list(self.coins or []):
+            ts = (self.last_training_times or {}).get(coin)
+            if ts and not self._is_trainer_running(coin):
+                self._schedule_auto_retrain(coin, due=float(ts) + hours * 3600)
+
+    def _trainer_status_text(self, running: List[str]) -> str:
+        """The Training tab's line: the trainers running, then the next retrain."""
+        waiting = sorted(
+            (due, coin)
+            for coin, due in (getattr(self, "auto_retrain_due", None) or {}).items()
+            if coin not in running
+        )
+        parts = []
+        if running:
+            parts.append(f"running: {', '.join(running)}")
+        if waiting:
+            due, coin = waiting[0]
+            more = f", +{len(waiting) - 1} more" if len(waiting) > 1 else ""
+            if running:
+                parts.append(f"next: {coin} at {_clock(due)}{more}")
+            else:
+                parts.append(f"idle until {_clock(due)} (next: {coin}{more})")
+        if parts:
+            return " · ".join(parts)
+        if not self._auto_retrain_hours():
+            return "(no trainers running; auto-retrain off)"
+        return "(no trainers running)"
 
     def _build_training_table(self) -> None:
         """One cell per coin: status dot, symbol and trained-for. Clicking a cell
@@ -5566,6 +5632,7 @@ Platform: {sys.platform}
 
     def _cancel_auto_retrain(self, coin: str) -> None:
         """Cancel ``coin``'s scheduled auto-retrain, if it has one."""
+        self.auto_retrain_due.pop(coin, None)
         timer_id = self.auto_retrain_timers.pop(coin, None)
         if timer_id is None:
             return
@@ -5896,13 +5963,7 @@ Platform: {sys.platform}
                 for c, lp in self.trainers.items()
                 if lp.info.proc and lp.info.proc.poll() is None
             ]
-            self.trainer_status_lbl.config(
-                text=(
-                    f"running: {', '.join(running)}"
-                    if running
-                    else "(no trainers running)"
-                )
-            )
+            self.trainer_status_lbl.config(text=self._trainer_status_text(running))
 
             lp = self.trainers.get(sel)
             if lp:
@@ -6617,6 +6678,9 @@ Platform: {sys.platform}
                             f"\nAuto-retrain: about every {every:g} h after a "
                             "successful run (Settings)."
                         )
+                due = (getattr(self, "auto_retrain_due", None) or {}).get(coin)
+                if due:
+                    auto += f"\nNext auto-retrain: {_clock(due)}."
             except Exception:
                 pass
             return (
@@ -7610,6 +7674,22 @@ Platform: {sys.platform}
         r += 1
         add_row(r, "Minimum hit rate after fees %:", min_hit_rate_var)
         r += 1
+        auto_retrain_var = tk.BooleanVar(
+            master=win, value=bool(self.settings.get("training_auto_enabled", True))
+        )
+        try:
+            retrain_hours = float(self.settings.get("training_auto_interval_hours", 6))
+        except (TypeError, ValueError):
+            retrain_hours = 6.0
+        retrain_hours_var = tk.StringVar(master=win, value=f"{retrain_hours:g}")
+        ttk.Checkbutton(
+            frm,
+            text="Retrain each trained coin automatically",
+            variable=auto_retrain_var,
+        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=6)
+        r += 1
+        add_row(r, "Retrain every (hours):", retrain_hours_var)
+        r += 1
 
         ttk.Separator(frm, orient="horizontal").grid(
             row=r, column=0, columnspan=3, sticky="ew", pady=10
@@ -7990,6 +8070,16 @@ Platform: {sys.platform}
                         "Minimum scored signals is at least 1, and the minimum hit "
                         "rate between 0 and 100 %"
                     )
+                retrain_hours = float(retrain_hours_var.get().strip())
+                if (
+                    not RETRAIN_HOURS_RANGE[0]
+                    <= retrain_hours
+                    <= RETRAIN_HOURS_RANGE[1]
+                ):
+                    raise ValueError(
+                        "Retrain every is between {:g} and {:g} hours (a model counts "
+                        "as trained for 14 days)".format(*RETRAIN_HOURS_RANGE)
+                    )
 
                 # Track coins before changes so we can detect newly added coins
                 prev_coins = set(
@@ -8118,6 +8208,12 @@ Platform: {sys.platform}
                 # --- Dark Theme and Notifications ---
                 self.settings["dark_theme"] = dark_theme_var.get()
                 self.settings["training_notifications"] = notifications_var.get()
+                retrain_was = (
+                    self.settings.get("training_auto_enabled", True),
+                    self.settings.get("training_auto_interval_hours", 6),
+                )
+                self.settings["training_auto_enabled"] = bool(auto_retrain_var.get())
+                self.settings["training_auto_interval_hours"] = retrain_hours
 
                 self._save_settings()
                 training_settings.save_training_settings(
@@ -8166,6 +8262,11 @@ Platform: {sys.platform}
 
                 # Refresh all coin-driven UI (dropdowns + chart tabs)
                 self._refresh_coin_dependent_ui(prev_coins)
+                if retrain_was != (
+                    self.settings["training_auto_enabled"],
+                    self.settings["training_auto_interval_hours"],
+                ):
+                    self._resume_auto_retrains()
 
                 # Refresh exchange system with new settings
                 self.refresh_exchange_settings()

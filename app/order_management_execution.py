@@ -81,6 +81,7 @@ PERCENT = "percent"
 ATR = "atr"
 ATR_LENGTH = 14  # bars in the average true range of a trailing stop's ATR multiple
 ATR_TF = "1h"  # of these candles
+ATR_TF_TEXT = "1-hour"
 ATR_HISTORY_BARS = 5 * ATR_LENGTH  # Wilder smoothing needs room to settle
 
 # How an order is carried out (ManagedOrder.handling)
@@ -494,7 +495,7 @@ class OrderExecutor:
         if settings.uses_preview:
             return (
                 "Live trading is set to preview orders, so nothing is placed: turn "
-                "off Preview orders in File > Trading Mode to place orders."
+                "off Preview orders only in File > Trading Mode to place orders."
             )
         reason = self.halt_reason(settings.data_subdir)
         if reason:

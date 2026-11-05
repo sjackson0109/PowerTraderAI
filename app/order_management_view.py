@@ -1,23 +1,30 @@
-"""The hub's Order Management tab (owner, 2026-11-04).
+"""The hub's Order Management tab (owner, 2026-11-04; order types 2026-11-05).
 
-A toolbar (Create Order, Refresh, Cancel Selected, a status filter and a search)
-over the orders table, and the Order Notifications under it, with a splitter
-between them. Orders and notifications are read from the order management database
-(order_management_db) and orders are created and cancelled through its OrderManager,
-as before; nothing here changes how they are stored or executed.
+A toolbar (Create Order, Refresh, Cancel Selected, Modify Selected, a status filter
+and a search) over the Active Orders table, and the Order Notifications under it,
+with a splitter between them. Orders and notifications are read from the order
+management database (order_management_db). An OCO or Bracket order is one row with
+its legs under it; cancelling it, or any of its legs, cancels them all.
 
-Create Order opens ``OrderDialog``:
+Create Order opens ``OrderDialog``. Its order types are Market, Limit, Stop-Limit,
+Trailing Stop, OCO and Bracket, each with only the fields it needs:
 
 * the coin shown in the chart (the first coin while the chart shows the account),
-  as the symbol of the exchange the order is for: the live exchange in live mode,
-  otherwise the exchange layer's, primary exchange first (``BTC-USD`` on Coinbase,
-  ``BTCUSDT`` on Binance);
+  from the coins in Settings, as the symbol of the exchange the order is for: the
+  live exchange in live mode, otherwise the exchange layer's, primary exchange
+  first (``BTC-USD`` on Coinbase, ``BTCUSDT`` on Binance);
 * that exchange's current bid and ask, which fill the price fields (a buy's from
   the ask, a sell's from the bid);
-* the order's estimated value, and its fee from the connector's ``trading_fees()``
-  where it has one;
+* how the order is carried out: placed on the exchange as its own order where the
+  exchange has that kind, else managed by PowerTrader (order_management_execution);
+* the order's estimated value, and its fee from ``trading_fees()``;
 * the account it is for (paper, or the live exchange), and a confirmation before it
-  is created. A buy worth more than Buying Power is refused.
+  is created. A buy worth more than Buying Power is refused, and so is every order
+  while trading is halted (Settings > Risk).
+
+The tab's monitor (``refresh_ms``) reads the database again and lets the
+OrderExecutor carry the open orders on (``OrderExecutor.check``), on a worker thread
+that stops with the tab.
 """
 
 import queue
@@ -31,6 +38,8 @@ from tkinter import font as tkfont
 from tkinter import messagebox, ttk
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+import order_management_execution as ome
+import ui_jobs
 import ui_table
 import ui_tokens
 
@@ -66,12 +75,16 @@ ORDER_HEADINGS = {
     "order_id": "Order ID",
 }
 ORDER_NUMERIC = ("quantity", "price", "stop")
+LEG_HEADING = "Leg"  # the tree column: an OCO or Bracket order's legs are named there
+LEG_NAMES = {"entry": "Entry", "take_profit": "Take-profit", "stop": "Stop"}
+LEG_ORDER = {name: n for n, name in enumerate(LEG_NAMES.values())}
 
 OPEN_STATUSES = ("pending", "submitted", "partial")
 STATUS_FILTERS: Tuple[Tuple[str, Optional[Tuple[str, ...]]], ...] = (
     ("Open", OPEN_STATUSES),
     ("Filled", ("filled",)),
     ("Cancelled", ("cancelled",)),
+    ("Rejected", ("rejected", "expired")),
     ("All", None),
 )
 NO_ORDERS = "No orders yet"
@@ -88,24 +101,43 @@ MIN_NOTES_PX = 90  # the notifications pane: its title row and a few rows
 # ---- order types (the dialog's names; the table shows the same) ----
 
 MARKET = "Market"
-STOP_LOSS = "Stop Loss"
+LIMIT = "Limit"
 STOP_LIMIT = "Stop-Limit"
+TRAILING_STOP = "Trailing Stop"
+OCO = "OCO"
+BRACKET = "Bracket"
+ORDER_TYPES = (MARKET, LIMIT, STOP_LIMIT, TRAILING_STOP, OCO, BRACKET)
+KIND_OF = {
+    MARKET: ome.MARKET,
+    LIMIT: ome.LIMIT,
+    STOP_LIMIT: ome.STOP_LIMIT,
+    TRAILING_STOP: ome.TRAILING_STOP,
+    OCO: ome.OCO,
+    BRACKET: ome.BRACKET,
+}
+NAME_OF = {kind: name for name, kind in KIND_OF.items()}
+TYPE_ROWS = 3  # the most rows an order type's own fields take (Bracket)
+SIDES = ("Buy", "Sell")
+TRAIL_PERCENT = "Percent"
+TRAIL_ATR = "ATR multiple"
+TRAIL_MODES = (TRAIL_PERCENT, TRAIL_ATR)
+ENTRY_TYPES = (MARKET, LIMIT)
+
+# The names of orders made before these types (their rows are still shown)
+STOP_LOSS = "Stop Loss"
 TAKE_PROFIT = "Take Profit"
 DCA = "DCA"
 CONDITIONAL = "Conditional"
-ORDER_TYPES = (MARKET, STOP_LOSS, STOP_LIMIT, TAKE_PROFIT, DCA, CONDITIONAL)
-FIXED_SIDE = {STOP_LOSS: "Sell", STOP_LIMIT: "Sell", TAKE_PROFIT: "Sell", DCA: "Buy"}
-TYPE_ROWS = 2  # the most rows an order type's own fields take (Stop-Limit, DCA)
-SIDES = ("Buy", "Sell")
 
 TYPE_NAMES = {
     "market": MARKET,
-    "limit": "Limit",
-    "stop": STOP_LOSS,
+    "limit": LIMIT,
+    "stop": "Stop",
     "stop_limit": STOP_LIMIT,
+    "trailing_stop": TRAILING_STOP,
     "conditional": CONDITIONAL,
-    "bracket": "Bracket",
-    "oco": "OCO",
+    "bracket": BRACKET,
+    "oco": OCO,
 }
 CONDITION_NAMES = {
     "price": "Price",
@@ -116,8 +148,6 @@ CONDITION_NAMES = {
     "portfolio_pct": "Portfolio %",
 }
 OPERATOR_SIGNS = {"gt": ">", "lt": "<", "gte": "≥", "lte": "≤", "eq": "=", "ne": "≠"}
-CONDITIONS = ("Price", "Neural level", "Volume")
-OPERATORS = ("≥", "≤", ">", "<", "=")
 
 
 def _value(enum_or_text: Any) -> str:
@@ -157,12 +187,15 @@ def local_time(when: Optional[datetime]) -> str:
 
 
 def type_name(order_type: Any, tag: Optional[str]) -> str:
-    """An order's type as the table shows it: its tag tells a take-profit from a
-    plain limit order, and a DCA stage from a plain conditional order."""
+    """An order's type as the table shows it: an older order's tag tells a
+    take-profit or stop-loss from a plain limit or stop order, and a DCA stage from
+    a plain conditional order."""
     kind = _value(order_type)
     tag = str(tag or "").upper()
     if kind == "limit" and tag == "TAKE_PROFIT":
         return TAKE_PROFIT
+    if kind == "stop" and tag in ("STOP_LOSS", ""):
+        return STOP_LOSS
     if kind == "conditional" and tag.startswith("DCA_STAGE_"):
         return f"DCA (stage {tag[len('DCA_STAGE_'):]})"
     return TYPE_NAMES.get(kind) or kind.replace("_", " ").title()
@@ -176,6 +209,40 @@ def condition_text(condition_type: Any, operator: Any, target: Any, met=False) -
         f"{number:,.8f}".rstrip("0").rstrip(".") if number is not None else str(target)
     )
     return f"{name} {sign} {shown}" + (" (met)" if met else "")
+
+
+def _grouped(number: Any) -> str:
+    value = _float(number)
+    return "" if value is None else f"{value:,.8f}".rstrip("0").rstrip(".")
+
+
+def how_text(order: Any, m: Any) -> str:
+    """What the Conditions column says of how an order is carried out: its trail,
+    where it is, and what last held it up."""
+    if m is None:
+        return ""
+    parts = []
+    if m.trail_mode == ome.PERCENT and m.trail_value is not None:
+        parts.append(f"Trail {_grouped(m.trail_value)}%")
+    elif m.trail_mode == ome.ATR and m.trail_value is not None:
+        parts.append(f"Trail {_grouped(m.trail_value)} × ATR {_grouped(m.atr)}")
+    if m.best_price is not None:
+        parts.append(f"best {_grouped(m.best_price)}")
+    if m.state == "waiting":
+        parts.append("Waits for the entry to fill")
+    elif m.state == "triggered":
+        parts.append("Stop reached: the limit works")
+    open_ = _value(order.status) in OPEN_STATUSES
+    if open_ and m.role in ("order", "group"):
+        if m.handling == ome.BY_EXCHANGE:
+            from pt_exchange_abstraction import exchange_name
+
+            parts.append(f"On {exchange_name(m.exchange)}")
+        elif _value(order.order_type) != "market":
+            parts.append("Managed by PowerTrader")
+    if m.note:
+        parts.append(str(m.note))
+    return "; ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -193,18 +260,24 @@ class OrderRow:
     stop: Optional[float]
     status: str  # OrderStatus value: pending, submitted, partial, filled, ...
     conditions: str
+    parent: str = ""  # an OCO or Bracket order's id, for its legs
+    leg: str = ""  # the leg's name: Entry, Take-profit, Stop
 
     @property
     def is_open(self) -> bool:
         return self.status in OPEN_STATUSES
 
 
-def order_row(order: Any) -> OrderRow:
-    """The OrderRow of an ``Order`` read in an open session."""
-    conditions = "; ".join(
+def order_row(order: Any, m: Any = None) -> OrderRow:
+    """The OrderRow of an ``Order`` (and its ManagedOrder, when Order Management
+    carries it out) read in an open session."""
+    conditions = [
         condition_text(c.condition_type, c.operator, c.target_value, bool(c.is_met))
         for c in (order.conditions or [])
-    )
+    ]
+    how = how_text(order, m)
+    if how:
+        conditions.append(how)
     return OrderRow(
         id=str(order.id),
         client_id=str(order.client_order_id or ""),
@@ -216,17 +289,37 @@ def order_row(order: Any) -> OrderRow:
         price=_float(order.price),
         stop=_float(order.stop_price),
         status=_value(order.status),
-        conditions=conditions,
+        conditions="; ".join(conditions),
+        parent=str(order.parent_order_id or ""),
+        leg=LEG_NAMES.get(getattr(m, "role", ""), ""),
     )
 
 
 def load_orders(db: Any, limit: int = ORDER_LIMIT) -> List[OrderRow]:
-    """The newest ``limit`` orders of the database, newest first (read only)."""
-    from order_management_models import Order
+    """The newest ``limit`` orders of the database, newest first, with the legs of
+    any OCO or Bracket order among them (read only)."""
+    from order_management_models import ManagedOrder, Order
 
     with db.get_session() as session:
-        orders = session.query(Order).order_by(Order.created_at.desc()).limit(limit)
-        return [order_row(o) for o in orders.all()]
+        rows = (
+            session.query(Order, ManagedOrder)
+            .outerjoin(ManagedOrder, ManagedOrder.order_id == Order.id)
+            .order_by(Order.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        out = [order_row(o, m) for o, m in rows]
+        have = {r.id for r in out}
+        groups = [o.id for o, m in rows if m is not None and m.role == "group"]
+        if groups:
+            legs = (
+                session.query(Order, ManagedOrder)
+                .outerjoin(ManagedOrder, ManagedOrder.order_id == Order.id)
+                .filter(Order.parent_order_id.in_(groups))
+                .all()
+            )
+            out += [order_row(o, m) for o, m in legs if str(o.id) not in have]
+        return out
 
 
 @dataclass(frozen=True)
@@ -294,33 +387,43 @@ class MarketQuote:
     pair: str  # that exchange's own market, e.g. "BTC-USD"
     bid: Optional[float] = None
     ask: Optional[float] = None
-    fee_rate: Optional[float] = None  # the taker fee, as a fraction (0.006 = 0.6%)
+    fees: Any = None  # TradingFees (maker and taker rates, as fractions), or None
     problem: str = ""  # why there is no bid and ask, when there are none
 
+    @property
+    def fee_rate(self) -> Optional[float]:
+        """The taker rate: a market order's."""
+        return self.fees.taker if self.fees is not None else None
 
-def fee_rate(connector: Any) -> Optional[float]:
-    """The taker fee rate (a fraction) from the connector's ``trading_fees()``: a
-    mapping with "taker" (and "maker") rates as fractions. None when the connector
-    has no ``trading_fees()`` or it gives no taker rate."""
+
+def trading_fees_of(connector: Any, symbol: str) -> Any:
+    """The connector's ``trading_fees(symbol)`` (a TradingFees), or None when it has
+    none or gives no usable rates."""
+    from pt_exchange_abstraction import usable_fees
+
     fees = getattr(connector, "trading_fees", None)
     if not callable(fees):
         return None
     try:
-        answer = fees()
+        return usable_fees(fees(symbol))
     except Exception:
         return None
-    taker = answer.get("taker") if isinstance(answer, dict) else None
-    rate = _float(taker)
-    return rate if rate is not None and 0.0 <= rate < 1.0 else None
 
 
 class ExchangeMarket:
-    """Symbols, bid and ask, and fees for the order dialog. A live order's come from
-    the live exchange; otherwise from the exchanges in Settings, the primary first
-    (``pt_multi_exchange.market_exchanges``, public market data: no credentials)."""
+    """Symbols, bid and ask, fees and a coin's ATR for the order dialog. A live
+    order's come from the live exchange; otherwise from the exchanges in Settings,
+    the primary first (``pt_multi_exchange.market_exchanges``, public market data:
+    no credentials). ``atr(coin, exchange)`` is for tests (default:
+    ``order_management_execution.candle_atr``)."""
 
-    def __init__(self, layer: Optional[Callable[[], Any]] = None):
+    def __init__(
+        self,
+        layer: Optional[Callable[[], Any]] = None,
+        atr: Optional[Callable[[str, str], Optional[float]]] = None,
+    ):
         self._layer = layer
+        self._atr = atr
         self._connectors: Dict[str, Any] = {}
 
     def _manager(self):
@@ -330,7 +433,7 @@ class ExchangeMarket:
 
         return market_exchanges()
 
-    def _connector(self, exchange: str):
+    def connector(self, exchange: str):
         """The exchange's connector: the layer's when it is connected there, else
         one built without credentials (as the hub's Exchange line does)."""
         import pt_exchanges  # noqa: F401  (registers the connectors)
@@ -349,6 +452,11 @@ class ExchangeMarket:
             )
         return self._connectors[exchange]
 
+    def atr(self, coin: str, exchange: str = "") -> Optional[float]:
+        if self._atr is not None:
+            return self._atr(coin, exchange)
+        return ome.candle_atr(coin, exchange)
+
     def lookup(self, coin: str, broker: Optional[str] = None) -> MarketQuote:
         """``coin``'s market on the exchange an order is for: ``broker`` (the live
         exchange) when given, otherwise the layer's, primary first."""
@@ -356,7 +464,7 @@ class ExchangeMarket:
 
         symbol = dollar_symbol(coin)
         if broker:
-            connector = self._connector(broker)
+            connector = self.connector(broker)
             pair = connector.market_symbol(symbol)
             try:
                 quote = connector.quote(symbol)
@@ -367,7 +475,7 @@ class ExchangeMarket:
             if quote is None or not (quote.bid > 0 and quote.ask > 0):
                 return MarketQuote(broker, pair, problem=problem or "No price")
             return MarketQuote(
-                broker, pair, quote.bid, quote.ask, fee_rate(connector), ""
+                broker, pair, quote.bid, quote.ask, trading_fees_of(connector, symbol)
             )
         try:
             manager = self._manager()
@@ -381,10 +489,12 @@ class ExchangeMarket:
         except Exception:
             answer = None
         if answer is None:
-            first = manager.exchange_manager.exchanges[ExchangeType(names[0])]
+            from exchange_symbols import market_pair
+
+            pair = market_pair(coin, lambda: manager)
             return MarketQuote(
-                names[0],
-                first.market_symbol(symbol),
+                pair.exchange or names[0],
+                pair.pair,
                 problem=f"No price for {coin} from "
                 + ", ".join(exchange_name(n) for n in names),
             )
@@ -396,7 +506,7 @@ class ExchangeMarket:
             answer.pair,
             float(answer.value.bid),
             float(answer.value.ask),
-            fee_rate(connector),
+            trading_fees_of(connector, symbol),
         )
 
 
@@ -414,8 +524,8 @@ class OrderDialog(tk.Toplevel):
 
     ``coins`` are the hub's coins and ``coin`` the one to start with; ``trading``
     the hub's trading settings; ``buying_power`` the account's (None when not
-    known); ``market`` an ExchangeMarket; ``manager`` the OrderManager the order is
-    created through; ``on_created(order_id)`` is called once it is.
+    known); ``market`` an ExchangeMarket; ``executor`` the OrderExecutor the order
+    is created through; ``on_created(order_id)`` is called once it is.
     ``background=False`` looks the market up at once (tests)."""
 
     def __init__(
@@ -427,7 +537,7 @@ class OrderDialog(tk.Toplevel):
         trading: Any,
         buying_power: Optional[float],
         market: Any,
-        manager: Any,
+        executor: Any,
         on_created: Callable[[str], None] = lambda _id: None,
         money: Callable[[float], str] = _plain_money,
         price: Callable[[float], str] = _plain_price,
@@ -441,14 +551,16 @@ class OrderDialog(tk.Toplevel):
         self.trading = trading
         self.buying_power = buying_power
         self.market = market
-        self.manager = manager
+        self.executor = executor
         self.on_created = on_created
         self._money, self._price = money, price
         self._background = background
         self.quote: Optional[MarketQuote] = None
+        self.atr: Optional[float] = None
         self.created_id: Optional[str] = None
-        self._results: "queue.Queue[Tuple[str, MarketQuote]]" = queue.Queue()
+        self._results: "queue.Queue[Tuple[str, str, Any]]" = queue.Queue()
         self._account, self._banner = account_text(trading)
+        self._prefilled: Dict[str, str] = {}
 
         gap = ui_tokens.SPACE["sm"]
         body = ttk.Frame(self, padding=ui_tokens.SPACE["lg"])
@@ -475,14 +587,12 @@ class OrderDialog(tk.Toplevel):
         self.type_var = tk.StringVar(value=MARKET)
         self.side_var = tk.StringVar(value="Buy")
         self.qty_var = tk.StringVar()
+        self.limit_var = tk.StringVar()  # a limit's, a stop-limit's, a bracket entry's
         self.stop_var = tk.StringVar()
-        self.limit_var = tk.StringVar()
-        self.target_var = tk.StringVar()
-        self.stage_var = tk.StringVar(value="1")
-        self.level_var = tk.StringVar()
-        self.cond_type_var = tk.StringVar(value=CONDITIONS[0])
-        self.cond_op_var = tk.StringVar(value=OPERATORS[0])
-        self.cond_value_var = tk.StringVar()
+        self.tp_var = tk.StringVar()
+        self.trail_mode_var = tk.StringVar(value=TRAIL_PERCENT)
+        self.trail_var = tk.StringVar(value="2")
+        self.entry_var = tk.StringVar(value=MARKET)
 
         row = 1
 
@@ -526,19 +636,24 @@ class OrderDialog(tk.Toplevel):
         self._body = body
         self._fields_row = row
         self._type_widgets: List[tk.Widget] = []
+        self.fields: Dict[str, tk.Widget] = {}  # label -> the shown field (tests)
         row += TYPE_ROWS
 
         ttk.Separator(body).grid(
             row=row, column=0, columnspan=2, sticky="ew", pady=(gap + 2, 0)
         )
         row += 1
+        self.how_label = ttk.Label(body, text="", wraplength=340, justify="left")
+        field("Execution", self.how_label)
         self.value_label = ttk.Label(body, text="")
         field("Estimated value", self.value_label)
         self.fee_label = ttk.Label(body, text="")
         field("Fee", self.fee_label)
         self.power_label = ttk.Label(body, text="")
         field("Buying Power", self.power_label)
-        self.warning_label = ttk.Label(body, text="", style="Bad.TLabel")
+        self.warning_label = ttk.Label(
+            body, text="", style="Bad.TLabel", wraplength=420, justify="left"
+        )
         self.warning_label.grid(
             row=row, column=0, columnspan=2, sticky="w", pady=(gap, 0)
         )
@@ -555,11 +670,14 @@ class OrderDialog(tk.Toplevel):
         self.coin_var.trace_add("write", lambda *_: self._coin_changed())
         self.type_var.trace_add("write", lambda *_: self._type_changed())
         self.side_var.trace_add("write", lambda *_: self._side_changed())
+        self.trail_mode_var.trace_add("write", lambda *_: self._trail_mode_changed())
+        self.entry_var.trace_add("write", lambda *_: self._type_changed())
         for var in (
             self.qty_var,
             self.stop_var,
             self.limit_var,
-            self.target_var,
+            self.tp_var,
+            self.trail_var,
         ):
             var.trace_add("write", lambda *_: self.update_estimate())
         self.bind("<Escape>", lambda _e: self.destroy())
@@ -580,21 +698,26 @@ class OrderDialog(tk.Toplevel):
             return getattr(self.trading, "active_broker", None) or None
         return None
 
+    def _run(self, what: str, coin: str, job: Callable[[], Any]) -> None:
+        """``job`` (a lookup) now, or on a thread whose answer ``_poll`` shows."""
+        if not self._background:
+            self._show(what, coin, job())
+            return
+        threading.Thread(
+            target=lambda: self._results.put((what, coin, job())), daemon=True
+        ).start()
+        self.after(50, self._poll)
+
     def _coin_changed(self) -> None:
         coin = self.coin_var.get()
         self.quote = None
+        self.atr = None
         self.symbol_label.configure(text=f"{coin} (looking up the market...)")
         self.quote_label.configure(text="")
         self.update_estimate()
         if not coin:
             return
-        if not self._background:
-            self._show_quote(coin, self._lookup(coin))
-            return
-        threading.Thread(
-            target=lambda: self._results.put((coin, self._lookup(coin))), daemon=True
-        ).start()
-        self.after(50, self._poll)
+        self._run("quote", coin, lambda: self._lookup(coin))
 
     def _lookup(self, coin: str) -> MarketQuote:
         try:
@@ -602,20 +725,30 @@ class OrderDialog(tk.Toplevel):
         except Exception as exc:
             return MarketQuote("", "", problem=f"{type(exc).__name__}: {exc}")
 
+    def _look_up_atr(self) -> None:
+        coin = self.coin_var.get()
+        exchange = self.quote.exchange if self.quote else ""
+
+        def job():
+            try:
+                return self.market.atr(coin, exchange)
+            except Exception:
+                return None
+
+        self._run("atr", coin, job)
+
     def _poll(self) -> None:
         try:
-            coin, quote = self._results.get_nowait()
+            what, coin, answer = self._results.get_nowait()
         except queue.Empty:
             try:
                 self.after(50, self._poll)
             except tk.TclError:
                 pass  # closed
             return
-        self._show_quote(coin, quote)
+        self._show(what, coin, answer)
 
-    def _show_quote(self, coin: str, quote: MarketQuote) -> None:
-        from pt_exchange_abstraction import exchange_name
-
+    def _show(self, what: str, coin: str, answer: Any) -> None:
         if coin != self.coin_var.get():
             return  # an older coin's answer
         try:
@@ -623,9 +756,18 @@ class OrderDialog(tk.Toplevel):
                 return
         except tk.TclError:
             return
+        if what == "atr":
+            self.atr = answer
+            self.update_estimate()
+            return
+        self._show_quote(answer)
+
+    def _show_quote(self, quote: MarketQuote) -> None:
+        from pt_exchange_abstraction import exchange_name
+
         self.quote = quote
         where = f" on {exchange_name(quote.exchange)}" if quote.exchange else ""
-        self.symbol_label.configure(text=f"{quote.pair or coin}{where}")
+        self.symbol_label.configure(text=f"{quote.pair or self.coin_var.get()}{where}")
         if quote.bid and quote.ask:
             self.quote_label.configure(
                 text=f"{self._price(quote.bid)} / {self._price(quote.ask)}"
@@ -633,42 +775,42 @@ class OrderDialog(tk.Toplevel):
         else:
             self.quote_label.configure(text=quote.problem or "No price")
         self.fill_prices()
+        if self.trail_mode_var.get() == TRAIL_ATR:
+            self._look_up_atr()
         self.update_estimate()
 
-    def fill_prices(self) -> None:
-        """The price fields from the current bid and ask: a buy's from the ask, a
-        sell's from the bid."""
-        q = self.quote
-        if q is None or not (q.bid and q.ask):
+    def fill_prices(self, only_prefilled: bool = False) -> None:
+        """The price fields from the market price for the side: the ask for a buy,
+        the bid for a sell. ``only_prefilled``: only fields not typed in since."""
+        price = self.market_price()
+        if price is None:
             return
-        for var in (self.stop_var, self.limit_var, self.target_var):
-            var.set(plain_number(q.bid))  # stops and take-profits sell
-        self.cond_value_var.set(
-            plain_number(q.ask if self.side_var.get() == "Buy" else q.bid)
-        )
+        text = plain_number(price)
+        for name, var in (
+            ("limit", self.limit_var),
+            ("stop", self.stop_var),
+            ("tp", self.tp_var),
+        ):
+            if only_prefilled and var.get() != self._prefilled.get(name):
+                continue
+            var.set(text)
+            self._prefilled[name] = text
 
     def _side_changed(self) -> None:
-        """A condition value still at the bid or ask follows the side."""
-        q = self.quote
-        if q is not None and q.bid and q.ask:
-            prefilled = {plain_number(q.bid), plain_number(q.ask)}
-            if self.cond_value_var.get() in prefilled:
-                self.cond_value_var.set(
-                    plain_number(q.ask if self.side_var.get() == "Buy" else q.bid)
-                )
+        """Prices still at the market price follow the side."""
+        self.fill_prices(only_prefilled=True)
         self.update_estimate()
 
     # ---- the order type ----
 
+    def kind(self) -> str:
+        return KIND_OF.get(self.type_var.get(), ome.MARKET)
+
     def _type_changed(self) -> None:
-        kind = self.type_var.get()
-        fixed = FIXED_SIDE.get(kind)
-        if fixed:
-            self.side_var.set(fixed)
-        self.side_box.configure(state="disabled" if fixed else "readonly")
         for widget in self._type_widgets:
             widget.destroy()
         self._type_widgets = []
+        self.fields = {}
         gap = ui_tokens.SPACE["sm"]
         body = self._body
         row = self._fields_row
@@ -679,47 +821,67 @@ class OrderDialog(tk.Toplevel):
             name.grid(row=row, column=0, sticky="w", padx=(0, gap), pady=(gap, 0))
             widget.grid(row=row, column=1, sticky="ew", pady=(gap, 0))
             self._type_widgets += [name, widget]
+            self.fields[label] = widget
             row += 1
 
-        def entry(var: tk.StringVar) -> ttk.Entry:
-            return ttk.Entry(body, textvariable=var, width=16)
+        def entry(var: tk.StringVar, parent=None) -> ttk.Entry:
+            return ttk.Entry(parent or body, textvariable=var, width=16)
 
+        kind = self.type_var.get()
         if kind == MARKET:
             self.market_price_label = ttk.Label(body, text="")
             field("Price", self.market_price_label)
-        elif kind == STOP_LOSS:
-            field("Stop price", entry(self.stop_var))
+        elif kind == LIMIT:
+            field("Limit price", entry(self.limit_var))
         elif kind == STOP_LIMIT:
             field("Stop price", entry(self.stop_var))
             field("Limit price", entry(self.limit_var))
-        elif kind == TAKE_PROFIT:
-            field("Target price", entry(self.target_var))
-        elif kind == DCA:
-            field("DCA stage", entry(self.stage_var))
-            field("Neural level ≥", entry(self.level_var))
-        elif kind == CONDITIONAL:
+        elif kind == TRAILING_STOP:
             line = ttk.Frame(body)
             ttk.Combobox(
                 line,
-                textvariable=self.cond_type_var,
-                values=CONDITIONS,
+                textvariable=self.trail_mode_var,
+                values=TRAIL_MODES,
                 state="readonly",
-                width=12,
+                width=13,
             ).pack(side="left")
-            ttk.Combobox(
-                line,
-                textvariable=self.cond_op_var,
-                values=OPERATORS,
-                state="readonly",
-                width=3,
-            ).pack(side="left", padx=(gap, 0))
-            ttk.Entry(line, textvariable=self.cond_value_var, width=14).pack(
+            entry(self.trail_var, line).pack(
                 side="left", padx=(gap, 0), fill="x", expand=True
             )
-            field("When", line)
+            field("Trail", line)
+            self.trail_label = ttk.Label(body, text="", style="Muted.TLabel")
+            field("Trail distance", self.trail_label)
+        elif kind == OCO:
+            field("Take-profit price", entry(self.tp_var))
+            field("Stop price", entry(self.stop_var))
+        elif kind == BRACKET:
+            line = ttk.Frame(body)
+            ttk.Combobox(
+                line,
+                textvariable=self.entry_var,
+                values=ENTRY_TYPES,
+                state="readonly",
+                width=8,
+            ).pack(side="left")
+            limit = entry(self.limit_var, line)
+            limit.pack(side="left", padx=(gap, 0), fill="x", expand=True)
+            if self.entry_var.get() != LIMIT:
+                limit.state(["disabled"])
+            field("Entry", line)
+            field("Take-profit price", entry(self.tp_var))
+            field("Stop price", entry(self.stop_var))
         self.update_estimate()
 
-    # ---- the estimate ----
+    def _trail_mode_changed(self) -> None:
+        if self.trail_mode_var.get() == TRAIL_ATR:
+            self.trail_var.set("2")
+            if self.atr is None and self.quote is not None:
+                self._look_up_atr()
+        else:
+            self.trail_var.set("2")
+        self.update_estimate()
+
+    # ---- the order ----
 
     def market_price(self) -> Optional[float]:
         """The current price for the side: the ask for a buy, the bid for a sell."""
@@ -728,18 +890,73 @@ class OrderDialog(tk.Toplevel):
             return None
         return q.ask if self.side_var.get() == "Buy" else q.bid
 
+    def spec(self) -> Optional[ome.OrderSpec]:
+        """The order the fields describe (None without a quantity); prices that are
+        not filled in are None."""
+        qty = parse_amount(self.qty_var.get())
+        if qty is None:
+            return None
+        kind = self.kind()
+        q = self.quote
+        mode = ome.PERCENT if self.trail_mode_var.get() == TRAIL_PERCENT else ome.ATR
+        limit = parse_amount(self.limit_var.get())
+        if kind == ome.BRACKET and self.entry_var.get() != LIMIT:
+            limit = None
+        return ome.OrderSpec(
+            kind=kind,
+            coin=self.coin_var.get(),
+            side=self.side_var.get().lower(),
+            quantity=qty,
+            exchange=q.exchange if q else "",
+            pair=q.pair if q else "",
+            price=limit if kind in (ome.LIMIT, ome.STOP_LIMIT, ome.BRACKET) else None,
+            stop_price=(
+                parse_amount(self.stop_var.get())
+                if kind in (ome.STOP_LIMIT, ome.OCO, ome.BRACKET)
+                else None
+            ),
+            take_profit=(
+                parse_amount(self.tp_var.get())
+                if kind in (ome.OCO, ome.BRACKET)
+                else None
+            ),
+            trail_mode=mode if kind == ome.TRAILING_STOP else None,
+            trail_value=(
+                parse_amount(self.trail_var.get())
+                if kind == ome.TRAILING_STOP
+                else None
+            ),
+            atr=self.atr if kind == ome.TRAILING_STOP and mode == ome.ATR else None,
+            reference=self.market_price(),
+        )
+
     def order_price(self) -> Optional[float]:
-        """The price the order's value is estimated at."""
-        kind = self.type_var.get()
-        typed = {
-            STOP_LOSS: self.stop_var,
-            STOP_LIMIT: self.limit_var,
-            TAKE_PROFIT: self.target_var,
-        }.get(kind)
-        if typed is not None:
-            number = parse_amount(typed.get())
+        """The price the order's value is estimated at: its limit (a limit,
+        stop-limit or bracket limit entry), the higher of an OCO buy's prices or an
+        OCO sell's take-profit, else the market price."""
+        kind = self.kind()
+        if kind in (ome.LIMIT, ome.STOP_LIMIT) or (
+            kind == ome.BRACKET and self.entry_var.get() == LIMIT
+        ):
+            number = parse_amount(self.limit_var.get())
             return float(number) if number is not None else None
-        return self.market_price()  # Market, DCA and Conditional fill at the market
+        if kind == ome.OCO:
+            tp, stop = parse_amount(self.tp_var.get()), parse_amount(
+                self.stop_var.get()
+            )
+            if tp is None or stop is None:
+                return None
+            buy = self.side_var.get() == "Buy"
+            return float(max(tp, stop)) if buy else float(tp)
+        return self.market_price()
+
+    def fee_kind(self) -> str:
+        """ "limit" (the maker rate) for an order that rests in the book, else
+        "market" (the taker rate)."""
+        kind = self.kind()
+        if kind == ome.LIMIT or (kind == ome.BRACKET and self.entry_var.get() == LIMIT):
+            return "limit"
+        return "market"
 
     def estimate(self) -> Tuple[Optional[float], Optional[float]]:
         """(estimated value, estimated fee); None where it can't be worked out."""
@@ -748,8 +965,11 @@ class OrderDialog(tk.Toplevel):
         if qty is None or price is None:
             return None, None
         value = float(qty) * price
-        rate = self.quote.fee_rate if self.quote else None
-        return value, (value * rate if rate is not None else None)
+        fees = self.quote.fees if self.quote else None
+        if fees is None:
+            return value, None
+        _name, rate = fees.for_order(self.fee_kind())
+        return value, value * rate
 
     def over_buying_power(self) -> bool:
         value, fee = self.estimate()
@@ -759,28 +979,58 @@ class OrderDialog(tk.Toplevel):
             self.buying_power
         )
 
+    def how_text(self) -> str:
+        """How the order is carried out (order_management_execution.handling_text)."""
+        from pt_exchange_abstraction import exchange_name
+
+        spec = self.spec() or ome.OrderSpec(
+            kind=self.kind(),
+            coin=self.coin_var.get(),
+            side=self.side_var.get().lower(),
+            quantity=Decimal("1"),
+            price=parse_amount(self.limit_var.get()),
+            trail_mode=ome.PERCENT,
+            trail_value=parse_amount(self.trail_var.get()),
+        )
+        broker = self.broker()
+        connector = None
+        if broker:
+            try:
+                connector = self.market.connector(broker)
+            except Exception:
+                connector = None
+        return ome.handling_text(
+            spec, bool(broker), connector, exchange_name(broker or "")
+        )
+
     def update_estimate(self) -> None:
         if not hasattr(self, "warning_label"):
             return  # still being built
-        if self.type_var.get() == MARKET and hasattr(self, "market_price_label"):
-            price = self.market_price()
-            word = "ask" if self.side_var.get() == "Buy" else "bid"
+        kind = self.type_var.get()
+        price = self.market_price()
+        word = "ask" if self.side_var.get() == "Buy" else "bid"
+        if kind == MARKET and hasattr(self, "market_price_label"):
             try:
                 self.market_price_label.configure(
                     text=f"{self._price(price)} (the {word})" if price else "N/A"
                 )
             except tk.TclError:
                 pass
+        if kind == TRAILING_STOP and hasattr(self, "trail_label"):
+            try:
+                self.trail_label.configure(text=self.trail_text(price))
+            except tk.TclError:
+                pass
         value, fee = self.estimate()
         self.value_label.configure(text=self._money(value) if value else "N/A")
-        rate = self.quote.fee_rate if self.quote else None
-        self.fee_label.configure(
-            text=(
-                f"{self._money(fee)} ({rate * 100:.2f}%)"
-                if fee is not None
-                else "not known"
+        fees = self.quote.fees if self.quote else None
+        if fee is not None and fees is not None:
+            name, rate = fees.for_order(self.fee_kind())
+            self.fee_label.configure(
+                text=f"{self._money(fee)} ({rate * 100:.2f}%, {name})"
             )
-        )
+        else:
+            self.fee_label.configure(text="not known")
         self.power_label.configure(
             text=(
                 self._money(self.buying_power)
@@ -788,13 +1038,45 @@ class OrderDialog(tk.Toplevel):
                 else "N/A"
             )
         )
-        if self._banner == "blocked":
-            warning = "No live exchange is chosen"
+        try:
+            self.how_label.configure(text=self.how_text())
+        except Exception:
+            self.how_label.configure(text="")
+        refused = self._refusal()
+        if refused:
+            warning = refused
         elif self.over_buying_power():
             warning = "More than Buying Power"
         else:
             warning = ""
         self.warning_label.configure(text=warning)
+
+    def trail_text(self, price: Optional[float]) -> str:
+        """The trail's distance now: a percent of the price, or the ATR multiple."""
+        value = parse_amount(self.trail_var.get())
+        if value is None:
+            return "Enter the trail"
+        if self.trail_mode_var.get() == TRAIL_PERCENT:
+            if price is None:
+                return f"{plain_number(value)}% of the price"
+            return (
+                f"{self._price(price * float(value) / 100.0)} "
+                f"({plain_number(value)}% of {self._price(price)})"
+            )
+        if self.atr is None:
+            return f"ATR({ome.ATR_LENGTH}) of {ome.ATR_TF_TEXT} candles: looking up..."
+        return (
+            f"{self._price(float(value) * self.atr)} ({plain_number(value)} × "
+            f"ATR({ome.ATR_LENGTH}) of {ome.ATR_TF_TEXT} candles, {self._price(self.atr)})"
+        )
+
+    def _refusal(self) -> str:
+        if self._banner == "blocked":
+            return "No live exchange is chosen"
+        try:
+            return self.executor.refusal(self.trading) if self.executor else ""
+        except Exception as exc:
+            return f"{type(exc).__name__}: {exc}"
 
     # ---- creating the order ----
 
@@ -803,48 +1085,30 @@ class OrderDialog(tk.Toplevel):
 
     def create(self) -> Optional[str]:
         """Check the order, confirm it, and create it; its id, or None."""
-        kind, side = self.type_var.get(), self.side_var.get()
         q = self.quote
         if self._banner == "blocked":
             self._refuse(
                 "Live mode has no exchange chosen, so the order has no account."
             )
             return None
+        refused = self._refusal()
+        if refused:
+            self._refuse(refused)
+            return None
         if q is None or not q.pair:
             self._refuse("The coin's market is not known yet.")
             return None
-        qty = parse_amount(self.qty_var.get())
-        if qty is None:
+        spec = self.spec()
+        if spec is None:
             self._refuse("Enter a quantity above 0.")
             return None
-        prices: Dict[str, Decimal] = {}
-        needed = {
-            STOP_LOSS: (("stop", self.stop_var, "stop price"),),
-            STOP_LIMIT: (
-                ("stop", self.stop_var, "stop price"),
-                ("limit", self.limit_var, "limit price"),
-            ),
-            TAKE_PROFIT: (("target", self.target_var, "target price"),),
-            CONDITIONAL: (("value", self.cond_value_var, "condition value"),),
-        }.get(kind, ())
-        for key, var, name in needed:
-            number = parse_amount(var.get())
-            if number is None:
-                self._refuse(f"Enter the {name}, above 0.")
-                return None
-            prices[key] = number
-        stage = level = 0
-        if kind == DCA:
-            try:
-                stage, level = int(self.stage_var.get()), int(self.level_var.get())
-            except ValueError:
-                stage = level = -1
-            if stage < 1 or level < 0:
-                self._refuse("Enter the DCA stage (1 or more) and the neural level.")
-                return None
+        problem = ome.problem_with(spec, q.bid, q.ask)
+        if problem:
+            self._refuse(problem)
+            return None
 
         value, fee = self.estimate()
-        if side == "Buy":
+        if spec.side == "buy":
             if value is None:
                 self._refuse(
                     f"There is no price for {q.pair}, so the order's value can't be "
@@ -865,19 +1129,17 @@ class OrderDialog(tk.Toplevel):
                 )
                 return None
 
-        if not self.confirm(kind, side, qty, value, fee):
+        if not self.confirm(spec, value, fee):
             return None
         try:
-            order_id = self.place(kind, side, q.pair, qty, prices, stage, level)
+            order_id = self.executor.create(spec)
+        except ValueError as exc:
+            self._refuse(str(exc))
+            return None
         except Exception as exc:
-            order_id = None
-            detail = f"\n\n{type(exc).__name__}: {exc}"
-        else:
-            detail = ""
-        if not order_id:
             messagebox.showerror(
                 "Order not created",
-                "The order could not be created." + detail,
+                f"The order could not be created.\n\n{type(exc).__name__}: {exc}",
                 parent=self,
             )
             return None
@@ -886,14 +1148,39 @@ class OrderDialog(tk.Toplevel):
         self.destroy()
         return self.created_id
 
-    def confirm(self, kind, side, qty, value, fee) -> bool:
+    def price_lines(self, spec: ome.OrderSpec) -> List[str]:
+        p = self._price
+        if spec.kind == ome.LIMIT:
+            return [f"Limit price: {p(float(spec.price))}"]
+        if spec.kind == ome.STOP_LIMIT:
+            return [
+                f"Stop price: {p(float(spec.stop_price))}",
+                f"Limit price: {p(float(spec.price))}",
+            ]
+        if spec.kind == ome.TRAILING_STOP:
+            return [f"Trail: {self.trail_text(self.market_price())}"]
+        if spec.kind in (ome.OCO, ome.BRACKET):
+            lines = []
+            if spec.kind == ome.BRACKET:
+                entry = f"limit {p(float(spec.price))}" if spec.price else "market"
+                lines.append(f"Entry: {entry}")
+            return lines + [
+                f"Take-profit: {p(float(spec.take_profit))}",
+                f"Stop: {p(float(spec.stop_price))}",
+            ]
+        return []
+
+    def confirm(self, spec: ome.OrderSpec, value, fee) -> bool:
         from pt_exchange_abstraction import exchange_name
 
         q = self.quote
         lines = [
             f"Account: {self._account}",
-            f"{side} {plain_number(qty)} {q.pair} on {exchange_name(q.exchange)}",
-            f"Type: {kind}",
+            f"{spec.side.capitalize()} {plain_number(spec.quantity)} {q.pair} on "
+            f"{exchange_name(q.exchange)}",
+            f"Type: {NAME_OF.get(spec.kind, spec.kind)}",
+            *self.price_lines(spec),
+            f"Execution: {self.how_text()}",
             f"Estimated value: {self._money(value) if value else 'N/A'}",
             f"Fee: {self._money(fee) if fee is not None else 'not known'}",
             "",
@@ -910,67 +1197,100 @@ class OrderDialog(tk.Toplevel):
             )
         )
 
-    def place(self, kind, side, symbol, qty, prices, stage, level) -> Optional[str]:
-        """Create the order through the OrderManager (the order management
-        database), as the tab's form did."""
-        from order_management_models import (
-            ConditionOperator,
-            ConditionType,
-            OrderSide,
-            OrderType,
-        )
 
-        m = self.manager
-        order_side = OrderSide.BUY if side == "Buy" else OrderSide.SELL
-        if kind == MARKET:
-            order = m.db.create_order(
-                symbol=symbol,
-                order_type=OrderType.MARKET,
-                side=order_side,
-                quantity=qty,
+class ModifyDialog(tk.Toplevel):
+    """Modify Selected: an open order's quantity and the prices its type has (a
+    trailing stop's trail). ``save(changes)`` changes the order and returns ""
+    or why it could not (OrderExecutor.modify)."""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        item: Any,
+        save: Callable[[Dict[str, Decimal]], None],
+    ):
+        super().__init__(parent)
+        self.title("Modify Order")
+        self.transient(parent.winfo_toplevel())
+        self.resizable(False, False)
+        self.item = item
+        self._save = save
+        gap = ui_tokens.SPACE["sm"]
+        body = ttk.Frame(self, padding=ui_tokens.SPACE["lg"])
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
+        name = NAME_OF.get(item.kind, item.kind)
+        ttk.Label(
+            body,
+            text=f"{name}: {item.side.capitalize()} {item.pair or item.coin}",
+            font=ui_tokens.font("body", "bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
+        self.vars: Dict[str, tk.StringVar] = {}
+        row = 1
+
+        def field(key: str, label: str, value: Any) -> None:
+            nonlocal row
+            var = tk.StringVar(value=plain_number(value))
+            self.vars[key] = var
+            ttk.Label(body, text=label).grid(
+                row=row, column=0, sticky="w", padx=(0, gap), pady=(gap, 0)
             )
-            return str(order.id)
-        if kind == STOP_LOSS:
-            return m.create_stop_loss_order(symbol, qty, prices["stop"])
-        if kind == STOP_LIMIT:
-            return m.create_stop_loss_order(
-                symbol, qty, prices["stop"], prices["limit"]
+            ttk.Entry(body, textvariable=var, width=16).grid(
+                row=row, column=1, sticky="ew", pady=(gap, 0)
             )
-        if kind == TAKE_PROFIT:
-            return m.create_take_profit_order(symbol, qty, prices["target"])
-        if kind == DCA:
-            return m.create_dca_order(symbol, qty, stage, level)
-        if kind == CONDITIONAL:
-            condition = {
-                "Price": ConditionType.PRICE,
-                "Neural level": ConditionType.NEURAL_LEVEL,
-                "Volume": ConditionType.VOLUME,
-            }[self.cond_type_var.get()]
-            operator = {
-                "≥": ConditionOperator.GTE,
-                "≤": ConditionOperator.LTE,
-                ">": ConditionOperator.GT,
-                "<": ConditionOperator.LT,
-                "=": ConditionOperator.EQ,
-            }[self.cond_op_var.get()]
-            order = m.db.create_order(
-                symbol=symbol,
-                order_type=OrderType.CONDITIONAL,
-                side=order_side,
-                quantity=qty,
-            )
-            m.db.add_condition_to_order(
-                order.id, condition, operator, prices["value"], symbol=symbol
-            )
-            return str(order.id)
-        return None
+            row += 1
+
+        spec = item.spec
+        entry = item.leg("entry")
+        entered = entry is not None and entry.status == "filled"
+        if not entered:
+            field("quantity", "Quantity", spec.quantity)
+        if spec.kind in (ome.LIMIT, ome.STOP_LIMIT) or (
+            spec.kind == ome.BRACKET and spec.price and not entered
+        ):
+            field("price", "Limit price", spec.price)
+        if spec.kind in (ome.STOP_LIMIT, ome.OCO, ome.BRACKET):
+            field("stop_price", "Stop price", spec.stop_price)
+        if spec.kind in (ome.OCO, ome.BRACKET):
+            field("take_profit", "Take-profit price", spec.take_profit)
+        if spec.kind == ome.TRAILING_STOP:
+            label = "Trail (%)" if spec.trail_mode == ome.PERCENT else "Trail (× ATR)"
+            field("trail_value", label, spec.trail_value)
+        self.message = ttk.Label(body, text="", style="Bad.TLabel", wraplength=320)
+        self.message.grid(row=row, column=0, columnspan=2, sticky="w", pady=(gap, 0))
+        row += 1
+        buttons = ttk.Frame(body)
+        buttons.grid(row=row, column=0, columnspan=2, sticky="e", pady=(gap * 2, 0))
+        ttk.Button(buttons, text="Save", command=self.save).pack(
+            side="left", padx=(0, gap)
+        )
+        ttk.Button(buttons, text="Cancel", command=self.destroy).pack(side="left")
+        self.bind("<Escape>", lambda _e: self.destroy())
+
+    def changes(self) -> Optional[Dict[str, Decimal]]:
+        out = {}
+        for key, var in self.vars.items():
+            number = parse_amount(var.get())
+            if number is None:
+                self.message.configure(text="Enter every value, above 0.")
+                return None
+            out[key] = number
+        return out
+
+    def save(self) -> None:
+        changes = self.changes()
+        if changes is not None:
+            self._save(changes)
 
 
 class OrderManagementView(ttk.Frame):
-    """The tab: toolbar and orders over the Order Notifications; see the module
-    docstring. The callables give the hub's current coins, the coin shown in the
-    chart, the trading settings and Buying Power when an order is created.
-    ``refresh_ms=None`` reads the database only when asked (tests)."""
+    """The tab: toolbar and Active Orders over the Order Notifications; see the
+    module docstring. The callables give the hub's current coins, the coin shown in
+    the chart, the trading settings and Buying Power when an order is created.
+    ``executor`` is the OrderExecutor (one on ``manager``'s database by default).
+    ``refresh_ms=None`` reads the database and carries the orders on only when asked
+    (tests); ``sync=True`` runs the executor's work at once instead of on a worker
+    thread (tests)."""
 
     def __init__(
         self,
@@ -982,22 +1302,35 @@ class OrderManagementView(ttk.Frame):
         trading: Callable[[], Any] = lambda: None,
         buying_power: Callable[[], Optional[float]] = lambda: None,
         market: Any = None,
+        executor: Any = None,
         money: Callable[[float], str] = _plain_money,
         price: Callable[[float], str] = _plain_price,
         refresh_ms: Optional[int] = REFRESH_MS,
+        sync: bool = False,
     ):
         super().__init__(parent)
         self.manager = manager
         self._coins, self._chart_coin = coins, chart_coin
         self._trading, self._buying_power = trading, buying_power
         self.market = market if market is not None else ExchangeMarket()
+        self.executor = executor
+        if self.executor is None and getattr(manager, "db", None) is not None:
+            import pt_paths
+
+            self.executor = ome.OrderExecutor(
+                manager.db, hub_dir=lambda: pt_paths.hub_dir_for(None), trading=trading
+            )
         self._money, self._price = money, price
         self._refresh_ms = refresh_ms
+        self._sync = sync
+        self.jobs = ui_jobs.BackgroundJobs(self, name="order-management")
         self.orders: List[OrderRow] = []
         self.shown: List[OrderRow] = []
         self.notes: List[NoteRow] = []
         self.dialog: Optional[OrderDialog] = None
+        self.modify_dialog: Optional[ModifyDialog] = None
         self._search_after: Optional[str] = None
+        self._tick_after: Optional[str] = None
         self._sash_placed = False
         gap = ui_tokens.SPACE["sm"]
 
@@ -1015,6 +1348,9 @@ class OrderManagementView(ttk.Frame):
             side="left", padx=(0, gap)
         )
         ttk.Button(bar, text="Cancel Selected", command=self.cancel_selected).pack(
+            side="left", padx=(0, gap)
+        )
+        ttk.Button(bar, text="Modify Selected", command=self.modify_selected).pack(
             side="left", padx=(0, gap + 4)
         )
         self.status_var = tk.StringVar(value=STATUS_FILTERS[0][0])
@@ -1040,9 +1376,11 @@ class OrderManagementView(ttk.Frame):
             numeric=ORDER_NUMERIC,
             sort=("created", True),
             empty_text=NO_ORDERS,
+            show="tree headings",  # an OCO or Bracket order's legs under it
         )
         self.orders_table.pack(side="top", fill="both", expand=True)
         self.orders_tree = self.orders_table.tree
+        self.orders_tree.heading(ui_table.TREE, text=LEG_HEADING)
 
         # ---- the notifications ----
         bottom = ttk.Frame(self.paned)
@@ -1079,10 +1417,11 @@ class OrderManagementView(ttk.Frame):
 
         self.status_var.trace_add("write", lambda *_: self.apply_filters())
         self.search_var.trace_add("write", lambda *_: self._search_changed())
+        self.bind("<Destroy>", self._on_destroy, add="+")
 
         self.refresh()
         if refresh_ms:
-            self.after(refresh_ms, self._tick)
+            self._tick_after = self.after(refresh_ms, self._tick)
 
     # ---- the splitter ----
 
@@ -1114,14 +1453,56 @@ class OrderManagementView(ttk.Frame):
         if clamped != pos:
             self.paned.sashpos(0, clamped)
 
-    # ---- reading the database ----
+    # ---- the monitor ----
+
+    def _on_destroy(self, event) -> None:
+        if event.widget is not self:
+            return
+        for after in (self._tick_after, self._search_after):
+            if after is not None:
+                try:
+                    self.after_cancel(after)
+                except tk.TclError:
+                    pass
+        self._tick_after = self._search_after = None
 
     def _tick(self) -> None:
+        """Every ``refresh_ms``: read the database, and let the executor carry the
+        open orders on (on the worker, one pass at a time)."""
+        self._tick_after = None
         try:
             self.refresh()
-            self.after(self._refresh_ms, self._tick)
+            self.check_orders()
+            self._tick_after = self.after(self._refresh_ms, self._tick)
         except tk.TclError:
             pass  # the tab is gone
+
+    def has_work(self) -> bool:
+        """Whether any order read is open (the executor carries on the ones it
+        made)."""
+        return any(r.is_open for r in self.orders)
+
+    def check_orders(self) -> None:
+        """One pass of ``OrderExecutor.check`` when there is an open order (no
+        worker thread starts while there is none)."""
+        if self.executor is None or self.jobs.busy or not self.has_work():
+            return
+        self._background(self.executor.check, lambda _n: self.refresh())
+
+    def _background(self, job: Callable[[], Any], on_done: Callable[[Any], None]):
+        """``job`` on the worker thread, then ``on_done(result)`` on the Tk thread
+        (at once with ``sync``)."""
+        if self._sync:
+            on_done(job())
+            return
+
+        def failed(exc: BaseException) -> None:
+            print(f"Order Management: {type(exc).__name__}: {exc}")
+            self.refresh()
+
+        self.jobs.submit(job, on_done=on_done, on_error=failed)
+
+    # ---- reading the database ----
 
     def refresh(self) -> None:
         """Read the orders and notifications again; the tables change only when
@@ -1171,20 +1552,44 @@ class OrderManagementView(ttk.Frame):
         self._search_after = None
         self.apply_filters()
 
+    def groups(self) -> List[Tuple[OrderRow, List[OrderRow]]]:
+        """Each order with its legs (an OCO or Bracket order's), newest first."""
+        legs: Dict[str, List[OrderRow]] = {}
+        ids = {r.id for r in self.orders}
+        for r in self.orders:
+            if r.parent and r.parent in ids:
+                legs.setdefault(r.parent, []).append(r)
+        out = []
+        for r in self.orders:
+            if r.parent and r.parent in ids:
+                continue
+            kids = sorted(
+                legs.get(r.id, []),
+                key=lambda x: (LEG_ORDER.get(x.leg, 9), x.created or datetime.min),
+            )
+            out.append((r, kids))
+        return out
+
     def matches(self) -> List[OrderRow]:
-        """The orders the status filter and the search keep."""
+        """The orders the status filter and the search keep: an order with legs is
+        kept, with all of them, when it or one of them is."""
         statuses = dict(STATUS_FILTERS).get(self.status_var.get())
         words = self.search_var.get().casefold().split()
-        kept = []
-        for r in self.orders:
+
+        def kept(r: OrderRow) -> bool:
             if statuses is not None and r.status not in statuses:
-                continue
+                return False
             if words:
-                text = " ".join(self.cells(r)).casefold()
-                if not all(w in text for w in words):
-                    continue
-            kept.append(r)
-        return kept
+                text = " ".join(self.cells(r) + (r.leg,)).casefold()
+                return all(w in text for w in words)
+            return True
+
+        out = []
+        for top, legs in self.groups():
+            if kept(top) or any(kept(x) for x in legs):
+                out.append(top)
+                out.extend(legs)
+        return out
 
     def apply_filters(self) -> None:
         tree = self.orders_tree
@@ -1193,8 +1598,17 @@ class OrderManagementView(ttk.Frame):
         kept = self.matches()
         self.shown = kept
         tree.delete(*tree.get_children())
+        ids = {r.id for r in kept}
         for r in kept:
-            tree.insert("", "end", iid=r.id, values=self.cells(r))
+            parent = r.parent if r.parent in ids else ""
+            tree.insert(
+                parent,
+                "end",
+                iid=r.id,
+                text=r.leg,
+                values=self.cells(r),
+                open=True,
+            )
         keep = [r.id for r in kept if r.id in selected]
         if keep:
             tree.selection_set(keep)
@@ -1228,8 +1642,16 @@ class OrderManagementView(ttk.Frame):
     # ---- the toolbar ----
 
     def _start_coin(self) -> Tuple[List[str], str]:
-        coins = [str(c).upper() for c in (self._coins() or ())]
-        shown = str(self._chart_coin() or "").upper()
+        """The coins in Settings (each as its coin, ``exchange_symbols.coin_of``) and
+        the one the chart shows, or the first."""
+        from exchange_symbols import coin_of
+
+        coins: List[str] = []
+        for c in self._coins() or ():
+            coin = coin_of(c)
+            if coin and coin not in coins:
+                coins.append(coin)
+        shown = coin_of(self._chart_coin() or "")
         return coins, (shown if shown in coins else (coins[0] if coins else ""))
 
     def open_dialog(self, background: bool = True) -> Optional[OrderDialog]:
@@ -1253,35 +1675,78 @@ class OrderManagementView(ttk.Frame):
             trading=self._trading(),
             buying_power=self._buying_power(),
             market=self.market,
-            manager=self.manager,
-            on_created=lambda _id: self.refresh(),
+            executor=self.executor,
+            on_created=self.order_created,
             money=self._money,
             price=self._price,
             background=background,
         )
         return self.dialog
 
+    def order_created(self, order_id: str) -> None:
+        """Send the new order (a market order fills or is placed at once), then show
+        it; a market order that was refused says why."""
+        self.refresh()
+
+        def done(_result) -> None:
+            self.refresh()
+            row = next((r for r in self.orders if r.id == str(order_id)), None)
+            if row is not None and row.status in ("rejected", "expired"):
+                messagebox.showerror(
+                    "Order not carried out",
+                    f"{row.side} {plain_number(row.quantity)} {row.symbol}, "
+                    f"{row.kind}: {row.conditions or row.status}",
+                    parent=self,
+                )
+
+        if self.executor is not None:
+            self._background(lambda: self.executor.submit(order_id), done)
+
+    def _selected_tops(self) -> List[OrderRow]:
+        """The orders selected: a leg stands for its OCO or Bracket order."""
+        by_id = {r.id: r for r in self.orders}
+        out: List[OrderRow] = []
+        for iid in self.orders_tree.selection():
+            r = by_id.get(str(iid))
+            if r is None:
+                continue
+            if r.parent and r.parent in by_id:
+                r = by_id[r.parent]
+            if r not in out:
+                out.append(r)
+        return out
+
+    def _legs_of(self, r: OrderRow) -> List[OrderRow]:
+        return [x for x in self.orders if x.parent == r.id]
+
+    def _is_open(self, r: OrderRow) -> bool:
+        return r.is_open or any(x.is_open for x in self._legs_of(r))
+
     def cancel_selected(self) -> int:
-        """Cancel the selected open orders, after a confirmation; how many were."""
-        selected = set(self.orders_tree.selection())
-        if not selected:
+        """Cancel the selected open orders, after a confirmation; how many were. An
+        OCO or Bracket order (or any of its legs) is cancelled with all its legs."""
+        if not self.orders_tree.selection():
             messagebox.showinfo(
                 "Cancel orders", "Select the orders to cancel first.", parent=self
             )
             return 0
-        rows = [r for r in self.orders if r.id in selected and r.is_open]
+        chosen = self._selected_tops()
+        rows = [r for r in chosen if self._is_open(r)]
         if not rows:
             messagebox.showinfo(
                 "Cancel orders", "Only open orders can be cancelled.", parent=self
             )
             return 0
-        lines = [
-            f"{r.side} {plain_number(r.quantity)} {r.symbol}, {r.kind}"
-            for r in rows[:10]
-        ]
+        lines = []
+        for r in rows[:10]:
+            legs = self._legs_of(r)
+            extra = f", with its {len(legs)} legs" if legs else ""
+            lines.append(
+                f"{r.side} {plain_number(r.quantity)} {r.symbol}, {r.kind}{extra}"
+            )
         if len(rows) > 10:
             lines.append(f"... and {len(rows) - 10} more")
-        skipped = len(selected) - len(rows)
+        skipped = len(chosen) - len(rows)
         if skipped:
             lines.append(f"({skipped} selected order(s) not open: left as they are)")
         n = len(rows)
@@ -1291,13 +1756,84 @@ class OrderManagementView(ttk.Frame):
             parent=self,
         ):
             return 0
-        failed = [r for r in rows if not self.manager.cancel_order(uuid.UUID(r.id))]
-        self.refresh()
-        if failed:
-            messagebox.showerror(
-                "Cancel orders",
-                f"{len(failed)} order(s) could not be cancelled: "
-                + ", ".join(r.client_id for r in failed),
+
+        def job():
+            failed = []
+            for r in rows:
+                if self.executor is not None:
+                    ok, why = self.executor.cancel(uuid.UUID(r.id))
+                else:
+                    ok, why = bool(self.manager.cancel_order(uuid.UUID(r.id))), ""
+                if not ok:
+                    failed.append((r, why))
+            return failed
+
+        def done(failed) -> None:
+            self.refresh()
+            if failed:
+                messagebox.showerror(
+                    "Cancel orders",
+                    f"{len(failed)} order(s) could not be cancelled:\n"
+                    + "\n".join(
+                        f"{r.client_id}: {why}" if why else r.client_id
+                        for r, why in failed
+                    ),
+                    parent=self,
+                )
+
+        result: List[Any] = []
+        self._background(job, lambda failed: (result.append(failed), done(failed)))
+        if self._sync and result:
+            return n - len(result[0])
+        return n
+
+    def modify_selected(self) -> Optional[ModifyDialog]:
+        """Modify Selected: the selected open order's quantity and prices."""
+        rows = [r for r in self._selected_tops() if self._is_open(r)]
+        if len(rows) != 1:
+            messagebox.showinfo(
+                "Modify order",
+                (
+                    "Select one open order to change."
+                    if not rows
+                    else "Select one order at a time to change."
+                ),
                 parent=self,
             )
-        return n - len(failed)
+            return None
+        item = self.executor.item(uuid.UUID(rows[0].id)) if self.executor else None
+        if item is None:
+            messagebox.showinfo(
+                "Modify order",
+                "This order was made before these order types: cancel it and create "
+                "it again to change it.",
+                parent=self,
+            )
+            return None
+        if item.kind == ome.MARKET:
+            messagebox.showinfo(
+                "Modify order",
+                "A market order fills when it is sent: it cannot be changed.",
+                parent=self,
+            )
+            return None
+        item.spec = self.executor.spec_of(item)
+
+        def save(changes: Dict[str, Decimal]) -> None:
+            def done(problem: str) -> None:
+                self.refresh()
+                try:
+                    if problem:
+                        dialog.message.configure(text=problem)
+                    else:
+                        dialog.destroy()
+                except tk.TclError:
+                    pass
+
+            self._background(
+                lambda: self.executor.modify(uuid.UUID(rows[0].id), **changes), done
+            )
+
+        dialog = ModifyDialog(self, item, save)
+        self.modify_dialog = dialog
+        return dialog

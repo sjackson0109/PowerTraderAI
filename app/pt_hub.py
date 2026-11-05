@@ -38,6 +38,7 @@ if __name__ == "__main__":
 
 import chart_settings
 import exchange_symbols
+import order_management_execution
 import order_management_view
 import paper_coins
 import position_sizing
@@ -3960,11 +3961,10 @@ class PowerTraderHub(tk.Tk):
                 ).pack(expand=True, fill="both", padx=20, pady=20)
                 return
 
-            # Start monitoring if not already started
-            self.order_manager.start_monitoring()
-
-            # Toolbar and orders over the Order Notifications (owner, 2026-11-04);
-            # the view reads both from the order management database every 5 s
+            # Toolbar and Active Orders over the Order Notifications (owner,
+            # 2026-11-04). Every 5 s the view reads both from the order management
+            # database and its executor carries the open orders on, for the account
+            # trading now (order_management_execution; owner, 2026-11-05)
             self.order_view = order_management_view.OrderManagementView(
                 order_tab,
                 self.order_manager,
@@ -3972,6 +3972,11 @@ class PowerTraderHub(tk.Tk):
                 chart_coin=lambda: getattr(self, "_current_chart_page", ""),
                 trading=lambda: self._trading,
                 buying_power=lambda: self._last_buying_power,
+                executor=order_management_execution.OrderExecutor(
+                    self.order_manager.db,
+                    hub_dir=lambda: self.hub_dir,
+                    trading=lambda: self._trading,
+                ),
                 money=_fmt_money,
                 price=_fmt_price,
             )

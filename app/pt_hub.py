@@ -4168,28 +4168,32 @@ class PowerTraderHub(tk.Tk):
             traceback.print_exc()
 
     def _create_portfolio_optimization_tab(self):
-        """Create the Portfolio Optimization tab for advanced portfolio management."""
+        """The Portfolio Optimization tab (portfolio_optimizer_gui): the coins in
+        Settings, their daily candles from the candle cache, and the current
+        portfolio from Long-term Holdings (its tag filter), built before it."""
+        self.portfolio_optimizer_gui = None
         try:
             # Always create the tab first
             portfolio_opt_tab = ttk.Frame(self.bottom_notebook)
             self.bottom_notebook.add(portfolio_opt_tab, text="Portfolio\nOptimization")
 
             if not PORTFOLIO_OPTIMIZER_AVAILABLE:
-                # Show a message about unavailability
                 ttk.Label(
                     portfolio_opt_tab,
-                    text="Portfolio Optimization Engine\n\nFor enhanced optimization features, install optional dependencies:\n\npython app/install_optional_deps.py\n\nCore features available without optional packages.",
-                    font=ui_tokens.font("body"),
+                    text="Portfolio Optimization could not be loaded.",
+                    style="Muted.TLabel",
                     anchor="center",
-                    justify="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-                print(
-                    "Portfolio Optimization Engine available with limited functionality"
-                )
+                print("Portfolio Optimization not available")
                 return
 
-            # Initialize the portfolio optimization GUI
-            self.portfolio_optimizer_gui = PortfolioOptimizerGUI(portfolio_opt_tab)
+            self.portfolio_optimizer_gui = PortfolioOptimizerGUI(
+                portfolio_opt_tab,
+                coins=lambda: list(self.coins),
+                holdings=getattr(self, "holdings_gui", None),
+                money=_fmt_money,
+                price=_fmt_price,
+            )
 
             print("Portfolio Optimization tab created successfully")
 

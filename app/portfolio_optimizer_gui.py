@@ -1,14 +1,36 @@
 #!/usr/bin/env python3
-"""
-Portfolio Optimization GUI for PowerTrader
-Interactive interface for portfolio optimization, efficient frontier, and rebalancing.
+"""The hub's Portfolio Optimization tab (owner, 2026-11-05).
+
+Modern Portfolio Theory over the coins in Settings (portfolio_optimizer). Sub-tabs:
+
+* Data: where the daily closes come from: the candle cache (the default: the coins
+  in Settings over a window of 90 days, 1 year or 3 years, from the exchanges in
+  Settings, primary first) or a price file (CSV) picked with Browse. Load Data
+  reads them; the table shows each coin's days of closes, last close, annual
+  return and volatility, and its share of the current portfolio, and the coins
+  left out say why.
+* Optimization: the objective (max Sharpe ratio, min variance or a target
+  return), the risk-free rate and the weight limits; Optimize Portfolio loads the
+  data first when the source, the window or the coins in Settings changed since it
+  was loaded, then works out the weights and the efficient frontier. The table
+  sets the optimised weights beside the current portfolio's, under their expected
+  return, volatility and Sharpe ratio.
+* Rebalancing and Analysis.
+
+The current portfolio is Long-term Holdings' (``holdings``: its window, a
+HoldingsManagementGUI): the holdings its tag filter keeps, each coin's share of
+their current value, worked out again when the filter changes (TAG_FILTER_EVENT).
+Holdings of coins with no data are left out of it, and named.
+
+Loading and optimising run off the Tk thread, one job at a time; the window shows
+the result when the job ends. A job still running when the window is destroyed is
+stopped (between coins, frontier points ...).
 """
 
-import json
+import threading
 import tkinter as tk
-from datetime import datetime, timedelta
-from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List, Optional
+from tkinter import filedialog, messagebox, simpledialog, ttk
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -18,6 +40,7 @@ import ui_theme
 import ui_tokens
 
 try:
+    import portfolio_optimizer as po
     from portfolio_optimizer import PortfolioOptimizer
 
     OPTIMIZER_AVAILABLE = True
@@ -26,296 +49,388 @@ except ImportError:
 
 try:
     import matplotlib.pyplot as plt
-    import seaborn as sns
     from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
     PLOTTING_AVAILABLE = True
 except ImportError:
     PLOTTING_AVAILABLE = False
 
+try:
+    from long_term_holdings_gui import TAG_FILTER_EVENT
+except ImportError:
+    TAG_FILTER_EVENT = "<<HoldingsTagFilter>>"
+
+SUB_TABS = ("Data", "Optimization", "Rebalancing", "Analysis")
+POLL_MS = 100  # how often the window looks for the end of a job
+STOP_WAIT_S = 2.0  # how long a destroyed window waits for its job to stop
+FRONTIER_POINTS = 30
+
+# ---- Data ----
+
+SOURCE_LABELS = (
+    (po.SOURCE_CANDLES if OPTIMIZER_AVAILABLE else "candles", "Daily candles"),
+    (po.SOURCE_FILE if OPTIMIZER_AVAILABLE else "file", "Price file (CSV)"),
+)
+DATA_COLUMNS = ("coin", "days", "last_close", "annual_return", "annual_vol", "held")
+DATA_HEADINGS = {
+    "coin": "Coin",
+    "days": "Days",
+    "last_close": "Last Close",
+    "annual_return": "Annual Return %",
+    "annual_vol": "Annual Volatility %",
+    "held": "% of Holdings",
+}
+DATA_NUMERIC = DATA_COLUMNS[1:]
+NO_DATA = "No data loaded yet"
+
+# ---- Optimization ----
+
+OPTIMIZATION_TYPES = (
+    ("Max Sharpe ratio", "max_sharpe"),
+    ("Min variance", "min_variance"),
+    ("Target return", "target_return"),
+)
+RESULT_COLUMNS = ("coin", "held", "optimised")
+RESULT_HEADINGS = {
+    "coin": "Coin",
+    "held": "% of Holdings",
+    "optimised": "Optimised %",
+}
+RESULT_NUMERIC = RESULT_COLUMNS[1:]
+NO_RESULT = "Not optimised yet"
+METRICS = (
+    ("Expected Return (annual)", "expected_return"),
+    ("Volatility (annual)", "volatility"),
+    ("Sharpe Ratio", "sharpe_ratio"),
+)
+PORTFOLIOS = (("current", "Current portfolio"), ("optimised", "Optimised"))
+
+
+def _money(value: float) -> str:
+    return f"${value:,.2f}"
+
+
+def _price(value: float) -> str:
+    return "$" + f"{value:,.8f}".rstrip("0").rstrip(".")
+
+
+def _pct(fraction: float, places: int = 2) -> str:
+    return f"{fraction * 100:.{places}f}%"
+
+
+def _number(text: str) -> Optional[float]:
+    """A number typed in a field; None when it is blank. ValueError otherwise."""
+    text = str(text).replace(",", "").replace("%", "").strip()
+    if not text:
+        return None
+    number = float(text)
+    if not np.isfinite(number):
+        raise ValueError(text)
+    return number
+
+
+class _Job:
+    """One piece of work off the Tk thread: ``work(job)`` runs in a daemon thread
+    and may check ``job.stop`` and set ``job.progress``; the window takes its
+    result (or error) on the Tk thread. Neither the job nor ``work`` holds the
+    window: a Tk object freed in another thread leaks its interpreter."""
+
+    def __init__(self, name: str, work: Callable[["_Job"], Any]):
+        self.name = name
+        self.stop = threading.Event()
+        self.progress = ""
+        self.result: Any = None
+        self.error: Optional[BaseException] = None
+        self.thread = threading.Thread(
+            target=self._run,
+            args=(work,),
+            name=f"Portfolio Optimization: {name}",
+            daemon=True,
+        )
+
+    def _run(self, work) -> None:
+        try:
+            self.result = work(self)
+        except BaseException as exc:  # handed to the window
+            self.error = exc
+
+
+def read_data(request: Tuple, load_candles: Callable, job: _Job) -> "po.MarketData":
+    """The data ``request`` asks for, ("candles", coins, days) or ("file", path),
+    off the Tk thread: ``load_candles`` reads the candles."""
+    if request[0] == po.SOURCE_FILE:
+        return po.load_price_file(request[1])
+    _source, coins, days = request
+
+    def progress(done: int, total: int, coin: str) -> None:
+        job.progress = f"Loading daily candles: {coin} ({done + 1} of {total})"
+
+    return load_candles(
+        list(coins), days, should_stop=job.stop.is_set, progress=progress
+    )
+
 
 class PortfolioOptimizerGUI:
-    """
-    Interactive GUI for portfolio optimization using Modern Portfolio Theory.
-    """
+    """The Portfolio Optimization tab's sub-tabs; see the module docstring.
 
-    def __init__(self, parent=None):
-        """Initialize the Portfolio Optimizer GUI."""
+    ``coins`` gives the coins in Settings; ``holdings`` is Long-term Holdings'
+    window (None: no current portfolio); ``optimizer`` a PortfolioOptimizer;
+    ``load_candles(coins, days, should_stop=..., progress=...)`` reads the daily
+    closes (portfolio_optimizer.load_candle_data); ``money`` and ``price`` format
+    amounts and prices."""
+
+    def __init__(
+        self,
+        parent=None,
+        *,
+        coins: Callable[[], Sequence[str]] = lambda: (),
+        holdings: Any = None,
+        optimizer: Optional["PortfolioOptimizer"] = None,
+        load_candles: Optional[Callable[..., "po.MarketData"]] = None,
+        money: Callable[[float], str] = _money,
+        price: Callable[[float], str] = _price,
+    ):
         if parent is None:
             self.root = ui_theme.themed_root()
             self.root.title("Portfolio Optimization Engine")
             self.root.geometry("1200x800")
+        elif not isinstance(parent, tk.Misc):
+            # a stand-in parent (a mock) has no end to its masters: a Tk variable
+            # would look for its root for ever
+            raise TypeError(f"the parent must be a Tk widget, not {type(parent)}")
         else:
             self.root = parent
+        self._coins = coins
+        self.holdings = holdings
+        self._money, self._price = money, price
 
-        # Initialize optimizer
-        if OPTIMIZER_AVAILABLE:
+        self.optimizer = optimizer
+        if self.optimizer is None and OPTIMIZER_AVAILABLE:
             self.optimizer = PortfolioOptimizer()
-        else:
-            self.optimizer = None
+        self._load_candles = load_candles or (
+            po.load_candle_data if OPTIMIZER_AVAILABLE else None
+        )
 
         # GUI state
-        self.current_data = None
-        self.optimization_result = None
-        self.frontier_data = None
+        self.market_data: Optional["po.MarketData"] = None
+        self._loaded_for: Optional[Tuple] = None  # the request market_data answers
+        self.current: Optional["po.CurrentPortfolio"] = None
+        self.optimization_result: Optional[Dict] = None
+        self.frontier_data: Optional[pd.DataFrame] = None
+        self.job: Optional[_Job] = None
+        self._done: Optional[Callable] = (
+            None  # takes the job's result, on the Tk thread
+        )
+        self._after: Optional[str] = None
+        self._busy_widgets: List[tk.Widget] = []
 
         self.setup_gui()
+        self.refresh_current()
 
     def setup_gui(self):
-        """Setup the main GUI layout."""
-        # Create main notebook for tabs
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True)
+        """The sub-tabs, in a notebook filling the parent."""
+        self.main_frame = ttk.Frame(self.root)
+        self.main_frame.pack(fill="both", expand=True)
+        self.main_frame.bind("<Destroy>", self._on_destroy, add="+")
+        self.notebook = ttk.Notebook(self.main_frame)
+        self.notebook.pack(fill="both", expand=True)
 
-        # Create tabs
         self.setup_data_tab()
         self.setup_optimization_tab()
         self.setup_rebalancing_tab()
         self.setup_analysis_tab()
 
         if not OPTIMIZER_AVAILABLE:
-            self.show_dependency_message()
-
-    def show_dependency_message(self):
-        """Show message about missing dependencies."""
-        p = ui_theme.active_palette()
-        msg_frame = tk.Frame(self.root)
-        msg_frame.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(
-            msg_frame,
-            text="Portfolio Optimization Engine - Enhanced Features Available",
-            font=ui_tokens.font("display", "bold"),
-        ).pack(pady=20)
-
-        tk.Label(
-            msg_frame,
-            text="For full portfolio optimization capabilities, install optional dependencies:",
-            font=ui_tokens.font("title"),
-        ).pack(pady=10)
-
-        tk.Label(
-            msg_frame,
-            text="python app/install_optional_deps.py",
-            font=ui_tokens.mono("body"),
-            background=p["PANEL"],
-            foreground=p["FG"],
-        ).pack(pady=5)
-
-        tk.Label(
-            msg_frame,
-            text="Features available with enhanced dependencies:",
-            font=ui_tokens.font("subtitle", "bold"),
-        ).pack(pady=(20, 5))
-
-        features = [
-            "• Modern Portfolio Theory optimization",
-            "• Efficient frontier calculations",
-            "• Sharpe ratio maximization",
-            "• Risk-adjusted portfolio construction",
-            "• Advanced statistical analysis",
-            "• Interactive charts and visualizations",
-        ]
-
-        for feature in features:
-            tk.Label(msg_frame, text=feature, font=ui_tokens.font("body")).pack(
-                anchor="w", padx=100
+            for widget in self._busy_widgets:
+                widget.state(["disabled"])
+            self._say("The optimizer could not be loaded.")
+        holdings_frame = getattr(self.holdings, "main_frame", None)
+        if holdings_frame is not None:
+            holdings_frame.bind(
+                TAG_FILTER_EVENT, lambda _e: self.refresh_current(), add="+"
             )
 
-        return
+    # ---- the sub-tabs ----
+
+    def _toolbar(self, tab: tk.Widget) -> ttk.Frame:
+        gap = ui_tokens.SPACE["sm"]
+        bar = ttk.Frame(tab)
+        bar.pack(side="top", fill="x", padx=gap, pady=(gap, 0))
+        return bar
+
+    def _button(self, bar: tk.Widget, text: str, command: Callable) -> ttk.Button:
+        """A toolbar button, disabled while a job runs."""
+        button = ttk.Button(bar, text=text, command=command)
+        button.pack(side="left", padx=(0, ui_tokens.SPACE["sm"]))
+        self._busy_widgets.append(button)
+        return button
 
     def setup_data_tab(self):
-        """Setup the data input tab."""
-        data_frame = ttk.Frame(self.notebook)
-        self.notebook.add(data_frame, text="Data Input")
+        """Where the closes come from, over the coins' table."""
+        gap = ui_tokens.SPACE["sm"]
+        self.data_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.data_tab, text=SUB_TABS[0])
 
-        # Data input section
-        input_frame = ttk.LabelFrame(data_frame, text="Portfolio Data Input")
-        input_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        # File input
-        file_frame = tk.Frame(input_frame)
-        file_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        tk.Label(file_frame, text="Price Data File:").pack(side=tk.LEFT)
-        self.file_path_var = tk.StringVar()
-        tk.Entry(file_frame, textvariable=self.file_path_var, width=50).pack(
-            side=tk.LEFT, padx=5
+        bar = self._toolbar(self.data_tab)
+        ttk.Label(bar, text="Source").pack(side="left", padx=(0, gap))
+        self.source_var = tk.StringVar(master=bar, value=SOURCE_LABELS[0][0])
+        for value, label in SOURCE_LABELS:
+            ttk.Radiobutton(
+                bar, text=label, value=value, variable=self.source_var
+            ).pack(side="left", padx=(0, gap))
+        ttk.Label(bar, text="Window").pack(side="left", padx=(gap, gap))
+        self.window_var = tk.StringVar(
+            master=bar, value=po.DEFAULT_WINDOW if OPTIMIZER_AVAILABLE else ""
         )
-        ttk.Button(file_frame, text="Browse", command=self.browse_file).pack(
-            side=tk.LEFT
+        self.window_box = ttk.Combobox(
+            bar,
+            textvariable=self.window_var,
+            values=(
+                [label for label, _days in po.WINDOWS] if OPTIMIZER_AVAILABLE else []
+            ),
+            state="readonly",
+            width=9,
         )
-        ttk.Button(file_frame, text="Load", command=self.load_data).pack(
-            side=tk.LEFT, padx=5
+        self.window_box.pack(side="left", padx=(0, gap * 2))
+        self._button(bar, "Load Data", self.load_data)
+
+        file_bar = self._toolbar(self.data_tab)
+        ttk.Label(file_bar, text="Price file").pack(side="left", padx=(0, gap))
+        self.file_path_var = tk.StringVar(master=file_bar)
+        ttk.Entry(file_bar, textvariable=self.file_path_var, width=50).pack(
+            side="left", padx=(0, gap)
         )
+        self._button(file_bar, "Browse", self.browse_file)
 
-        # Manual input
-        manual_frame = ttk.LabelFrame(data_frame, text="Manual Asset Input")
-        manual_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        # Asset list
-        list_frame = tk.Frame(manual_frame)
-        list_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-        # Asset input controls
-        controls_frame = tk.Frame(list_frame)
-        controls_frame.pack(fill=tk.X, pady=(0, 5))
-
-        tk.Label(controls_frame, text="Symbol:").pack(side=tk.LEFT)
-        self.symbol_entry = tk.Entry(controls_frame, width=10)
-        self.symbol_entry.pack(side=tk.LEFT, padx=5)
-
-        tk.Label(controls_frame, text="Expected Return (%):").pack(
-            side=tk.LEFT, padx=(20, 0)
+        self.data_status = ttk.Label(self.data_tab, text="", style="Muted.TLabel")
+        self.data_status.pack(side="top", fill="x", padx=gap, pady=(gap, 0))
+        self.left_out_label = ttk.Label(
+            self.data_tab, text="", style="Muted.TLabel", anchor="w"
         )
-        self.return_entry = tk.Entry(controls_frame, width=10)
-        self.return_entry.pack(side=tk.LEFT, padx=5)
+        self.left_out_label.pack(side="bottom", fill="x", padx=gap, pady=(0, gap))
 
-        tk.Label(controls_frame, text="Volatility (%):").pack(
-            side=tk.LEFT, padx=(20, 0)
+        self.data_table = ui_table.DataTable(
+            self.data_tab,
+            DATA_COLUMNS,
+            DATA_HEADINGS,
+            key="portfolio_optimization.data",
+            numeric=DATA_NUMERIC,
+            empty_text=NO_DATA,
         )
-        self.volatility_entry = tk.Entry(controls_frame, width=10)
-        self.volatility_entry.pack(side=tk.LEFT, padx=5)
-
-        ttk.Button(controls_frame, text="Add Asset", command=self.add_asset).pack(
-            side=tk.LEFT, padx=10
-        )
-        ttk.Button(controls_frame, text="Remove", command=self.remove_asset).pack(
-            side=tk.LEFT
-        )
-        ttk.Button(
-            controls_frame, text="Load Sample", command=self.load_sample_data
-        ).pack(side=tk.LEFT, padx=5)
-
-        # Asset list display (ui_table: fitted columns, its own scrollbars, sortable);
-        # eight rows high, so the Data Summary below stays in a short panel
-        self.asset_table = ui_table.DataTable(
-            list_frame,
-            ("Symbol", "Return", "Volatility"),
-            {
-                "Symbol": "Symbol",
-                "Return": "Expected Return (%)",
-                "Volatility": "Volatility (%)",
-            },
-            key="portfolio_optimization.assets",
-            numeric=("Return", "Volatility"),
-            empty_text="No assets yet",
-            height=8,
-        )
-        self.asset_table.pack(fill="both", expand=True)
-        self.asset_tree = self.asset_table.tree
-
-        # Data summary
-        summary_frame = ttk.LabelFrame(data_frame, text="Data Summary")
-        summary_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        self.data_summary_label = tk.Label(
-            summary_frame, text="No data loaded", font=ui_tokens.font("body")
-        )
-        self.data_summary_label.pack(pady=5)
+        self.data_table.pack(side="top", fill="both", expand=True, pady=(gap, 0))
+        self.data_tree = self.data_table.tree
 
     def setup_optimization_tab(self):
-        """Setup the optimization tab."""
-        opt_frame = ttk.Frame(self.notebook)
-        self.notebook.add(opt_frame, text="Optimization")
+        """The objective and limits, the buttons, and the weights."""
+        gap = ui_tokens.SPACE["sm"]
+        self.optimization_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.optimization_tab, text=SUB_TABS[1])
+        tab = self.optimization_tab
 
-        # Optimization parameters
-        params_frame = ttk.LabelFrame(opt_frame, text="Optimization Parameters")
-        params_frame.pack(fill=tk.X, padx=10, pady=10)
+        params = ttk.Frame(tab)
+        params.pack(side="top", fill="x", padx=gap, pady=(gap, 0))
+        self.opt_type_var = tk.StringVar(master=params, value=OPTIMIZATION_TYPES[0][0])
+        self.target_return_var = tk.StringVar(master=params)
+        self.risk_free_var = tk.StringVar(master=params, value="2.0")
+        self.max_weight_var = tk.StringVar(master=params, value="40")
+        self.min_weight_var = tk.StringVar(master=params, value="1")
+        self.max_vol_var = tk.StringVar(master=params, value="")  # blank: no limit
 
-        # Optimization type
-        type_frame = tk.Frame(params_frame)
-        type_frame.pack(fill=tk.X, padx=5, pady=5)
+        def field(row: int, column: int, label: str, widget: tk.Widget) -> None:
+            ttk.Label(params, text=label).grid(
+                row=row, column=column * 2, sticky="w", padx=(0, gap), pady=(0, gap)
+            )
+            widget.grid(
+                row=row,
+                column=column * 2 + 1,
+                sticky="w",
+                padx=(0, gap * 3),
+                pady=(0, gap),
+            )
 
-        tk.Label(type_frame, text="Optimization Type:").pack(side=tk.LEFT)
-        self.opt_type_var = tk.StringVar(value="max_sharpe")
-        opt_combo = ttk.Combobox(
-            type_frame,
+        opt_box = ttk.Combobox(
+            params,
             textvariable=self.opt_type_var,
-            values=["max_sharpe", "min_variance", "target_return"],
+            values=[label for label, _key in OPTIMIZATION_TYPES],
             state="readonly",
-            width=15,
+            width=16,
         )
-        opt_combo.pack(side=tk.LEFT, padx=5)
-        opt_combo.bind("<<ComboboxSelected>>", self.on_opt_type_change)
-
-        # Target return (for target_return optimization)
-        self.target_frame = tk.Frame(type_frame)
-        self.target_frame.pack(side=tk.LEFT, padx=20)
-        tk.Label(self.target_frame, text="Target Return (%):").pack(side=tk.LEFT)
-        self.target_return_entry = tk.Entry(self.target_frame, width=10)
-        self.target_return_entry.pack(side=tk.LEFT, padx=5)
-        self.target_frame.pack_forget()  # Initially hidden
-
-        # Risk-free rate
-        rate_frame = tk.Frame(params_frame)
-        rate_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        tk.Label(rate_frame, text="Risk-free Rate (%):").pack(side=tk.LEFT)
-        self.risk_free_var = tk.StringVar(value="2.0")
-        tk.Entry(rate_frame, textvariable=self.risk_free_var, width=10).pack(
-            side=tk.LEFT, padx=5
+        opt_box.bind("<<ComboboxSelected>>", self.on_opt_type_change)
+        field(0, 0, "Objective", opt_box)
+        self.target_return_entry = ttk.Entry(
+            params, textvariable=self.target_return_var, width=8
         )
-
-        # Constraints
-        constraints_frame = ttk.LabelFrame(opt_frame, text="Constraints")
-        constraints_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        constraint_grid = tk.Frame(constraints_frame)
-        constraint_grid.pack(padx=5, pady=5)
-
-        tk.Label(constraint_grid, text="Max Weight per Asset (%):").grid(
-            row=0, column=0, sticky="w", padx=5
+        field(0, 1, "Target Return (annual %)", self.target_return_entry)
+        field(
+            0,
+            2,
+            "Risk-free Rate (%)",
+            ttk.Entry(params, textvariable=self.risk_free_var, width=8),
         )
-        self.max_weight_var = tk.StringVar(value="40")
-        tk.Entry(constraint_grid, textvariable=self.max_weight_var, width=10).grid(
-            row=0, column=1, padx=5
+        field(
+            1,
+            0,
+            "Max Weight per Coin (%)",
+            ttk.Entry(params, textvariable=self.max_weight_var, width=8),
         )
+        field(
+            1,
+            1,
+            "Min Weight per Coin (%)",
+            ttk.Entry(params, textvariable=self.min_weight_var, width=8),
+        )
+        field(
+            1,
+            2,
+            "Max Volatility (annual %, blank: none)",
+            ttk.Entry(params, textvariable=self.max_vol_var, width=8),
+        )
+        self.on_opt_type_change()
 
-        tk.Label(constraint_grid, text="Min Weight per Asset (%):").grid(
-            row=0, column=2, sticky="w", padx=5
-        )
-        self.min_weight_var = tk.StringVar(value="1")
-        tk.Entry(constraint_grid, textvariable=self.min_weight_var, width=10).grid(
-            row=0, column=3, padx=5
-        )
+        bar = self._toolbar(tab)
+        self._button(bar, "Optimize Portfolio", self.optimize_portfolio)
+        self._button(bar, "Save Portfolio", self.save_portfolio)
 
-        tk.Label(constraint_grid, text="Max Portfolio Volatility (%):").grid(
-            row=1, column=0, sticky="w", padx=5, pady=5
-        )
-        self.max_vol_var = tk.StringVar(value="25")
-        tk.Entry(constraint_grid, textvariable=self.max_vol_var, width=10).grid(
-            row=1, column=1, padx=5, pady=5
+        self.current_label = ttk.Label(tab, text="", style="Muted.TLabel", anchor="w")
+        self.current_label.pack(side="top", fill="x", padx=gap, pady=(gap, 0))
+        self.status_label = ttk.Label(tab, text="", style="Muted.TLabel", anchor="w")
+        self.status_label.pack(
+            side="top", fill="x", padx=gap, pady=(ui_tokens.SPACE["xs"], 0)
         )
 
-        # Optimization button and results
-        opt_button_frame = tk.Frame(opt_frame)
-        opt_button_frame.pack(fill=tk.X, padx=10, pady=10)
+        # the portfolios' figures, under the weights (packed ahead of the table:
+        # the table takes the room left)
+        metrics = ttk.Frame(tab)
+        metrics.pack(
+            side="bottom", fill="x", padx=gap, pady=(ui_tokens.SPACE["xs"], gap)
+        )
+        self.metric_labels: Dict[Tuple[str, str], ttk.Label] = {}
+        for column, (key, title) in enumerate(PORTFOLIOS, start=1):
+            ttk.Label(metrics, text=title, style="Muted.TLabel").grid(
+                row=0, column=column, sticky="e", padx=(gap * 3, 0)
+            )
+        for row, (title, key) in enumerate(METRICS, start=1):
+            ttk.Label(metrics, text=title).grid(row=row, column=0, sticky="w")
+            for column, (portfolio, _title) in enumerate(PORTFOLIOS, start=1):
+                value = ttk.Label(metrics, text="")
+                value.grid(row=row, column=column, sticky="e", padx=(gap * 3, 0))
+                self.metric_labels[(portfolio, key)] = value
 
-        ttk.Button(
-            opt_button_frame, text="Optimize Portfolio", command=self.optimize_portfolio
-        ).pack(side=tk.LEFT)
-        ttk.Button(
-            opt_button_frame,
-            text="Calculate Efficient Frontier",
-            command=self.calculate_frontier,
-        ).pack(side=tk.LEFT, padx=10)
-        ttk.Button(
-            opt_button_frame, text="Save Portfolio", command=self.save_portfolio
-        ).pack(side=tk.LEFT)
-
-        # Results display
-        results_frame = ttk.LabelFrame(opt_frame, text="Optimization Results")
-        results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        self.results_text = tk.Text(results_frame, height=10, wrap=tk.WORD)
-        scrollbar = ttk.Scrollbar(results_frame, orient=tk.VERTICAL)
-        ui_table.scroll_when_needed(self.results_text, scrollbar)
+        self.result_table = ui_table.DataTable(
+            tab,
+            RESULT_COLUMNS,
+            RESULT_HEADINGS,
+            key="portfolio_optimization.result",
+            numeric=RESULT_NUMERIC,
+            empty_text=NO_RESULT,
+        )
+        self.result_table.pack(side="top", fill="both", expand=True, pady=(gap, 0))
+        self.results_tree = self.result_table.tree
 
     def setup_rebalancing_tab(self):
         """Setup the rebalancing tab."""
         rebal_frame = ttk.Frame(self.notebook)
-        self.notebook.add(rebal_frame, text="Rebalancing")
+        self.notebook.add(rebal_frame, text=SUB_TABS[2])
 
         # Current portfolio input
         current_frame = ttk.LabelFrame(rebal_frame, text="Current Portfolio")
@@ -401,7 +516,7 @@ class PortfolioOptimizerGUI:
     def setup_analysis_tab(self):
         """Setup the analysis and visualization tab."""
         analysis_frame = ttk.Frame(self.notebook)
-        self.notebook.add(analysis_frame, text="Analysis")
+        self.notebook.add(analysis_frame, text=SUB_TABS[3])
 
         if not PLOTTING_AVAILABLE:
             tk.Label(
@@ -436,16 +551,123 @@ class PortfolioOptimizerGUI:
         self.chart_frame = tk.Frame(analysis_frame)
         self.chart_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-    # Event handlers
-    def on_opt_type_change(self, event=None):
-        """Handle optimization type change."""
-        if self.opt_type_var.get() == "target_return":
-            self.target_frame.pack(side=tk.LEFT, padx=20)
+    # ---- jobs off the Tk thread ----
+
+    def _start(self, name: str, work: Callable[[_Job], Any], done: Callable) -> bool:
+        """Run ``work`` off the Tk thread and ``done(result)`` on it once it ends;
+        False (nothing started) while another job runs."""
+        if self.job is not None:
+            self._say("Busy: wait for the current job to end.")
+            return False
+        self.job, self._done = _Job(name, work), done
+        self._set_busy(True)
+        self.job.thread.start()
+        self._poll()
+        return True
+
+    def _poll(self) -> None:
+        self._after = None
+        job = self.job
+        if job is None:
+            return
+        if job.thread.is_alive():
+            if job.progress:
+                self._say(job.progress)
+            try:
+                self._after = self.main_frame.after(POLL_MS, self._poll)
+            except tk.TclError:
+                pass  # the window is gone
+            return
+        done, self.job, self._done = self._done, None, None
+        self._set_busy(False)
+        if job.stop.is_set() or isinstance(job.error, po.Stopped):
+            return
+        if job.error is not None:
+            self._failed(job.error)
         else:
-            self.target_frame.pack_forget()
+            done(job.result)
+
+    def wait(self, timeout: float = 60.0) -> None:
+        """Wait for the job running now and show its result (tests)."""
+        job = self.job
+        if job is None:
+            return
+        job.thread.join(timeout)
+        if self._after is not None:
+            try:
+                self.main_frame.after_cancel(self._after)
+            except tk.TclError:
+                pass
+        self._poll()
+
+    def close(self) -> None:
+        """Stop the job running now (the window is being destroyed)."""
+        job, self.job, self._done = self.job, None, None
+        if self._after is not None:
+            try:
+                self.main_frame.after_cancel(self._after)
+            except tk.TclError:
+                pass
+            self._after = None
+        if job is not None:
+            job.stop.set()
+            job.thread.join(STOP_WAIT_S)
+
+    def _on_destroy(self, event) -> None:
+        if event.widget is self.main_frame:
+            self.close()
+
+    def _set_busy(self, busy: bool) -> None:
+        for widget in self._busy_widgets:
+            try:
+                widget.state(["disabled"] if busy else ["!disabled"])
+            except tk.TclError:
+                pass
+
+    def _say(self, text: str) -> None:
+        """A line of status, on the Data and Optimization sub-tabs."""
+        for label in (self.data_status, self.status_label):
+            try:
+                label.configure(text=text)
+            except tk.TclError:
+                pass
+
+    def _failed(self, error: BaseException) -> None:
+        self._say(f"Not done: {error}")
+        messagebox.showerror("Portfolio Optimization", str(error))
+
+    # ---- the data ----
+
+    def _data_request(self) -> Optional[Tuple]:
+        """What Load Data would read now: ("candles", coins, days) or ("file",
+        path); None, after saying why, when there is nothing to read."""
+        if self.source_var.get() == po.SOURCE_FILE:
+            path = self.file_path_var.get().strip()
+            if not path:
+                messagebox.showerror(
+                    "Portfolio Optimization", "Choose a price file first."
+                )
+                return None
+            return (po.SOURCE_FILE, path)
+        coins = tuple(self._coin_list())
+        if not coins:
+            messagebox.showerror(
+                "Portfolio Optimization", "Add a coin in Settings first."
+            )
+            return None
+        return (po.SOURCE_CANDLES, coins, po.window_days(self.window_var.get()))
+
+    def _coin_list(self) -> List[str]:
+        try:
+            coins = self._coins() or ()
+        except Exception:
+            coins = ()
+        return list(
+            dict.fromkeys(str(c).strip().upper() for c in coins if str(c).strip())
+        )
 
     def browse_file(self):
-        """Browse for data file."""
+        """Pick a price file (and read prices from it)."""
         filename = filedialog.askopenfilename(
             title="Select Price Data File",
             filetypes=[
@@ -456,264 +678,315 @@ class PortfolioOptimizerGUI:
         )
         if filename:
             self.file_path_var.set(filename)
+            self.source_var.set(po.SOURCE_FILE)
 
-    def load_data(self):
-        """Load data from file."""
-        if not self.file_path_var.get():
-            messagebox.showerror("Error", "Please select a data file")
-            return
+    def load_data(self) -> bool:
+        """Read the closes from the source chosen, off the Tk thread."""
+        request = self._data_request()
+        if request is None:
+            return False
 
-        try:
-            file_path = self.file_path_var.get()
-            if file_path.endswith(".csv"):
-                data = pd.read_csv(file_path, index_col=0, parse_dates=True)
-            elif file_path.endswith(".xlsx"):
-                data = pd.read_excel(file_path, index_col=0, parse_dates=True)
-            else:
-                messagebox.showerror("Error", "Unsupported file format")
-                return
+        load_candles = self._load_candles
 
-            self.current_data = data
-            self.update_data_summary(
-                f"Loaded data: {len(data)} rows, {len(data.columns)} assets"
+        def work(job: _Job):
+            return request, read_data(request, load_candles, job)
+
+        return self._start("load", work, self._loaded)
+
+    def _loaded(self, answer) -> None:
+        request, data = answer
+        self.market_data, self._loaded_for = data, request
+        # a result worked out from other data no longer applies
+        self.optimization_result, self.frontier_data = None, None
+        self.refresh_current()
+        self.show_data()
+
+    def data_summary(self) -> str:
+        """The data in one line: the coins and the days they share."""
+        data = self.market_data
+        if data is None:
+            return NO_DATA
+        if data.prices.empty:
+            return "No coin has enough daily closes."
+        days = len(data.prices)
+        first, last = data.first_day, data.last_day
+        span = f"{first:%Y-%m-%d} to {last:%Y-%m-%d}"
+        where = "price file" if data.source == po.SOURCE_FILE else "daily candles"
+        n = len(data.coins)
+        return f"{n} coin{'' if n == 1 else 's'}, {days} days of {where}, {span}"
+
+    def show_data(self) -> None:
+        """The coins' table and the coins left out."""
+        tree = self.data_tree
+        tree.delete(*tree.get_children())
+        data = self.market_data
+        held = self.current.weights if self.current is not None else {}
+        if data is not None and not data.prices.empty:
+            returns, vols = data.expected_returns(), data.volatilities()
+            last = data.prices.iloc[-1]
+            for coin in data.coins:
+                tree.insert(
+                    "",
+                    "end",
+                    iid=coin,
+                    values=(
+                        coin,
+                        str(data.bars.get(coin, len(data.prices))),
+                        self._price(float(last[coin])),
+                        _pct(float(returns[coin])),
+                        _pct(float(vols[coin])),
+                        _pct(held[coin]) if coin in held else "",
+                    ),
+                )
+        left = data.left_out if data is not None else {}
+        self.left_out_label.configure(
+            text=(
+                "Left out: " + "; ".join(f"{c} ({why})" for c, why in left.items())
+                if left
+                else ""
             )
-            messagebox.showinfo("Success", f"Data loaded successfully: {data.shape}")
+        )
+        self.data_status.configure(text=self.data_summary())
+        self.data_table.settle()
 
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to load data: {str(e)}")
+    # ---- the current portfolio (Long-term Holdings) ----
 
-    def add_asset(self):
-        """Add asset manually."""
+    def held_holdings(self) -> List[Any]:
+        """The holdings Long-term Holdings' tag filter keeps ([] without it)."""
+        if self.holdings is None:
+            return []
         try:
-            symbol = self.symbol_entry.get().strip().upper()
-            expected_return = float(self.return_entry.get())
-            volatility = float(self.volatility_entry.get())
+            return list(self.holdings.filtered_holdings())
+        except Exception as e:
+            print(f"Error reading the holdings: {e}")
+            return []
 
-            if not symbol:
-                messagebox.showerror("Error", "Please enter a symbol")
-                return
+    def tag_text(self) -> str:
+        try:
+            return str(self.holdings.tag_filter_text())
+        except Exception:
+            return "All"
 
-            # Check if asset already exists
-            for item in self.asset_tree.get_children():
-                if self.asset_tree.item(item, "values")[0] == symbol:
-                    messagebox.showerror("Error", f"Asset {symbol} already exists")
-                    return
+    def refresh_current(self) -> None:
+        """The current portfolio again, from the holdings the tag filter keeps, in
+        the coins of the data loaded (every coin held before any is)."""
+        if not OPTIMIZER_AVAILABLE:
+            return
+        coins = self.market_data.coins if self.market_data is not None else None
+        self.current = po.current_portfolio(self.held_holdings(), coins)
+        self.current_label.configure(text=self.current_text())
+        if self.market_data is not None:
+            self.show_data()
+        self.show_result()
 
-            self.asset_tree.insert(
+    def current_text(self) -> str:
+        """The current portfolio in one line."""
+        if self.holdings is None:
+            return "Current portfolio: Long-term Holdings is not available."
+        current = self.current
+        tags = self.tag_text()
+        if current is None or not current.weights:
+            return f"Current portfolio: no holding with a current value (tags: {tags})."
+        n = len(current.weights)
+        text = (
+            f"Current portfolio: Long-term Holdings, tags {tags}: {n} "
+            f"coin{'' if n == 1 else 's'}, {self._money(current.value)}"
+        )
+        if current.outside:
+            text += ". Left out, no data: " + ", ".join(
+                f"{c} ({_pct(share, 1)} of the holdings' value)"
+                for c, share in sorted(current.outside.items())
+            )
+        return text
+
+    # ---- optimising ----
+
+    def on_opt_type_change(self, event=None):
+        """The target return takes input only for a target return objective."""
+        wanted = self.opt_type() == "target_return"
+        self.target_return_entry.state(["!disabled"] if wanted else ["disabled"])
+
+    def opt_type(self) -> str:
+        return dict(OPTIMIZATION_TYPES).get(self.opt_type_var.get(), "max_sharpe")
+
+    def read_parameters(self) -> Optional[Dict[str, Any]]:
+        """The objective and limits typed; None, after saying why, when they are
+        not numbers in range."""
+
+        def refuse(message: str) -> None:
+            messagebox.showerror("Portfolio Optimization", message)
+
+        try:
+            risk_free = _number(self.risk_free_var.get()) or 0.0
+            top = _number(self.max_weight_var.get())
+            bottom = _number(self.min_weight_var.get()) or 0.0
+            max_vol = _number(self.max_vol_var.get())
+            target = _number(self.target_return_var.get())
+        except ValueError:
+            refuse("Enter numbers in the number fields.")
+            return None
+        if top is None or not 0.0 < top <= 100.0:
+            refuse("Max weight per coin must be above 0% and at most 100%.")
+            return None
+        if not 0.0 <= bottom < top:
+            refuse("Min weight per coin must be at least 0% and below the max weight.")
+            return None
+        if max_vol is not None and max_vol <= 0.0:
+            refuse("Max volatility must be above 0%, or blank for none.")
+            return None
+        kind = self.opt_type()
+        if kind == "target_return" and target is None:
+            refuse("Enter the target return.")
+            return None
+        return {
+            "type": kind,
+            "risk_free_rate": risk_free / 100.0,
+            "target_return": target / 100.0 if kind == "target_return" else None,
+            "constraints": {
+                "max_weight": top / 100.0,
+                "min_weight": bottom / 100.0,
+                "max_volatility": max_vol / 100.0 if max_vol is not None else None,
+            },
+        }
+
+    def optimize_portfolio(self) -> bool:
+        """Optimise over the data (loaded first when the source, the window or the
+        coins in Settings changed), and work out the efficient frontier, off the Tk
+        thread."""
+        if not OPTIMIZER_AVAILABLE or self.optimizer is None:
+            messagebox.showerror(
+                "Portfolio Optimization", "The optimizer could not be loaded."
+            )
+            return False
+        params = self.read_parameters()
+        if params is None:
+            return False
+        request = self._data_request()
+        if request is None:
+            return False
+        loaded = self.market_data if request == self._loaded_for else None
+        optimizer, load_candles = self.optimizer, self._load_candles
+        optimizer.risk_free_rate = params["risk_free_rate"]
+
+        def work(job: _Job):
+            data = (
+                loaded if loaded is not None else read_data(request, load_candles, job)
+            )
+            problem = po.data_problem(data)
+            if problem is None:
+                problem = po.constraint_problem(len(data.coins), params["constraints"])
+            if problem is not None:
+                return request, data, problem, None, None
+            expected, cov = data.expected_returns(), data.covariance()
+            job.progress = "Optimizing"
+            result = optimizer.optimize_portfolio(
+                expected,
+                cov,
+                params["type"],
+                params["target_return"],
+                params["constraints"],
+            )
+            job.progress = "Working out the efficient frontier"
+            frontier = optimizer.calculate_efficient_frontier(
+                expected,
+                cov,
+                FRONTIER_POINTS,
+                constraints=params["constraints"],
+                should_stop=job.stop.is_set,
+            )
+            return request, data, None, result, frontier
+
+        return self._start("optimize", work, self._optimized)
+
+    def _optimized(self, answer) -> None:
+        request, data, problem, result, frontier = answer
+        if data is not self.market_data:
+            self._loaded((request, data))
+        if problem is not None:
+            self._say(f"Not optimised: {problem}")
+            messagebox.showerror("Portfolio Optimization", problem)
+            return
+        result = dict(result)
+        result.pop("optimization_result", None)  # scipy's own, not kept
+        result["weights"] = {c: float(w) for c, w in result["weights"].items()}
+        self.optimization_result = result
+        self.frontier_data = frontier
+        self.refresh_current()
+        self._say(self.result_summary())
+
+    def result_summary(self) -> str:
+        result = self.optimization_result
+        if result is None:
+            return NO_RESULT
+        label = {key: label for label, key in OPTIMIZATION_TYPES}.get(
+            result.get("method"), result.get("method")
+        )
+        text = f"Optimised: {label}, over {self.data_summary()}"
+        if not result.get("success"):
+            text = (
+                "Not optimised: "
+                + str(result.get("error") or "the optimizer found no solution")
+                + "; the weights shown are equal weights"
+            )
+        return text
+
+    def portfolio_figures(self, weights: Dict[str, float]) -> Optional[Tuple]:
+        """(expected return, volatility, Sharpe ratio) of ``weights`` over the data
+        loaded, annualised; None without data or weights."""
+        data = self.market_data
+        if data is None or data.prices.empty or not weights or self.optimizer is None:
+            return None
+        coins = data.coins
+        w = po.weights_vector(weights, coins)
+        if w.sum() <= 0:
+            return None
+        ret, vol, sharpe = self.optimizer.portfolio_performance(
+            w / w.sum(), data.expected_returns().values, data.covariance().values
+        )
+        return float(ret), float(vol), float(sharpe)
+
+    def show_result(self) -> None:
+        """The current and optimised weights, and their figures."""
+        tree = self.results_tree
+        tree.delete(*tree.get_children())
+        result = self.optimization_result
+        held = self.current.weights if self.current is not None else {}
+        optimised = result["weights"] if result else {}
+        coins = list(optimised) or (self.market_data.coins if self.market_data else [])
+        coins += [c for c in held if c not in coins]
+        for coin in coins:
+            tree.insert(
                 "",
                 "end",
-                values=(symbol, f"{expected_return:.2f}", f"{volatility:.2f}"),
+                iid=coin,
+                values=(
+                    coin,
+                    _pct(held[coin]) if coin in held else "",
+                    _pct(optimised[coin]) if coin in optimised else "",
+                ),
             )
-
-            # Clear entries
-            self.symbol_entry.delete(0, tk.END)
-            self.return_entry.delete(0, tk.END)
-            self.volatility_entry.delete(0, tk.END)
-
-            self.update_manual_data()
-
-        except ValueError:
-            messagebox.showerror(
-                "Error", "Please enter valid numbers for return and volatility"
-            )
-
-    def remove_asset(self):
-        """Remove selected asset."""
-        selection = self.asset_tree.selection()
-        if not selection:
-            messagebox.showwarning("Warning", "Please select an asset to remove")
-            return
-
-        for item in selection:
-            self.asset_tree.delete(item)
-
-        self.update_manual_data()
-
-    def load_sample_data(self):
-        """Load sample portfolio data."""
-        # Clear existing data
-        for item in self.asset_tree.get_children():
-            self.asset_tree.delete(item)
-
-        # Sample crypto portfolio
-        sample_assets = [
-            ("BTC", 8.5, 45.2),
-            ("ETH", 12.1, 58.7),
-            ("ADA", 15.3, 67.8),
-            ("DOT", 18.7, 72.1),
-            ("LINK", 22.4, 68.9),
-        ]
-
-        for symbol, ret, vol in sample_assets:
-            self.asset_tree.insert(
-                "", "end", values=(symbol, f"{ret:.1f}", f"{vol:.1f}")
-            )
-
-        self.update_manual_data()
-
-    def update_manual_data(self):
-        """Update data from manual input."""
-        assets = []
-        returns = []
-        volatilities = []
-
-        for item in self.asset_tree.get_children():
-            values = self.asset_tree.item(item, "values")
-            assets.append(values[0])
-            returns.append(float(values[1]) / 100)  # Convert percentage to decimal
-            volatilities.append(float(values[2]) / 100)
-
-        if assets:
-            self.current_data = {
-                "assets": assets,
-                "expected_returns": pd.Series(returns, index=assets),
-                "volatilities": pd.Series(volatilities, index=assets),
-            }
-
-            # Create covariance matrix (simplified - assumes correlations)
-            correlations = np.random.rand(len(assets), len(assets)) * 0.3 + 0.5
-            np.fill_diagonal(correlations, 1.0)
-            correlations = (correlations + correlations.T) / 2  # Make symmetric
-
-            vol_matrix = np.outer(volatilities, volatilities)
-            cov_matrix = correlations * vol_matrix
-
-            self.current_data["covariance_matrix"] = pd.DataFrame(
-                cov_matrix, index=assets, columns=assets
-            )
-
-            self.update_data_summary(f"Manual data: {len(assets)} assets")
-        else:
-            self.current_data = None
-            self.update_data_summary("No data loaded")
-
-    def update_data_summary(self, text):
-        """Update data summary display."""
-        self.data_summary_label.config(text=text)
-
-    def optimize_portfolio(self):
-        """Perform portfolio optimization."""
-        if not OPTIMIZER_AVAILABLE:
-            messagebox.showerror(
-                "Error",
-                "Portfolio optimizer not available. Install scipy for optimization.",
-            )
-            return
-
-        if not self.current_data:
-            messagebox.showerror("Error", "Please load data first")
-            return
-
-        try:
-            # Get optimization parameters
-            opt_type = self.opt_type_var.get()
-            risk_free_rate = float(self.risk_free_var.get()) / 100
-
-            # Update optimizer risk-free rate
-            self.optimizer.risk_free_rate = risk_free_rate
-
-            # Get constraints
-            constraints = {
-                "max_weight": float(self.max_weight_var.get()) / 100,
-                "min_weight": float(self.min_weight_var.get()) / 100,
-                "max_volatility": float(self.max_vol_var.get()) / 100,
-            }
-
-            # Get data
-            if isinstance(self.current_data, dict):
-                expected_returns = self.current_data["expected_returns"]
-                cov_matrix = self.current_data["covariance_matrix"]
-            else:
+        figures = {
+            "current": self.portfolio_figures(held),
+            "optimised": (
                 (
-                    expected_returns,
-                    cov_matrix,
-                ) = self.optimizer.calculate_returns_covariance(self.current_data)
-
-            # Target return for target_return optimization
-            target_return = None
-            if opt_type == "target_return":
-                target_return = float(self.target_return_entry.get()) / 100
-
-            # Perform optimization
-            result = self.optimizer.optimize_portfolio(
-                expected_returns, cov_matrix, opt_type, target_return, constraints
-            )
-
-            self.optimization_result = result
-            self.display_optimization_results(result)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Optimization failed: {str(e)}")
-
-    def display_optimization_results(self, result):
-        """Display optimization results."""
-        self.results_text.delete("1.0", tk.END)
-
-        text = f"Optimization Results ({result['method']})\n"
-        text += "=" * 50 + "\n\n"
-
-        text += f"Expected Return: {result['expected_return']:.2%}\n"
-        text += f"Volatility: {result['volatility']:.2%}\n"
-        text += f"Sharpe Ratio: {result['sharpe_ratio']:.3f}\n"
-        text += f"Success: {result['success']}\n\n"
-
-        text += "Optimal Weights:\n"
-        text += "-" * 20 + "\n"
-
-        for asset, weight in sorted(
-            result["weights"].items(), key=lambda x: x[1], reverse=True
-        ):
-            text += f"{asset}: {weight:.1%}\n"
-
-        if not result["success"] and "error" in result:
-            text += f"\nNote: {result['error']}\n"
-
-        self.results_text.insert("1.0", text)
-
-    def calculate_frontier(self):
-        """Calculate and display efficient frontier."""
-        if not OPTIMIZER_AVAILABLE:
-            messagebox.showerror(
-                "Error",
-                "Portfolio optimizer not available. Install scipy for optimization.",
-            )
-            return
-
-        if not self.current_data:
-            messagebox.showerror("Error", "Please load data first")
-            return
-
-        try:
-            # Get data
-            if isinstance(self.current_data, dict):
-                expected_returns = self.current_data["expected_returns"]
-                cov_matrix = self.current_data["covariance_matrix"]
-            else:
-                (
-                    expected_returns,
-                    cov_matrix,
-                ) = self.optimizer.calculate_returns_covariance(self.current_data)
-
-            # Calculate efficient frontier
-            frontier = self.optimizer.calculate_efficient_frontier(
-                expected_returns, cov_matrix, 30
-            )
-            self.frontier_data = frontier
-
-            # Display summary
-            text = f"\nEfficient Frontier calculated with {len(frontier)} points\n"
-            text += f"Return range: {frontier['Return'].min():.2%} to {frontier['Return'].max():.2%}\n"
-            text += f"Risk range: {frontier['Volatility'].min():.2%} to {frontier['Volatility'].max():.2%}\n"
-            text += f"Max Sharpe ratio: {frontier['Sharpe_Ratio'].max():.3f}\n"
-
-            self.results_text.insert(tk.END, text)
-
-            messagebox.showinfo(
-                "Success", f"Efficient frontier calculated with {len(frontier)} points"
-            )
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Frontier calculation failed: {str(e)}")
+                    result["expected_return"],
+                    result["volatility"],
+                    result["sharpe_ratio"],
+                )
+                if result
+                else None
+            ),
+        }
+        for portfolio, values in figures.items():
+            for i, (_title, key) in enumerate(METRICS):
+                if values is None:
+                    text = ""
+                elif key == "sharpe_ratio":
+                    text = f"{values[i]:.3f}"
+                else:
+                    text = _pct(values[i])
+                self.metric_labels[(portfolio, key)].configure(text=text)
+        self.result_table.settle()
 
     def save_portfolio(self):
         """Save optimized portfolio."""
@@ -722,17 +995,19 @@ class PortfolioOptimizerGUI:
             return
 
         # Simple dialog for portfolio name
-        name = tk.simpledialog.askstring("Save Portfolio", "Enter portfolio name:")
+        name = simpledialog.askstring("Save Portfolio", "Enter portfolio name:")
         if name and OPTIMIZER_AVAILABLE:
             try:
                 portfolio_id = self.optimizer.save_optimized_portfolio(
-                    name, self.optimization_result, self.opt_type_var.get()
+                    name, self.optimization_result, self.opt_type()
                 )
                 messagebox.showinfo(
                     "Success", f"Portfolio saved with ID {portfolio_id}"
                 )
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save portfolio: {str(e)}")
+
+    # ---- Rebalancing ----
 
     def use_last_optimization(self):
         """Use last optimization result for rebalancing."""
@@ -831,6 +1106,8 @@ class PortfolioOptimizerGUI:
 
         self.rebal_results_text.insert("1.0", text)
 
+    # ---- Analysis ----
+
     def plot_efficient_frontier(self):
         """Plot efficient frontier."""
         if not PLOTTING_AVAILABLE:
@@ -838,7 +1115,7 @@ class PortfolioOptimizerGUI:
             return
 
         if self.frontier_data is None or self.frontier_data.empty:
-            messagebox.showerror("Error", "Please calculate efficient frontier first")
+            messagebox.showerror("Error", "Optimize the portfolio first")
             return
 
         # Clear previous charts
@@ -934,7 +1211,8 @@ class PortfolioOptimizerGUI:
             messagebox.showerror("Error", "Matplotlib not available for plotting")
             return
 
-        if not self.current_data:
+        data = self.market_data
+        if data is None or data.prices.empty:
             messagebox.showerror("Error", "Please load data first")
             return
 
@@ -944,14 +1222,7 @@ class PortfolioOptimizerGUI:
 
         fig, ax = plt.subplots(figsize=(10, 6))
 
-        if isinstance(self.current_data, dict):
-            returns = self.current_data["expected_returns"]
-            volatilities = self.current_data["volatilities"]
-        else:
-            returns, cov_matrix = self.optimizer.calculate_returns_covariance(
-                self.current_data
-            )
-            volatilities = np.sqrt(np.diag(cov_matrix))
+        returns, volatilities = data.expected_returns(), data.volatilities()
 
         # Plot individual assets
         ax.scatter(volatilities, returns, s=100, alpha=0.7, c=ui_tokens.CHART["series"])

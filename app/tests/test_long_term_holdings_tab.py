@@ -582,7 +582,10 @@ def test_rebalancing_is_searched_and_exported_as_shown(
     out = tmp_path / "suggestions.csv"
     assert g.export_suggestions(str(out))
     lines = out.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "Coin,Action,% of Holdings,Target %,Deviation %,Amount"
+    assert (
+        lines[0]
+        == "Coin,Action,% of Holdings,Target %,Deviation %,Amount,Fee,Net Amount"
+    )
     assert len(lines) == 2 and lines[1].startswith("ETH,Buy,")
 
 

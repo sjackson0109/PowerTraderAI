@@ -13,7 +13,9 @@ annualised, the mean is multiplied by DAYS_PER_YEAR and the covariance too
 (crypto trades every day of the year).
 
 The current portfolio (``current_portfolio``) is Long-term Holdings': each coin's
-share of the current value of the holdings given.
+share of the current value of the holdings given. ``targets_from_weights`` turns
+optimised weights into each holding's target % (Long-term Holdings' Rebalancing
+works from those).
 """
 
 import json
@@ -94,6 +96,20 @@ class MarketData:
     @property
     def last_day(self) -> Optional[pd.Timestamp]:
         return self.prices.index[-1] if len(self.prices) else None
+
+    def only(self, coins: Iterable[str]) -> "MarketData":
+        """The same data for those of ``coins`` it has, in its own order."""
+        wanted = {str(c).upper() for c in coins}
+        kept = [c for c in self.coins if c in wanted]
+        return MarketData(
+            self.prices[kept],
+            self.source,
+            self.window_days,
+            {c: n for c, n in self.bars.items() if c in kept},
+            {c: e for c, e in self.exchanges.items() if c in kept},
+            dict(self.left_out),
+            self.path,
+        )
 
 
 def window_days(label: str) -> int:
@@ -233,6 +249,45 @@ def current_portfolio(
 def weights_vector(weights: Dict[str, float], coins: Sequence[str]) -> np.ndarray:
     """``weights`` in the order of ``coins`` (0 for a coin not in them)."""
     return np.array([float(weights.get(c, 0.0)) for c in coins], dtype=float)
+
+
+TARGET_DECIMALS = 2  # a target % worked out from a weight is rounded to this
+
+
+@dataclass
+class TargetChange:
+    """A holding's target % before and after weights are applied."""
+
+    holding: Any
+    old: float
+    new: float
+
+
+def targets_from_weights(
+    holdings: Iterable[Any], weights: Dict[str, float]
+) -> Tuple[List[TargetChange], Dict[str, float]]:
+    """The target % each of ``holdings`` gets from ``weights`` (coin -> fraction):
+    its coin's weight, shared among the holdings of that coin by their current
+    value (equally when none has one), rounded to TARGET_DECIMALS. A holding whose
+    coin has no weight gets 0 (no target). Also the weights of the coins none of
+    ``holdings`` is in, which no target can carry."""
+    holdings = list(holdings or ())
+    by_coin: Dict[str, List[Any]] = {}
+    for h in holdings:
+        by_coin.setdefault(str(h.symbol).strip().upper(), []).append(h)
+    new: Dict[int, float] = {}
+    for coin, group in by_coin.items():
+        weight = float(weights.get(coin, 0.0)) * 100.0
+        values = [max(0.0, float(h.current_value or 0.0)) for h in group]
+        total = sum(values)
+        for h, value in zip(group, values):
+            share = value / total if total > 0 else 1.0 / len(group)
+            new[id(h)] = round(weight * share, TARGET_DECIMALS)
+    changes = [
+        TargetChange(h, float(h.target_percentage or 0.0), new[id(h)]) for h in holdings
+    ]
+    unheld = {c: float(w) for c, w in weights.items() if c not in by_coin and w > 0}
+    return changes, unheld
 
 
 def constraint_problem(n_assets: int, constraints: Dict) -> Optional[str]:
@@ -662,72 +717,6 @@ class PortfolioOptimizer:
             frontier_results,
             columns=["Return", "Volatility", "Sharpe_Ratio", "Weights"],
         )
-
-    def suggest_rebalancing(
-        self,
-        current_weights: Dict[str, float],
-        target_weights: Dict[str, float],
-        threshold: float = 0.05,
-        transaction_cost: float = 0.001,
-    ) -> Dict:
-        """
-        Suggest portfolio rebalancing based on drift from target weights.
-
-        Args:
-            current_weights: Current portfolio weights
-            target_weights: Target portfolio weights
-            threshold: Rebalancing threshold (5% drift)
-            transaction_cost: Transaction cost rate (0.1%)
-
-        Returns:
-            Rebalancing recommendation dictionary
-        """
-        recommendations = []
-        total_drift = 0
-        rebalancing_needed = False
-
-        # Check each asset
-        for symbol in target_weights:
-            current_weight = current_weights.get(symbol, 0)
-            target_weight = target_weights[symbol]
-            drift = abs(current_weight - target_weight)
-
-            if drift > threshold:
-                rebalancing_needed = True
-                action = "Buy" if current_weight < target_weight else "Sell"
-                change_needed = target_weight - current_weight
-
-                recommendations.append(
-                    {
-                        "symbol": symbol,
-                        "current_weight": current_weight,
-                        "target_weight": target_weight,
-                        "drift": drift,
-                        "action": action,
-                        "change_needed": change_needed,
-                        "urgency": "High" if drift > threshold * 2 else "Medium",
-                    }
-                )
-
-            total_drift += drift
-
-        # Estimate transaction costs
-        if rebalancing_needed:
-            total_trades = sum(
-                1 for rec in recommendations if abs(rec["change_needed"]) > 0.01
-            )
-            estimated_cost = total_trades * transaction_cost
-        else:
-            estimated_cost = 0
-
-        return {
-            "rebalancing_needed": rebalancing_needed,
-            "total_drift": total_drift,
-            "recommendations": recommendations,
-            "estimated_transaction_cost": estimated_cost,
-            "cost_benefit_ratio": total_drift
-            / (estimated_cost + 1e-10),  # Avoid division by zero
-        }
 
     def save_optimized_portfolio(
         self,

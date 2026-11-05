@@ -7,6 +7,10 @@
   primary first) over a window; a price file (CSV) stays an optional source, and the
   sample data and the typed returns are gone. The current portfolio is Long-term
   Holdings', as its tag filter keeps it.
+* One Rebalancing: Long-term Holdings'. Apply as Targets writes an optimisation's
+  weights to the holdings' target %, after a confirmation with the old and new
+  targets, and Long-term Holdings' Rebalancing shows the drift from them, each
+  trade with its fee at the exchange layer's taker rate (0.6% when it gives none).
 
 Real Tk widgets and a real hub, under the isolation guard (app/conftest.py); the
 exchanges are fakes behind a real ExchangeManager, so no request is sent; every
@@ -232,12 +236,16 @@ def holding(symbol, qty, cost, price, **kw):
     )
 
 
-def holdings_gui(win, manager):
+def holdings_gui(win, manager, fees=lambda symbol: (0.005, True)):
+    """Long-term Holdings' window on ``manager``; ``fees`` stands in for the
+    exchange layer's taker rate (0.5% by default)."""
     from tkinter import ttk
 
     frame = ttk.Frame(win)
     frame.pack(fill="both", expand=True)
-    return ltg.HoldingsManagementGUI(frame, coins=lambda: list(COINS), manager=manager)
+    return ltg.HoldingsManagementGUI(
+        frame, coins=lambda: list(COINS), manager=manager, fees=fees
+    )
 
 
 def optimizer_gui(win, frames=None, coins=COINS, holdings=None, **kw):
@@ -528,6 +536,271 @@ def test_without_long_term_holdings_there_is_no_current_portfolio(root, dialogs)
     assert g.current_label.cget("text") == (
         "Current portfolio: Long-term Holdings is not available."
     )
+
+
+# ---- acceptance: one Rebalancing, and Apply as Targets feeds it ----
+
+
+def test_no_duplicate_rebalancing_remains(root, manager, dialogs):
+    lt = holdings_gui(root, manager)
+    g = optimizer_gui(root, holdings=lt)
+    assert [g.notebook.tab(t, "text") for t in g.notebook.tabs()] == [
+        "Data",
+        "Optimization",
+        "Analysis",
+    ]
+    assert not [t for t in texts(g.main_frame) if "Rebalanc" in t]
+    for name in (
+        "setup_rebalancing_tab",
+        "analyze_rebalancing",
+        "use_last_optimization",
+        "parse_weights",
+    ):
+        assert not hasattr(g, name)
+    assert not hasattr(po.PortfolioOptimizer, "suggest_rebalancing")
+    # the one left: Long-term Holdings'
+    assert "Rebalancing" in [lt.notebook.tab(t, "text") for t in lt.notebook.tabs()]
+
+
+def pension_holdings(manager):
+    """Four Pension holdings (BTC 30,000, ETH 20,000 on Coinbase and 10,000 on
+    Kraken, SOL with no current price) and a Steve one."""
+    for h in (
+        holding("BTC", 1, 30000.0, 30000.0, target_percentage=50.0, tags=["Pension"]),
+        holding(
+            "ETH",
+            10,
+            2000.0,
+            2000.0,
+            exchange="Coinbase",
+            target_percentage=25.0,
+            tags=["Pension"],
+        ),
+        holding(
+            "ETH",
+            5,
+            2000.0,
+            2000.0,
+            exchange="Kraken",
+            target_percentage=25.0,
+            tags=["Pension"],
+        ),
+        holding("SOL", 100, 100.0, 0.0, tags=["Pension"]),
+        holding("DOGE", 10000, 0.1, 0.5, target_percentage=100.0, tags=["Steve"]),
+    ):
+        manager.add_holding(h)
+
+
+def saved_holdings(manager):
+    """holdings.db's holdings, by (coin, exchange)."""
+    return {(h.symbol, h.exchange): h for h in manager.db.get_all_holdings()}
+
+
+def test_applying_a_result_updates_the_targets_and_rebalancing_reflects_them(
+    root, manager, dialogs
+):
+    pension_holdings(manager)
+    lt = holdings_gui(root, manager)
+    lt.set_tag_selection(["Pension"])
+    g = optimizer_gui(root, holdings=lt)
+    g.optimize_portfolio()
+    g.wait()
+    weights = g.optimization_result["weights"]
+    # the targets now, beside the weights
+    targets = {r[0]: r[3] for r in rows(g.results_tree)}
+    assert (targets["BTC"], targets["ETH"], targets["XRP"]) == ("50.00%", "50.00%", "")
+
+    # the confirmation: each old and new target; No changes nothing
+    dialogs.answer = False
+    assert not g.apply_as_targets()
+    ((_box, title, message),) = [c for c in dialogs.calls if c[0] == "askyesno"]
+    assert title == "Apply as Targets"
+    lines = message.splitlines()
+    assert lines[0] == (
+        "Set the target % of 4 holdings (tags: Pension) to the optimised weights?"
+    )
+    btc, eth, sol = (weights[c] * 100 for c in ("BTC", "ETH", "SOL"))
+    assert f"BTC: 50.00% → {btc:.2f}%" in lines
+    # ETH's weight shared by value: 20,000 on Coinbase, 10,000 on Kraken
+    assert f"ETH (Coinbase): 25.00% → {eth * 2 / 3:.2f}%" in lines
+    assert f"ETH (Kraken): 25.00% → {eth / 3:.2f}%" in lines
+    assert f"SOL: 0.00% → {sol:.2f}%" in lines  # the one SOL holding
+    assert lines[-1] == f"Not set, no holding: XRP {weights['XRP'] * 100:.2f}%"
+    assert saved_holdings(manager)[("BTC", "")].target_percentage == 50.0
+
+    dialogs.answer = True
+    assert g.apply_as_targets()
+    saved = saved_holdings(manager)
+    new = {
+        ("BTC", ""): round(btc, 2),
+        ("ETH", "Coinbase"): round(eth * 2 / 3, 2),
+        ("ETH", "Kraken"): round(eth / 3, 2),
+        ("SOL", ""): round(sol, 2),
+        ("DOGE", ""): 100.0,  # outside the tag filter: as it was
+    }
+    assert {k: h.target_percentage for k, h in saved.items()} == pytest.approx(new)
+    assert saved[("BTC", "")].tags == ["Pension"]  # the tags kept
+    # Long-term Holdings shows them at once: Holdings, and Rebalancing's drift
+    assert {r[0]: r[9] for r in rows(lt.holdings_tree)}[
+        "BTC"
+    ] == f"{new['BTC', '']:.1f}%"
+    expected = manager.get_rebalancing_suggestions(
+        lt.filtered_holdings(), fee_rate=lt.fee_rate
+    )
+    # BTC is 50% of the Pension holdings' value, its target at most 40% now
+    assert ("BTC", "SELL") in [(s["symbol"], s["action"]) for s in expected]
+    assert rows(lt.suggestions_tree) == [lt.suggestion_cells(s) for s in expected]
+    shown_targets = {r[0]: r[3] for r in rows(lt.suggestions_tree)}
+    assert shown_targets["BTC"] == f"{new['BTC', '']:.2f}%"
+    # and the Optimization table, the targets now
+    targets = {r[0]: r[3] for r in rows(g.results_tree)}
+    assert targets["BTC"] == f"{new['BTC', '']:.2f}%"
+    assert targets["ETH"] == f"{new['ETH', 'Coinbase'] + new['ETH', 'Kraken']:.2f}%"
+    assert g.status_label.cget("text") == "Targets set on 4 holdings."
+
+
+def test_coins_held_optimises_over_the_coins_held_only(root, manager, dialogs):
+    pension_holdings(manager)
+    lt = holdings_gui(root, manager)
+    lt.set_tag_selection(["Pension"])
+    g = optimizer_gui(root, holdings=lt)
+    g.universe_var.set("Coins held")
+    g.optimize_portfolio()
+    g.wait()
+    assert set(g.optimization_result["weights"]) == {"BTC", "ETH", "SOL"}
+    assert g.market_data.coins == list(COINS)  # the data: the coins in Settings
+    assert g.apply_as_targets()
+    message = [c for c in dialogs.calls if c[0] == "askyesno"][-1][2]
+    assert "Not set" not in message
+    pension = [h for h in manager.db.get_all_holdings() if "Pension" in h.tags]
+    assert sum(h.target_percentage for h in pension) == pytest.approx(100.0, abs=0.05)
+
+    lt.set_tag_selection(["Steve"])  # DOGE only, and DOGE has no data
+    g.optimize_portfolio()
+    g.wait()
+    assert dialogs.calls[-1][2] == (
+        "Of the coins held: optimization needs daily closes for at least two coins."
+    )
+
+
+def test_apply_as_targets_needs_a_result_and_holdings(root, manager, dialogs):
+    lt = holdings_gui(root, manager)
+    g = optimizer_gui(root, holdings=lt)
+    assert not g.apply_as_targets()
+    assert dialogs.calls[-1][2] == "Optimize the portfolio first."
+    g.optimize_portfolio()
+    g.wait()
+    assert not g.apply_as_targets()
+    assert dialogs.calls[-1][2] == "No holdings to set targets on (tags: All)."
+    alone = optimizer_gui(root)
+    alone.optimize_portfolio()
+    alone.wait()
+    assert not alone.apply_as_targets()
+    assert dialogs.calls[-1][2] == "Long-term Holdings is not available."
+
+
+def test_a_coins_weight_is_shared_by_its_holdings_value():
+    eth = [holding("ETH", 2, 1.0, 100.0), holding("ETH", 1, 1.0, 100.0)]
+    ada = [holding("ADA", 10, 1.0, 0.0), holding("ADA", 5, 1.0, 0.0)]  # no value
+    doge = holding("DOGE", 1, 1.0, 1.0, target_percentage=30.0)
+    changes, unheld = po.targets_from_weights(
+        eth + ada + [doge], {"ETH": 0.6, "ADA": 0.3, "BTC": 0.1}
+    )
+    assert [(c.old, c.new) for c in changes] == [
+        (0.0, 40.0),
+        (0.0, 20.0),
+        (0.0, 15.0),  # equal shares when none has a value
+        (0.0, 15.0),
+        (30.0, 0.0),  # no weight: no target
+    ]
+    assert unheld == {"BTC": 0.1}
+
+
+# ---- fees: the exchange layer's taker rate, else 0.6% ----
+
+
+def test_the_fee_rate_comes_from_the_exchange_layer_else_the_default_0_6_percent():
+    asked = []
+
+    def trading_fees(symbol):
+        asked.append(symbol)
+        return {"maker": 0.004, "taker": 0.0025}
+
+    on_layer = SimpleNamespace(trading_fees=trading_fees)
+    assert lth.trading_fee_rate("BTC", layer=lambda: on_layer) == (0.0025, True)
+    on_manager = SimpleNamespace(
+        exchange_manager=SimpleNamespace(trading_fees=trading_fees)
+    )
+    assert lth.trading_fee_rate("ETH", layer=lambda: on_manager) == (0.0025, True)
+    assert asked == ["BTC", "ETH"]
+    assert lth.DEFAULT_TAKER_FEE_RATE == 0.006
+    for layer in (
+        SimpleNamespace(exchange_manager=SimpleNamespace()),  # no trading_fees()
+        SimpleNamespace(trading_fees=lambda s: {"maker": 0.004}),  # no taker rate
+        SimpleNamespace(trading_fees=lambda s: {"taker": 0.6}),  # a percent
+        SimpleNamespace(trading_fees=lambda s: 1 / 0),  # it fails
+    ):
+        assert lth.trading_fee_rate("BTC", layer=lambda: layer) == (0.006, False)
+
+
+def two_holdings_to_rebalance(manager):
+    """BTC 30,000 and ETH 10,000, both with a 50% target: BTC sells 10,000 and ETH
+    buys 10,000."""
+    for h in (
+        holding("BTC", 0.5, 40000.0, 60000.0, target_percentage=50.0),
+        holding("ETH", 10, 1000.0, 1000.0, target_percentage=50.0),
+    ):
+        manager.add_holding(h)
+
+
+def trade_totals(lt):
+    return {k: label.cget("text") for k, label in lt.trade_labels.items()}
+
+
+def test_rebalancing_shows_each_trade_with_its_fee_and_the_totals(
+    root, manager, dialogs
+):
+    two_holdings_to_rebalance(manager)
+    asked = []
+
+    def fees(symbol):
+        asked.append(symbol)
+        return 0.005, True
+
+    lt = holdings_gui(root, manager, fees=fees)
+    cells = {r[0]: r for r in rows(lt.suggestions_tree)}
+    assert cells["BTC"][1] == "Sell"
+    assert cells["BTC"][5:] == ("$10,000.00", "$50.00", "$9,950.00")
+    assert cells["ETH"][1] == "Buy"
+    assert cells["ETH"][5:] == ("$10,000.00", "$50.00", "$10,050.00")
+    assert [lt.suggestions_tree.heading(c, "text") for c in ("fee", "net")] == [
+        "Fee",
+        "Net Amount",
+    ]
+    assert trade_totals(lt) == {
+        "count": "2",
+        "amount": "$20,000.00",
+        "fees": "$100.00",
+        "rate": "0.50%",
+    }
+    # each coin's rate is read once, until Refresh
+    lt.refresh_holdings_display()
+    assert sorted(asked) == ["BTC", "ETH"]
+    lt.refresh()
+    assert sorted(asked) == ["BTC", "BTC", "ETH", "ETH"]
+
+
+def test_with_no_rate_from_the_exchange_layer_fees_are_at_the_default_rate(
+    root, manager, dialogs
+):
+    two_holdings_to_rebalance(manager)
+    no_rate = SimpleNamespace(exchange_manager=SimpleNamespace())
+    lt = holdings_gui(
+        root, manager, fees=lambda s: lth.trading_fee_rate(s, layer=lambda: no_rate)
+    )
+    cells = {r[0]: r for r in rows(lt.suggestions_tree)}
+    assert cells["BTC"][5:] == ("$10,000.00", "$60.00", "$9,940.00")
+    assert trade_totals(lt)["rate"] == "0.60% (default rate)"
 
 
 # ---- jobs off the Tk thread ----

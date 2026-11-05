@@ -10,12 +10,16 @@ Modern Portfolio Theory over the coins in Settings (portfolio_optimizer). Sub-ta
   return and volatility, and its share of the current portfolio, and the coins
   left out say why.
 * Optimization: the objective (max Sharpe ratio, min variance or a target
-  return), the risk-free rate and the weight limits; Optimize Portfolio loads the
-  data first when the source, the window or the coins in Settings changed since it
-  was loaded, then works out the weights and the efficient frontier. The table
-  sets the optimised weights beside the current portfolio's, under their expected
-  return, volatility and Sharpe ratio.
-* Rebalancing and Analysis.
+  return), the risk-free rate, the weight limits and the coins (those in Settings,
+  or only those held); Optimize Portfolio loads the data first when the source,
+  the window or the coins in Settings changed since it was loaded, then works out
+  the weights and the efficient frontier. The table sets the optimised weights
+  beside the current portfolio's and the holdings' target %, under the two
+  portfolios' expected return, volatility and Sharpe ratio. Apply as Targets
+  writes the optimised weights to the target % of the holdings the tag filter
+  keeps, after a confirmation that lists each old and new target; Long-term
+  Holdings' Rebalancing (the one rebalancing) then shows the drift from them.
+* Analysis.
 
 The current portfolio is Long-term Holdings' (``holdings``: its window, a
 HoldingsManagementGUI): the holdings its tag filter keeps, each coin's share of
@@ -60,7 +64,7 @@ try:
 except ImportError:
     TAG_FILTER_EVENT = "<<HoldingsTagFilter>>"
 
-SUB_TABS = ("Data", "Optimization", "Rebalancing", "Analysis")
+SUB_TABS = ("Data", "Optimization", "Analysis")
 POLL_MS = 100  # how often the window looks for the end of a job
 STOP_WAIT_S = 2.0  # how long a destroyed window waits for its job to stop
 FRONTIER_POINTS = 30
@@ -90,11 +94,14 @@ OPTIMIZATION_TYPES = (
     ("Min variance", "min_variance"),
     ("Target return", "target_return"),
 )
-RESULT_COLUMNS = ("coin", "held", "optimised")
+# the coins optimised over: those in Settings, or only those held
+UNIVERSES = (("Coins in Settings", "settings"), ("Coins held", "held"))
+RESULT_COLUMNS = ("coin", "held", "optimised", "target")
 RESULT_HEADINGS = {
     "coin": "Coin",
     "held": "% of Holdings",
     "optimised": "Optimised %",
+    "target": "Target %",  # the holdings' targets now, in Long-term Holdings
 }
 RESULT_NUMERIC = RESULT_COLUMNS[1:]
 NO_RESULT = "Not optimised yet"
@@ -216,12 +223,13 @@ class PortfolioOptimizerGUI:
         self._loaded_for: Optional[Tuple] = None  # the request market_data answers
         self.current: Optional["po.CurrentPortfolio"] = None
         self.optimization_result: Optional[Dict] = None
+        self.result_data: Optional["po.MarketData"] = None  # what the result is over
         self.frontier_data: Optional[pd.DataFrame] = None
         self.job: Optional[_Job] = None
-        self._done: Optional[Callable] = (
-            None  # takes the job's result, on the Tk thread
-        )
+        # takes the job's result, on the Tk thread
+        self._done: Optional[Callable] = None
         self._after: Optional[str] = None
+        self._closed = False  # the window is destroyed
         self._busy_widgets: List[tk.Widget] = []
 
         self.setup_gui()
@@ -237,7 +245,6 @@ class PortfolioOptimizerGUI:
 
         self.setup_data_tab()
         self.setup_optimization_tab()
-        self.setup_rebalancing_tab()
         self.setup_analysis_tab()
 
         if not OPTIMIZER_AVAILABLE:
@@ -246,9 +253,11 @@ class PortfolioOptimizerGUI:
             self._say("The optimizer could not be loaded.")
         holdings_frame = getattr(self.holdings, "main_frame", None)
         if holdings_frame is not None:
-            holdings_frame.bind(
-                TAG_FILTER_EVENT, lambda _e: self.refresh_current(), add="+"
-            )
+            holdings_frame.bind(TAG_FILTER_EVENT, self._on_tag_filter, add="+")
+
+    def _on_tag_filter(self, _event=None) -> None:
+        if not self._closed:  # Long-term Holdings can outlive this window
+            self.refresh_current()
 
     # ---- the sub-tabs ----
 
@@ -335,6 +344,7 @@ class PortfolioOptimizerGUI:
         self.max_weight_var = tk.StringVar(master=params, value="40")
         self.min_weight_var = tk.StringVar(master=params, value="1")
         self.max_vol_var = tk.StringVar(master=params, value="")  # blank: no limit
+        self.universe_var = tk.StringVar(master=params, value=UNIVERSES[0][0])
 
         def field(row: int, column: int, label: str, widget: tk.Widget) -> None:
             ttk.Label(params, text=label).grid(
@@ -385,10 +395,23 @@ class PortfolioOptimizerGUI:
             "Max Volatility (annual %, blank: none)",
             ttk.Entry(params, textvariable=self.max_vol_var, width=8),
         )
+        field(
+            2,
+            0,
+            "Coins",
+            ttk.Combobox(
+                params,
+                textvariable=self.universe_var,
+                values=[label for label, _key in UNIVERSES],
+                state="readonly",
+                width=16,
+            ),
+        )
         self.on_opt_type_change()
 
         bar = self._toolbar(tab)
         self._button(bar, "Optimize Portfolio", self.optimize_portfolio)
+        self._button(bar, "Apply as Targets", self.apply_as_targets)
         self._button(bar, "Save Portfolio", self.save_portfolio)
 
         self.current_label = ttk.Label(tab, text="", style="Muted.TLabel", anchor="w")
@@ -427,96 +450,10 @@ class PortfolioOptimizerGUI:
         self.result_table.pack(side="top", fill="both", expand=True, pady=(gap, 0))
         self.results_tree = self.result_table.tree
 
-    def setup_rebalancing_tab(self):
-        """Setup the rebalancing tab."""
-        rebal_frame = ttk.Frame(self.notebook)
-        self.notebook.add(rebal_frame, text=SUB_TABS[2])
-
-        # Current portfolio input
-        current_frame = ttk.LabelFrame(rebal_frame, text="Current Portfolio")
-        current_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        # Current weights input
-        current_input_frame = tk.Frame(current_frame)
-        current_input_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        tk.Label(
-            current_input_frame,
-            text="Enter current weights (Symbol:Weight%, comma separated):",
-        ).pack(anchor="w")
-        self.current_weights_entry = tk.Text(current_input_frame, height=3, width=80)
-        self.current_weights_entry.pack(fill=tk.X, pady=5)
-        self.current_weights_entry.insert(
-            "1.0", "BTC:35, ETH:25, ADA:15, DOT:15, LINK:10"
-        )
-
-        # Target portfolio
-        target_frame = ttk.LabelFrame(rebal_frame, text="Target Portfolio")
-        target_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        target_controls = tk.Frame(target_frame)
-        target_controls.pack(fill=tk.X, padx=5, pady=5)
-
-        ttk.Button(
-            target_controls,
-            text="Use Last Optimization",
-            command=self.use_last_optimization,
-        ).pack(side=tk.LEFT)
-        ttk.Button(
-            target_controls,
-            text="Load Saved Portfolio",
-            command=self.load_saved_portfolio,
-        ).pack(side=tk.LEFT, padx=10)
-
-        # Manual target weights
-        tk.Label(target_frame, text="Or enter target weights manually:").pack(
-            anchor="w", padx=5
-        )
-        self.target_weights_entry = tk.Text(target_frame, height=3, width=80)
-        self.target_weights_entry.pack(fill=tk.X, padx=5, pady=5)
-
-        # Rebalancing parameters
-        rebal_params_frame = ttk.LabelFrame(rebal_frame, text="Rebalancing Parameters")
-        rebal_params_frame.pack(fill=tk.X, padx=10, pady=10)
-
-        params_grid = tk.Frame(rebal_params_frame)
-        params_grid.pack(padx=5, pady=5)
-
-        tk.Label(params_grid, text="Drift Threshold (%):").grid(
-            row=0, column=0, sticky="w", padx=5
-        )
-        self.drift_threshold_var = tk.StringVar(value="5")
-        tk.Entry(params_grid, textvariable=self.drift_threshold_var, width=10).grid(
-            row=0, column=1, padx=5
-        )
-
-        tk.Label(params_grid, text="Transaction Cost (%):").grid(
-            row=0, column=2, sticky="w", padx=5
-        )
-        self.transaction_cost_var = tk.StringVar(value="0.1")
-        tk.Entry(params_grid, textvariable=self.transaction_cost_var, width=10).grid(
-            row=0, column=3, padx=5
-        )
-
-        # Analyze button
-        ttk.Button(
-            rebal_frame,
-            text="Analyze Rebalancing Need",
-            command=self.analyze_rebalancing,
-        ).pack(pady=10)
-
-        # Rebalancing results
-        rebal_results_frame = ttk.LabelFrame(rebal_frame, text="Rebalancing Analysis")
-        rebal_results_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        self.rebal_results_text = tk.Text(rebal_results_frame, wrap=tk.WORD)
-        rebal_scrollbar = ttk.Scrollbar(rebal_results_frame, orient=tk.VERTICAL)
-        ui_table.scroll_when_needed(self.rebal_results_text, rebal_scrollbar)
-
     def setup_analysis_tab(self):
         """Setup the analysis and visualization tab."""
         analysis_frame = ttk.Frame(self.notebook)
-        self.notebook.add(analysis_frame, text=SUB_TABS[3])
+        self.notebook.add(analysis_frame, text=SUB_TABS[2])
 
         if not PLOTTING_AVAILABLE:
             tk.Label(
@@ -602,6 +539,7 @@ class PortfolioOptimizerGUI:
 
     def close(self) -> None:
         """Stop the job running now (the window is being destroyed)."""
+        self._closed = True
         job, self.job, self._done = self.job, None, None
         if self._after is not None:
             try:
@@ -698,6 +636,7 @@ class PortfolioOptimizerGUI:
         self.market_data, self._loaded_for = data, request
         # a result worked out from other data no longer applies
         self.optimization_result, self.frontier_data = None, None
+        self.result_data = None
         self.refresh_current()
         self.show_data()
 
@@ -840,6 +779,7 @@ class PortfolioOptimizerGUI:
             return None
         return {
             "type": kind,
+            "universe": dict(UNIVERSES).get(self.universe_var.get(), "settings"),
             "risk_free_rate": risk_free / 100.0,
             "target_return": target / 100.0 if kind == "target_return" else None,
             "constraints": {
@@ -867,17 +807,23 @@ class PortfolioOptimizerGUI:
         loaded = self.market_data if request == self._loaded_for else None
         optimizer, load_candles = self.optimizer, self._load_candles
         optimizer.risk_free_rate = params["risk_free_rate"]
+        held = None
+        if params["universe"] == "held":
+            held = {str(h.symbol).strip().upper() for h in self.held_holdings()}
 
         def work(job: _Job):
             data = (
                 loaded if loaded is not None else read_data(request, load_candles, job)
             )
-            problem = po.data_problem(data)
+            used = data if held is None else data.only(held)
+            problem = po.data_problem(used)
             if problem is None:
-                problem = po.constraint_problem(len(data.coins), params["constraints"])
+                problem = po.constraint_problem(len(used.coins), params["constraints"])
             if problem is not None:
-                return request, data, problem, None, None
-            expected, cov = data.expected_returns(), data.covariance()
+                if held is not None:
+                    problem = f"Of the coins held: {problem[0].lower()}{problem[1:]}"
+                return request, data, used, problem, None, None
+            expected, cov = used.expected_returns(), used.covariance()
             job.progress = "Optimizing"
             result = optimizer.optimize_portfolio(
                 expected,
@@ -894,12 +840,12 @@ class PortfolioOptimizerGUI:
                 constraints=params["constraints"],
                 should_stop=job.stop.is_set,
             )
-            return request, data, None, result, frontier
+            return request, data, used, None, result, frontier
 
         return self._start("optimize", work, self._optimized)
 
     def _optimized(self, answer) -> None:
-        request, data, problem, result, frontier = answer
+        request, data, used, problem, result, frontier = answer
         if data is not self.market_data:
             self._loaded((request, data))
         if problem is not None:
@@ -910,6 +856,7 @@ class PortfolioOptimizerGUI:
         result.pop("optimization_result", None)  # scipy's own, not kept
         result["weights"] = {c: float(w) for c, w in result["weights"].items()}
         self.optimization_result = result
+        self.result_data = used  # the coins and days the result is over
         self.frontier_data = frontier
         self.refresh_current()
         self._say(self.result_summary())
@@ -932,8 +879,9 @@ class PortfolioOptimizerGUI:
 
     def portfolio_figures(self, weights: Dict[str, float]) -> Optional[Tuple]:
         """(expected return, volatility, Sharpe ratio) of ``weights`` over the data
-        loaded, annualised; None without data or weights."""
-        data = self.market_data
+        the result is over (else the data loaded), annualised; None without data or
+        weights."""
+        data = self.result_data if self.result_data is not None else self.market_data
         if data is None or data.prices.empty or not weights or self.optimizer is None:
             return None
         coins = data.coins
@@ -952,8 +900,9 @@ class PortfolioOptimizerGUI:
         result = self.optimization_result
         held = self.current.weights if self.current is not None else {}
         optimised = result["weights"] if result else {}
+        targets = self.targets_now()
         coins = list(optimised) or (self.market_data.coins if self.market_data else [])
-        coins += [c for c in held if c not in coins]
+        coins = list(dict.fromkeys(coins + list(held) + list(targets)))
         for coin in coins:
             tree.insert(
                 "",
@@ -963,6 +912,7 @@ class PortfolioOptimizerGUI:
                     coin,
                     _pct(held[coin]) if coin in held else "",
                     _pct(optimised[coin]) if coin in optimised else "",
+                    f"{targets[coin]:.2f}%" if coin in targets else "",
                 ),
             )
         figures = {
@@ -988,6 +938,88 @@ class PortfolioOptimizerGUI:
                 self.metric_labels[(portfolio, key)].configure(text=text)
         self.result_table.settle()
 
+    # ---- Apply as Targets ----
+
+    def targets_now(self) -> Dict[str, float]:
+        """Each coin's target % now: the sum of the targets of the holdings the tag
+        filter keeps (holdings with no target left out)."""
+        targets: Dict[str, float] = {}
+        for h in self.held_holdings():
+            target = float(getattr(h, "target_percentage", 0.0) or 0.0)
+            if target > 0:
+                coin = str(h.symbol).strip().upper()
+                targets[coin] = targets.get(coin, 0.0) + target
+        return targets
+
+    def _holding_names(self, holdings: Sequence[Any]) -> Dict[int, str]:
+        """A holding's coin, and its exchange when the coin is held more than once."""
+        counts: Dict[str, int] = {}
+        for h in holdings:
+            counts[h.symbol] = counts.get(h.symbol, 0) + 1
+        return {
+            id(h): (
+                f"{h.symbol} ({h.exchange})"
+                if counts[h.symbol] > 1 and h.exchange
+                else str(h.symbol)
+            )
+            for h in holdings
+        }
+
+    def apply_as_targets(self) -> bool:
+        """Write the optimised weights to the target % of the holdings the tag
+        filter keeps (portfolio_optimizer.targets_from_weights), after a
+        confirmation listing each old and new target; Long-term Holdings shows them
+        at once. Whether they were written."""
+        title = "Apply as Targets"
+        result = self.optimization_result
+        if not result:
+            messagebox.showerror(title, "Optimize the portfolio first.")
+            return False
+        manager = getattr(self.holdings, "holdings_manager", None)
+        if manager is None:
+            messagebox.showerror(title, "Long-term Holdings is not available.")
+            return False
+        holdings = self.held_holdings()
+        if not holdings:
+            messagebox.showerror(
+                title, f"No holdings to set targets on (tags: {self.tag_text()})."
+            )
+            return False
+        changes, unheld = po.targets_from_weights(holdings, result["weights"])
+        names = self._holding_names(holdings)
+        n = len(changes)
+        lines = [
+            f"Set the target % of {n} holding{'' if n == 1 else 's'} "
+            f"(tags: {self.tag_text()}) to the optimised weights?",
+            "",
+        ]
+        lines += [
+            f"{names[id(c.holding)]}: {c.old:.2f}% → {c.new:.2f}%" for c in changes
+        ]
+        if unheld:
+            lines += [
+                "",
+                "Not set, no holding: "
+                + ", ".join(f"{c} {w * 100:.2f}%" for c, w in unheld.items()),
+            ]
+        if not messagebox.askyesno(title, "\n".join(lines)):
+            return False
+        failed = []
+        for change in changes:
+            change.holding.target_percentage = change.new
+            if not manager.update_holding(change.holding):
+                failed.append(names[id(change.holding)])
+        try:
+            self.holdings.refresh_holdings_display()
+        except Exception as e:
+            print(f"Error showing the holdings: {e}")
+        self.refresh_current()
+        if failed:
+            messagebox.showerror(title, "Not set: " + ", ".join(failed))
+            return False
+        self._say(f"Targets set on {n} holding{'' if n == 1 else 's'}.")
+        return True
+
     def save_portfolio(self):
         """Save optimized portfolio."""
         if not self.optimization_result:
@@ -1006,105 +1038,6 @@ class PortfolioOptimizerGUI:
                 )
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save portfolio: {str(e)}")
-
-    # ---- Rebalancing ----
-
-    def use_last_optimization(self):
-        """Use last optimization result for rebalancing."""
-        if not self.optimization_result:
-            messagebox.showerror("Error", "No optimization result available")
-            return
-
-        # Format weights for target entry
-        weights_text = ", ".join(
-            [
-                f"{asset}:{weight*100:.1f}"
-                for asset, weight in self.optimization_result["weights"].items()
-            ]
-        )
-
-        self.target_weights_entry.delete("1.0", tk.END)
-        self.target_weights_entry.insert("1.0", weights_text)
-
-    def load_saved_portfolio(self):
-        """Load saved portfolio for rebalancing."""
-        # This would open a dialog to select from saved portfolios
-        messagebox.showinfo("Info", "Feature coming soon: Load from saved portfolios")
-
-    def parse_weights(self, text):
-        """Parse weights from text input."""
-        weights = {}
-        try:
-            for item in text.split(","):
-                if ":" in item:
-                    symbol, weight = item.split(":")
-                    weights[symbol.strip().upper()] = float(weight.strip()) / 100
-            return weights
-        except:
-            raise ValueError(
-                "Invalid weights format. Use 'Symbol:Weight%, Symbol:Weight%'"
-            )
-
-    def analyze_rebalancing(self):
-        """Analyze rebalancing needs."""
-        if not OPTIMIZER_AVAILABLE:
-            messagebox.showerror("Error", "Portfolio optimizer not available")
-            return
-
-        try:
-            # Parse current and target weights
-            current_text = self.current_weights_entry.get("1.0", tk.END).strip()
-            target_text = self.target_weights_entry.get("1.0", tk.END).strip()
-
-            if not current_text or not target_text:
-                messagebox.showerror(
-                    "Error", "Please enter both current and target weights"
-                )
-                return
-
-            current_weights = self.parse_weights(current_text)
-            target_weights = self.parse_weights(target_text)
-
-            # Get parameters
-            threshold = float(self.drift_threshold_var.get()) / 100
-            transaction_cost = float(self.transaction_cost_var.get()) / 100
-
-            # Analyze rebalancing
-            analysis = self.optimizer.suggest_rebalancing(
-                current_weights, target_weights, threshold, transaction_cost
-            )
-
-            self.display_rebalancing_analysis(analysis)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Rebalancing analysis failed: {str(e)}")
-
-    def display_rebalancing_analysis(self, analysis):
-        """Display rebalancing analysis results."""
-        self.rebal_results_text.delete("1.0", tk.END)
-
-        text = "Rebalancing Analysis\n"
-        text += "=" * 30 + "\n\n"
-
-        text += (
-            f"Rebalancing Needed: {'Yes' if analysis['rebalancing_needed'] else 'No'}\n"
-        )
-        text += f"Total Portfolio Drift: {analysis['total_drift']:.2%}\n"
-        text += f"Estimated Transaction Cost: {analysis['estimated_transaction_cost']:.2%}\n"
-        text += f"Cost-Benefit Ratio: {analysis['cost_benefit_ratio']:.2f}\n\n"
-
-        if analysis["recommendations"]:
-            text += "Recommendations:\n"
-            text += "-" * 20 + "\n"
-
-            for rec in analysis["recommendations"]:
-                text += f"{rec['symbol']}: {rec['action']} "
-                text += f"({rec['current_weight']:.1%} → {rec['target_weight']:.1%}, "
-                text += f"Drift: {rec['drift']:.2%}, Urgency: {rec['urgency']})\n"
-        else:
-            text += "No rebalancing recommendations.\n"
-
-        self.rebal_results_text.insert("1.0", text)
 
     # ---- Analysis ----
 

@@ -163,18 +163,6 @@ except ImportError:
     HOLDINGS_MANAGEMENT_AVAILABLE = False
     print("Warning: Long-term Holdings not available.")
 
-# Portfolio Analytics imports
-try:
-    from portfolio_analytics_gui import PortfolioAnalyticsGUI
-
-    # Temporarily disable portfolio analytics due to memory allocation issues
-    PORTFOLIO_ANALYTICS_AVAILABLE = (
-        False  # Set to False to avoid matplotlib memory errors
-    )
-except ImportError:
-    PORTFOLIO_ANALYTICS_AVAILABLE = False
-    print("Warning: Portfolio Analytics not available.")
-
 # Advanced Order Types imports
 try:
     from advanced_order_gui import AdvancedOrderGUI
@@ -323,7 +311,6 @@ MODULE_TAB_ORDER = (
     "Market Data",
     "Long-term Holdings",
     "Holdings Management",
-    "Portfolio Analytics",
     "Performance Attribution",
     "Backtesting Framework",
     "Portfolio Optimization",
@@ -3678,37 +3665,32 @@ class PowerTraderHub(tk.Tk):
         self._create_llm_research_tab()
 
         # ----------------------------
-        # TAB 6: Portfolio Analytics
-        # ----------------------------
-        self._create_portfolio_analytics_tab()
-
-        # ----------------------------
-        # TAB 7: Advanced Order Types
+        # TAB 6: Advanced Order Types
         # ----------------------------
         self._create_advanced_order_tab()
 
         # ----------------------------
-        # TAB 8: Real-time Market Data
+        # TAB 7: Real-time Market Data
         # ----------------------------
         self._create_market_data_tab()
 
         # ----------------------------
-        # TAB 9: Portfolio Optimization
+        # TAB 8: Portfolio Optimization
         # ----------------------------
         self._create_portfolio_optimization_tab()
 
         # ----------------------------
-        # TAB 10: Backtesting Framework
+        # TAB 9: Backtesting Framework
         # ----------------------------
         self._create_backtesting_tab()
 
         # ----------------------------
-        # TAB 11: Performance Attribution
+        # TAB 10: Performance Attribution
         # ----------------------------
         self._create_performance_attribution_tab()
 
         # ----------------------------
-        # TAB 12: Institutional Trading
+        # TAB 11: Institutional Trading
         # ----------------------------
         self._create_institutional_trading_tab()
 
@@ -4097,47 +4079,6 @@ class PowerTraderHub(tk.Tk):
                 anchor="center",
             ).pack(expand=True, fill="both", padx=20, pady=20)
             print(f"Error creating the Long-term Holdings tab: {e}")
-            import traceback
-
-            traceback.print_exc()
-
-    def _create_portfolio_analytics_tab(self):
-        """Create the Portfolio Analytics tab for advanced portfolio analysis."""
-        try:
-            # Always create the tab first
-            analytics_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(analytics_tab, text="Portfolio\nAnalytics")
-
-            if not PORTFOLIO_ANALYTICS_AVAILABLE:
-                # Show a message about unavailability
-                ttk.Label(
-                    analytics_tab,
-                    text="Portfolio Analytics Not Available\n\nRequired dependencies missing.\nPlease install: pip install pandas numpy matplotlib seaborn",
-                    font=ui_tokens.font("body"),
-                    anchor="center",
-                ).pack(expand=True, fill="both", padx=20, pady=20)
-                print("Portfolio Analytics not available")
-                return
-
-            # Initialize the analytics GUI
-            self.analytics_gui = PortfolioAnalyticsGUI(analytics_tab)
-
-            print("Portfolio Analytics tab created successfully")
-
-        except Exception as e:
-            # If there's an error after tab creation, show error message in the tab
-            try:
-                for widget in analytics_tab.winfo_children():
-                    widget.destroy()
-                ttk.Label(
-                    analytics_tab,
-                    text=f"Portfolio Analytics Error\n\n{str(e)}\n\nPlease check console for details.",
-                    font=ui_tokens.font("body"),
-                    anchor="center",
-                ).pack(expand=True, fill="both", padx=20, pady=20)
-            except Exception:
-                pass
-            print(f"Error creating Portfolio Analytics tab: {e}")
             import traceback
 
             traceback.print_exc()

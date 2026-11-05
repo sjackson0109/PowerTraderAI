@@ -9,9 +9,14 @@ yet; the ``holdings`` table and its rows are left exactly as they are, so a hold
 from before has no tags. Tags compare without regard to case and hold no commas.
 A tag selection (``filter_holdings``) keeps the holdings with any of its tags;
 UNTAGGED in it keeps those with none, and an empty one keeps every holding.
+
+Fees (owner, 2026-11-05): a rebalancing suggestion carries the fee of its trade at
+the taker rate ``trading_fee_rate`` gives: the exchange layer's
+``trading_fees(symbol)`` where the layer has it, else DEFAULT_TAKER_FEE_RATE.
 """
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -21,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:
     import pandas as pd
@@ -118,6 +123,49 @@ def filter_holdings(
     """The holdings the tag selection keeps, in their order (see matches_tags)."""
     selection = tuple(selection or ())
     return [h for h in holdings if matches_tags(h, selection)]
+
+
+# ---- fees, through the exchange layer ----
+
+DEFAULT_TAKER_FEE_RATE = (
+    0.006  # 0.6%: the taker rate when the exchange layer gives none
+)
+MAX_FEE_RATE = 0.1  # a "rate" of 10% or more is not taken as a fee rate
+
+
+def trading_fee_rate(
+    symbol: str, layer: Optional[Callable[[], Any]] = None
+) -> Tuple[float, bool]:
+    """The taker fee rate for trading ``symbol`` (a fraction: 0.006 is 0.6%) and
+    whether the exchange layer gave it: the layer's ``trading_fees(symbol)`` (the
+    selected exchange's maker and taker rates, as fractions) when it has that
+    method, else DEFAULT_TAKER_FEE_RATE. ``layer`` gives the exchange layer
+    (default: pt_multi_exchange.market_exchanges). The one place fees are read."""
+    try:
+        if layer is None:
+            from pt_multi_exchange import market_exchanges as layer
+        source = layer()
+        fees = getattr(source, "trading_fees", None)
+        if not callable(fees):
+            fees = getattr(
+                getattr(source, "exchange_manager", None), "trading_fees", None
+            )
+        if callable(fees):
+            answer = fees(symbol)
+            # the managers answer with a Sourced whose value is the TradingFees
+            if hasattr(getattr(answer, "value", None), "taker"):
+                answer = answer.value
+            taker = (
+                answer.get("taker")
+                if isinstance(answer, dict)
+                else getattr(answer, "taker", None)
+            )
+            rate = float(taker)
+            if math.isfinite(rate) and 0.0 <= rate < MAX_FEE_RATE:
+                return rate, True
+    except Exception as e:
+        print(f"No trading fee from the exchange layer for {symbol}: {e}")
+    return DEFAULT_TAKER_FEE_RATE, False
 
 
 def quantity_for_amount(amount: float, average_cost: float) -> float:
@@ -459,11 +507,16 @@ class HoldingsManager:
         }
 
     def get_rebalancing_suggestions(
-        self, holdings: Optional[Sequence[Holding]] = None
+        self,
+        holdings: Optional[Sequence[Holding]] = None,
+        fee_rate: Optional[Callable[[str], float]] = None,
     ) -> List[Dict[str, Any]]:
         """Generate rebalancing suggestions based on target allocations: each
         holding's share of the current value of ``holdings`` (e.g. filter_by_tags;
-        None: every holding) against its target %"""
+        None: every holding) against its target %. ``fee_rate(symbol)`` is the
+        taker rate (a fraction) of the trade: each suggestion has its fee and its
+        net amount (a buy's amount and fee, a sell's amount less its fee); None:
+        no fee."""
         holdings = self._chosen(holdings)
         suggestions = []
         portfolio_value = sum(h.current_value for h in holdings)
@@ -486,6 +539,8 @@ class HoldingsManager:
                         else "SELL"
                     )
                     amount_diff = abs(target_value - current_value)
+                    rate = float(fee_rate(holding.symbol)) if fee_rate else 0.0
+                    fee = amount_diff * rate
 
                     suggestions.append(
                         {
@@ -496,6 +551,13 @@ class HoldingsManager:
                             "deviation": deviation,
                             "amount_difference": amount_diff,
                             "suggested_value": target_value,
+                            "fee_rate": rate,
+                            "fee": fee,
+                            "net_amount": (
+                                amount_diff + fee
+                                if action == "BUY"
+                                else amount_diff - fee
+                            ),
                         }
                     )
 

@@ -123,32 +123,6 @@ class TestPortfolioOptimization(unittest.TestCase):
             else:
                 raise
 
-    def test_rebalancing_analysis(self):
-        """Test portfolio rebalancing analysis"""
-        if not self.portfolio_optimizer_available:
-            self.skipTest("Portfolio optimizer not available")
-
-        current_weights = {
-            "AAPL": 0.3,
-            "MSFT": 0.2,
-            "GOOGL": 0.2,
-            "TSLA": 0.2,
-            "BTC": 0.1,
-        }
-
-        try:
-            rebalance_result = self.optimizer.suggest_rebalancing(
-                self.sample_data, current_weights
-            )
-
-            self.assertIsInstance(rebalance_result, dict)
-            self.assertIn("rebalancing_needed", rebalance_result)
-            self.assertIn("suggested_weights", rebalance_result)
-
-        except Exception:
-            # Should handle gracefully if optimization fails
-            pass
-
 
 class TestBacktestingFramework(unittest.TestCase):
     """Test suite for Backtesting Framework"""

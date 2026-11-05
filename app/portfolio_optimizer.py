@@ -1,14 +1,34 @@
 #!/usr/bin/env python3
 """
 Portfolio Optimization Engine for PowerTrader
-Advanced portfolio optimization with Modern Portfolio Theory, efficient frontier, and risk management.
+Modern Portfolio Theory: optimal weights and the efficient frontier.
+
+Data (owner, 2026-11-05): ``load_candle_data`` reads the daily closes of the coins
+in Settings from the candle cache (``market_data.candles.exchange_candles``: the
+exchanges in Settings, primary first, each series from one exchange) over a window
+(WINDOWS); ``load_price_file`` reads a price file (CSV) instead. The coins' closes
+are lined up on the days every coin has one (MarketData), so each day's returns
+are the coins' moves on that same day. Returns are simple daily returns;
+annualised, the mean is multiplied by DAYS_PER_YEAR and the covariance too
+(crypto trades every day of the year).
+
+The current portfolio (``current_portfolio``) is Long-term Holdings': each coin's
+share of the current value of the holdings given. ``targets_from_weights`` turns
+optimised weights into each holding's target % (Long-term Holdings' Rebalancing
+works from those).
+
+Monte Carlo (simulate_portfolios): paths of portfolios' value over a horizon,
+drawn from the window's daily returns, by resampling whole days (the default) or
+as correlated normal draws: a model based on past data, not a forecast.
 """
 
 import json
 import logging
+import math
 import sqlite3
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -22,13 +42,467 @@ try:
 except ImportError:
     SCIPY_AVAILABLE = False
 
-try:
-    import matplotlib.pyplot as plt
-    import seaborn as sns
+DAYS_PER_YEAR = 365  # crypto trades every day: daily figures are annualised over 365
+# The windows offered for the daily closes, (label, days), and the one chosen at first
+WINDOWS = (("90 days", 90), ("1 year", 365), ("3 years", 1095))
+DEFAULT_WINDOW = "1 year"
+# A coin with closes on fewer than this share of the window's days is left out: kept,
+# it would shorten every coin's data to its own (a coin listed late)
+MIN_WINDOW_SHARE = 0.5
+MIN_RETURN_DAYS = 20  # the fewest days of returns the coins must share
+SOURCE_CANDLES, SOURCE_FILE = "candles", "file"
 
-    PLOTTING_AVAILABLE = True
-except ImportError:
-    PLOTTING_AVAILABLE = False
+
+class Stopped(Exception):
+    """The work was stopped before it ended (its window was closed)."""
+
+
+@dataclass
+class MarketData:
+    """Daily closes for the optimisation: one column per coin, one row per day
+    (ascending), only the days every coin has a close."""
+
+    prices: pd.DataFrame
+    source: str = SOURCE_CANDLES  # SOURCE_CANDLES or SOURCE_FILE
+    window_days: int = 0  # the window asked for (candles); 0 for a file
+    bars: Dict[str, int] = field(default_factory=dict)  # coin -> its own closes
+    exchanges: Dict[str, str] = field(default_factory=dict)  # coin -> exchange id
+    left_out: Dict[str, str] = field(default_factory=dict)  # coin -> why
+    path: str = ""  # the price file (SOURCE_FILE)
+
+    @property
+    def coins(self) -> List[str]:
+        return [str(c) for c in self.prices.columns]
+
+    @property
+    def returns(self) -> pd.DataFrame:
+        """Simple daily returns, one row per day after the first."""
+        return self.prices.pct_change().iloc[1:]
+
+    def expected_returns(self) -> pd.Series:
+        """The mean daily return, annualised (x DAYS_PER_YEAR)."""
+        return self.returns.mean() * DAYS_PER_YEAR
+
+    def covariance(self) -> pd.DataFrame:
+        """The covariance of the daily returns, annualised (x DAYS_PER_YEAR)."""
+        return self.returns.cov() * DAYS_PER_YEAR
+
+    def volatilities(self) -> pd.Series:
+        """The annualised standard deviation of each coin's daily returns."""
+        return pd.Series(
+            np.sqrt(np.diag(self.covariance().values)), index=self.prices.columns
+        )
+
+    @property
+    def first_day(self) -> Optional[pd.Timestamp]:
+        return self.prices.index[0] if len(self.prices) else None
+
+    @property
+    def last_day(self) -> Optional[pd.Timestamp]:
+        return self.prices.index[-1] if len(self.prices) else None
+
+    def only(self, coins: Iterable[str]) -> "MarketData":
+        """The same data for those of ``coins`` it has, in its own order."""
+        wanted = {str(c).upper() for c in coins}
+        kept = [c for c in self.coins if c in wanted]
+        return MarketData(
+            self.prices[kept],
+            self.source,
+            self.window_days,
+            {c: n for c, n in self.bars.items() if c in kept},
+            {c: e for c, e in self.exchanges.items() if c in kept},
+            dict(self.left_out),
+            self.path,
+        )
+
+
+def window_days(label: str) -> int:
+    """A window's days, by its label ("1 year": 365)."""
+    return dict(WINDOWS)[label]
+
+
+def _why_no_candles(exc: BaseException) -> str:
+    from pt_exchange_abstraction import MarketNotFound
+
+    if isinstance(exc, MarketNotFound):
+        return "no exchange in Settings has a market for it"
+    return "no daily candles from the exchanges in Settings"
+
+
+def load_candle_data(
+    coins: Sequence[str],
+    days: int,
+    *,
+    candles: Optional[Callable[..., pd.DataFrame]] = None,
+    now=None,
+    should_stop: Callable[[], bool] = lambda: False,
+    progress: Callable[[int, int, str], None] = lambda done, total, coin: None,
+) -> MarketData:
+    """The daily closes of ``coins`` over the last ``days`` days, to the last closed
+    daily bar, from the candle cache (``candles``: exchange_candles, the exchanges
+    in Settings, primary first). A coin with no candles, or with closes on fewer
+    than MIN_WINDOW_SHARE of the days, is left out (``left_out`` says why).
+    ``progress(done, total, coin)`` is called before each coin; Stopped is raised
+    when ``should_stop()`` turns true between coins."""
+    if candles is None:
+        from market_data.candles import exchange_candles as candles
+    from market_data.candles import to_utc
+
+    end = (pd.Timestamp.now(tz="UTC") if now is None else to_utc(now)).floor("D")
+    start = end - pd.Timedelta(days=int(days))
+    wanted = list(
+        dict.fromkeys(str(c).strip().upper() for c in coins if str(c).strip())
+    )
+    fewest = max(MIN_RETURN_DAYS + 1, int(math.ceil(MIN_WINDOW_SHARE * int(days))))
+    data = MarketData(pd.DataFrame(), SOURCE_CANDLES, int(days))
+    closes: Dict[str, pd.Series] = {}
+    for i, coin in enumerate(wanted):
+        if should_stop():
+            raise Stopped()
+        progress(i, len(wanted), coin)
+        try:
+            df = candles(coin, "1d", start, end, closed_only=True)
+        except Exception as exc:
+            data.left_out[coin] = _why_no_candles(exc)
+            continue
+        if df is None or df.empty:
+            data.left_out[coin] = "no daily candles in the window"
+            continue
+        # by the day: two exchanges' daily bars line up whatever hour they open at
+        day = pd.DatetimeIndex(df["open_time"]).normalize()
+        series = pd.Series(df["close"].astype(float).values, index=day)
+        series = series[~series.index.duplicated(keep="last") & (series > 0)]
+        data.bars[coin] = int(len(series))
+        if len(series) < fewest:
+            data.left_out[coin] = f"closes on {len(series)} of the {int(days)} days"
+            continue
+        closes[coin] = series
+        exchange = df.attrs.get("exchange")
+        if exchange:
+            data.exchanges[coin] = str(exchange)
+    if closes:
+        data.prices = pd.DataFrame(closes).sort_index().dropna(how="any")
+    return data
+
+
+def load_price_file(path: str) -> MarketData:
+    """Daily prices from a file the user picked: a CSV (or Excel) file with the
+    dates in its first column and one column of prices per coin. Only the days with
+    a price for every coin are kept."""
+    if str(path).lower().endswith(".xlsx"):
+        raw = pd.read_excel(path, index_col=0, parse_dates=True)
+    else:
+        raw = pd.read_csv(path, index_col=0, parse_dates=True)
+    prices = raw.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
+    prices.columns = [str(c).strip().upper() for c in prices.columns]
+    bars = {c: int(prices[c].count()) for c in prices.columns}
+    prices = prices.sort_index().dropna(how="any")
+    prices = prices.loc[:, (prices > 0).all()]
+    return MarketData(prices, SOURCE_FILE, bars=bars, path=str(path))
+
+
+def data_problem(data: MarketData) -> Optional[str]:
+    """Why ``data`` cannot be optimised over (None when it can)."""
+    if data.prices.shape[1] < 2:
+        return "Optimization needs daily closes for at least two coins."
+    if len(data.returns) < MIN_RETURN_DAYS:
+        return (
+            f"The coins share {len(data.returns)} days of returns; "
+            f"optimization needs at least {MIN_RETURN_DAYS}."
+        )
+    return None
+
+
+@dataclass
+class CurrentPortfolio:
+    """Holdings as weights of coins."""
+
+    weights: Dict[str, float] = field(default_factory=dict)  # coin -> share, sum 1
+    value: float = 0.0  # the current value of the holdings in those coins
+    outside: Dict[str, float] = field(default_factory=dict)  # coin -> share of all
+    holdings: int = 0  # the holdings given
+
+
+def current_portfolio(
+    holdings: Iterable[Any], coins: Optional[Iterable[str]] = None
+) -> CurrentPortfolio:
+    """Each coin's share of the current value of ``holdings`` (anything with
+    ``symbol`` and ``current_value``, e.g. Long-term Holdings' holdings; a coin held
+    more than once is summed). With ``coins``, the shares among those coins only:
+    the others' shares of the whole value are in ``outside``."""
+    holdings = list(holdings or ())
+    values: Dict[str, float] = {}
+    for h in holdings:
+        coin = str(getattr(h, "symbol", "") or "").strip().upper()
+        value = float(getattr(h, "current_value", 0.0) or 0.0)
+        if coin and value > 0:
+            values[coin] = values.get(coin, 0.0) + value
+    wanted = None if coins is None else {str(c).upper() for c in coins}
+    inside = {c: v for c, v in values.items() if wanted is None or c in wanted}
+    total, covered = sum(values.values()), sum(inside.values())
+    return CurrentPortfolio(
+        weights={c: v / covered for c, v in inside.items()} if covered > 0 else {},
+        value=covered,
+        outside={
+            c: v / total for c, v in values.items() if c not in inside and total > 0
+        },
+        holdings=len(holdings),
+    )
+
+
+def weights_vector(weights: Dict[str, float], coins: Sequence[str]) -> np.ndarray:
+    """``weights`` in the order of ``coins`` (0 for a coin not in them)."""
+    return np.array([float(weights.get(c, 0.0)) for c in coins], dtype=float)
+
+
+TARGET_DECIMALS = 2  # a target % worked out from a weight is rounded to this
+
+
+@dataclass
+class TargetChange:
+    """A holding's target % before and after weights are applied."""
+
+    holding: Any
+    old: float
+    new: float
+
+
+def targets_from_weights(
+    holdings: Iterable[Any], weights: Dict[str, float]
+) -> Tuple[List[TargetChange], Dict[str, float]]:
+    """The target % each of ``holdings`` gets from ``weights`` (coin -> fraction):
+    its coin's weight, shared among the holdings of that coin by their current
+    value (equally when none has one), rounded to TARGET_DECIMALS. A holding whose
+    coin has no weight gets 0 (no target). Also the weights of the coins none of
+    ``holdings`` is in, which no target can carry."""
+    holdings = list(holdings or ())
+    by_coin: Dict[str, List[Any]] = {}
+    for h in holdings:
+        by_coin.setdefault(str(h.symbol).strip().upper(), []).append(h)
+    new: Dict[int, float] = {}
+    for coin, group in by_coin.items():
+        weight = float(weights.get(coin, 0.0)) * 100.0
+        values = [max(0.0, float(h.current_value or 0.0)) for h in group]
+        total = sum(values)
+        for h, value in zip(group, values):
+            share = value / total if total > 0 else 1.0 / len(group)
+            new[id(h)] = round(weight * share, TARGET_DECIMALS)
+    changes = [
+        TargetChange(h, float(h.target_percentage or 0.0), new[id(h)]) for h in holdings
+    ]
+    unheld = {c: float(w) for c, w in weights.items() if c not in by_coin and w > 0}
+    return changes, unheld
+
+
+def constraint_problem(n_assets: int, constraints: Dict) -> Optional[str]:
+    """Why no weights of ``n_assets`` coins can keep to the max_weight and
+    min_weight (fractions) of ``constraints``, or None."""
+    top = float(constraints.get("max_weight", 1.0))
+    bottom = float(constraints.get("min_weight", 0.0))
+    if n_assets * top < 1.0 - 1e-9:
+        return (
+            f"With {n_assets} coins the max weight per coin must be at least "
+            f"{100.0 / n_assets:.1f}%."
+        )
+    if n_assets * bottom > 1.0 + 1e-9:
+        return (
+            f"With {n_assets} coins the min weight per coin can be at most "
+            f"{100.0 / n_assets:.1f}%."
+        )
+    return None
+
+
+def greedy_weights(score: np.ndarray, low: float, high: float) -> np.ndarray:
+    """The weights within [low, high] summing to 1 that make ``score . w`` the
+    largest: every coin at ``low``, then the rest to the highest scores first, up to
+    ``high`` each (feasible limits: constraint_problem gives None)."""
+    score = np.asarray(score, dtype=float)
+    weights = np.full(len(score), low)
+    left = 1.0 - weights.sum()
+    for i in np.argsort(-score, kind="stable"):
+        add = min(high - low, max(left, 0.0))
+        weights[i] += add
+        left -= add
+    return weights
+
+
+def reachable_returns(expected_returns, constraints: Dict) -> Tuple[float, float]:
+    """The lowest and highest expected return of weights within the max_weight and
+    min_weight of ``constraints`` (feasible limits: constraint_problem gives
+    None)."""
+    mu = np.asarray(expected_returns, dtype=float)
+    low, high = float(constraints["min_weight"]), float(constraints["max_weight"])
+    return (
+        float(np.dot(greedy_weights(-mu, low, high), mu)),
+        float(np.dot(greedy_weights(mu, low, high), mu)),
+    )
+
+
+# ---- Monte Carlo ----
+
+# How the daily returns of a path are drawn: resampled from the window's own days
+# (each day's returns of every coin together), or correlated normal draws with the
+# window's mean and covariance. The bootstrap keeps the fat tails of crypto
+# returns, which normal draws understate: it is the default.
+MC_BOOTSTRAP, MC_NORMAL = "bootstrap", "normal"
+MC_METHODS = (("Historical bootstrap", MC_BOOTSTRAP), ("Normal", MC_NORMAL))
+DEFAULT_MC_PATHS = 5000
+DEFAULT_MC_DAYS = 30
+MC_PERCENTILES = (5, 25, 50, 75, 95)  # the fan chart's bands and median
+VAR_PERCENTILE = 5  # Value at Risk at 95%: the loss at the 5th percentile
+MAX_MC_PATHS = 100_000
+MAX_MC_DAYS = 1095
+MAX_MC_CELLS = 10_000_000  # paths x days kept per portfolio (float32: 40 MB)
+MC_CHUNK_CELLS = 2_000_000  # draws (paths x days x coins) made at a time
+
+
+@dataclass
+class PathStats:
+    """One portfolio's simulated values: ``percentiles[p]`` is the p-th percentile
+    of the value on each day, day 0 (the start) to the horizon."""
+
+    start_value: float
+    percentiles: Dict[int, np.ndarray]
+    finals: np.ndarray  # each path's value at the horizon
+    expected_final: float  # the mean of the final values
+    median_final: float
+    var_95: float  # start value - the 5th percentile of the final value
+    drawdown_probability: float  # share of paths whose drawdown reached the limit
+
+
+@dataclass
+class Simulation:
+    """Monte Carlo paths of portfolios' value: a model based on past daily
+    returns, not a forecast."""
+
+    method: str
+    paths: int
+    days: int
+    seed: int
+    drawdown_limit: float  # a fraction: 0.08 for an 8% drawdown
+    first_day: Optional[pd.Timestamp]  # the days the returns came from
+    last_day: Optional[pd.Timestamp]
+    portfolios: Dict[str, PathStats] = field(default_factory=dict)
+
+
+def max_drawdowns(values: np.ndarray) -> np.ndarray:
+    """Each path's (row's) largest drawdown, a fraction: its largest fall from the
+    highest value before it (the first value counts), as the trader's emergency
+    stop measures an account's."""
+    peaks = np.maximum.accumulate(values, axis=1)
+    return (1.0 - values / np.where(peaks > 0, peaks, 1.0)).max(axis=1)
+
+
+def _correlated(cov: np.ndarray) -> np.ndarray:
+    """A matrix L with L @ L.T == cov: its Cholesky factor, or (cov not positive
+    definite, e.g. two coins moving as one) from its eigenvalues, the negative ones
+    taken as 0."""
+    try:
+        return np.linalg.cholesky(cov)
+    except np.linalg.LinAlgError:
+        values, vectors = np.linalg.eigh(cov)
+        return vectors * np.sqrt(np.clip(values, 0.0, None))
+
+
+def simulate_portfolios(
+    returns: pd.DataFrame,
+    portfolios: Dict[str, Dict[str, float]],
+    *,
+    start_value: float,
+    days: int = DEFAULT_MC_DAYS,
+    paths: int = DEFAULT_MC_PATHS,
+    method: str = MC_BOOTSTRAP,
+    seed: int = 0,
+    drawdown_limit: float = 0.08,
+    should_stop: Callable[[], bool] = lambda: False,
+) -> Simulation:
+    """``paths`` paths of each portfolio's value over ``days`` days from
+    ``start_value``, from the daily ``returns`` (one column per coin, one row per
+    day). ``portfolios`` maps a name to its weights (coin -> fraction, rescaled to
+    sum 1); the coins are bought at the start and held (no rebalancing on the way).
+
+    Each day of a path draws one return per coin: ``MC_BOOTSTRAP`` resamples a day
+    of ``returns`` (with replacement; the coins' moves on that day stay together),
+    ``MC_NORMAL`` draws correlated normal returns with the window's mean and
+    covariance (normal draws times its Cholesky factor). Every portfolio gets the
+    same draws, so their differences come from the weights alone; ``seed`` makes
+    the draws again. A path's drawdown on a day is its fall from its highest value
+    so far (the start counts); ``drawdown_probability`` is the share of paths whose
+    drawdown reached ``drawdown_limit`` on any day. Stopped is raised once
+    ``should_stop()`` is true between batches of paths."""
+    coins = [str(c) for c in returns.columns]
+    history = returns.to_numpy(dtype=float)
+    if history.ndim != 2 or len(history) < 2 or not coins:
+        raise ValueError("The simulation needs at least two days of returns.")
+    weights = {}
+    for name, w in portfolios.items():
+        vector = weights_vector(w, coins)
+        if vector.sum() > 0:
+            weights[name] = vector / vector.sum()
+    if not weights:
+        raise ValueError("No portfolio has a weight in the coins with returns.")
+    days, paths = int(days), int(paths)
+    n_coins = len(coins)
+    rng = np.random.default_rng(int(seed))
+    if method == MC_NORMAL:
+        mean = history.mean(axis=0)
+        factor = _correlated(np.atleast_2d(np.cov(history, rowvar=False)))
+    elif method != MC_BOOTSTRAP:
+        raise ValueError(f"Unknown simulation method: {method}")
+    values = {name: np.empty((paths, days + 1), dtype=np.float32) for name in weights}
+    batch = max(1, MC_CHUNK_CELLS // max(1, days * n_coins))
+    for first in range(0, paths, batch):
+        if should_stop():
+            raise Stopped()
+        count = min(batch, paths - first)
+        if method == MC_BOOTSTRAP:
+            draws = history[rng.integers(0, len(history), size=(count, days))]
+        else:
+            normal = rng.standard_normal((count, days, n_coins))
+            draws = mean + normal @ factor.T
+        # each coin's value multiple, day by day (a coin cannot fall below 0)
+        growth = np.cumprod(1.0 + np.maximum(draws, -1.0), axis=1)
+        for name, w in weights.items():
+            block = values[name][first : first + count]
+            block[:, 0] = start_value
+            block[:, 1:] = start_value * (growth @ w)
+    simulation = Simulation(
+        method,
+        paths,
+        days,
+        int(seed),
+        float(drawdown_limit),
+        returns.index[0] if len(returns) else None,
+        returns.index[-1] if len(returns) else None,
+    )
+    for name, v in values.items():
+        v = v.astype(float)
+        finals = v[:, -1]
+        simulation.portfolios[name] = PathStats(
+            start_value=float(start_value),
+            percentiles=dict(
+                zip(MC_PERCENTILES, np.percentile(v, MC_PERCENTILES, axis=0))
+            ),
+            finals=finals,
+            expected_final=float(finals.mean()),
+            median_final=float(np.median(finals)),
+            var_95=float(start_value - np.percentile(finals, VAR_PERCENTILE)),
+            drawdown_probability=float(
+                (max_drawdowns(v) >= drawdown_limit - 1e-12).mean()
+            ),
+        )
+    return simulation
+
+
+def simulation_problem(paths: int, days: int) -> Optional[str]:
+    """Why ``paths`` paths of ``days`` days are not simulated (None when they are)."""
+    if not 1 <= days <= MAX_MC_DAYS:
+        return f"The horizon must be from 1 to {MAX_MC_DAYS} days."
+    if not 100 <= paths <= MAX_MC_PATHS:
+        return f"The paths must be from 100 to {MAX_MC_PATHS:,}."
+    if paths * days > MAX_MC_CELLS:
+        return f"Paths times days can be at most {MAX_MC_CELLS:,}."
+    return None
 
 
 class PortfolioOptimizer:
@@ -54,7 +528,9 @@ class PortfolioOptimizer:
         self.default_constraints = {
             "max_weight": 0.4,  # Maximum 40% in any single asset
             "min_weight": 0.01,  # Minimum 1% in any asset
-            "max_volatility": 0.25,  # Maximum 25% portfolio volatility
+            # Maximum portfolio volatility; None: no limit (a crypto portfolio's
+            # annual volatility is usually well above the 25% this used to be)
+            "max_volatility": None,
             "max_correlation": 0.8,  # Maximum correlation between assets
         }
 
@@ -129,14 +605,15 @@ class PortfolioOptimizer:
             """)
 
     def calculate_returns_covariance(
-        self, price_data: pd.DataFrame, period: int = 252
+        self, price_data: pd.DataFrame, period: int = DAYS_PER_YEAR
     ) -> Tuple[pd.Series, pd.DataFrame]:
         """
         Calculate expected returns and covariance matrix from price data.
 
         Args:
             price_data: DataFrame with asset prices (columns = assets, index = dates)
-            period: Number of periods for annualization (252 for daily data)
+            period: Number of periods for annualization (DAYS_PER_YEAR for daily
+                crypto prices)
 
         Returns:
             Tuple of (expected_returns, covariance_matrix)
@@ -220,6 +697,10 @@ class PortfolioOptimizer:
             active_constraints.update(constraints)
 
         n_assets = len(expected_returns)
+        # numpy arrays in the optimiser's loop: a pandas product there costs far more
+        # per call, and SLSQP makes thousands of them (seconds for a frontier)
+        mu = np.asarray(expected_returns, dtype=float)
+        cov = np.asarray(cov_matrix, dtype=float)
 
         # Bounds for weights (min_weight, max_weight)
         bounds = tuple(
@@ -230,13 +711,13 @@ class PortfolioOptimizer:
         # Constraint: weights sum to 1
         constraints_list = [{"type": "eq", "fun": lambda x: np.sum(x) - 1.0}]
 
-        # Volatility constraint
-        if "max_volatility" in active_constraints:
+        # Volatility constraint (None: no limit)
+        if active_constraints.get("max_volatility"):
             constraints_list.append(
                 {
                     "type": "ineq",
                     "fun": lambda x: active_constraints["max_volatility"]
-                    - np.sqrt(np.dot(x.T, np.dot(cov_matrix, x))),
+                    - np.sqrt(np.dot(x.T, np.dot(cov, x))),
                 }
             )
 
@@ -244,15 +725,13 @@ class PortfolioOptimizer:
         if optimization_type == "max_sharpe":
             # Maximize Sharpe ratio (minimize negative Sharpe ratio)
             def objective(weights):
-                _, _, sharpe = self.portfolio_performance(
-                    weights, expected_returns, cov_matrix
-                )
+                _, _, sharpe = self.portfolio_performance(weights, mu, cov)
                 return -sharpe
 
         elif optimization_type == "min_variance":
             # Minimize portfolio variance
             def objective(weights):
-                return np.dot(weights.T, np.dot(cov_matrix, weights))
+                return np.dot(weights.T, np.dot(cov, weights))
 
         elif optimization_type == "target_return":
             if target_return is None:
@@ -264,12 +743,12 @@ class PortfolioOptimizer:
             constraints_list.append(
                 {
                     "type": "eq",
-                    "fun": lambda x: np.dot(x, expected_returns) - target_return,
+                    "fun": lambda x: np.dot(x, mu) - target_return,
                 }
             )
 
             def objective(weights):
-                return np.dot(weights.T, np.dot(cov_matrix, weights))
+                return np.dot(weights.T, np.dot(cov, weights))
 
         else:
             raise ValueError(f"Unknown optimization type: {optimization_type}")
@@ -291,7 +770,7 @@ class PortfolioOptimizer:
             if result.success:
                 optimal_weights = result.x
                 port_return, port_vol, sharpe = self.portfolio_performance(
-                    optimal_weights, expected_returns, cov_matrix
+                    optimal_weights, mu, cov
                 )
 
                 return {
@@ -342,6 +821,8 @@ class PortfolioOptimizer:
         expected_returns: pd.Series,
         cov_matrix: pd.DataFrame,
         num_points: int = 50,
+        constraints: Optional[Dict] = None,
+        should_stop: Callable[[], bool] = lambda: False,
     ) -> pd.DataFrame:
         """
         Calculate the efficient frontier.
@@ -350,6 +831,8 @@ class PortfolioOptimizer:
             expected_returns: Expected returns for each asset
             cov_matrix: Covariance matrix
             num_points: Number of points on the efficient frontier
+            constraints: The weight constraints, as optimize_portfolio takes them
+            should_stop: Checked before each point: Stopped once it is true
 
         Returns:
             DataFrame with efficient frontier points
@@ -373,20 +856,35 @@ class PortfolioOptimizer:
                 }
             )
 
-        # Define return range
-        min_ret = expected_returns.min()
-        max_ret = expected_returns.max()
+        # Define return range: from the minimum-variance portfolio's return (below
+        # it, a portfolio with the same volatility returns more: not efficient) to
+        # the highest return weights within the limits can reach (a target outside
+        # the reachable returns only fails, slowly)
+        active = {**self.default_constraints, **(constraints or {})}
+        mu = np.asarray(expected_returns, dtype=float)
+        if constraint_problem(len(mu), active) is None:
+            min_ret, max_ret = reachable_returns(mu, active)
+        else:
+            min_ret, max_ret = float(mu.min()), float(mu.max())
+        lowest = self.optimize_portfolio(
+            expected_returns, cov_matrix, "min_variance", constraints=constraints
+        )
+        if lowest["success"]:
+            min_ret = min(max(min_ret, float(lowest["expected_return"])), max_ret)
         target_returns = np.linspace(min_ret, max_ret, num_points)
 
         frontier_results = []
 
         for target_ret in target_returns:
+            if should_stop():
+                raise Stopped()
             try:
                 result = self.optimize_portfolio(
                     expected_returns,
                     cov_matrix,
                     optimization_type="target_return",
                     target_return=target_ret,
+                    constraints=constraints,
                 )
 
                 if result["success"]:
@@ -403,73 +901,10 @@ class PortfolioOptimizer:
                 self.logger.debug(f"Skipping target return {target_ret}: {e}")
                 continue
 
-        return pd.DataFrame(frontier_results)
-
-    def suggest_rebalancing(
-        self,
-        current_weights: Dict[str, float],
-        target_weights: Dict[str, float],
-        threshold: float = 0.05,
-        transaction_cost: float = 0.001,
-    ) -> Dict:
-        """
-        Suggest portfolio rebalancing based on drift from target weights.
-
-        Args:
-            current_weights: Current portfolio weights
-            target_weights: Target portfolio weights
-            threshold: Rebalancing threshold (5% drift)
-            transaction_cost: Transaction cost rate (0.1%)
-
-        Returns:
-            Rebalancing recommendation dictionary
-        """
-        recommendations = []
-        total_drift = 0
-        rebalancing_needed = False
-
-        # Check each asset
-        for symbol in target_weights:
-            current_weight = current_weights.get(symbol, 0)
-            target_weight = target_weights[symbol]
-            drift = abs(current_weight - target_weight)
-
-            if drift > threshold:
-                rebalancing_needed = True
-                action = "Buy" if current_weight < target_weight else "Sell"
-                change_needed = target_weight - current_weight
-
-                recommendations.append(
-                    {
-                        "symbol": symbol,
-                        "current_weight": current_weight,
-                        "target_weight": target_weight,
-                        "drift": drift,
-                        "action": action,
-                        "change_needed": change_needed,
-                        "urgency": "High" if drift > threshold * 2 else "Medium",
-                    }
-                )
-
-            total_drift += drift
-
-        # Estimate transaction costs
-        if rebalancing_needed:
-            total_trades = sum(
-                1 for rec in recommendations if abs(rec["change_needed"]) > 0.01
-            )
-            estimated_cost = total_trades * transaction_cost
-        else:
-            estimated_cost = 0
-
-        return {
-            "rebalancing_needed": rebalancing_needed,
-            "total_drift": total_drift,
-            "recommendations": recommendations,
-            "estimated_transaction_cost": estimated_cost,
-            "cost_benefit_ratio": total_drift
-            / (estimated_cost + 1e-10),  # Avoid division by zero
-        }
+        return pd.DataFrame(
+            frontier_results,
+            columns=["Return", "Volatility", "Sharpe_Ratio", "Weights"],
+        )
 
     def save_optimized_portfolio(
         self,

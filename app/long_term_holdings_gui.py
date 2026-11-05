@@ -17,7 +17,11 @@ sub-tabs:
 * Rebalancing: of the holdings the tag filter keeps, those whose share of their
   current value is further from their target % than their rebalance threshold,
   worked out again whenever the holdings or the filter change, in the shared
-  table; Export CSV, the tag filter and a search.
+  table; Export CSV, the tag filter and a search. Each trade shows its fee at the
+  taker rate (long_term_holdings.trading_fee_rate: the exchange layer's
+  ``trading_fees()``, else the default rate) and its net amount; under the table,
+  the totals of the trades shown. Portfolio Optimization's "Apply as Targets" sets
+  the targets this works from.
 * Analytics, from holdings.db: each holding's unrealised P&L % (its current price
   against its average cost) and the prices recorded with Update Prices, as the
   change since each coin's first recorded price. With no holdings, "No data yet".
@@ -54,6 +58,7 @@ try:
     from long_term_holdings import (
         UNTAGGED,
         Holding,
+        trading_fee_rate,
         HoldingsManager,
         clean_tags,
         filter_holdings,
@@ -144,6 +149,8 @@ REBALANCE_COLUMNS = (
     "target_pct",
     "deviation",
     "amount_diff",
+    "fee",
+    "net",
 )
 REBALANCE_HEADINGS = {
     "symbol": "Coin",
@@ -152,8 +159,19 @@ REBALANCE_HEADINGS = {
     "target_pct": "Target %",
     "deviation": "Deviation %",
     "amount_diff": "Amount",
+    "fee": "Fee",
+    # what a buy costs with its fee, what a sell brings in less its fee
+    "net": "Net Amount",
 }
-REBALANCE_NUMERIC = ("current_pct", "target_pct", "deviation", "amount_diff")
+REBALANCE_NUMERIC = REBALANCE_COLUMNS[2:]
+# the line under the suggestions table: the totals of the trades shown
+REBALANCE_SUMMARY = (
+    ("Trades", "count"),
+    ("Amount", "amount"),
+    ("Fees", "fees"),
+    ("Taker Fee", "rate"),
+)
+DEFAULT_RATE_NOTE = "default rate"  # after a taker fee the exchange layer did not give
 NO_TARGETS = "No holding has a target %"
 IN_BALANCE = "Every holding is within its rebalance threshold of its target %"
 NO_SUGGESTIONS_MATCH = "No suggestions match the search"
@@ -373,7 +391,8 @@ class HoldingsManagementGUI:
     ``coins`` gives the hub's coins (Settings) when a holding is added or edited;
     ``manager`` is the HoldingsManager (None: the shared one, on holdings.db in the
     user data folder); ``symbols`` an ExchangeSymbols; ``money`` and ``price``
-    format amounts and prices."""
+    format amounts and prices; ``fees(symbol)`` gives a coin's taker rate and
+    whether the exchange layer gave it (long_term_holdings.trading_fee_rate)."""
 
     def __init__(
         self,
@@ -384,6 +403,7 @@ class HoldingsManagementGUI:
         symbols: Optional[ExchangeSymbols] = None,
         money: Callable[[float], str] = _money,
         price: Callable[[float], str] = _price,
+        fees: Optional[Callable[[str], Tuple[float, bool]]] = None,
     ):
         if not isinstance(parent, tk.Misc):
             # a stand-in parent (a mock) has no end to its masters: the search
@@ -393,6 +413,10 @@ class HoldingsManagementGUI:
         self._coins = coins
         self.symbols = symbols if symbols is not None else ExchangeSymbols()
         self._money, self._price = money, price
+        # a coin's taker rate and whether the exchange layer gave it, read once per
+        # coin until Refresh
+        self._fees = fees if fees is not None else trading_fee_rate
+        self._fee_rates: Dict[str, Tuple[float, bool]] = {}
         self.holdings_manager = manager
         self.selected_holding: Optional["Holding"] = None
         self.dialog: Optional["HoldingDialog"] = None
@@ -469,7 +493,7 @@ class HoldingsManagementGUI:
             ("Delete", self.delete_holding),
             ("Update Prices", self.update_prices_dialog),
             ("Export CSV", self.export_holdings),
-            ("Refresh", self.refresh_holdings_display),
+            ("Refresh", self.refresh),
         ):
             ttk.Button(bar, text=text, command=command).pack(side="left", padx=(0, gap))
         self.holdings_filter = self._tag_filter(bar)
@@ -548,6 +572,17 @@ class HoldingsManagementGUI:
         self.suggestions_filter = self._tag_filter(bar)
         self.suggestions_search = ui_table.SearchBox(bar, self.show_suggestions)
 
+        # under the table (packed ahead of it: the table takes the room left)
+        self.suggestions_summary = ttk.Frame(self.rebalancing_tab)
+        self.trade_labels: Dict[str, ttk.Label] = {}
+        for i, (text, key) in enumerate(REBALANCE_SUMMARY):
+            ttk.Label(self.suggestions_summary, text=text, style="Muted.TLabel").pack(
+                side="left", padx=(gap * 2 if i else 0, ui_tokens.SPACE["xs"])
+            )
+            value = ttk.Label(self.suggestions_summary, text="")
+            value.pack(side="left")
+            self.trade_labels[key] = value
+
         self.suggestions_table = ui_table.DataTable(
             self.rebalancing_tab,
             REBALANCE_COLUMNS,
@@ -578,6 +613,11 @@ class HoldingsManagementGUI:
             self.analytics_widget = self.analytics_canvas.get_tk_widget()
 
     # ---- reading holdings.db ----
+
+    def refresh(self) -> None:
+        """The toolbar's Refresh: the holdings, and the fee rates, read again."""
+        self._fee_rates = {}
+        self.refresh_holdings_display()
 
     def refresh_holdings_display(self):
         """Read the holdings again and show them in every sub-tab."""
@@ -862,6 +902,21 @@ class HoldingsManagementGUI:
 
     # ---- Rebalancing ----
 
+    def fee_rate(self, symbol: str) -> float:
+        """The taker rate (a fraction) of a trade in ``symbol``."""
+        return self._fee(symbol)[0]
+
+    def _fee(self, symbol: str) -> Tuple[float, bool]:
+        key = str(symbol).strip().upper()
+        if key not in self._fee_rates:
+            try:
+                rate, given = self._fees(key)
+                self._fee_rates[key] = (float(rate), bool(given))
+            except Exception as e:
+                print(f"Error reading the fee rate of {key}: {e}")
+                return 0.0, False
+        return self._fee_rates[key]
+
     def suggestion_cells(self, s: Dict[str, Any]) -> Tuple[str, ...]:
         return (
             s["symbol"],
@@ -870,7 +925,50 @@ class HoldingsManagementGUI:
             f"{s['target_percentage']:.2f}%",
             f"{s['deviation']:.2f}%",
             self._money(s["amount_difference"]),
+            self._money(s.get("fee", 0.0)),
+            self._money(s.get("net_amount", s["amount_difference"])),
         )
+
+    def rate_text(self, suggestions: Sequence[Dict[str, Any]]) -> str:
+        """The taker rate of ``suggestions``: "0.60%", "0.40% to 0.60%" when it is
+        not one rate, and "(default rate)" after a rate the exchange layer did not
+        give."""
+        rates = sorted({round(s.get("fee_rate", 0.0), 6) for s in suggestions})
+        if not rates:
+            return ""
+        text = f"{rates[0] * 100:.2f}%"
+        if len(rates) > 1:
+            text += f" to {rates[-1] * 100:.2f}%"
+        if not all(self._fee(s["symbol"])[1] for s in suggestions):
+            text += f" ({DEFAULT_RATE_NOTE})"
+        return text
+
+    def show_trade_totals(self, shown: Sequence[Dict[str, Any]]) -> None:
+        """The line under the suggestions table: the totals of the trades shown
+        (none: no line)."""
+        frame = self.suggestions_summary
+        if not shown:
+            if frame.winfo_manager():
+                frame.pack_forget()
+            return
+        if not frame.winfo_manager():
+            gap = ui_tokens.SPACE["sm"]
+            frame.pack(
+                side="bottom",
+                fill="x",
+                padx=gap,
+                pady=(ui_tokens.SPACE["xs"], gap),
+                before=self.suggestions_table,
+            )
+        labels = self.trade_labels
+        labels["count"].configure(text=f"{len(shown)}")
+        labels["amount"].configure(
+            text=self._money(sum(s["amount_difference"] for s in shown))
+        )
+        labels["fees"].configure(
+            text=self._money(sum(s.get("fee", 0.0) for s in shown))
+        )
+        labels["rate"].configure(text=self.rate_text(shown))
 
     def show_suggestions(self) -> None:
         """The holdings the tag filter keeps to buy or sell to reach their target %
@@ -881,19 +979,24 @@ class HoldingsManagementGUI:
         holdings = self.filtered_holdings()
         try:
             suggestions = (
-                self.holdings_manager.get_rebalancing_suggestions(holdings)
+                self.holdings_manager.get_rebalancing_suggestions(
+                    holdings, fee_rate=self.fee_rate
+                )
                 if holdings
                 else []
             )
         except Exception as e:
             print(f"Error generating suggestions: {e}")
             suggestions = []
+        shown = []
         for s in suggestions:
             cells = self.suggestion_cells(s)
             if not self.suggestions_search.matches(cells):
                 continue
             tag = "buy" if str(s["action"]).upper() == "BUY" else "sell"
             tree.insert("", "end", values=cells, tags=(tag,))
+            shown.append(s)
+        self.show_trade_totals(shown)
         if not self._holdings():
             empty = NO_HOLDINGS
         elif not holdings:

@@ -360,70 +360,6 @@ class TestLongTermHoldings(TestBase):
             self.skipTest("Long-term holdings module not available")
 
 
-class TestPortfolioAnalytics(TestBase):
-    """Test portfolio analytics system"""
-
-    def test_portfolio_analytics_initialization(self):
-        """Test analytics system initialization"""
-        try:
-            from portfolio_analytics import PortfolioAnalytics
-
-            analytics = PortfolioAnalytics(self.test_db_path)
-            self.assertIsNotNone(analytics)
-
-            # Test database creation
-            self.assertFileExists(self.test_db_path)
-
-        except ImportError:
-            self.skipTest("Portfolio analytics module not available")
-
-    def test_portfolio_snapshot(self):
-        """Test portfolio snapshot functionality"""
-        try:
-            from portfolio_analytics import PortfolioAnalytics
-
-            analytics = PortfolioAnalytics(self.test_db_path)
-
-            # Test saving snapshot
-            test_holdings_data = [
-                {
-                    "symbol": "BTC",
-                    "quantity": 1.0,
-                    "current_price": 50000.0,
-                    "current_value": 50000.0,
-                    "total_cost": 45000.0,
-                }
-            ]
-
-            success = analytics.save_portfolio_snapshot(test_holdings_data)
-            self.assertTrue(success)
-
-        except ImportError:
-            self.skipTest("Portfolio analytics module not available")
-
-    def test_performance_metrics(self):
-        """Test performance metrics calculation"""
-        try:
-            from portfolio_analytics import PortfolioAnalytics
-
-            analytics = PortfolioAnalytics(self.test_db_path)
-
-            # Add some test data
-            test_data = [
-                {"symbol": "BTC", "current_value": 50000, "total_cost": 45000},
-                {"symbol": "ETH", "current_value": 15000, "total_cost": 12000},
-            ]
-
-            analytics.save_portfolio_snapshot(test_data)
-
-            # Test metrics calculation (might return None if insufficient data)
-            metrics = analytics.calculate_performance_metrics(7)
-            # Should not raise exception
-
-        except ImportError:
-            self.skipTest("Portfolio analytics module not available")
-
-
 class TestLLMResearch(TestBase):
     """Test LLM research engine"""
 
@@ -540,7 +476,6 @@ class TestGUIComponents(TestBase):
         """Test that GUI modules can be imported"""
         gui_modules = [
             "long_term_holdings_gui",
-            "portfolio_analytics_gui",
             "llm_research_gui",
         ]
 
@@ -562,15 +497,6 @@ class TestGUIComponents(TestBase):
 
             holdings_gui = HoldingsManagementGUI(mock_parent)
             self.assertIsNotNone(holdings_gui)
-        except Exception:
-            pass
-
-        # Test analytics GUI
-        try:
-            from portfolio_analytics_gui import PortfolioAnalyticsGUI
-
-            analytics_gui = PortfolioAnalyticsGUI(mock_parent)
-            self.assertIsNotNone(analytics_gui)
         except Exception:
             pass
 
@@ -618,15 +544,6 @@ class TestIntegration(TestBase):
         except ImportError:
             pass
 
-        # Test analytics database
-        try:
-            from portfolio_analytics import PortfolioAnalytics
-
-            analytics = PortfolioAnalytics(os.path.join(test_data_dir, "analytics.db"))
-            self.assertIsNotNone(analytics)
-        except ImportError:
-            pass
-
 
 class TestSuite:
     """Main test suite coordinator"""
@@ -637,7 +554,6 @@ class TestSuite:
             TestMultiExchange,
             TestOrderManagement,
             TestLongTermHoldings,
-            TestPortfolioAnalytics,
             TestLLMResearch,
             TestDependencyChecker,
             TestGUIComponents,

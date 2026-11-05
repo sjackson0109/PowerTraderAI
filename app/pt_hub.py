@@ -163,18 +163,6 @@ except ImportError:
     HOLDINGS_MANAGEMENT_AVAILABLE = False
     print("Warning: Long-term Holdings not available.")
 
-# Portfolio Analytics imports
-try:
-    from portfolio_analytics_gui import PortfolioAnalyticsGUI
-
-    # Temporarily disable portfolio analytics due to memory allocation issues
-    PORTFOLIO_ANALYTICS_AVAILABLE = (
-        False  # Set to False to avoid matplotlib memory errors
-    )
-except ImportError:
-    PORTFOLIO_ANALYTICS_AVAILABLE = False
-    print("Warning: Portfolio Analytics not available.")
-
 # Advanced Order Types imports
 try:
     from advanced_order_gui import AdvancedOrderGUI
@@ -323,7 +311,6 @@ MODULE_TAB_ORDER = (
     "Market Data",
     "Long-term Holdings",
     "Holdings Management",
-    "Portfolio Analytics",
     "Performance Attribution",
     "Backtesting Framework",
     "Portfolio Optimization",
@@ -3678,37 +3665,32 @@ class PowerTraderHub(tk.Tk):
         self._create_llm_research_tab()
 
         # ----------------------------
-        # TAB 6: Portfolio Analytics
-        # ----------------------------
-        self._create_portfolio_analytics_tab()
-
-        # ----------------------------
-        # TAB 7: Advanced Order Types
+        # TAB 6: Advanced Order Types
         # ----------------------------
         self._create_advanced_order_tab()
 
         # ----------------------------
-        # TAB 8: Real-time Market Data
+        # TAB 7: Real-time Market Data
         # ----------------------------
         self._create_market_data_tab()
 
         # ----------------------------
-        # TAB 9: Portfolio Optimization
+        # TAB 8: Portfolio Optimization
         # ----------------------------
         self._create_portfolio_optimization_tab()
 
         # ----------------------------
-        # TAB 10: Backtesting Framework
+        # TAB 9: Backtesting Framework
         # ----------------------------
         self._create_backtesting_tab()
 
         # ----------------------------
-        # TAB 11: Performance Attribution
+        # TAB 10: Performance Attribution
         # ----------------------------
         self._create_performance_attribution_tab()
 
         # ----------------------------
-        # TAB 12: Institutional Trading
+        # TAB 11: Institutional Trading
         # ----------------------------
         self._create_institutional_trading_tab()
 
@@ -4101,47 +4083,6 @@ class PowerTraderHub(tk.Tk):
 
             traceback.print_exc()
 
-    def _create_portfolio_analytics_tab(self):
-        """Create the Portfolio Analytics tab for advanced portfolio analysis."""
-        try:
-            # Always create the tab first
-            analytics_tab = ttk.Frame(self.bottom_notebook)
-            self.bottom_notebook.add(analytics_tab, text="Portfolio\nAnalytics")
-
-            if not PORTFOLIO_ANALYTICS_AVAILABLE:
-                # Show a message about unavailability
-                ttk.Label(
-                    analytics_tab,
-                    text="Portfolio Analytics Not Available\n\nRequired dependencies missing.\nPlease install: pip install pandas numpy matplotlib seaborn",
-                    font=ui_tokens.font("body"),
-                    anchor="center",
-                ).pack(expand=True, fill="both", padx=20, pady=20)
-                print("Portfolio Analytics not available")
-                return
-
-            # Initialize the analytics GUI
-            self.analytics_gui = PortfolioAnalyticsGUI(analytics_tab)
-
-            print("Portfolio Analytics tab created successfully")
-
-        except Exception as e:
-            # If there's an error after tab creation, show error message in the tab
-            try:
-                for widget in analytics_tab.winfo_children():
-                    widget.destroy()
-                ttk.Label(
-                    analytics_tab,
-                    text=f"Portfolio Analytics Error\n\n{str(e)}\n\nPlease check console for details.",
-                    font=ui_tokens.font("body"),
-                    anchor="center",
-                ).pack(expand=True, fill="both", padx=20, pady=20)
-            except Exception:
-                pass
-            print(f"Error creating Portfolio Analytics tab: {e}")
-            import traceback
-
-            traceback.print_exc()
-
     def _create_advanced_order_tab(self):
         """Create the Advanced Order Types tab for sophisticated order management."""
         try:
@@ -4227,28 +4168,32 @@ class PowerTraderHub(tk.Tk):
             traceback.print_exc()
 
     def _create_portfolio_optimization_tab(self):
-        """Create the Portfolio Optimization tab for advanced portfolio management."""
+        """The Portfolio Optimization tab (portfolio_optimizer_gui): the coins in
+        Settings, their daily candles from the candle cache, and the current
+        portfolio from Long-term Holdings (its tag filter), built before it."""
+        self.portfolio_optimizer_gui = None
         try:
             # Always create the tab first
             portfolio_opt_tab = ttk.Frame(self.bottom_notebook)
             self.bottom_notebook.add(portfolio_opt_tab, text="Portfolio\nOptimization")
 
             if not PORTFOLIO_OPTIMIZER_AVAILABLE:
-                # Show a message about unavailability
                 ttk.Label(
                     portfolio_opt_tab,
-                    text="Portfolio Optimization Engine\n\nFor enhanced optimization features, install optional dependencies:\n\npython app/install_optional_deps.py\n\nCore features available without optional packages.",
-                    font=ui_tokens.font("body"),
+                    text="Portfolio Optimization could not be loaded.",
+                    style="Muted.TLabel",
                     anchor="center",
-                    justify="center",
                 ).pack(expand=True, fill="both", padx=20, pady=20)
-                print(
-                    "Portfolio Optimization Engine available with limited functionality"
-                )
+                print("Portfolio Optimization not available")
                 return
 
-            # Initialize the portfolio optimization GUI
-            self.portfolio_optimizer_gui = PortfolioOptimizerGUI(portfolio_opt_tab)
+            self.portfolio_optimizer_gui = PortfolioOptimizerGUI(
+                portfolio_opt_tab,
+                coins=lambda: list(self.coins),
+                holdings=getattr(self, "holdings_gui", None),
+                money=_fmt_money,
+                price=_fmt_price,
+            )
 
             print("Portfolio Optimization tab created successfully")
 

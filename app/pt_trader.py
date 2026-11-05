@@ -14,7 +14,12 @@ import risk_state
 from colorama import Fore, Style
 from market_data.listing import not_trading_reason
 from pt_cost import CostManager, PerformanceTier
-from pt_exchange_abstraction import OrderResult, usable_minimum
+from pt_exchange_abstraction import (
+    OrderResult,
+    TradingFees,
+    usable_fees,
+    usable_minimum,
+)
 from pt_logging import get_logger
 from pt_risk import RiskLimits, RiskManager
 from pt_validation import InputValidator, ValidationError
@@ -77,6 +82,7 @@ _gui_settings_cache = {
     "trade_start_level": 3,
     "start_allocation_pct": position_sizing.DEFAULT_START_ALLOCATION_PCT,
     "max_coin_allocation_pct": position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT,
+    "min_order_margin_pct": position_sizing.DEFAULT_MIN_ORDER_MARGIN_PCT,
     "dca_multiplier": 2.0,
     "dca_levels": [-2.5, -5.0, -10.0, -20.0, -30.0, -40.0, -50.0],
     "max_dca_buys_per_24h": 2,
@@ -173,6 +179,8 @@ TRADE_START_LEVEL = 3
 SIGNAL_MAX_AGE_SECONDS = 15 * 60
 START_ALLOC_PCT = position_sizing.DEFAULT_START_ALLOCATION_PCT
 MAX_COIN_PCT = position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT
+# Room an entry raised to the exchange's minimum order keeps above it (Settings)
+MIN_ORDER_MARGIN_PCT = position_sizing.DEFAULT_MIN_ORDER_MARGIN_PCT
 DCA_MULTIPLIER = 2.0
 DCA_LEVELS = [-2.5, -5.0, -10.0, -20.0, -30.0, -40.0, -50.0]
 MAX_DCA_BUYS_PER_24H = 2
@@ -191,12 +199,12 @@ def _refresh_paths_and_symbols():
     Hot-reload GUI settings while trader is running.
     Updates globals: crypto_symbols, main_dir, base_paths,
                     TRADE_START_LEVEL, START_ALLOC_PCT, MAX_COIN_PCT, DCA_MULTIPLIER, DCA_LEVELS,
-                    MAX_DCA_BUYS_PER_24H,
+                    MAX_DCA_BUYS_PER_24H, MIN_ORDER_MARGIN_PCT,
                     TRAILING_GAP_PCT, PM_START_PCT_NO_DCA, PM_START_PCT_WITH_DCA
     """
     global crypto_symbols, main_dir, base_paths
     global TRADE_START_LEVEL, START_ALLOC_PCT, MAX_COIN_PCT, DCA_MULTIPLIER, DCA_LEVELS
-    global MAX_DCA_BUYS_PER_24H
+    global MAX_DCA_BUYS_PER_24H, MIN_ORDER_MARGIN_PCT
     global TRAILING_GAP_PCT, PM_START_PCT_NO_DCA, PM_START_PCT_WITH_DCA
     global _last_settings_mtime
 
@@ -224,6 +232,18 @@ def _refresh_paths_and_symbols():
     if START_ALLOC_PCT < 0.0:
         START_ALLOC_PCT = 0.0
     MAX_COIN_PCT = float(s.get("max_coin_allocation_pct", MAX_COIN_PCT) or MAX_COIN_PCT)
+
+    # 0 is a valid margin (0-20); anything else invalid is the default
+    margin = s.get("min_order_margin_pct", position_sizing.DEFAULT_MIN_ORDER_MARGIN_PCT)
+    if not position_sizing.valid_min_order_margin_pct(margin):
+        logger.warning(
+            f"Invalid min_order_margin_pct={margin!r} (valid "
+            f"{position_sizing.MIN_ORDER_MARGIN_RANGE[0]:g}-"
+            f"{position_sizing.MIN_ORDER_MARGIN_RANGE[1]:g}); using "
+            f"{position_sizing.DEFAULT_MIN_ORDER_MARGIN_PCT:g}"
+        )
+        margin = position_sizing.DEFAULT_MIN_ORDER_MARGIN_PCT
+    MIN_ORDER_MARGIN_PCT = float(margin)
 
     DCA_MULTIPLIER = float(s.get("dca_multiplier", DCA_MULTIPLIER) or DCA_MULTIPLIER)
     if DCA_MULTIPLIER < 0.0:
@@ -575,6 +595,8 @@ class CryptoAPITrading:
                     continue
 
         # GUI hub persistence
+        # <COIN> -> True when its last fill was a sell that ended the trade (_open_trade)
+        self._trade_ended: Dict[str, bool] = self._ended_trades()
         self._pnl_ledger = self._load_pnl_ledger()
         self._reconcile_pending_orders()
 
@@ -805,6 +827,7 @@ class CryptoAPITrading:
                             buying_power_after=bp_after,
                             buying_power_delta=bp_delta,
                             closes_position=not getattr(order, "partial", False),
+                            fee_detail=self._fee_detail(order),
                             **self._provenance(order, self._target),
                         )
 
@@ -841,6 +864,7 @@ class CryptoAPITrading:
         age_s: Optional[float] = None,
         price_exchange: Optional[str] = None,
         closes_position: bool = True,
+        fee_detail: Optional[dict] = None,
     ) -> None:
         """
         Minimal local ledger for GUI:
@@ -850,7 +874,8 @@ class CryptoAPITrading:
 
         A sell row says whether it ended the trade (``closes_position``): a sell
         that stopped part-way did not, so the DCA stages and the 24h DCA window
-        rebuilt from the history carry on past it.
+        rebuilt from the history carry on past it. ``fee_detail`` (``_fee_detail``)
+        says how the fee in ``fees_usd`` was worked out.
         """
         ts = time.time()
 
@@ -989,6 +1014,8 @@ class CryptoAPITrading:
                 float(position_cost_after) if position_cost_after is not None else None
             ),
         }
+        if fee_detail:
+            entry.update(fee_detail)
         if price_source is not None:
             # Paper fills record where their price came from (live/stale/simulated)
             entry["price_source"] = price_source
@@ -999,12 +1026,41 @@ class CryptoAPITrading:
         if side_l == "sell":
             entry["closes_position"] = bool(closes_position)
         self._append_jsonl(self.trade_history_path, entry)
+        if base and side_l == "buy":
+            self._trade_ended[base] = False
+        elif base and side_l == "sell" and closes_position:
+            self._trade_ended[base] = True
 
     @staticmethod
     def _sell_ends_trade(entry: dict) -> bool:
         """A sell row ends the trade unless it says it did not (rows written before
         ``closes_position`` existed end it, as they always did)."""
         return entry.get("closes_position") is not False
+
+    def _ended_trades(self) -> Dict[str, bool]:
+        """Whether each coin's last fill in this mode's trade history was a sell that
+        ended its trade (a buy, or a sell that stopped part-way, leaves it open)."""
+        ended: Dict[str, bool] = {}
+        for row in self._read_trade_history():
+            base = str(row.get("symbol", "") or "").upper().split("-")[0].strip()
+            side = str(row.get("side", "") or "").lower().strip()
+            if base and side == "buy":
+                ended[base] = False
+            elif base and side == "sell" and self._sell_ends_trade(row):
+                ended[base] = True
+        return ended
+
+    def _open_trade(self, base: str) -> bool:
+        """Whether this trader has a trade open in ``base``: the ledger holds a position
+        in it, and no sell has ended that trade since its last buy (what such a sell
+        leaves behind is a remainder, not a trade)."""
+        if self._trade_ended.get(base, False):
+            return False
+        try:
+            pos = (self._pnl_ledger.get("open_positions") or {}).get(base) or {}
+            return float(pos.get("qty", 0.0) or 0.0) > 0.0
+        except (AttributeError, TypeError, ValueError):
+            return False
 
     def _write_trader_status(self, status: dict) -> None:
         self._atomic_write_json(self.trader_status_path, status)
@@ -1601,7 +1657,14 @@ class CryptoAPITrading:
         value = (self._last_good_account_snapshot or {}).get("total_account_value")
         return float(value) if value is not None else None
 
-    def _risk_check(self, symbol: str, side: str, quantity: float, price: float):
+    def _risk_check(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float,
+        minimum_entry_usd: Optional[float] = None,
+    ):
         """Shared pre-order risk gate. Returns True when the order may proceed."""
         if self.risk_manager.is_trading_halted():
             print(
@@ -1615,12 +1678,14 @@ class CryptoAPITrading:
         self.risk_manager.update_portfolio_value(portfolio_value)
 
         # One buy may use the coin's whole budget (Max per coin %); the exchange's
-        # minimum order is always allowed, as the entry is raised to it
+        # minimum order is always allowed, as the entry is raised to it (with its
+        # room for the spread and fees, ``minimum_entry_usd``)
         max_buy_usd = 0.0
         if side == "buy":
             max_buy_usd = position_sizing.coin_budget_usd(portfolio_value, MAX_COIN_PCT)
             if quantity * price > max_buy_usd:
-                max_buy_usd = max(max_buy_usd, self._minimum_order_usd(symbol) or 0.0)
+                minimum = minimum_entry_usd or self._minimum_order_usd(symbol) or 0.0
+                max_buy_usd = max(max_buy_usd, minimum)
         validation = self.risk_manager.validate_order(
             {
                 "symbol": symbol,
@@ -1805,6 +1870,7 @@ class CryptoAPITrading:
             buying_power_after=buying_power_after,
             buying_power_delta=buying_power_delta,
             closes_position=not getattr(final, "partial", False),
+            fee_detail=self._fee_detail(final),
             **self._provenance(final, target),
         )
         self._clear_pending(order_id)
@@ -1819,6 +1885,24 @@ class CryptoAPITrading:
             "mode": target.key,
             # the order stopped part-way: the rest of the position is still held
             "partial": bool(getattr(final, "partial", False)),
+        }
+
+    @staticmethod
+    def _fee_detail(order: OrderResult) -> dict:
+        """Ledger columns for how a fill's fee was worked out, where the exchange (or
+        the paper account) says: its currency, the rate charged (a fraction of the
+        filled value), "maker" or "taker", and whose rates and from where."""
+        detail = {
+            "fee_currency": getattr(order, "fee_currency", ""),
+            "fee_rate": getattr(order, "fee_rate", None),
+            "fee_type": getattr(order, "fee_type", ""),
+            "fee_exchange": getattr(order, "fee_exchange", ""),
+            "fee_source": getattr(order, "fee_source", ""),
+        }
+        return {
+            k: v
+            for k, v in detail.items()
+            if isinstance(v, (str, int, float)) and v != ""
         }
 
     @staticmethod
@@ -1920,11 +2004,47 @@ class CryptoAPITrading:
             return None
         return usable_minimum(minimum)
 
+    def _trading_fees(self, symbol: str) -> Optional[TradingFees]:
+        """The maker and taker fee rates an order on ``symbol`` pays where this trader's
+        orders go: the broker's when trading live; in paper trading, the rates the
+        paper account charges (the exchanges in Settings, primary first). None when
+        they are not known."""
+        try:
+            return usable_fees(self._target.exchange.trading_fees(symbol))
+        except Exception:
+            return None
+
+    def _entry_size(
+        self, symbol: str, account_value: float, ask: Any, bid: Any
+    ) -> tuple:
+        """(the amount for a new trade in ``symbol``, the smallest entry the exchange's
+        minimum order needs, or None when it states none). Start allocation % of the
+        account; below the minimum order it is raised to the minimum plus the spread
+        of the coin's quote (``ask`` vs ``bid``), a market buy's and a market sell's
+        fees and the margin in Settings, so the new position is still worth the
+        minimum at the bid after its fees."""
+        minimum = self._minimum_order_usd(symbol)
+        fees = self._trading_fees(symbol) if minimum else None
+        terms = {
+            "minimum_usd": minimum,
+            "spread": position_sizing.quote_spread(ask, bid),
+            "round_trip_fee": 2.0 * fees.taker if fees is not None else 0.0,
+            "margin_pct": MIN_ORDER_MARGIN_PCT,
+        }
+        return (
+            position_sizing.entry_usd(account_value, START_ALLOC_PCT, **terms),
+            position_sizing.minimum_entry_usd(**terms),
+        )
+
     def _is_dust(self, full_symbol: str, quantity: Any, sell_price: Any) -> bool:
         """A holding worth less than the smallest order the exchange takes (what a
         sell rounded down to the exchange's step can leave) cannot be sold, so it
         is not a position: it does not stop a new entry, and no exit or DCA is
-        tried on it. False when the price or the minimum is not known."""
+        tried on it. An open trade is never dust (a coin bought at the ask can be
+        worth a little less at the bid): only what a sell left, or a holding the
+        ledger has no trade for. False when the price or the minimum is not known."""
+        if self._open_trade(str(full_symbol).upper().split("-")[0].strip()):
+            return False
         try:
             value = float(quantity) * float(sell_price)
         except (TypeError, ValueError):
@@ -1963,7 +2083,10 @@ class CryptoAPITrading:
         avg_cost_basis: Optional[float] = None,
         pnl_pct: Optional[float] = None,
         tag: Optional[str] = None,
+        minimum_entry_usd: Optional[float] = None,
     ) -> Any:
+        """``minimum_entry_usd``: an entry raised to the exchange's minimum order is
+        allowed up to that amount whatever the coin's budget (``_entry_size``)."""
         # Gate first: a refused order must not cost a single price lookup.
         target = self._gate_or_refuse()
         if target is None:
@@ -1978,7 +2101,9 @@ class CryptoAPITrading:
         asset_quantity = round(amount_in_usd / current_price, 8)
 
         # --- Risk Management Checks ---
-        if not self._risk_check(symbol, side, asset_quantity, current_price):
+        if not self._risk_check(
+            symbol, side, asset_quantity, current_price, minimum_entry_usd
+        ):
             return None
 
         return self._place_gated_order(
@@ -2787,11 +2912,13 @@ class CryptoAPITrading:
                 start_index += 1
                 continue
 
-            # Start allocation % of the account, raised to the exchange's minimum
-            allocation_in_usd = position_sizing.entry_usd(
+            # Start allocation % of the account, raised to the exchange's minimum with
+            # room for this quote's spread and the fees
+            allocation_in_usd, minimum_entry = self._entry_size(
+                full_symbol,
                 total_account_value,
-                START_ALLOC_PCT,
-                self._minimum_order_usd(full_symbol),
+                current_buy_prices.get(full_symbol),
+                current_sell_prices.get(full_symbol),
             )
             response = self.place_buy_order(
                 client_order_id,
@@ -2800,6 +2927,7 @@ class CryptoAPITrading:
                 full_symbol,
                 allocation_in_usd,
                 tag="ENTRY" if catalogue_mode else None,
+                minimum_entry_usd=minimum_entry,
             )
 
             if response and "errors" not in response:

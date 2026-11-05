@@ -275,6 +275,13 @@ class TradeHistoryView(ttk.Frame):
         self.source_box.configure(values=[ALL, *SOURCES, *extra])
         self.apply_filters()
 
+    def _fee(self, value: float) -> str:
+        """A fee in dollars; one under a cent to its first digits ($0.004), as two
+        decimals would show it as $0.00."""
+        if 0.0 < abs(value) < 0.01:
+            return self._price(value)
+        return self._money(value)
+
     def cells(self, t: Trade) -> Tuple[str, ...]:
         def fmt(value: Optional[float], how: Callable[[float], str]) -> str:
             return "" if value is None else how(value)
@@ -292,7 +299,7 @@ class TradeHistoryView(ttk.Frame):
             fmt(t.price, self._price),
             fmt(t.value, self._money),
             # a fee the trade did not record is unknown, not zero
-            "N/A" if t.fees is None else self._money(t.fees),
+            "N/A" if t.fees is None else self._fee(t.fees),
             fmt(t.realised, signed_money),
             fmt(t.pnl_pct, self._pct),
         )
@@ -399,7 +406,7 @@ class TradeHistoryView(ttk.Frame):
         realised = sum(t.realised for t in kept if t.realised is not None)
         parts = [
             f"{n} trade{'' if n == 1 else 's'}",
-            f"fees {self._money(sum(fees))}",
+            f"fees {self._fee(sum(fees))}",
             f"realised PnL {signed_money(realised)}",
         ]
         text = ", ".join(parts)

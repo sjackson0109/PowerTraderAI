@@ -40,11 +40,15 @@ from pt_exchange_abstraction import (
     ExchangeType,
     MarketData,
     OrderResult,
+    TradingFees,
+    default_trading_fees,
     exchange_name,
+    usable_fees,
 )
 from pt_paper_trading import (
     MarketDataSimulator,
     OrderSide,
+    OrderStatus,
     OrderType,
     PaperTradingAccount,
     Position,
@@ -482,6 +486,36 @@ def fetch_public_quote(base: str) -> Optional[Quote]:
     return quote
 
 
+# --- Trading fees for paper fills (the exchange layer; never an order call) --
+
+
+def _layer_fees(base: str, exchange: str = ""):
+    """The exchange layer's maker and taker fees for ``base``: a ``Sourced``
+    ``TradingFees`` from ``exchange``, or from the exchanges in Settings, primary
+    first, when ``exchange`` is ""; None when none gives them."""
+    from pt_multi_exchange import market_exchanges
+
+    return market_exchanges().trading_fees(base, only=exchange or None)
+
+
+def fetch_trading_fees(base: str, exchange: str = "") -> Optional[TradingFees]:
+    """
+    The fee rates a paper fill of ``base`` pays: those of ``exchange`` (the exchange
+    whose quote priced it), else of the exchanges in Settings, primary first. The
+    exchange layer reads each exchange's own rates where it can and gives its
+    published standard rates otherwise (``TradingFees.source``). When the layer
+    cannot be asked, ``exchange``'s standard rates; None when there are none.
+    """
+    try:
+        answer = _layer_fees(base, exchange)
+    except Exception as exc:
+        logger.debug(f"No trading fees for {base} from the exchange layer: {exc}")
+        answer = None
+    if answer is not None:
+        return answer.value
+    return default_trading_fees(exchange) if exchange else None
+
+
 # --- Paper adapter -----------------------------------------------------------
 
 
@@ -521,10 +555,19 @@ class PaperExchange(AbstractExchange):
 
     ``settings_source`` is where the policy and max quote age are read from
     (None = the settings file, re-read on every use).
+
+    Every fill pays a fee, in USD from the paper cash: the taker rate for a market
+    order, the maker rate for a limit order, of the exchange whose quote priced it
+    (``fee_feed(base, exchange) -> TradingFees | None``, the exchange layer's
+    ``trading_fees``; "" for the exchanges in Settings, primary first). With no
+    rates from the feed, that exchange's stored standard rates; with none at all,
+    the paper account's own rate, logged at WARNING.
     """
 
     # Offline fallback spread around the simulator price.
     _SIM_HALF_SPREAD = 0.0005
+    # How long fee rates are reused before they are asked for again.
+    _FEES_TTL_SECONDS = 3600.0
 
     def __init__(
         self,
@@ -534,6 +577,7 @@ class PaperExchange(AbstractExchange):
         state_path: Optional[str] = None,
         settings_source: Any = None,
         clock: Callable[[], float] = time.time,
+        fee_feed: Optional[Callable[[str, str], Optional[TradingFees]]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__("", "", **kwargs)
@@ -541,12 +585,15 @@ class PaperExchange(AbstractExchange):
         self._simulator = _AnchoredSimulator()
         self.account.market_simulator = self._simulator
         self._price_feed = price_feed
+        self._fee_feed = fee_feed
         self._state_path = state_path
         self.settings_source = settings_source
         self._clock = clock
         self._lock = threading.RLock()
         self._rejections: Dict[str, OrderResult] = {}
         self.last_quotes: Dict[str, PricedQuote] = {}
+        # (exchange, base) -> (when read, the fee rates a fill pays)
+        self._fees: Dict[Tuple[str, str], Tuple[float, TradingFees]] = {}
         # False when there is no saved book or it could not be read
         self.state_loaded = bool(state_path) and self.load_state(state_path)
 
@@ -635,6 +682,49 @@ class PaperExchange(AbstractExchange):
             exchange="paper",
         )
 
+    # -- fees --
+
+    def _fees_for(self, base: str, exchange: str) -> TradingFees:
+        """The fee rates a fill of ``base`` priced by ``exchange`` pays ("" when no
+        exchange priced it), reused for ``_FEES_TTL_SECONDS``."""
+        key = (exchange, base)
+        now = self._clock()
+        cached = self._fees.get(key)
+        if cached is not None and now - cached[0] < self._FEES_TTL_SECONDS:
+            return cached[1]
+        fees = None
+        if self._fee_feed is not None:
+            try:
+                fees = usable_fees(self._fee_feed(base, exchange))
+            except Exception as exc:
+                logger.debug(f"No trading fees for {base} from the fee feed: {exc}")
+        if fees is None and exchange:
+            fees = default_trading_fees(exchange)
+        if fees is None:
+            rate = float(self.account.commission_rate)
+            logger.warning(
+                f"No trading fees for {base} from the exchanges in Settings; paper "
+                f"fills pay {rate:.2%}"
+            )
+            fees = TradingFees(rate, rate, exchange, "paper")
+        self._fees[key] = (now, fees)
+        return fees
+
+    def trading_fees(self, symbol: str) -> TradingFees:
+        """The fee rates the next fill of ``symbol`` pays: those of the exchange whose
+        quote last priced it (the exchanges in Settings, primary first, before any
+        quote)."""
+        base = _base_asset(symbol)
+        last = self.last_quotes.get(base)
+        return self._fees_for(base, last.exchange if last is not None else "")
+
+    def _stamp_fees(self, order_id: str, fees: TradingFees, fee_type: str) -> None:
+        """Record on the order which rate its fill pays and where it came from."""
+        order = self.account.orders[order_id]
+        order.fee_type = fee_type
+        order.fee_exchange = fees.exchange
+        order.fee_source = fees.source
+
     # -- orders --
 
     def place_order(
@@ -649,7 +739,8 @@ class PaperExchange(AbstractExchange):
         with self._lock:
             priced: Optional[PricedQuote] = None
             if price is None:
-                # Market order: fill at the ask when buying, the bid when selling.
+                # Market order: fill at the ask when buying, the bid when selling,
+                # paying the taker rate of the exchange whose quote it is.
                 try:
                     priced = self._priced_quote(base)
                 except PriceUnavailable:
@@ -657,22 +748,30 @@ class PaperExchange(AbstractExchange):
                 self._simulator.anchors[base] = Decimal(
                     str(priced.ask if order_side is OrderSide.BUY else priced.bid)
                 )
+                fees = self._fees_for(base, priced.exchange)
+                fee_type, rate = fees.for_order("market")
                 order_id = self.account.place_order(
                     symbol=base,
                     order_type=OrderType.MARKET,
                     side=order_side,
                     quantity=Decimal(str(amount)),
+                    commission_rate=Decimal(str(rate)),
                 )
             else:
-                # Limit order: the price is the caller's, no feed involved.
+                # Limit order: the price is the caller's, no feed involved; it pays
+                # the maker rate.
+                fees = self.trading_fees(base)
+                fee_type, rate = fees.for_order("limit")
                 order_id = self.account.place_order(
                     symbol=base,
                     order_type=OrderType.LIMIT,
                     side=order_side,
                     quantity=Decimal(str(amount)),
                     price=Decimal(str(price)),
+                    commission_rate=Decimal(str(rate)),
                 )
             self._stamp_provenance(order_id, priced)
+            self._stamp_fees(order_id, fees, fee_type)
             self._save_state()
             return self._order_result(order_id)
 
@@ -733,6 +832,9 @@ class PaperExchange(AbstractExchange):
 
     def _order_result(self, order_id: str) -> OrderResult:
         order = self.account.orders[order_id]
+        # A fill reports its value and fee (USD, from the paper cash), as an
+        # exchange does: the trader's books take them as they are
+        filled = order.status is OrderStatus.FILLED
         return OrderResult(
             order_id=order_id,
             symbol=f"{order.symbol}-USD",
@@ -746,6 +848,19 @@ class PaperExchange(AbstractExchange):
             quote_ts=order.quote_ts,
             age_s=order.age_s,
             price_exchange=order.price_exchange,
+            fee=float(order.commission) if filled else None,
+            filled_value=(
+                float(order.filled_quantity * order.filled_price) if filled else None
+            ),
+            fee_currency=PAPER_BALANCE_ASSET if filled else "",
+            fee_rate=(
+                float(order.commission_rate)
+                if order.commission_rate is not None
+                else None
+            ),
+            fee_type=order.fee_type,
+            fee_exchange=order.fee_exchange,
+            fee_source=order.fee_source,
         )
 
     # -- persistence (so the paper book survives a trader restart) --
@@ -1074,6 +1189,9 @@ def configure_paper_exchange(
     initial_balance: Decimal = DEFAULT_PAPER_BALANCE,
     price_feed: Optional[Callable[[str], Optional[Quote]]] = fetch_public_quote,
     settings_source: Any = None,
+    fee_feed: Optional[
+        Callable[[str, str], Optional[TradingFees]]
+    ] = fetch_trading_fees,
 ) -> PaperExchange:
     """(Re)create the process-wide paper exchange. Call once at trader start-up.
 
@@ -1089,6 +1207,7 @@ def configure_paper_exchange(
             price_feed=price_feed,
             state_path=state_path,
             settings_source=settings_source,
+            fee_feed=fee_feed,
         )
         if state_path:
             if os.path.exists(state_path) and not _paper_exchange.state_loaded:
@@ -1111,7 +1230,9 @@ def get_paper_exchange() -> PaperExchange:
     global _paper_exchange
     with _paper_lock:
         if _paper_exchange is None:
-            _paper_exchange = PaperExchange(price_feed=fetch_public_quote)
+            _paper_exchange = PaperExchange(
+                price_feed=fetch_public_quote, fee_feed=fetch_trading_fees
+            )
         return _paper_exchange
 
 

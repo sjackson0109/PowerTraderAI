@@ -91,8 +91,8 @@ LIMITS = (
     (
         "min_order_margin_pct",
         "Minimum order margin %:",
-        (0.0, 20.0),
-        2.0,
+        position_sizing.MIN_ORDER_MARGIN_RANGE,
+        position_sizing.DEFAULT_MIN_ORDER_MARGIN_PCT,
         False,
         "When an entry is raised to the exchange's minimum order, it is raised by "
         "this much more, so the position stays above the minimum when valued at the "

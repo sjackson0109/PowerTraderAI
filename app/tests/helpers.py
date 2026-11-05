@@ -24,7 +24,7 @@ if APP_DIR not in sys.path:
 import pandas as pd  # noqa: E402
 
 import trading_mode as tm  # noqa: E402
-from pt_exchange_abstraction import PriceQuote, Sourced  # noqa: E402
+from pt_exchange_abstraction import PriceQuote, Sourced, TradingFees  # noqa: E402
 
 
 def make_candles(closes, start="2026-01-01", tf_seconds=3600, opens=None, wick=0.001):
@@ -108,6 +108,35 @@ class FakeQuotes:
         )
 
 
+class FakeFees:
+    """Stands in for the exchange layer's trading fees (``trading_mode._layer_fees``):
+    the rates of the exchange asked for (the one whose quote priced a fill), or of the
+    primary exchange (``exchange``) when none is named. 0.1% maker and taker (the
+    paper account's own rate) unless a test sets them; with ``reachable`` False no
+    exchange gives any. Records every (coin, exchange) it was asked about.
+    """
+
+    def __init__(self) -> None:
+        self.asked: List[tuple] = []
+        self.maker = 0.001
+        self.taker = 0.001
+        self.source = "exchange"
+        self.exchange = "coinbase"
+        self.reachable = True
+
+    def layer_fees(self, base: str, exchange: str = "") -> Optional[Sourced]:
+        self.asked.append((base, exchange))
+        if not self.reachable:
+            return None
+        name = exchange or self.exchange
+        return Sourced(
+            TradingFees(self.maker, self.taker, name, self.source),
+            exchange=name,
+            pair=f"{base}-USD",
+            primary=name == self.exchange,
+        )
+
+
 class FakeMarkets:
     """Stands in for the trader's exchanges in Settings (pt_trader._market_exchanges),
     so no trader test reaches a real exchange. States no minimum order unless a test
@@ -123,8 +152,9 @@ class FakeMarkets:
 
 
 class PaperTraderCase(unittest.TestCase):
-    """A paper trader in a temp dir with fake exchange-layer quotes (FakeQuotes),
-    fake exchanges in Settings (FakeMarkets) and no real network."""
+    """A paper trader in a temp dir with fake exchange-layer quotes (FakeQuotes) and
+    trading fees (FakeFees), fake exchanges in Settings (FakeMarkets) and no real
+    network."""
 
     @classmethod
     def setUpClass(cls):
@@ -142,10 +172,12 @@ class PaperTraderCase(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
 
         self.quotes = FakeQuotes()
+        self.fees = FakeFees()
         self.markets = FakeMarkets()
         for p in (
             mock.patch.object(self.pt_trader, "HUB_DATA_DIR", self.tmp.name),
             mock.patch.object(tm, "_layer_quote", self.quotes.layer_quote),
+            mock.patch.object(tm, "_layer_fees", self.fees.layer_fees),
             mock.patch.object(
                 self.pt_trader, "_market_exchanges", lambda: self.markets
             ),

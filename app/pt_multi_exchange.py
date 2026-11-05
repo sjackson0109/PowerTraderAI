@@ -560,6 +560,15 @@ class MultiExchangeManager:
             symbol, tf, start_ms, end_ms, now_ms, only=only, closed_only=closed_only
         )
 
+    def trading_fees(self, symbol: str, only=None):
+        """Maker and taker fee rates for ``symbol`` (a ``Sourced`` TradingFees), from
+        the primary exchange, else the next that gives them; ``only`` asks one exchange
+        (``ExchangeManager.trading_fees``)."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.trading_fees(symbol, only=only)
+
     def market_status(self, symbol: str):
         """Whether ``symbol``'s market is trading, from the primary exchange unless it
         does not list the coin (``ExchangeManager.market_status``)."""

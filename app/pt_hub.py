@@ -534,7 +534,7 @@ DEFAULT_SETTINGS = {
     "start_allocation_pct": position_sizing.DEFAULT_START_ALLOCATION_PCT,
     # An entry raised to the exchange's minimum order is raised by this % more, so the
     # position stays above the minimum when valued at the bid after fees
-    "min_order_margin_pct": 2.0,
+    "min_order_margin_pct": position_sizing.DEFAULT_MIN_ORDER_MARGIN_PCT,
     # The most one coin may hold, at cost, as % of the account: DCA buys stop there
     "max_coin_allocation_pct": position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT,
     position_sizing.DEFAULTS_VERSION_KEY: position_sizing.DEFAULTS_VERSION,

@@ -853,6 +853,62 @@ def test_overview_and_rebalancing_say_when_the_filter_keeps_nothing(root, manage
     assert g.suggestions_table.empty.cget("text") == ltg.NO_TARGETS
 
 
+# ---- Export CSV ----
+
+
+@pytest.mark.parametrize("with_pandas", [True, False])
+def test_export_csv_has_the_tags_and_purchase_dates_of_the_holdings_kept(
+    root, manager, dialogs, tmp_path, monkeypatch, with_pandas
+):
+    import csv
+
+    if with_pandas and not lth.PANDAS_AVAILABLE:
+        pytest.skip("pandas not installed")
+    monkeypatch.setattr(lth, "PANDAS_AVAILABLE", with_pandas)
+    for h in (
+        holding(
+            "BTC", 0.5, 40000.0, 60000.0, tags=["Steve"], purchase_date="2021-03-01"
+        ),
+        holding(
+            "ETH",
+            2,
+            3000.0,
+            3200.0,
+            tags=["Steve", "Pension"],
+            purchase_date="2024-01-15 10:30",
+        ),
+        holding("DOT", 100, 5.0, 10.0, notes="Zoë's"),
+    ):
+        manager.add_holding(h)
+    g = gui(root, manager)
+
+    def exported(name):
+        out = tmp_path / name
+        assert g.export_holdings(str(out))
+        assert dialogs.calls[-1][:2] == ("showinfo", "Export Holdings")
+        with open(out, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            return reader.fieldnames, list(reader)
+
+    columns, table = exported("all.csv")
+    assert columns == list(lth.EXPORT_COLUMNS)
+    assert columns[9:11] == ["Purchase Date", "Tags"]
+    got = {r["Symbol"]: (r["Purchase Date"], r["Tags"], r["Notes"]) for r in table}
+    assert got == {
+        "BTC": ("2021-03-01", "Steve", ""),
+        "DOT": ("", "", "Zoë's"),
+        "ETH": ("2024-01-15 10:30", "Pension, Steve", ""),
+    }
+    assert float(table[0]["Quantity"]) == 0.5  # BTC first, as holdings.db orders
+
+    g.set_tag_selection(["Pension"])  # the holdings the filter keeps
+    _columns, table = exported("pension.csv")
+    assert [r["Symbol"] for r in table] == ["ETH"]
+    g.set_tag_selection([ltg.UNTAGGED])
+    _columns, table = exported("untagged.csv")
+    assert [r["Symbol"] for r in table] == ["DOT"]
+
+
 def test_widths_and_sort_are_kept_between_sessions(root, manager):
     g = gui(root, manager)
     g.holdings_table.sort_by("current_value", descending=True)

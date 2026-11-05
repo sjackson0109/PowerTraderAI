@@ -60,6 +60,21 @@ def _connect(path: str):
 UNTAGGED = ""  # in a tag selection: the holdings with no tags (no tag is blank)
 TAG_SEPARATOR = ", "  # between a holding's tags in the table and the CSV export
 QUANTITY_DECIMALS = 8  # a quantity worked out from an amount is rounded to this
+EXPORT_COLUMNS = (  # Export CSV's columns, in order
+    "Symbol",
+    "Quantity",
+    "Average Cost",
+    "Current Price",
+    "Total Cost",
+    "Current Value",
+    "Unrealized P&L",
+    "P&L %",
+    "Exchange",
+    "Purchase Date",
+    "Tags",
+    "Target %",
+    "Notes",
+)
 
 
 def clean_tags(tags: Iterable[str]) -> List[str]:
@@ -486,71 +501,44 @@ class HoldingsManager:
 
         return sorted(suggestions, key=lambda x: x["deviation"], reverse=True)
 
-    def export_holdings_csv(self, file_path: str) -> bool:
-        """Export holdings to CSV file"""
+    @staticmethod
+    def export_row(holding: Holding) -> Dict[str, Any]:
+        """A holding as one row of the CSV export (EXPORT_COLUMNS)."""
+        return {
+            "Symbol": holding.symbol,
+            "Quantity": holding.quantity,
+            "Average Cost": holding.average_cost,
+            "Current Price": holding.current_price,
+            "Total Cost": holding.total_cost,
+            "Current Value": holding.current_value,
+            "Unrealized P&L": holding.unrealized_pnl,
+            "P&L %": holding.unrealized_pnl_percentage,
+            "Exchange": holding.exchange,
+            "Purchase Date": holding.purchase_date,
+            "Tags": tags_text(holding.tags),
+            "Target %": holding.target_percentage,
+            "Notes": holding.notes,
+        }
+
+    def export_holdings_csv(
+        self, file_path: str, holdings: Optional[Sequence[Holding]] = None
+    ) -> bool:
+        """Export holdings to CSV file (``holdings``, e.g. filter_by_tags; None:
+        every holding)"""
+        rows = [self.export_row(h) for h in self._chosen(holdings)]
         try:
             if PANDAS_AVAILABLE:
-                data = []
-                for holding in self.holdings:
-                    data.append(
-                        {
-                            "Symbol": holding.symbol,
-                            "Quantity": holding.quantity,
-                            "Average Cost": holding.average_cost,
-                            "Current Price": holding.current_price,
-                            "Total Cost": holding.total_cost,
-                            "Current Value": holding.current_value,
-                            "Unrealized P&L": holding.unrealized_pnl,
-                            "P&L %": holding.unrealized_pnl_percentage,
-                            "Exchange": holding.exchange,
-                            "Purchase Date": holding.purchase_date,
-                            "Target %": holding.target_percentage,
-                            "Notes": holding.notes,
-                        }
-                    )
-
-                df = pd.DataFrame(data)
+                df = pd.DataFrame(rows, columns=list(EXPORT_COLUMNS))
                 df.to_csv(file_path, index=False)
                 return True
             else:
                 # Fallback CSV writing without pandas
                 import csv
 
-                with open(file_path, "w", newline="") as csvfile:
-                    fieldnames = [
-                        "Symbol",
-                        "Quantity",
-                        "Average Cost",
-                        "Current Price",
-                        "Total Cost",
-                        "Current Value",
-                        "Unrealized P&L",
-                        "P&L %",
-                        "Exchange",
-                        "Purchase Date",
-                        "Target %",
-                        "Notes",
-                    ]
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                with open(file_path, "w", newline="", encoding="utf-8") as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=list(EXPORT_COLUMNS))
                     writer.writeheader()
-
-                    for holding in self.holdings:
-                        writer.writerow(
-                            {
-                                "Symbol": holding.symbol,
-                                "Quantity": holding.quantity,
-                                "Average Cost": holding.average_cost,
-                                "Current Price": holding.current_price,
-                                "Total Cost": holding.total_cost,
-                                "Current Value": holding.current_value,
-                                "Unrealized P&L": holding.unrealized_pnl,
-                                "P&L %": holding.unrealized_pnl_percentage,
-                                "Exchange": holding.exchange,
-                                "Purchase Date": holding.purchase_date,
-                                "Target %": holding.target_percentage,
-                                "Notes": holding.notes,
-                            }
-                        )
+                    writer.writerows(rows)
                 return True
         except Exception as e:
             print(f"Error exporting to CSV: {e}")

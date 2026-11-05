@@ -9,7 +9,8 @@ sub-tabs:
   Refresh, the tag filter and a search through every column) over the holdings,
   in the shared table (ui_table.DataTable), with their tags and each holding's
   share of the current value of the holdings the tag filter keeps ("% of
-  Holdings"); under the table, the totals of the rows shown.
+  Holdings"); under the table, the totals of the rows shown. Export CSV writes
+  the holdings the tag filter keeps, with their tags and purchase dates.
 * Portfolio Overview: the tag filter over the totals of the holdings it keeps,
   beside their allocation, a pie of each one's share of their current value. With
   no holdings, only "No holdings to display".
@@ -1128,22 +1129,26 @@ class HoldingsManagementGUI:
         if dialog.updated:
             self.refresh_holdings_display()
 
-    def export_holdings(self):
-        """Export the holdings to a CSV file."""
+    def export_holdings(self, file_path: Optional[str] = None) -> bool:
+        """Export the holdings the tag filter keeps (every one for All), with their
+        tags and purchase dates, to a CSV file."""
         if not HOLDINGS_AVAILABLE or not self.holdings_manager:
-            return
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            title="Export Holdings",
-        )
-        if file_path:
-            if self.holdings_manager.export_holdings_csv(file_path):
-                messagebox.showinfo("Export Holdings", f"Exported to {file_path}")
-            else:
-                messagebox.showerror(
-                    "Export Holdings", "The holdings were not exported."
-                )
+            return False
+        if file_path is None:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                title="Export Holdings",
+            )
+        if not file_path:
+            return False
+        if not self.holdings_manager.export_holdings_csv(
+            file_path, self.filtered_holdings()
+        ):
+            messagebox.showerror("Export Holdings", "The holdings were not exported.")
+            return False
+        messagebox.showinfo("Export Holdings", f"Exported to {file_path}")
+        return True
 
     def export_suggestions(self, file_path: Optional[str] = None) -> bool:
         """Export the suggestions shown, in their order, to a CSV file."""

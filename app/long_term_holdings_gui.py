@@ -6,9 +6,10 @@ include them, and nothing here reads or changes the paper or live account. Four
 sub-tabs:
 
 * Holdings: a toolbar (Add Holding, Edit, Delete, Update Prices, Export CSV,
-  Refresh and a search through every column) over the holdings, in the shared
-  table (ui_table.DataTable), with each holding's share of the holdings' current
-  value ("% of Holdings").
+  Refresh, the tag filter and a search through every column) over the holdings,
+  in the shared table (ui_table.DataTable), with their tags and each holding's
+  share of the current value of the holdings the tag filter keeps ("% of
+  Holdings"); under the table, the totals of the rows shown.
 * Portfolio Overview: the holdings' totals beside the allocation, a pie of each
   holding's share of their current value. With no holdings, only "No holdings to
   display".
@@ -18,6 +19,11 @@ sub-tabs:
 * Analytics, from holdings.db: each holding's unrealised P&L % (its current price
   against its average cost) and the prices recorded with Update Prices, as the
   change since each coin's first recorded price. With no holdings, "No data yet".
+
+The tag filter (TagFilter) keeps every holding (All), the untagged ones, or those
+with any of the tags chosen; it is one choice for every sub-tab that has it, read
+and set from outside with ``tag_selection()``, ``filtered_holdings()`` and
+``set_tag_selection()`` (main_frame gets TAG_FILTER_EVENT when it changes).
 
 Add Holding and Edit open HoldingDialog: the coin from the hub's coins (Settings),
 the exchange from the exchanges in Settings, primary first (or typed, e.g. a
@@ -43,12 +49,15 @@ import ui_tokens
 
 try:
     from long_term_holdings import (
+        UNTAGGED,
         Holding,
         HoldingsManager,
         clean_tags,
+        filter_holdings,
         get_holdings_manager,
         quantity_for_amount,
         sorted_tags,
+        tags_text,
     )
 
     HOLDINGS_AVAILABLE = True
@@ -83,6 +92,7 @@ HOLDINGS_COLUMNS = (
     "share",
     "target_pct",
     "exchange",
+    "tags",
 )
 HOLDINGS_HEADINGS = {
     "symbol": "Coin",
@@ -93,14 +103,34 @@ HOLDINGS_HEADINGS = {
     "current_value": "Current Value",
     "pnl": "P&L",
     "pnl_pct": "P&L %",
-    # the share of the holdings' own current value, not of the trading account
+    # the share of the current value of the holdings the tag filter keeps, not of
+    # the trading account
     "share": "% of Holdings",
     "target_pct": "Target %",
     "exchange": "Exchange",
+    "tags": "Tags",
 }
-HOLDINGS_NUMERIC = tuple(c for c in HOLDINGS_COLUMNS if c not in ("symbol", "exchange"))
+HOLDINGS_NUMERIC = tuple(
+    c for c in HOLDINGS_COLUMNS if c not in ("symbol", "exchange", "tags")
+)
 NO_HOLDINGS = "No holdings yet"
 NO_HOLDINGS_MATCH = "No holdings match the search"
+NO_TAG_MATCH = "No holdings match the tag filter"
+# the line under the holdings table: the totals of the rows shown
+SHOWN_SUMMARY = (
+    ("Holdings", "holdings_count"),
+    ("Total Cost", "total_cost"),
+    ("Current Value", "total_value"),
+    ("P&L", "total_pnl"),
+    ("P&L %", "total_pnl_pct"),
+)
+
+# ---- the tag filter ----
+
+ALL_LABEL, UNTAGGED_LABEL = "All", "Untagged"
+MENU_MARK = "▾"  # after the choice on the filter's button: it opens a menu
+FILTER_NAMES = 2  # the filter's button names this many of the tags chosen, then "+n"
+TAG_FILTER_EVENT = "<<HoldingsTagFilter>>"  # on main_frame, when the filter changes
 
 # ---- the rebalancing table ----
 
@@ -262,6 +292,78 @@ class ExchangeSymbols:
             return symbol, chosen
 
 
+class TagFilter:
+    """A sub-tab's tag filter, packed left in a toolbar: "Tags" and a button whose
+    menu ticks All, Untagged and each tag in use (``tags()``) as chosen
+    (``chosen()``); a click calls ``on_pick(value)``, value None for All, UNTAGGED
+    or the tag. The window keeps one choice for every sub-tab's filter."""
+
+    def __init__(
+        self,
+        bar: tk.Misc,
+        *,
+        tags: Callable[[], Sequence[str]],
+        chosen: Callable[[], Sequence[str]],
+        on_pick: Callable[[Optional[str]], None],
+    ):
+        self._tags, self._chosen, self._on_pick = tags, chosen, on_pick
+        self._vars: List[tk.BooleanVar] = []
+        self.text = ALL_LABEL
+        ttk.Label(bar, text="Tags").pack(side="left", padx=(0, ui_tokens.SPACE["xs"]))
+        # a toolbar button (the theme's), whose menu opens under it
+        self.button = ttk.Button(bar, command=self.open)
+        self.menu = tk.Menu(self.button, tearoff=0)
+        self.button.pack(side="left", padx=(0, ui_tokens.SPACE["sm"]))
+        self.show(ALL_LABEL)
+        self.fill()
+
+    def open(self) -> None:
+        """The menu, under the button."""
+        self.fill()
+        b = self.button
+        try:
+            self.menu.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+        finally:
+            self.menu.grab_release()
+
+    def fill(self) -> None:
+        """The menu, from the tags in use and the choice now."""
+        menu = self.menu
+        menu.delete(0, "end")
+        self._vars = []
+        chosen = {str(c).casefold() for c in self._chosen()}
+
+        def item(label: str, value: Optional[str], ticked: bool) -> None:
+            var = tk.BooleanVar(master=menu, value=ticked)
+            self._vars.append(var)
+            menu.add_checkbutton(
+                label=label, variable=var, command=lambda: self._on_pick(value)
+            )
+
+        item(ALL_LABEL, None, not chosen)
+        item(UNTAGGED_LABEL, UNTAGGED, UNTAGGED in chosen)
+        tags = list(self._tags())
+        if tags:
+            menu.add_separator()
+        for tag in tags:
+            item(tag, tag, tag.casefold() in chosen)
+
+    def entries(self) -> List[Tuple[str, bool]]:
+        """The menu's items, (label, ticked), as it shows them now (tests)."""
+        self.fill()
+        labels = [
+            self.menu.entrycget(i, "label")
+            for i in range(self.menu.index("end") + 1)
+            if self.menu.type(i) == "checkbutton"
+        ]
+        return [(label, bool(v.get())) for label, v in zip(labels, self._vars)]
+
+    def show(self, text: str) -> None:
+        """The choice on the button: "All", "Pension, Steve" ..."""
+        self.text = text
+        self.button.configure(text=f"{text}  {MENU_MARK}")
+
+
 class HoldingsManagementGUI:
     """The Long-term Holdings tab's four sub-tabs; see the module docstring.
 
@@ -291,6 +393,9 @@ class HoldingsManagementGUI:
         self.holdings_manager = manager
         self.selected_holding: Optional["Holding"] = None
         self.dialog: Optional["HoldingDialog"] = None
+        # the tag filter: the tags chosen (UNTAGGED: the holdings with none), () All
+        self._tag_selection: Tuple[str, ...] = ()
+        self.tag_filters: List[TagFilter] = []
         # what the Analytics charts show (tests): [(label, P&L %)], {coin: [% change]}
         self.analytics_pnl: List[Tuple[str, float]] = []
         self.analytics_prices: Dict[str, List[float]] = {}
@@ -338,8 +443,21 @@ class HoldingsManagementGUI:
         bar.pack(side="top", fill="x", padx=gap, pady=(gap, gap))
         return bar
 
+    def _tag_filter(self, bar: tk.Widget) -> TagFilter:
+        """A tag filter in ``bar``, showing the window's one choice."""
+        tag_filter = TagFilter(
+            bar,
+            tags=self._tags_in_use,
+            chosen=self.tag_selection,
+            on_pick=self.pick_tag,
+        )
+        tag_filter.show(self.tag_filter_text())
+        self.tag_filters.append(tag_filter)
+        return tag_filter
+
     def setup_holdings_tab(self):
-        """A toolbar over the holdings table."""
+        """A toolbar (with the tag filter) over the holdings table, and the totals of
+        the rows shown under it."""
         gap = ui_tokens.SPACE["sm"]
         bar = self._toolbar(self.holdings_tab)
         for text, command in (
@@ -351,8 +469,20 @@ class HoldingsManagementGUI:
             ("Refresh", self.refresh_holdings_display),
         ):
             ttk.Button(bar, text=text, command=command).pack(side="left", padx=(0, gap))
+        self.holdings_filter = self._tag_filter(bar)
         self.holdings_search = ui_table.SearchBox(bar, self.show_holdings)
         self.search_var = self.holdings_search.var
+
+        # under the table (packed ahead of it: the table takes the room left)
+        self.holdings_summary = ttk.Frame(self.holdings_tab)
+        self.shown_labels: Dict[str, ttk.Label] = {}
+        for i, (text, key) in enumerate(SHOWN_SUMMARY):
+            ttk.Label(self.holdings_summary, text=text, style="Muted.TLabel").pack(
+                side="left", padx=(gap * 2 if i else 0, ui_tokens.SPACE["xs"])
+            )
+            value = ttk.Label(self.holdings_summary, text="")
+            value.pack(side="left")
+            self.shown_labels[key] = value
 
         self.holdings_table = ui_table.DataTable(
             self.holdings_tab,
@@ -455,13 +585,91 @@ class HoldingsManagementGUI:
                 "Long-term Holdings", f"Error reading the holdings: {e}"
             )
             return
+        # a tag no holding has any more leaves the filter (none left: All)
+        before = self._tag_selection
+        self._tag_selection = self._valid_selection(before)
+        self._show_tag_filter()
         self.show_holdings()
         self.update_portfolio_summary()
         self.show_suggestions()
         self.update_analytics()
+        if self._tag_selection != before:
+            self._tag_filter_changed()
 
     def _holdings(self) -> List["Holding"]:
         return list(getattr(self.holdings_manager, "holdings", None) or [])
+
+    # ---- the tag filter (Holdings, Portfolio Overview, Rebalancing) ----
+
+    def tag_selection(self) -> Tuple[str, ...]:
+        """The tags the filter keeps, UNTAGGED for the holdings with none; () for
+        All."""
+        return self._tag_selection
+
+    def filtered_holdings(self) -> List["Holding"]:
+        """The holdings the tag filter keeps, in holdings.db's order (by coin)."""
+        return filter_holdings(self._holdings(), self._tag_selection)
+
+    def set_tag_selection(self, selection: Optional[Sequence[str]] = ()) -> None:
+        """Filter by ``selection``: tags (in any case) and UNTAGGED; () or None for
+        All. Tags no holding has are dropped. The sub-tabs the filter applies to show
+        the holdings it keeps, and main_frame gets TAG_FILTER_EVENT."""
+        self._tag_selection = self._valid_selection(selection)
+        self._show_tag_filter()
+        self.show_filtered()
+        self._tag_filter_changed()
+
+    def pick_tag(self, value: Optional[str]) -> None:
+        """A click in a filter's menu: All (None) clears the choice; Untagged or a
+        tag joins it, or leaves it when it is in it already."""
+        if value is None:
+            self.set_tag_selection(())
+            return
+        chosen = list(self._tag_selection)
+        folded = [c.casefold() for c in chosen]
+        if value.casefold() in folded:
+            del chosen[folded.index(value.casefold())]
+        else:
+            chosen.append(value)
+        self.set_tag_selection(chosen)
+
+    def tag_filter_text(self) -> str:
+        """What the filters' buttons show: "All", or the choice ("Untagged",
+        "Pension, Steve", "Pension, Steve +1")."""
+        names = [UNTAGGED_LABEL if v == UNTAGGED else v for v in self._tag_selection]
+        if not names:
+            return ALL_LABEL
+        more = len(names) - FILTER_NAMES
+        shown = ", ".join(names[:FILTER_NAMES])
+        return f"{shown} +{more}" if more > 0 else shown
+
+    def _tags_in_use(self) -> List[str]:
+        return sorted_tags(t for h in self._holdings() for t in h.tags)
+
+    def _valid_selection(self, selection: Optional[Sequence[str]]) -> Tuple[str, ...]:
+        """``selection`` with only UNTAGGED and the tags in use (in their own
+        spelling), once each: UNTAGGED first, then the tags alphabetically."""
+        in_use = {t.casefold(): t for t in self._tags_in_use()}
+        values = [str(v).strip() for v in (selection or ())]
+        tags = sorted_tags(
+            in_use[v.casefold()] for v in values if v.casefold() in in_use
+        )
+        return ((UNTAGGED,) if UNTAGGED in values else ()) + tuple(tags)
+
+    def _show_tag_filter(self) -> None:
+        text = self.tag_filter_text()
+        for tag_filter in self.tag_filters:
+            tag_filter.show(text)
+
+    def _tag_filter_changed(self) -> None:
+        try:
+            self.main_frame.event_generate(TAG_FILTER_EVENT)
+        except tk.TclError:
+            pass  # the window is gone
+
+    def show_filtered(self) -> None:
+        """Show again what the tag filter applies to."""
+        self.show_holdings()
 
     # ---- Holdings ----
 
@@ -481,15 +689,20 @@ class HoldingsManagementGUI:
             share,
             f"{h.target_percentage:.1f}%",
             h.exchange,
+            tags_text(h.tags),
         )
 
     def show_holdings(self) -> None:
-        """The holdings the search keeps; the selection stays where it can."""
+        """The holdings the tag filter and the search keep, each with its share of
+        the current value of those the tag filter keeps, and their totals under the
+        table; the selection stays where it can."""
         tree = self.holdings_tree
         selected = set(tree.selection())
-        holdings = self._holdings()
+        everything = self._holdings()
+        holdings = filter_holdings(everything, self._tag_selection)
         total = sum(max(0.0, h.current_value) for h in holdings)
         tree.delete(*tree.get_children())
+        shown = []
         for h in holdings:
             cells = self.holding_cells(h, total)
             if not self.holdings_search.matches(cells):
@@ -500,14 +713,53 @@ class HoldingsManagementGUI:
                 else ("loss",) if h.unrealized_pnl < 0 else ()
             )
             tree.insert("", "end", iid=str(h.id), values=cells, tags=tags)
+            shown.append(h)
         keep = [iid for iid in selected if tree.exists(iid)]
         if keep:
             tree.selection_set(keep)
         self.selected_holding = self._selected()
-        self.holdings_table.empty.configure(
-            text=NO_HOLDINGS_MATCH if holdings else NO_HOLDINGS
-        )
+        if not everything:
+            empty = NO_HOLDINGS
+        elif not holdings:
+            empty = NO_TAG_MATCH
+        else:
+            empty = NO_HOLDINGS_MATCH
+        self.holdings_table.empty.configure(text=empty)
+        self.show_totals(shown)
         self.holdings_table.settle()
+
+    def show_totals(self, shown: Sequence["Holding"]) -> None:
+        """The line under the holdings table: the totals of the rows shown (none:
+        no line)."""
+        self._pack_summary(bool(shown))
+        if not shown:
+            return
+        summary = self.holdings_manager.get_portfolio_summary(list(shown))
+        labels = self.shown_labels
+        labels["holdings_count"].configure(text=f"{summary['holdings_count']}")
+        labels["total_cost"].configure(text=self._money(summary["total_cost"]))
+        labels["total_value"].configure(text=self._money(summary["total_value"]))
+        pnl_style = "Good.TLabel" if summary["total_pnl"] >= 0 else "Bad.TLabel"
+        labels["total_pnl"].configure(
+            text=signed_money(summary["total_pnl"], self._money), style=pnl_style
+        )
+        labels["total_pnl_pct"].configure(
+            text=f"{summary['total_pnl_percentage']:+.2f}%", style=pnl_style
+        )
+
+    def _pack_summary(self, shown: bool) -> None:
+        frame = self.holdings_summary
+        if shown and not frame.winfo_manager():
+            gap = ui_tokens.SPACE["sm"]
+            frame.pack(
+                side="bottom",
+                fill="x",
+                padx=gap,
+                pady=(ui_tokens.SPACE["xs"], gap),
+                before=self.holdings_table,
+            )
+        elif not shown and frame.winfo_manager():
+            frame.pack_forget()
 
     def _selected(self) -> Optional["Holding"]:
         chosen = {str(iid) for iid in self.holdings_tree.selection()}

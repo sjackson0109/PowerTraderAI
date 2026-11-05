@@ -421,10 +421,17 @@ class HoldingsManager:
         untagged ones for UNTAGGED, and every holding for an empty selection."""
         return filter_holdings(self.holdings, selection)
 
-    def get_portfolio_summary(self) -> Dict[str, float]:
-        """Get overall portfolio summary"""
-        total_cost = sum(h.total_cost for h in self.holdings)
-        total_value = sum(h.current_value for h in self.holdings)
+    def _chosen(self, holdings: Optional[Sequence[Holding]]) -> List[Holding]:
+        return list(self.holdings if holdings is None else holdings)
+
+    def get_portfolio_summary(
+        self, holdings: Optional[Sequence[Holding]] = None
+    ) -> Dict[str, float]:
+        """Get overall portfolio summary (of ``holdings``, e.g. filter_by_tags;
+        None: every holding)"""
+        holdings = self._chosen(holdings)
+        total_cost = sum(h.total_cost for h in holdings)
+        total_value = sum(h.current_value for h in holdings)
         total_pnl = total_value - total_cost
         total_pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
 
@@ -433,7 +440,7 @@ class HoldingsManager:
             "total_value": total_value,
             "total_pnl": total_pnl,
             "total_pnl_percentage": total_pnl_pct,
-            "holdings_count": len(self.holdings),
+            "holdings_count": len(holdings),
         }
 
     def get_rebalancing_suggestions(self) -> List[Dict[str, Any]]:

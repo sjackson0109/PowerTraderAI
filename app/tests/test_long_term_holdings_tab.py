@@ -586,6 +586,188 @@ def test_rebalancing_is_searched_and_exported_as_shown(
     assert len(lines) == 2 and lines[1].startswith("ETH,Buy,")
 
 
+# ---- the tag filter: Holdings ----
+
+
+def shown_totals(g):
+    """The line under the holdings table, {key: text}; {} while it is hidden."""
+    if not g.holdings_summary.winfo_manager():
+        return {}
+    return {k: label.cget("text") for k, label in g.shown_labels.items()}
+
+
+def test_a_holding_added_as_50_dollars_tagged_steve_shows_under_steve(
+    root, manager, dialogs
+):
+    """Acceptance: BTC added as "$50 at <price>" tagged Steve shows the right
+    quantity, and appears when filtering by Steve."""
+    manager.add_holding(holding("ETH", 2, 3000.0, 3200.0, tags=["Pension"]))
+    g = gui(root, manager)
+    dlg = g.add_holding_dialog()
+    dlg.attributes("-alpha", 0.0)
+    dlg.coin_var.set("BTC")
+    dlg.entry_mode.set(ltg.BY_AMOUNT)
+    dlg.amount_var.set("50")
+    dlg.cost_var.set("80000")
+    dlg.price_var.set("80000")
+    assert dlg.quantity_var.get() == "0.000625"  # 50 / 80,000, shown before saving
+    typed(dlg, "Steve")
+    assert dlg.save() is not None
+    settle(root, g)
+    assert g.holdings_tree.heading("tags", "text") == "Tags"
+    table = {r[0]: r for r in rows(g.holdings_tree)}
+    assert table["BTC"][1] == "0.000625" and table["BTC"][4] == "$50.00"
+    assert table["BTC"][11] == "Steve" and table["ETH"][11] == "Pension"
+
+    g.set_tag_selection(["Steve"])
+    settle(root, g)
+    assert rows(g.holdings_tree, 0) == ["BTC"]
+    assert g.holdings_filter.text == "Steve"
+    g.set_tag_selection(["Pension"])
+    settle(root, g)
+    assert rows(g.holdings_tree, 0) == ["ETH"]
+
+
+def test_a_holding_with_two_tags_shows_under_either(root, manager):
+    """Acceptance: a holding tagged both Steve and Pension appears under either
+    filter."""
+    for coin, tags in (
+        ("BTC", ["Steve"]),
+        ("ETH", ["Steve", "Pension"]),
+        ("SOL", ["Pension"]),
+        ("DOT", []),
+    ):
+        manager.add_holding(holding(coin, 1, 10.0, 10.0, tags=tags))
+    g = gui(root, manager)
+    assert sorted(rows(g.holdings_tree, 0)) == ["BTC", "DOT", "ETH", "SOL"]
+    assert {r[0]: r[11] for r in rows(g.holdings_tree)}["ETH"] == "Pension, Steve"
+    for selection, coins in (
+        (["Steve"], ["BTC", "ETH"]),
+        (["Pension"], ["ETH", "SOL"]),
+        (["Steve", "Pension"], ["BTC", "ETH", "SOL"]),
+        ([ltg.UNTAGGED], ["DOT"]),
+        ([], ["BTC", "DOT", "ETH", "SOL"]),
+    ):
+        g.set_tag_selection(selection)
+        settle(root, g)
+        assert sorted(rows(g.holdings_tree, 0)) == coins, selection
+        assert g.tag_selection() == g.holdings_filter._chosen()
+        assert sorted(h.symbol for h in g.filtered_holdings()) == coins
+
+
+def test_the_totals_and_the_share_follow_the_tag_filter(root, manager):
+    """Acceptance: the totals change with the tag filter."""
+    for h in (
+        holding("BTC", 0.5, 40000.0, 60000.0, tags=["Steve"]),  # 20,000 -> 30,000
+        holding("ETH", 2, 3000.0, 2500.0, tags=["Steve", "Pension"]),  # 6,000 -> 5,000
+        holding("SOL", 10, 100.0, 150.0, tags=["Pension"]),  # 1,000 -> 1,500
+    ):
+        manager.add_holding(h)
+    g = gui(root, manager)
+    assert shown_totals(g) == {
+        "holdings_count": "3",
+        "total_cost": "$27,000.00",
+        "total_value": "$36,500.00",
+        "total_pnl": "+$9,500.00",
+        "total_pnl_pct": "+35.19%",
+    }
+    assert g.shown_labels["total_pnl"].cget("style") == "Good.TLabel"
+    shares = {r[0]: r[8] for r in rows(g.holdings_tree)}
+    assert shares == {"BTC": "82.19%", "ETH": "13.70%", "SOL": "4.11%"}
+
+    g.set_tag_selection(["Pension"])
+    settle(root, g)
+    assert shown_totals(g) == {
+        "holdings_count": "2",
+        "total_cost": "$7,000.00",
+        "total_value": "$6,500.00",
+        "total_pnl": "-$500.00",
+        "total_pnl_pct": "-7.14%",
+    }
+    assert g.shown_labels["total_pnl_pct"].cget("style") == "Bad.TLabel"
+    # % of Holdings within the rows the filter keeps
+    shares = {r[0]: r[8] for r in rows(g.holdings_tree)}
+    assert shares == {"ETH": "76.92%", "SOL": "23.08%"}
+
+    # the search narrows the rows shown, and their totals
+    g.search_var.set("SOL")
+    g.holdings_search.now()
+    settle(root, g)
+    assert shown_totals(g)["holdings_count"] == "1"
+    assert shown_totals(g)["total_value"] == "$1,500.00"
+    assert rows(g.holdings_tree, 8) == ["23.08%"]  # the share stays the filter's
+    g.search_var.set("nothing like this")
+    g.holdings_search.now()
+    settle(root, g)
+    assert shown_totals(g) == {}  # no rows: no line
+    assert g.holdings_table.empty.cget("text") == ltg.NO_HOLDINGS_MATCH
+
+
+def test_the_filter_menu_ticks_all_untagged_and_the_tags_chosen(root, manager):
+    manager.add_holding(holding("BTC", 1, 1.0, 1.0, tags=["Steve"]))
+    manager.add_holding(holding("ETH", 1, 1.0, 1.0, tags=["Pension", "ISA"]))
+    g = gui(root, manager)
+    menu = g.holdings_filter
+    assert menu.text == "All" and menu.button.cget("text") == "All  ▾"
+    assert menu.entries() == [
+        ("All", True),
+        ("Untagged", False),
+        ("ISA", False),
+        ("Pension", False),
+        ("Steve", False),
+    ]
+    g.pick_tag("Steve")
+    g.pick_tag("pension")  # in any case: the tag's own spelling
+    assert g.tag_selection() == ("Pension", "Steve")
+    assert menu.text == "Pension, Steve"
+    assert dict(menu.entries()) == {
+        "All": False,
+        "Untagged": False,
+        "ISA": False,
+        "Pension": True,
+        "Steve": True,
+    }
+    g.pick_tag(ltg.UNTAGGED)
+    g.pick_tag("ISA")
+    assert g.tag_selection() == (ltg.UNTAGGED, "ISA", "Pension", "Steve")
+    assert menu.text == "Untagged, ISA +2"
+    g.pick_tag("Steve")  # a second click takes it out
+    assert g.tag_selection() == (ltg.UNTAGGED, "ISA", "Pension")
+    g.pick_tag(None)  # All
+    assert g.tag_selection() == () and menu.text == "All"
+    g.set_tag_selection(["Nobody"])  # not a tag in use: All
+    assert g.tag_selection() == ()
+
+
+def test_the_filter_says_when_it_keeps_nothing_and_drops_tags_gone(
+    root, manager, dialogs
+):
+    manager.add_holding(holding("BTC", 1, 1.0, 1.0, tags=["Steve"]))
+    g = gui(root, manager)
+    changes = []
+    g.main_frame.bind(
+        ltg.TAG_FILTER_EVENT, lambda _e: changes.append(g.tag_selection())
+    )
+    g.set_tag_selection([ltg.UNTAGGED])
+    settle(root, g)
+    assert g.holdings_table.is_empty_shown()
+    assert g.holdings_table.empty.cget("text") == ltg.NO_TAG_MATCH
+    assert shown_totals(g) == {}
+
+    g.set_tag_selection(["Steve"])
+    settle(root, g)
+    assert rows(g.holdings_tree, 0) == ["BTC"]
+    # the last holding tagged Steve loses the tag: the filter goes back to All
+    h = manager.holdings[0]
+    h.tags = []
+    manager.update_holding(h)
+    g.refresh_holdings_display()
+    settle(root, g)
+    assert g.tag_selection() == () and g.holdings_filter.text == "All"
+    assert rows(g.holdings_tree, 0) == ["BTC"]
+    assert changes == [(ltg.UNTAGGED,), ("Steve",), ()]
+
+
 def test_widths_and_sort_are_kept_between_sessions(root, manager):
     g = gui(root, manager)
     g.holdings_table.sort_by("current_value", descending=True)

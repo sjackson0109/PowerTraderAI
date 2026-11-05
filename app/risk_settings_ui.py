@@ -6,11 +6,14 @@ Settings > Risk: the limits that protect the account.
   the warning and critical levels and the emergency stop, each with the account
   value it equals at the peak; and Reset peak, which sets the peak to the account
   value shown.
+* **Trading halt** - after an emergency stop: since when, why, and Resume trading,
+  the only way trading starts again (a restart does not).
 
 Save writes the ``risk`` keys of ``pt_config.json`` (``SettingsManager.set_risk``),
-which the trader reads before every drawdown check. Reset peak is a request the
-trader applies (``risk_state``). The window is built like Settings > Strategy
-(``strategy_settings_ui``): a scrolling body, a status line, Save and Cancel.
+which the trader reads before every drawdown check. Reset peak and Resume trading
+are requests the trader applies (``risk_state``). The window is built like Settings
+> Strategy (``strategy_settings_ui``): a scrolling body, a status line, Save and
+Cancel. ``HaltBanner`` is the hub's TRADING HALTED banner.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from tkinter import ttk
 from typing import Any, Callable, Dict, Mapping, Optional
 
 import risk_state
+import ui_tokens
 from pt_settings_manager import (
     DEFAULT_DRAWDOWN_CRITICAL_PCT,
     DEFAULT_DRAWDOWN_WARNING_PCT,
@@ -57,7 +61,8 @@ LEVELS = (
         "Emergency stop %:",
         EMERGENCY_DRAWDOWN_RANGE,
         DEFAULT_EMERGENCY_DRAWDOWN_PCT,
-        "At this drawdown the trader stops trading.",
+        "At this drawdown the trader stops trading, and stays stopped, also after "
+        "a restart, until Resume trading is pressed.",
     ),
 )
 
@@ -87,6 +92,23 @@ def drawdown_pct(peak: float, value: Optional[float]) -> Optional[float]:
     return max(0.0, (peak - float(value)) / peak * 100.0)
 
 
+def when(ts: float) -> str:
+    return time.strftime("%d %b %Y %H:%M", time.localtime(ts))
+
+
+def halt_text(view: risk_state.RiskView) -> str:
+    """Why and since when trading is halted ("" when it is not)."""
+    if not view.halted:
+        return ""
+    parts = [view.halt_reason or "Emergency stop"]
+    if view.halted_ts > 0.0:
+        since = f"since {when(view.halted_ts)}"
+        if view.halt_value is not None:
+            since += f", account value {money(view.halt_value)}"
+        parts.append(since)
+    return " \u00b7 ".join(parts)
+
+
 def level_hint(peak: float, pct: Optional[float]) -> str:
     """The account value a level equals at the peak."""
     if not peak > 0.0 or pct is None:
@@ -101,7 +123,8 @@ class RiskSettingsWindow(tk.Toplevel):
     another window saved meanwhile is kept). ``books_dir`` is the trader's books
     folder for the trading mode (where the peak is kept); ``account_value()`` the
     last account value the trader reported (None before it has). ``on_saved()``
-    runs after a save (the hub refreshes its Settings line)."""
+    runs after a save, ``on_changed()`` after Reset peak or Resume trading (the hub
+    refreshes its Settings line and banner)."""
 
     def __init__(
         self,
@@ -110,6 +133,7 @@ class RiskSettingsWindow(tk.Toplevel):
         account_value: Optional[Callable[[], Optional[float]]] = None,
         manager_factory: Optional[Callable[[], Any]] = None,
         on_saved: Optional[Callable[[], None]] = None,
+        on_changed: Optional[Callable[[], None]] = None,
         messagebox=None,
         palette: Optional[dict] = None,
     ) -> None:
@@ -125,6 +149,7 @@ class RiskSettingsWindow(tk.Toplevel):
         self._books_dir = books_dir
         self._account_value = account_value or (lambda: None)
         self._on_saved = on_saved
+        self._on_changed = on_changed
         self._box = messagebox or _messagebox
         self._palette = palette or {}
         if self._palette.get("BG"):
@@ -136,6 +161,7 @@ class RiskSettingsWindow(tk.Toplevel):
         self.peak_var = tk.StringVar(master=self)
         self.account_var = tk.StringVar(master=self)
         self.drawdown_var = tk.StringVar(master=self)
+        self.halt_var = tk.StringVar(master=self)
         # per setting key: the field's text and its hint
         self.vars: Dict[str, tk.StringVar] = {}
         self.hints: Dict[str, tk.StringVar] = {}
@@ -174,11 +200,7 @@ class RiskSettingsWindow(tk.Toplevel):
         self._peak = view.peak_value
         value = self.account_value()
         if self._peak > 0.0:
-            seen = (
-                time.strftime(", seen %d %b %Y %H:%M", time.localtime(view.peak_ts))
-                if view.peak_ts > 0.0
-                else ""
-            )
+            seen = f", seen {when(view.peak_ts)}" if view.peak_ts > 0.0 else ""
             self.peak_var.set(money(self._peak) + seen)
         else:
             self.peak_var.set("none recorded yet")
@@ -189,6 +211,12 @@ class RiskSettingsWindow(tk.Toplevel):
         )
         dd = drawdown_pct(self._peak, value)
         self.drawdown_var.set("" if dd is None else f"{dd:.2f}%")
+        self.halt_var.set(
+            f"Trading is halted: {halt_text(view)}."
+            if view.halted
+            else "Trading is not halted."
+        )
+        self.resume_button.state(["!disabled"] if view.halted else ["disabled"])
         self._show_hints()
 
     def _show_hints(self) -> None:
@@ -222,7 +250,53 @@ class RiskSettingsWindow(tk.Toplevel):
             return False
         self.refresh()
         self.status_var.set(f"Peak set to {money(value)}.")
+        self._changed()
         return True
+
+    def resume(self) -> bool:
+        """Clear the halt, after a confirmation: the trader trades again from its
+        next start."""
+        view = risk_state.current(self._books_dir)
+        if not view.halted or not self._books_dir:
+            self.refresh()
+            return False
+        message = (
+            f"Trading was halted: {halt_text(view)}.\n\nThe trader trades again "
+            "from its next start."
+        )
+        try:
+            from trading_mode import read_drawdown_levels
+
+            stop = read_drawdown_levels(self._factory()).emergency_pct
+        except Exception:
+            stop = None
+        dd = drawdown_pct(view.peak_value, self.account_value())
+        if stop is not None and dd is not None and dd >= stop:
+            message += (
+                f"\n\nThe account is {dd:.2f}% below its peak, at or above the "
+                f"{stop:g}% emergency stop: the trader stops again at its first "
+                "check, unless the peak is reset or the stop is raised first."
+            )
+        if not self._box.askyesno("Resume trading?", message, parent=self):
+            return False
+        try:
+            risk_state.request_resume(self._books_dir)
+        except OSError as exc:
+            text = f"Trading could not be resumed: {exc}"
+            self.status_var.set(text)
+            self._box.showerror(TITLE, text, parent=self)
+            return False
+        self.refresh()
+        self.status_var.set(
+            "Trading resumes when the trader is next started (the \u25ba button in "
+            "the Trading section)."
+        )
+        self._changed()
+        return True
+
+    def _changed(self) -> None:
+        if self._on_changed is not None:
+            self._on_changed()
 
     # -- saving ----------------------------------------------------------------------
 
@@ -307,7 +381,8 @@ class RiskSettingsWindow(tk.Toplevel):
         self._body = body
         body.columnconfigure(2, weight=1)
 
-        self._build_drawdown(body, 0)
+        r = self._build_halt(body, 0)
+        self._build_drawdown(body, r)
 
         ttk.Label(
             self, textvariable=self.status_var, wraplength=HELP_WRAP, justify="left"
@@ -328,9 +403,31 @@ class RiskSettingsWindow(tk.Toplevel):
             justify="left",
         ).grid(row=r, column=column, columnspan=3 - column, sticky="w")
 
+    def _build_halt(self, frm: ttk.Frame, r: int) -> int:
+        ttk.Label(frm, text="Trading halt", style="Header.TLabel").grid(
+            row=r, column=0, columnspan=3, sticky="w"
+        )
+        r += 1
+        ttk.Label(
+            frm, textvariable=self.halt_var, wraplength=HELP_WRAP, justify="left"
+        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        r += 1
+        self.resume_button = ttk.Button(
+            frm, text="Resume trading...", command=self.resume
+        )
+        self.resume_button.grid(row=r, column=0, sticky="w", pady=(6, 0))
+        r += 1
+        self._help(
+            frm,
+            r,
+            "After an emergency stop the trader places no orders, also after a "
+            "restart, until trading is resumed here.",
+        )
+        return r + 1
+
     def _build_drawdown(self, frm: ttk.Frame, r: int) -> int:
         ttk.Label(frm, text="Account drawdown", style="Header.TLabel").grid(
-            row=r, column=0, columnspan=3, sticky="w"
+            row=r, column=0, columnspan=3, sticky="w", pady=(14, 0)
         )
         r += 1
         self._help(
@@ -381,3 +478,45 @@ class RiskSettingsWindow(tk.Toplevel):
             )
             r += 1
         return r
+
+
+class HaltBanner(tk.Frame):
+    """Across the top of the hub while trading is halted: TRADING HALTED, why and
+    since when, and a button that opens the Risk window (where Resume trading is)."""
+
+    def __init__(self, parent: tk.Misc, on_open: Callable[[], None], **kwargs) -> None:
+        bg, fg = ui_tokens.BANNER["halted"]
+        super().__init__(parent, bg=bg, highlightthickness=0, bd=0, **kwargs)
+        tk.Label(
+            self,
+            text="TRADING HALTED",
+            bg=bg,
+            fg=fg,
+            font=ui_tokens.font("display", "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left")
+        tk.Button(
+            self,
+            text="Risk...",
+            command=on_open,
+            bg=fg,
+            fg=bg,
+            activebackground=fg,
+            activeforeground=bg,
+            relief="flat",
+            padx=10,
+            pady=2,
+        ).pack(side="right", padx=6, pady=2)
+        self.reason_var = tk.StringVar(master=self, value="")
+        tk.Label(
+            self,
+            textvariable=self.reason_var,
+            bg=bg,
+            fg=fg,
+            font=ui_tokens.font("subtitle"),
+            anchor="w",
+        ).pack(side="left", fill="x", expand=True)
+
+    def show(self, view: risk_state.RiskView) -> None:
+        self.reason_var.set(halt_text(view))

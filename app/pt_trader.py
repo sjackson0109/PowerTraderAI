@@ -293,9 +293,10 @@ class _TraderRiskAdapter:
     measured against the peak account value seen by this trader, at the warning /
     critical / emergency levels in Settings > Risk (read before every check).
 
-    With ``state_dir`` (the trader's books folder) the peak is kept in
-    ``risk_state.json`` across restarts, and Settings > Risk's Reset peak is applied
-    from ``risk_requests.json`` (``risk_state``).
+    With ``state_dir`` (the trader's books folder) the peak and an emergency stop's
+    halt are kept in ``risk_state.json`` across restarts, and Settings > Risk's Reset
+    peak and Resume trading are applied from ``risk_requests.json``
+    (``risk_state``). Nothing else clears a halt.
     """
 
     def __init__(
@@ -311,23 +312,31 @@ class _TraderRiskAdapter:
         self.state_dir = state_dir
         self._state: Dict[str, Any] = {}
         self._requests_mtime: Any = object()  # not read yet
+        self.halt_reason = ""
         if state_dir:
             self._state = risk_state.read_state(state_dir)
             self.peak_value = max(0.0, float(self._state.get("peak_value") or 0.0))
+            if self._state.get("halted"):
+                # halted before this start: still halted until Resume trading
+                self.halt_reason = str(self._state.get("halt_reason") or "")
+                self.manager.is_trading_halted = True
+                self.manager.emergency_stop_triggered = True
             self._apply_requests()
 
-    def _save_state(self) -> None:
+    def _save_state(self) -> bool:
         if not self.state_dir:
-            return
+            return True
         self._state["peak_value"] = self.peak_value
         try:
             risk_state.write_state(self.state_dir, self._state)
         except OSError as exc:
             logger.error(f"Risk state not saved: {exc}")
+            return False
+        return True
 
     def _apply_requests(self) -> None:
-        """Settings > Risk requests (Reset peak) not applied yet; the request file
-        is read again only when it changes."""
+        """Settings > Risk requests (Reset peak, Resume trading) not applied yet;
+        the request file is read again only when it changes."""
         path = risk_state.requests_path(self.state_dir)
         try:
             mtime = os.path.getmtime(path)
@@ -343,7 +352,16 @@ class _TraderRiskAdapter:
         if after != before:
             self._state = after
             self.peak_value = float(after.get("peak_value") or 0.0)
-            print(f"Peak account value reset to ${self.peak_value:,.2f}")
+            if after.get("peak_reset_ts") != before.get("peak_reset_ts"):
+                print(
+                    f"Peak account value reset to ${self.peak_value:,.2f}"
+                    if self.peak_value > 0.0
+                    else "Peak account value cleared: the next account value is the peak"
+                )
+            if before.get("halted") and not after.get("halted"):
+                self.manager.reset_emergency_stop(manual_override=True)
+                self.halt_reason = ""
+                print("Trading resumed (Resume trading in Settings > Risk)")
             self._save_state()
 
     def is_trading_halted(self) -> bool:
@@ -408,8 +426,20 @@ class _TraderRiskAdapter:
                 break
         return {"emergency_stop": False, "reason": "", "warnings": warnings}
 
-    def emergency_stop(self) -> None:
+    def emergency_stop(self, reason: str = "", value: Optional[float] = None) -> None:
+        """Halt trading, and keep the halt (and ``reason``) for the next start."""
         self.manager.emergency_stop()
+        self.halt_reason = reason or "Emergency stop"
+        if not self.state_dir:
+            return
+        self._state = risk_state.halted_state(
+            self._state, self.halt_reason, value, time.time()
+        )
+        if not self._save_state():
+            print(
+                f"{Fore.RED}The halt could not be saved: check the books folder "
+                f"{self.state_dir} before starting the trader again{Style.RESET_ALL}"
+            )
 
     def record_error(self, message: str) -> None:
         self.error_count += 1
@@ -2855,6 +2885,17 @@ class CryptoAPITrading:
     def run(self):
         while True:
             try:
+                # A halt ends the run before anything trades: an emergency stop, also
+                # one from before this start. Only Resume trading clears it.
+                if self.risk_manager.is_trading_halted():
+                    reason = self.risk_manager.halt_reason or "risk controls"
+                    print(f"{Fore.RED}TRADING HALTED: {reason}{Style.RESET_ALL}")
+                    print(
+                        f"{Fore.RED}Press Resume trading in Settings > Risk to trade "
+                        f"again{Style.RESET_ALL}"
+                    )
+                    break
+
                 # Risk monitoring at start of each cycle (needs a complete account
                 # snapshot, so it starts after the first manage_trades() pass)
                 current_portfolio_value = self._get_account_value()
@@ -2870,9 +2911,12 @@ class CryptoAPITrading:
                             f"{Fore.RED}EMERGENCY STOP: {risk_status['reason']}{Style.RESET_ALL}"
                         )
                         print(
-                            f"{Fore.RED}Trading halted until manual intervention{Style.RESET_ALL}"
+                            f"{Fore.RED}Trading halted until Resume trading is "
+                            f"pressed in Settings > Risk{Style.RESET_ALL}"
                         )
-                        self.risk_manager.emergency_stop()
+                        self.risk_manager.emergency_stop(
+                            risk_status["reason"], current_portfolio_value
+                        )
                         break
 
                     # Log risk warnings

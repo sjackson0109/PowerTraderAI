@@ -215,3 +215,130 @@ def test_an_unreadable_request_file_asks_for_nothing(tmp_path):
         f.write("{not json")
     assert risk_state.current(books).peak_value == 50.0
     assert adapter(state_dir=books).peak_value == 50.0
+
+
+def test_a_peak_reset_without_a_value_clears_the_peak(tmp_path):
+    books = str(tmp_path)
+    risk_state.write_state(books, {"peak_value": 10_000.0, "peak_ts": 5.0})
+    risk_state.request_peak_reset(books, None, now=9.0)
+    assert risk_state.current(books).peak_value == 0.0
+    a = adapter(state_dir=books)
+    assert a.peak_value == 0.0
+    a.update_portfolio_value(1_000.0)  # the next account value is the peak
+    assert a.peak_value == 1_000.0 == risk_state.current(books).peak_value
+
+
+# --- the halt, kept across restarts ---------------------------------------------------
+
+
+def test_a_resume_clears_only_the_halt_it_was_asked_for_after():
+    halted = risk_state.halted_state({"peak_value": 10.0}, "why", 9.0, now=100.0)
+    assert halted == {
+        "peak_value": 10.0,
+        "halted": True,
+        "halt_reason": "why",
+        "halted_ts": 100.0,
+        "halt_value": 9.0,
+    }
+    before = {"resume": {"ts": 99.0}}  # pressed before this halt began
+    assert risk_state.apply_requests(halted, before) == halted
+    resumed = risk_state.apply_requests(halted, {"resume": {"ts": 101.0}})
+    assert resumed == {"peak_value": 10.0, "resumed_ts": 101.0}
+    # a later halt is not cleared by that resume
+    again = risk_state.halted_state(resumed, "again", None, now=200.0)
+    assert risk_state.apply_requests(again, {"resume": {"ts": 101.0}})["halted"]
+
+
+def test_an_unreadable_state_file_is_a_halt(tmp_path):
+    books = str(tmp_path)
+    with open(risk_state.state_path(books), "w", encoding="utf-8") as f:
+        f.write("{damaged")
+    view = risk_state.current(books)
+    assert view.halted and view.halt_reason == risk_state.UNREADABLE_REASON
+    assert adapter(state_dir=books).is_trading_halted()
+    risk_state.request_resume(books)  # after the file was damaged: clears it
+    assert not risk_state.current(books).halted
+    resumed = adapter(state_dir=books)
+    assert not resumed.is_trading_halted()
+    assert risk_state.read_state(books)["resumed_ts"] > 0  # rewritten, readable
+
+
+def test_the_view_shows_the_halt(tmp_path):
+    books = str(tmp_path)
+    assert not risk_state.current(books).halted
+    risk_state.write_state(
+        books, risk_state.halted_state({"peak_value": 50.0}, "Stop", 45.0, now=7.0)
+    )
+    view = risk_state.current(books)
+    assert (view.halted, view.halt_reason, view.halted_ts, view.halt_value) == (
+        True,
+        "Stop",
+        7.0,
+        45.0,
+    )
+    assert risk_state.current(None) == risk_state.RiskView(0.0, 0.0)
+
+
+from helpers import PaperTraderCase  # noqa: E402
+
+
+class StopRun(BaseException):
+    """Ends the trader's endless loop in a test (run() catches Exception)."""
+
+
+class HaltAcrossRestartTests(PaperTraderCase):
+    """Acceptance: after an emergency stop, a restart does not trade until Resume."""
+
+    def started(self, account_value=None):
+        trader = self.trader()
+        trader._last_good_account_snapshot["total_account_value"] = account_value
+        return trader
+
+    def run_once(self, trader):
+        """run() until it ends by itself (a halt) or reaches manage_trades."""
+        with mock.patch.object(
+            trader, "manage_trades", side_effect=StopRun
+        ) as manage, mock.patch.object(self.pt_trader.time, "sleep"):
+            try:
+                trader.run()
+            except StopRun:
+                pass
+        return manage.called
+
+    def test_a_restart_after_an_emergency_stop_does_not_trade_until_resume(self):
+        books = os.path.join(self.tmp.name, "paper")
+        first = self.started(account_value=900.0)
+        first.risk_manager.update_portfolio_value(1000.0)  # the peak, kept
+        self.assertFalse(self.run_once(first))  # 10% drawdown: stopped, no trading
+        view = risk_state.current(books)
+        self.assertTrue(view.halted)
+        self.assertEqual(
+            view.halt_reason, "Account drawdown 10.0% reached the 8% emergency limit"
+        )
+        self.assertEqual(view.halt_value, 900.0)
+
+        # a restart, even with the account back above the peak, does not trade
+        restarted = self.started(account_value=1100.0)
+        self.assertTrue(restarted.risk_manager.is_trading_halted())
+        self.assertEqual(restarted.risk_manager.halt_reason, view.halt_reason)
+        self.assertFalse(self.run_once(restarted))
+        refused = restarted._risk_check("BTC-USD", "buy", 0.001, 100.0)
+        self.assertFalse(refused)
+        self.assertTrue(risk_state.current(books).halted)  # still halted
+
+        risk_state.request_resume(books)  # Resume trading in Settings > Risk
+        resumed = self.started()
+        self.assertFalse(resumed.risk_manager.is_trading_halted())
+        self.assertTrue(self.run_once(resumed))  # it trades again
+        self.assertFalse(risk_state.current(books).halted)
+        self.assertEqual(risk_state.current(books).peak_value, 1000.0)
+
+    def test_a_halt_that_cannot_be_saved_is_reported(self):
+        trader = self.started(account_value=900.0)
+        trader.risk_manager.update_portfolio_value(1000.0)
+        with mock.patch.object(
+            risk_state, "write_state", side_effect=OSError("disk full")
+        ), mock.patch("builtins.print") as said:
+            self.assertFalse(self.run_once(trader))
+        self.assertTrue(trader.risk_manager.is_trading_halted())
+        self.assertIn("The halt could not be saved", str(said.call_args_list))

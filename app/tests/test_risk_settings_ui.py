@@ -287,3 +287,108 @@ def test_the_hub_shows_the_peak_of_the_books_it_shows(hub):
     assert win.peak_var.get() == "$5,000.00"
     assert win.drawdown_var.get() == "4.00%"
     win.destroy()
+
+
+# --- the halt in the window and the hub -----------------------------------------------
+
+
+def halt(books, reason="Account drawdown 9.0% reached the 8% emergency limit"):
+    risk_state.write_state(
+        books,
+        risk_state.halted_state(
+            {"peak_value": 10_000.0, "peak_ts": 1.7e9}, reason, 9_100.0, now=1.7e9 + 60
+        ),
+    )
+
+
+def test_without_a_halt_resume_cannot_be_pressed(root, folder, books):
+    win = open_window(root, folder, books)
+    assert win.halt_var.get() == "Trading is not halted."
+    assert win.resume_button.instate(["disabled"])
+    assert not win.resume()
+    win.destroy()
+
+
+def test_resume_trading_clears_the_halt_after_asking(root, folder, books):
+    halt(books)
+    box = Box(yes=False)
+    changed = []
+    win = ui.RiskSettingsWindow(
+        root,
+        books_dir=books,
+        account_value=lambda: 9_600.0,
+        manager_factory=lambda: manager(folder),
+        on_changed=lambda: changed.append("changed"),
+        messagebox=box,
+    )
+    win.withdraw()
+    text = win.halt_var.get()
+    assert text.startswith(
+        "Trading is halted: Account drawdown 9.0% reached the 8% emergency limit "
+        "\u00b7 since "
+    )
+    assert text.endswith(", account value $9,100.00.")
+    assert win.resume_button.instate(["!disabled"])
+
+    assert not win.resume()  # "No": still halted
+    assert risk_state.current(books).halted and changed == []
+    title, message = box.asked[0]
+    assert title == "Resume trading?" and "trades again from its next start" in message
+    assert "emergency stop" not in message.split("\n\n")[-1]  # 4% < 8%: no warning
+
+    box.yes = True
+    assert win.resume()
+    assert not risk_state.current(books).halted
+    assert win.halt_var.get() == "Trading is not halted."
+    assert win.resume_button.instate(["disabled"])
+    assert win.status_var.get().startswith("Trading resumes when the trader is next")
+    assert changed == ["changed"]
+    win.destroy()
+
+
+def test_resume_says_when_the_drawdown_is_still_past_the_stop(root, folder, books):
+    halt(books)
+    box = Box(yes=False)
+    win = open_window(root, folder, books, account=9_100.0, box=box)
+    win.resume()
+    assert box.asked[0][1].endswith(
+        "The account is 9.00% below its peak, at or above the 8% emergency stop: the "
+        "trader stops again at its first check, unless the peak is reset or the stop "
+        "is raised first."
+    )
+    win.destroy()
+
+
+def test_the_hub_shows_a_halt_banner_until_trading_is_resumed(hub, monkeypatch):
+    from risk_settings_ui import HaltBanner
+
+    hub._refresh_halt_banner()
+    assert hub._halt_banner is None
+    halt(hub._books_dir)
+    hub._refresh_halt_banner()
+    banner = hub._halt_banner
+    assert isinstance(banner, HaltBanner)
+    assert hub.pack_slaves()[0] is banner  # above everything
+    assert banner.reason_var.get().startswith(
+        "Account drawdown 9.0% reached the 8% emergency limit \u00b7 since "
+    )
+    texts = [str(w.cget("text")) for w in banner.winfo_children() if "text" in w.keys()]
+    assert "TRADING HALTED" in texts and "Risk..." in texts
+    assert hub._risk_summary().startswith("Trading is halted. Trading stops at a 8%")
+
+    win = hub.open_risk_settings()
+    win.withdraw()
+    monkeypatch.setattr(win, "_box", Box(yes=True))
+    assert win.resume()
+    assert hub._halt_banner is None  # gone at once, not at the next tick
+    assert not hub._risk_summary().startswith("Trading is halted")
+    win.destroy()
+
+
+def test_saving_the_paper_account_clears_the_paper_peak(hub):
+    risk_state.write_state(hub._books_dir, {"peak_value": 10_000.0})
+    halt(hub._books_dir)
+    hub._on_paper_account_saved()
+    view = risk_state.current(hub._books_dir)
+    assert view.peak_value == 0.0  # measured from the new book's first value
+    assert view.halted  # a halt stays until Resume trading

@@ -1,19 +1,23 @@
 """
 The account drawdown stop's state, kept across restarts: the peak account value the
-trader has seen, and when it was seen.
+trader has seen, and whether trading is halted (since when, why, at what account
+value).
 
 Two files in the trader's books folder for the trading mode (next to
 trader_status.json, so paper and each live broker keep their own), each with one
 writer, so neither can undo the other's change:
 
-* ``risk_state.json`` - the trader's: the peak, and the time of the last Settings >
-  Risk request it has applied.
-* ``risk_requests.json`` - the hub's: "set the peak to this value" (Reset peak), with
-  the time it was asked for.
+* ``risk_state.json`` - the trader's: the peak, the halt, and the time of the last
+  Settings > Risk request it has applied.
+* ``risk_requests.json`` - the hub's: "set the peak to this value" (Reset peak; no
+  value clears the peak, so the next account value is the peak) and "resume
+  trading" (Resume trading), each with the time it was asked for.
 
 ``apply_requests`` is the one rule both sides use: the trader to apply a request,
 the hub to show what the trader will use (a request made while the trader is
-stopped applies when it next starts).
+stopped applies when it next starts). A resume clears a halt only when it was asked
+for after that halt; nothing else clears a halt. A state file that exists but
+cannot be read counts as a halt, so a damaged file cannot resume trading either.
 """
 
 from __future__ import annotations
@@ -27,6 +31,8 @@ from typing import Any, Dict, Mapping, Optional
 
 STATE_FILE = "risk_state.json"
 REQUESTS_FILE = "risk_requests.json"
+UNREADABLE_REASON = "The saved risk state could not be read"
+HALT_KEYS = ("halted", "halt_reason", "halted_ts", "halt_value")
 
 
 def state_path(folder: str) -> str:
@@ -68,8 +74,17 @@ def _write(path: str, data: Mapping[str, Any]) -> None:
 
 
 def read_state(folder: str) -> Dict[str, Any]:
-    """The trader's saved state ({} when there is none, or it cannot be read)."""
-    return _read(state_path(folder)) or {}
+    """The trader's saved state ({} when there is none). A file that cannot be read
+    is a halt since the file was last written (fail closed)."""
+    path = state_path(folder)
+    state = _read(path)
+    if state is None:
+        try:
+            since = os.path.getmtime(path)
+        except OSError:
+            since = time.time()
+        return {"halted": True, "halt_reason": UNREADABLE_REASON, "halted_ts": since}
+    return state
 
 
 def write_state(folder: str, state: Mapping[str, Any]) -> None:
@@ -88,25 +103,54 @@ def _request(folder: str, name: str, entry: Dict[str, Any]) -> None:
     _write(requests_path(folder), requests)
 
 
-def request_peak_reset(folder: str, value: float, now: Optional[float] = None) -> None:
-    """Reset peak: the peak becomes ``value`` (the account value the user saw)."""
-    if not _number(value) > 0.0:
+def request_peak_reset(
+    folder: str, value: Optional[float], now: Optional[float] = None
+) -> None:
+    """Reset peak: the peak becomes ``value`` (the account value the user saw);
+    None clears it, so the trader's next account value is the peak."""
+    if value is not None and not _number(value) > 0.0:
         raise ValueError("The peak must be an account value above 0.")
     ts = time.time() if now is None else float(now)
-    _request(folder, "reset_peak", {"ts": ts, "value": float(value)})
+    entry = {"ts": ts, "value": None if value is None else float(value)}
+    _request(folder, "reset_peak", entry)
+
+
+def request_resume(folder: str, now: Optional[float] = None) -> None:
+    """Resume trading: clears the halt there is now (not a later one)."""
+    ts = time.time() if now is None else float(now)
+    _request(folder, "resume", {"ts": ts})
+
+
+def halted_state(
+    state: Mapping[str, Any], reason: str, value: Optional[float], now: float
+) -> Dict[str, Any]:
+    """``state`` with trading halted at ``now`` (a new dict)."""
+    out = dict(state)
+    out.update(halted=True, halt_reason=str(reason), halted_ts=float(now))
+    out["halt_value"] = None if value is None else float(value)
+    return out
 
 
 def apply_requests(
     state: Mapping[str, Any], requests: Mapping[str, Any]
 ) -> Dict[str, Any]:
     """``state`` with the requests not applied yet (a new dict). A reset applies
-    once: its time is kept, so the peak can rise again after it."""
+    once: its time is kept, so the peak can rise again after it. A resume clears
+    the halt only when it was asked for after the halt began."""
     out = dict(state)
     reset = requests.get("reset_peak")
-    if isinstance(reset, Mapping):
-        ts, value = _number(reset.get("ts")), _number(reset.get("value"))
-        if value > 0.0 and ts > _number(out.get("peak_reset_ts")):
-            out.update(peak_value=value, peak_ts=ts, peak_reset_ts=ts)
+    if isinstance(reset, Mapping) and "value" in reset:
+        ts, raw = _number(reset.get("ts")), reset["value"]
+        value = _number(raw)
+        if (raw is None or value > 0.0) and ts > _number(out.get("peak_reset_ts")):
+            out.update(peak_value=value, peak_ts=ts if value else 0.0, peak_reset_ts=ts)
+    resume = requests.get("resume")
+    if isinstance(resume, Mapping) and out.get("halted"):
+        ts = _number(resume.get("ts"))
+        if ts > _number(out.get("halted_ts")):
+            for key in HALT_KEYS:
+                out.pop(key, None)
+            out["resumed_ts"] = ts
     return out
 
 
@@ -116,6 +160,10 @@ class RiskView:
 
     peak_value: float  # 0.0: no peak recorded yet
     peak_ts: float
+    halted: bool = False
+    halt_reason: str = ""
+    halted_ts: float = 0.0
+    halt_value: Optional[float] = None
 
 
 def current(folder: Optional[str]) -> RiskView:
@@ -123,7 +171,23 @@ def current(folder: Optional[str]) -> RiskView:
     if not folder:
         return RiskView(0.0, 0.0)
     state = apply_requests(read_state(folder), read_requests(folder))
+    value = _number(state.get("halt_value"))
     return RiskView(
         peak_value=max(0.0, _number(state.get("peak_value"))),
         peak_ts=_number(state.get("peak_ts")),
+        halted=bool(state.get("halted")),
+        halt_reason=str(state.get("halt_reason") or ""),
+        halted_ts=_number(state.get("halted_ts")),
+        halt_value=value if value > 0.0 else None,
     )
+
+
+def files_signature(folder: Optional[str]) -> tuple:
+    """Changes when either file changes (the hub re-reads them only then)."""
+    out = []
+    for path in (state_path(folder or ""), requests_path(folder or "")):
+        try:
+            out.append(os.path.getmtime(path))
+        except OSError:
+            out.append(None)
+    return (folder, *out)

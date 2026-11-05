@@ -41,6 +41,7 @@ import order_management_view
 import paper_coins
 import position_sizing
 import pt_paths
+import risk_state
 import trade_history_view
 import training_settings
 import ui_table
@@ -2464,6 +2465,7 @@ class PowerTraderHub(tk.Tk):
         # Header strip + banner widgets; built after the layout exists.
         self._mode_indicator: Optional[TradingModeIndicator] = None
         self._paper_banner: Optional[PaperBanner] = None
+        self._halt_banner = None  # TRADING HALTED (risk_settings_ui.HaltBanner)
         self._paper_section_label: Optional[tk.Label] = None
         self._paper_account = None  # lazy: only spun up when sample runs
 
@@ -2674,6 +2676,8 @@ class PowerTraderHub(tk.Tk):
             strip.lift(banner)  # the banner may be newer: keep the strip above it
         else:
             pack_at_top(strip, self)
+        if getattr(self, "_halt_banner", None) is not None:
+            pack_at_top(self._halt_banner, self)  # a halt stays above everything
 
     def _attach_paper_section_label(self) -> None:
         """Drop a 'PAPER TRADING' label at the top of the trades panel."""
@@ -5884,6 +5888,7 @@ Platform: {sys.platform}
         self._refresh_trader_status()
         self._refresh_price_note()
         self._refresh_signals_note()
+        self._refresh_halt_banner()
 
         # pnl ledger -> realized profit (now mtime-cached inside)
         self._refresh_pnl()
@@ -7154,7 +7159,7 @@ Platform: {sys.platform}
                 known_coins=getattr(self, "coins", ()) or (),
                 palette=ui_tokens.palette(paper_mode),
                 live=not paper_mode,
-                on_saved=self._refresh_trader_status,
+                on_saved=self._on_paper_account_saved,
             )
         except Exception as e:
             messagebox.showerror(
@@ -7238,10 +7243,12 @@ Platform: {sys.platform}
         return value if value > 0.0 else None
 
     def open_risk_settings(self, parent=None, on_saved=None):
-        """Settings > Risk: the account drawdown levels and the peak they are
-        measured from (``risk_settings_ui``). The levels are saved to
-        pt_config.json, which the trader reads before every drawdown check; the
-        peak is kept in the books folder this hub shows."""
+        """Settings > Risk: the account drawdown levels, the peak they are
+        measured from, and Resume trading after an emergency stop
+        (``risk_settings_ui``). The levels are saved to pt_config.json, which the
+        trader reads before every drawdown check; the peak and the halt are kept in
+        the books folder this hub shows. ``on_saved()`` also runs after Reset peak
+        and Resume trading."""
         win = getattr(self, "_risk_settings_win", None)
         try:
             if win is not None and win.winfo_exists():
@@ -7251,6 +7258,12 @@ Platform: {sys.platform}
                 return win
         except tk.TclError:
             pass
+
+        def changed() -> None:
+            self._refresh_halt_banner()
+            if on_saved is not None:
+                on_saved()
+
         try:
             from risk_settings_ui import RiskSettingsWindow
 
@@ -7258,7 +7271,8 @@ Platform: {sys.platform}
                 parent or self,
                 books_dir=getattr(self, "_books_dir", None),
                 account_value=self._shown_account_value,
-                on_saved=on_saved,
+                on_saved=changed,
+                on_changed=changed,
                 palette=ui_theme.active_palette(),
             )
         except Exception as e:
@@ -7267,17 +7281,56 @@ Platform: {sys.platform}
         self._risk_settings_win = win
         return win
 
-    @staticmethod
-    def _risk_summary() -> str:
-        """Settings' Risk line: the drawdown levels the trader uses."""
+    def _risk_summary(self) -> str:
+        """Settings' Risk line: a halt, and the drawdown levels the trader uses."""
         try:
             levels = read_drawdown_levels()
+            halted = risk_state.current(getattr(self, "_books_dir", None)).halted
         except Exception as e:
             return f"Could not read the risk settings: {e}"
-        return (
+        return ("Trading is halted. " if halted else "") + (
             f"Trading stops at a {levels.emergency_pct:g}% drawdown from the peak; "
             f"warnings at {levels.warning_pct:g}% and {levels.critical_pct:g}%"
         )
+
+    def _refresh_halt_banner(self) -> None:
+        """TRADING HALTED across the top while an emergency stop has halted
+        trading for the books this hub shows; the files are read again only when
+        one of them changes."""
+        folder = getattr(self, "_books_dir", None)
+        key = risk_state.files_signature(folder)
+        if key == getattr(self, "_halt_banner_key", None):
+            return
+        self._halt_banner_key = key
+        view = risk_state.current(folder)
+        banner = self._halt_banner
+        if not view.halted:
+            if banner is not None:
+                try:
+                    banner.destroy()
+                except tk.TclError:
+                    pass
+                self._halt_banner = None
+            return
+        if banner is None:
+            from risk_settings_ui import HaltBanner
+
+            banner = HaltBanner(self, on_open=lambda: self.open_risk_settings())
+            self._halt_banner = banner
+            pack_at_top(banner, self)
+        banner.show(view)
+
+    def _on_paper_account_saved(self) -> None:
+        """Settings > Paper Account saved a new book: the Account panel shows it,
+        and the paper peak is cleared, so drawdown is measured from the book's
+        first account value when the trader starts (a halt stays)."""
+        self._refresh_trader_status()
+        try:
+            risk_state.request_peak_reset(
+                os.path.dirname(paper_book_path(self.hub_dir)), None
+            )
+        except OSError as exc:
+            print(f"Paper peak not cleared: {exc}")
 
     @staticmethod
     def _strategy_summary() -> str:

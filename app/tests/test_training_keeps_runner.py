@@ -360,6 +360,7 @@ def test_a_retrain_that_fires_after_its_coin_was_removed_does_nothing():
         settings={"training_auto_enabled": True, "training_auto_interval_hours": 6},
         master=types.SimpleNamespace(after=after),
         auto_retrain_timers={},
+        auto_retrain_due={},
         coins=["ETH", "ZEC"],
         trainers={},
         trainer_coin_var=Var("ETH"),
@@ -368,6 +369,7 @@ def test_a_retrain_that_fires_after_its_coin_was_removed_does_nothing():
         status=mock.Mock(),
     )
     hub._cancel_auto_retrain = lambda coin: Hub._cancel_auto_retrain(hub, coin)
+    hub._auto_retrain_hours = lambda: Hub._auto_retrain_hours(hub)
     Hub._schedule_auto_retrain(hub, "ZEC")
     hub.coins = ["ETH"]  # ZEC removed, its timer somehow not cancelled
     scheduled["callback"]()

@@ -861,3 +861,9 @@ def test_switching_to_live_and_back_moves_the_mode_strip(hub):
     assert hub.pack_slaves()[0] is banner and strip.pack_info()["in"] is banner
     children = hub.winfo_children()  # in stacking order, lowest first
     assert children.index(strip) > children.index(banner)  # drawn above its banner
+
+
+def test_the_charts_frame_is_titled_charts_alone(hub):
+    """The overlays can all be switched off (Chart settings), so the frame names
+    none of them."""
+    assert str(hub._charts_frame.cget("text")) == "Charts"

@@ -36,7 +36,7 @@ ENGINE_NAMES: Dict[str, str] = {
 ENGINE_HELP: Dict[str, str] = {
     "catalogue": (
         "The strategy below decides each buy and sale from closed candles. Each buy "
-        "is the Start allocation % in Settings. The trade start level, DCA and "
+        "is the Start allocation % in Settings > Risk. The trade start level, DCA and "
         "trailing profit margin settings are not used."
     ),
     "legacy_neural": (

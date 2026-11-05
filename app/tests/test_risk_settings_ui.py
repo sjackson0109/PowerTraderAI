@@ -392,3 +392,201 @@ def test_saving_the_paper_account_clears_the_paper_peak(hub):
     view = risk_state.current(hub._books_dir)
     assert view.peak_value == 0.0  # measured from the new book's first value
     assert view.halted  # a halt stays until Resume trading
+
+
+# --- the position and DCA limits ------------------------------------------------------
+
+LIMITS_SAVED = {
+    "start_allocation_pct": 1.0,
+    "min_order_margin_pct": 2.0,
+    "max_coin_allocation_pct": 10.0,
+    "dca_multiplier": 2.0,
+    "max_dca_buys_per_24h": 2,
+}
+
+
+def limits_window(root, folder, limits=None, account=10_000.0, box=None):
+    written = []
+    win = ui.RiskSettingsWindow(
+        root,
+        account_value=lambda: account,
+        limits=dict(LIMITS_SAVED, **(limits or {})),
+        save_limits=written.append,
+        manager_factory=lambda: manager(folder),
+        messagebox=box or Box(),
+    )
+    win.withdraw()
+    win.written = written
+    return win
+
+
+def test_the_limits_show_as_saved_with_their_dollar_amounts(root, folder):
+    win = limits_window(root, folder, {"start_allocation_pct": 1.5})
+    assert {k: win.vars[k].get() for k in LIMITS_SAVED} == {
+        "start_allocation_pct": "1.5",
+        "min_order_margin_pct": "2",
+        "max_coin_allocation_pct": "10",
+        "dca_multiplier": "2",
+        "max_dca_buys_per_24h": "2",
+    }
+    assert win.hints["start_allocation_pct"].get() == (
+        "≈ $150.00 per entry, at least the exchange minimum"
+    )
+    assert win.hints["max_coin_allocation_pct"].get() == (
+        "≈ $1,000.00 per coin with DCA; no DCA buy past it"
+    )
+    shown = texts(win)
+    labels = [t for t in shown if t.endswith(":")]
+    # Minimum order margin % is beside Start allocation %
+    i = labels.index("Start allocation %:")
+    assert labels[i : i + 5] == [
+        "Start allocation %:",
+        "Minimum order margin %:",
+        "Max per coin %:",
+        "DCA multiplier:",
+        "Max DCA buys / coin (rolling 24h):",
+    ]
+    assert (
+        "When an entry is raised to the exchange's minimum order, it is raised by "
+        "this much more, so the position stays above the minimum when valued at the "
+        "bid after fees. 0 to 20, default 2."
+    ) in shown
+    win.destroy()
+
+
+def test_no_account_value_shows_no_dollar_amounts(root, folder):
+    win = limits_window(root, folder, account=None)
+    assert win.hints["start_allocation_pct"].get() == ""
+    assert win.hints["max_coin_allocation_pct"].get() == ""
+    win.destroy()
+
+
+def test_save_writes_the_limits_with_the_types_the_trader_reads(root, folder):
+    win = limits_window(root, folder)
+    win.vars["start_allocation_pct"].set("2.5%")
+    win.vars["min_order_margin_pct"].set("0")
+    win.vars["max_coin_allocation_pct"].set("15")
+    win.vars["dca_multiplier"].set("1.5")
+    win.vars["max_dca_buys_per_24h"].set("0")
+    assert win.save()
+    assert win.written == [
+        {
+            "start_allocation_pct": 2.5,
+            "min_order_margin_pct": 0.0,
+            "max_coin_allocation_pct": 15.0,
+            "dca_multiplier": 1.5,
+            "max_dca_buys_per_24h": 0,
+        }
+    ]
+    assert isinstance(win.written[0]["max_dca_buys_per_24h"], int)
+
+
+@pytest.mark.parametrize(
+    "key, typed, said",
+    [
+        (
+            "start_allocation_pct",
+            "0",
+            "Start allocation % must be a number from 0.0001 to 100.",
+        ),
+        (
+            "start_allocation_pct",
+            "",
+            "Start allocation % must be a number from 0.0001 to 100.",
+        ),
+        (
+            "min_order_margin_pct",
+            "21",
+            "Minimum order margin % must be a number from 0 to 20.",
+        ),
+        (
+            "min_order_margin_pct",
+            "-1",
+            "Minimum order margin % must be a number from 0 to 20.",
+        ),
+        (
+            "max_coin_allocation_pct",
+            "101",
+            "Max per coin % must be a number from 0.1 to 100.",
+        ),
+        ("dca_multiplier", "0", "DCA multiplier must be a number from 0.1 to 10."),
+        ("dca_multiplier", "two", "DCA multiplier must be a number from 0.1 to 10."),
+        (
+            "max_dca_buys_per_24h",
+            "2.5",
+            "Max DCA buys / coin (rolling 24h) must be a whole number from 0 to 100.",
+        ),
+    ],
+)
+def test_a_wrong_limit_is_refused_and_nothing_is_saved(root, folder, key, typed, said):
+    box = Box()
+    win = limits_window(root, folder, box=box)
+    win.vars[key].set(typed)
+    assert not win.save()
+    assert said in box.errors
+    assert win.written == [] and on_disk(folder) == {}
+    win.destroy()
+
+
+def test_the_hub_default_margin_sits_beside_start_allocation():
+    import pt_hub
+
+    keys = list(pt_hub.DEFAULT_SETTINGS)
+    i = keys.index("start_allocation_pct")
+    assert keys[i + 1] == "min_order_margin_pct"
+    assert pt_hub.DEFAULT_SETTINGS["min_order_margin_pct"] == 2.0
+    assert set(pt_hub.RISK_LIMIT_KEYS) == set(LIMITS_SAVED)
+    assert [spec[0] for spec in ui.LIMITS] == list(pt_hub.RISK_LIMIT_KEYS)
+
+
+def test_limits_saved_in_the_hub_are_what_the_trader_reads(hub, monkeypatch):
+    """Acceptance: the moved controls work as before: same keys, same file, read by
+    the running trader's settings reload."""
+    import pt_paths
+    import pt_trader
+
+    win = hub.open_risk_settings()
+    win.withdraw()
+    win.vars["start_allocation_pct"].set("3")
+    win.vars["max_coin_allocation_pct"].set("20")
+    win.vars["dca_multiplier"].set("1.5")
+    win.vars["max_dca_buys_per_24h"].set("4")
+    assert win.save()
+    saved = hub._load_settings()
+    assert {k: saved[k] for k in LIMITS_SAVED} == {
+        "start_allocation_pct": 3.0,
+        "min_order_margin_pct": 2.0,
+        "max_coin_allocation_pct": 20.0,
+        "dca_multiplier": 1.5,
+        "max_dca_buys_per_24h": 4,
+    }
+
+    monkeypatch.setattr(pt_trader, "_GUI_SETTINGS_PATH", pt_paths.gui_settings_file())
+    monkeypatch.setattr(
+        pt_trader,
+        "_gui_settings_cache",
+        dict(pt_trader._gui_settings_cache, mtime=None),
+    )
+    monkeypatch.setattr(pt_trader, "_last_settings_mtime", None)
+    for name in (
+        "crypto_symbols",
+        "main_dir",
+        "base_paths",
+        "TRADE_START_LEVEL",
+        "START_ALLOC_PCT",
+        "MAX_COIN_PCT",
+        "DCA_MULTIPLIER",
+        "DCA_LEVELS",
+        "MAX_DCA_BUYS_PER_24H",
+        "TRAILING_GAP_PCT",
+        "PM_START_PCT_NO_DCA",
+        "PM_START_PCT_WITH_DCA",
+    ):
+        monkeypatch.setattr(pt_trader, name, getattr(pt_trader, name))
+    pt_trader._refresh_paths_and_symbols()
+    assert (
+        pt_trader.START_ALLOC_PCT,
+        pt_trader.MAX_COIN_PCT,
+        pt_trader.DCA_MULTIPLIER,
+        pt_trader.MAX_DCA_BUYS_PER_24H,
+    ) == (3.0, 20.0, 1.5, 4)

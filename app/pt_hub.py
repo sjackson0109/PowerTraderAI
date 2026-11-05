@@ -516,12 +516,24 @@ class WrapFrame(ttk.Frame):
 # Settings / Paths
 # -----------------------------
 
+# Settings > Risk's position and DCA limits (the hub's settings, read by the trader)
+RISK_LIMIT_KEYS = (
+    "start_allocation_pct",
+    "min_order_margin_pct",
+    "max_coin_allocation_pct",
+    "dca_multiplier",
+    "max_dca_buys_per_24h",
+)
+
 DEFAULT_SETTINGS = {
     "main_neural_dir": "",
     "coins": ["BTC", "ETH", "XRP", "BNB", "DOGE"],
     "trade_start_level": 3,  # trade starts when long signal >= this level (1..7)
     # A new trade: this % of the account value, at least the exchange's minimum order
     "start_allocation_pct": position_sizing.DEFAULT_START_ALLOCATION_PCT,
+    # An entry raised to the exchange's minimum order is raised by this % more, so the
+    # position stays above the minimum when valued at the bid after fees
+    "min_order_margin_pct": 2.0,
     # The most one coin may hold, at cost, as % of the account: DCA buys stop there
     "max_coin_allocation_pct": position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT,
     position_sizing.DEFAULTS_VERSION_KEY: position_sizing.DEFAULTS_VERSION,
@@ -7247,8 +7259,9 @@ Platform: {sys.platform}
         measured from, and Resume trading after an emergency stop
         (``risk_settings_ui``). The levels are saved to pt_config.json, which the
         trader reads before every drawdown check; the peak and the halt are kept in
-        the books folder this hub shows. ``on_saved()`` also runs after Reset peak
-        and Resume trading."""
+        the books folder this hub shows; the position and DCA limits in
+        gui_settings.json. ``on_saved()`` also runs after Reset peak and Resume
+        trading."""
         win = getattr(self, "_risk_settings_win", None)
         try:
             if win is not None and win.winfo_exists():
@@ -7271,6 +7284,11 @@ Platform: {sys.platform}
                 parent or self,
                 books_dir=getattr(self, "_books_dir", None),
                 account_value=self._shown_account_value,
+                limits={
+                    key: self.settings.get(key, DEFAULT_SETTINGS[key])
+                    for key in RISK_LIMIT_KEYS
+                },
+                save_limits=self._save_risk_limits,
                 on_saved=changed,
                 on_changed=changed,
                 palette=ui_theme.active_palette(),
@@ -7280,6 +7298,13 @@ Platform: {sys.platform}
             return None
         self._risk_settings_win = win
         return win
+
+    def _save_risk_limits(self, values: Dict[str, Any]) -> None:
+        """Settings > Risk's position and DCA limits, saved in gui_settings.json
+        with the rest of the hub's settings (the trader re-reads that file when it
+        changes)."""
+        self.settings.update({k: values[k] for k in RISK_LIMIT_KEYS if k in values})
+        self._save_settings()
 
     def _risk_summary(self) -> str:
         """Settings' Risk line: a halt, and the drawdown levels the trader uses."""
@@ -7546,36 +7571,12 @@ Platform: {sys.platform}
         trade_start_level_var = tk.StringVar(
             value=str(self.settings.get("trade_start_level", 3))
         )
-        start_alloc_pct_var = tk.StringVar(
-            value=str(
-                self.settings.get(
-                    "start_allocation_pct", position_sizing.DEFAULT_START_ALLOCATION_PCT
-                )
-            )
-        )
-        max_coin_pct_var = tk.StringVar(
-            value=str(
-                self.settings.get(
-                    "max_coin_allocation_pct",
-                    position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT,
-                )
-            )
-        )
-        dca_mult_var = tk.StringVar(value=str(self.settings.get("dca_multiplier", 2.0)))
         _dca_levels = self.settings.get(
             "dca_levels", DEFAULT_SETTINGS.get("dca_levels", [])
         )
         if not isinstance(_dca_levels, list):
             _dca_levels = DEFAULT_SETTINGS.get("dca_levels", [])
         dca_levels_var = tk.StringVar(value=",".join(str(x) for x in _dca_levels))
-        max_dca_var = tk.StringVar(
-            value=str(
-                self.settings.get(
-                    "max_dca_buys_per_24h",
-                    DEFAULT_SETTINGS.get("max_dca_buys_per_24h", 2),
-                )
-            )
-        )
 
         # --- Trailing PM settings (editable; hot-reload friendly) ---
         pm_no_dca_var = tk.StringVar(
@@ -7629,82 +7630,9 @@ Platform: {sys.platform}
         add_row(r, "Trade start level (1-7):", trade_start_level_var)
         r += 1
 
-        # Start allocation % and Max per coin %, each with its amount in dollars at the
-        # last account value the trader reported
-        ttk.Label(frm, text="Start allocation %:").grid(
-            row=r, column=0, sticky="w", padx=(0, 10), pady=6
-        )
-        ttk.Entry(frm, textvariable=start_alloc_pct_var).grid(
-            row=r, column=1, sticky="ew", pady=6
-        )
-
-        start_alloc_hint_var = tk.StringVar(value="")
-        ttk.Label(frm, textvariable=start_alloc_hint_var).grid(
-            row=r, column=2, sticky="w", padx=(10, 0), pady=6
-        )
-
-        def _pct(var):
-            """A percentage typed as "1" or "1%" (None if it is not a number)."""
-            try:
-                return max(0.0, float((var.get() or "").strip().replace("%", "")))
-            except ValueError:
-                return None
-
-        def _account_value() -> float:
-            # the last account value in trader_status.json (no extra API calls)
-            try:
-                return float(getattr(self, "_last_total_account_value", 0.0) or 0.0)
-            except (TypeError, ValueError):
-                return 0.0
-
-        def _update_start_alloc_hint(*_):
-            pct, total_val = _pct(start_alloc_pct_var), _account_value()
-            if pct is None or total_val <= 0.0:
-                start_alloc_hint_var.set("")
-                return
-            entry = position_sizing.entry_usd(total_val, pct)
-            start_alloc_hint_var.set(
-                f"≈ {_fmt_money(entry)} per entry, at least the exchange minimum"
-            )
-
-        _update_start_alloc_hint()
-        start_alloc_pct_var.trace_add("write", _update_start_alloc_hint)
-
-        r += 1
-
-        ttk.Label(frm, text="Max per coin %:").grid(
-            row=r, column=0, sticky="w", padx=(0, 10), pady=6
-        )
-        ttk.Entry(frm, textvariable=max_coin_pct_var).grid(
-            row=r, column=1, sticky="ew", pady=6
-        )
-        max_coin_hint_var = tk.StringVar(value="")
-        ttk.Label(frm, textvariable=max_coin_hint_var).grid(
-            row=r, column=2, sticky="w", padx=(10, 0), pady=6
-        )
-
-        def _update_max_coin_hint(*_):
-            pct, total_val = _pct(max_coin_pct_var), _account_value()
-            if pct is None or total_val <= 0.0:
-                max_coin_hint_var.set("")
-                return
-            budget = position_sizing.coin_budget_usd(total_val, pct)
-            max_coin_hint_var.set(
-                f"≈ {_fmt_money(budget)} per coin with DCA; no DCA buy past it"
-            )
-
-        _update_max_coin_hint()
-        max_coin_pct_var.trace_add("write", _update_max_coin_hint)
-
-        r += 1
-
+        # Start allocation %, Max per coin %, DCA multiplier and Max DCA buys are in
+        # Settings > Risk (Position and DCA limits)
         add_row(r, "DCA levels (% list):", dca_levels_var)
-        r += 1
-
-        add_row(r, "DCA multiplier:", dca_mult_var)
-        r += 1
-
-        add_row(r, "Max DCA buys / coin (rolling 24h):", max_dca_var)
         r += 1
 
         add_row(r, "Trailing PM start % (no DCA):", pm_no_dca_var)
@@ -8181,30 +8109,6 @@ Platform: {sys.platform}
                     1, min(int(float(trade_start_level_var.get().strip())), 7)
                 )
 
-                sap = (start_alloc_pct_var.get() or "").strip().replace("%", "")
-                self.settings["start_allocation_pct"] = min(
-                    100.0, max(0.0001, float(sap or 0.0))
-                )
-                mcp = (max_coin_pct_var.get() or "").strip().replace("%", "")
-                self.settings["max_coin_allocation_pct"] = min(
-                    100.0, max(0.1, float(mcp or 0.0))
-                )
-
-                dm = (dca_mult_var.get() or "").strip()
-                try:
-                    dm_f = float(dm)
-                except Exception:
-                    dm_f = float(
-                        self.settings.get(
-                            "dca_multiplier",
-                            DEFAULT_SETTINGS.get("dca_multiplier", 2.0),
-                        )
-                        or 2.0
-                    )
-                if dm_f < 0.0:
-                    dm_f = 0.0
-                self.settings["dca_multiplier"] = dm_f
-
                 raw_dca = (dca_levels_var.get() or "").replace(",", " ").split()
                 dca_levels = []
                 for tok in raw_dca:
@@ -8215,21 +8119,6 @@ Platform: {sys.platform}
                 if not dca_levels:
                     dca_levels = list(DEFAULT_SETTINGS.get("dca_levels", []))
                 self.settings["dca_levels"] = dca_levels
-
-                md = (max_dca_var.get() or "").strip()
-                try:
-                    md_i = int(float(md))
-                except Exception:
-                    md_i = int(
-                        self.settings.get(
-                            "max_dca_buys_per_24h",
-                            DEFAULT_SETTINGS.get("max_dca_buys_per_24h", 2),
-                        )
-                        or 2
-                    )
-                if md_i < 0:
-                    md_i = 0
-                self.settings["max_dca_buys_per_24h"] = md_i
 
                 # --- Trailing PM settings ---
                 try:

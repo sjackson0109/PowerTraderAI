@@ -8,9 +8,14 @@ Settings > Risk: the limits that protect the account.
   value shown.
 * **Trading halt** - after an emergency stop: since when, why, and Resume trading,
   the only way trading starts again (a restart does not).
+* **Position and DCA limits** - Start allocation %, Minimum order margin %, Max per
+  coin %, DCA multiplier and Max DCA buys per coin in 24 hours, with the dollar
+  amounts at the last account value.
 
 Save writes the ``risk`` keys of ``pt_config.json`` (``SettingsManager.set_risk``),
-which the trader reads before every drawdown check. Reset peak and Resume trading
+which the trader reads before every drawdown check, and the limits through
+``save_limits`` (the hub's settings, which the trader re-reads when they change).
+Reset peak and Resume trading
 are requests the trader applies (``risk_state``). The window is built like Settings
 > Strategy (``strategy_settings_ui``): a scrolling body, a status line, Save and
 Cancel. ``HaltBanner`` is the hub's TRADING HALTED banner.
@@ -25,6 +30,7 @@ from tkinter import messagebox as _messagebox
 from tkinter import ttk
 from typing import Any, Callable, Dict, Mapping, Optional
 
+import position_sizing
 import risk_state
 import ui_tokens
 from pt_settings_manager import (
@@ -65,6 +71,69 @@ LEVELS = (
         "a restart, until Resume trading is pressed.",
     ),
 )
+
+
+# The position and DCA limits: setting key (the hub's settings), label, range, default,
+# whole number, help. The ranges are the trader's own (pt_validation): a value outside
+# them makes the trader keep its last settings.
+LIMITS = (
+    (
+        "start_allocation_pct",
+        "Start allocation %:",
+        (0.0001, 100.0),
+        position_sizing.DEFAULT_START_ALLOCATION_PCT,
+        False,
+        "A new trade is this % of the account value, or the exchange's minimum "
+        "order when that is more.",
+    ),
+    (
+        "min_order_margin_pct",
+        "Minimum order margin %:",
+        (0.0, 20.0),
+        2.0,
+        False,
+        "When an entry is raised to the exchange's minimum order, it is raised by "
+        "this much more, so the position stays above the minimum when valued at the "
+        "bid after fees.",
+    ),
+    (
+        "max_coin_allocation_pct",
+        "Max per coin %:",
+        (0.1, 100.0),
+        position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT,
+        False,
+        "The most one coin may hold, at cost, as % of the account value.",
+    ),
+    (
+        "dca_multiplier",
+        "DCA multiplier:",
+        (0.1, 10.0),
+        2.0,
+        False,
+        "Each DCA buy is the position's current value times this.",
+    ),
+    (
+        "max_dca_buys_per_24h",
+        "Max DCA buys / coin (rolling 24h):",
+        (0, 100),
+        2,
+        True,
+        "The most DCA buys one coin may have in any 24 hours; 0: none.",
+    ),
+)
+
+
+def limit_hint(key: str, pct: Optional[float], account: Optional[float]) -> str:
+    """The dollar amount a limit is at the account value."""
+    if pct is None or account is None or pct < 0.0:
+        return ""
+    if key == "start_allocation_pct":
+        entry = position_sizing.entry_usd(account, pct)
+        return f"\u2248 {money(entry)} per entry, at least the exchange minimum"
+    if key == "max_coin_allocation_pct":
+        budget = position_sizing.coin_budget_usd(account, pct)
+        return f"\u2248 {money(budget)} per coin with DCA; no DCA buy past it"
+    return ""
 
 
 def money(value: float) -> str:
@@ -122,7 +191,9 @@ class RiskSettingsWindow(tk.Toplevel):
     manager to read from and save through (a fresh one each time, so a change
     another window saved meanwhile is kept). ``books_dir`` is the trader's books
     folder for the trading mode (where the peak is kept); ``account_value()`` the
-    last account value the trader reported (None before it has). ``on_saved()``
+    last account value the trader reported (None before it has). ``limits`` are the
+    position and DCA limits as saved, ``save_limits(values)`` saves them (without
+    it the window shows no limits). ``on_saved()``
     runs after a save, ``on_changed()`` after Reset peak or Resume trading (the hub
     refreshes its Settings line and banner)."""
 
@@ -131,6 +202,8 @@ class RiskSettingsWindow(tk.Toplevel):
         parent: tk.Misc,
         books_dir: Optional[str] = None,
         account_value: Optional[Callable[[], Optional[float]]] = None,
+        limits: Optional[Mapping[str, Any]] = None,
+        save_limits: Optional[Callable[[Dict[str, Any]], None]] = None,
         manager_factory: Optional[Callable[[], Any]] = None,
         on_saved: Optional[Callable[[], None]] = None,
         on_changed: Optional[Callable[[], None]] = None,
@@ -148,6 +221,7 @@ class RiskSettingsWindow(tk.Toplevel):
         self._factory = manager_factory
         self._books_dir = books_dir
         self._account_value = account_value or (lambda: None)
+        self._save_limits = save_limits
         self._on_saved = on_saved
         self._on_changed = on_changed
         self._box = messagebox or _messagebox
@@ -170,6 +244,14 @@ class RiskSettingsWindow(tk.Toplevel):
                 master=self, value=_number(saved.get(key, default))
             )
             self.hints[key] = tk.StringVar(master=self)
+        limits = limits if isinstance(limits, Mapping) else {}
+        self._limit_keys = [spec[0] for spec in LIMITS] if save_limits else []
+        for key, _label, _bounds, default, _whole, _help in LIMITS:
+            if key in self._limit_keys:
+                self.vars[key] = tk.StringVar(
+                    master=self, value=_number(limits.get(key, default))
+                )
+                self.hints[key] = tk.StringVar(master=self)
         self._peak = 0.0
         try:
             self._build()
@@ -220,8 +302,13 @@ class RiskSettingsWindow(tk.Toplevel):
         self._show_hints()
 
     def _show_hints(self) -> None:
+        account = self.account_value()
         for key, var in self.vars.items():
-            self.hints[key].set(level_hint(self._peak, parse_number(var.get())))
+            number = parse_number(var.get())
+            if key in self._limit_keys:
+                self.hints[key].set(limit_hint(key, number, account))
+            else:
+                self.hints[key].set(level_hint(self._peak, number))
 
     # -- actions ---------------------------------------------------------------------
 
@@ -316,9 +403,29 @@ class RiskSettingsWindow(tk.Toplevel):
             raise ValueError("Critical % must be below Emergency stop %.")
         return values
 
+    def collect_limits(self) -> Dict[str, Any]:
+        """What Save writes through ``save_limits``: ValueError says which value is
+        wrong."""
+        values: Dict[str, Any] = {}
+        for key, label, (lo, hi), _default, whole, _help in LIMITS:
+            if key not in self._limit_keys:
+                continue
+            number = parse_number(self.vars[key].get())
+            name = label.rstrip(":")
+            kind = "a whole number" if whole else "a number"
+            if (
+                number is None
+                or not lo <= number <= hi
+                or (whole and not float(number).is_integer())
+            ):
+                raise ValueError(f"{name} must be {kind} from {lo:g} to {hi:g}.")
+            values[key] = int(number) if whole else float(number)
+        return values
+
     def save(self) -> bool:
         try:
             values = self.collect()
+            limits = self.collect_limits()
         except ValueError as exc:
             self.status_var.set(str(exc))
             self._box.showerror(TITLE, str(exc), parent=self)
@@ -328,6 +435,14 @@ class RiskSettingsWindow(tk.Toplevel):
             self.status_var.set(message)
             self._box.showerror(TITLE, message, parent=self)
             return False
+        if self._save_limits is not None:
+            try:
+                self._save_limits(limits)
+            except Exception as exc:
+                message = f"The position and DCA limits could not be saved: {exc}"
+                self.status_var.set(message)
+                self._box.showerror(TITLE, message, parent=self)
+                return False
         if self._on_saved is not None:
             self._on_saved()
         self.destroy()
@@ -382,7 +497,9 @@ class RiskSettingsWindow(tk.Toplevel):
         body.columnconfigure(2, weight=1)
 
         r = self._build_halt(body, 0)
-        self._build_drawdown(body, r)
+        r = self._build_drawdown(body, r)
+        if self._limit_keys:
+            self._build_limits(body, r)
 
         ttk.Label(
             self, textvariable=self.status_var, wraplength=HELP_WRAP, justify="left"
@@ -459,25 +576,49 @@ class RiskSettingsWindow(tk.Toplevel):
         ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(6, 0))
         r += 1
 
-        for key, label, (lo, hi), default, help_text in LEVELS:
-            ttk.Label(frm, text=label).grid(
-                row=r, column=0, sticky="w", padx=(0, 10), pady=(10, 0)
-            )
-            ttk.Entry(frm, textvariable=self.vars[key], width=10).grid(
-                row=r, column=1, sticky="w", pady=(10, 0)
-            )
-            ttk.Label(frm, textvariable=self.hints[key]).grid(
-                row=r, column=2, sticky="w", padx=(10, 0), pady=(10, 0)
-            )
-            r += 1
-            self._help(
-                frm,
-                r,
-                f"{help_text} {lo:g} to {hi:g}, default {default:g}.",
-                column=1,
-            )
-            r += 1
+        for key, label, bounds, default, help_text in LEVELS:
+            r = self._field(frm, r, key, label, bounds, default, help_text)
         return r
+
+    def _build_limits(self, frm: ttk.Frame, r: int) -> int:
+        ttk.Label(frm, text="Position and DCA limits", style="Header.TLabel").grid(
+            row=r, column=0, columnspan=3, sticky="w", pady=(14, 0)
+        )
+        r += 1
+        for key, label, bounds, default, _whole, help_text in LIMITS:
+            r = self._field(frm, r, key, label, bounds, default, help_text)
+        return r
+
+    def _field(
+        self,
+        frm: ttk.Frame,
+        r: int,
+        key: str,
+        label: str,
+        bounds: tuple,
+        default: Any,
+        help_text: str,
+    ) -> int:
+        """A field's row: its label, entry and hint; its help, range and default
+        under it. Returns the next free row."""
+        ttk.Label(frm, text=label).grid(
+            row=r, column=0, sticky="w", padx=(0, 10), pady=(10, 0)
+        )
+        ttk.Entry(frm, textvariable=self.vars[key], width=10).grid(
+            row=r, column=1, sticky="w", pady=(10, 0)
+        )
+        ttk.Label(frm, textvariable=self.hints[key]).grid(
+            row=r, column=2, sticky="w", padx=(10, 0), pady=(10, 0)
+        )
+        r += 1
+        lo, hi = bounds
+        self._help(
+            frm,
+            r,
+            f"{help_text} {lo:g} to {hi:g}, default {_number(default)}.",
+            column=1,
+        )
+        return r + 1
 
 
 class HaltBanner(tk.Frame):

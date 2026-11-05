@@ -60,12 +60,14 @@ def widgets_of(win):
 
 
 def test_settings_sizes_a_new_trade_and_caps_a_coin(hub):
-    """Start allocation % and Max per coin %, each shown in dollars at the last
-    account value; Save writes both where the trader reads them."""
-    from test_trainer_launch import open_settings, press, type_into
+    """Start allocation % and Max per coin % (in Settings > Risk), each shown in
+    dollars at the last account value; Save writes both where the trader reads
+    them."""
+    from test_trainer_launch import press, type_into
 
     hub._last_total_account_value = 10_000.0
-    win = open_settings(hub)
+    win = hub.open_risk_settings()
+    win.withdraw()
     texts = label_texts(win)
     assert "Max per coin %:" in texts
     assert "≈ $100.00 per entry, at least the exchange minimum" in texts
@@ -77,9 +79,31 @@ def test_settings_sizes_a_new_trade_and_caps_a_coin(hub):
     assert "≈ $1,500.00 per coin with DCA; no DCA buy past it" in label_texts(win)
     press(win, "Save")
 
-    assert [d[1][0] for d in hub.test_dialogs if d[0] == "showinfo"] == ["Saved"]
+    assert hub.test_dialogs == [] and not win.winfo_exists()
     saved = hub._load_settings()
     assert (saved["start_allocation_pct"], saved["max_coin_allocation_pct"]) == (
         2.0,
         15.0,
     )
+
+
+def test_the_position_and_dca_limits_left_the_settings_page(hub):
+    """They are in Settings > Risk now; Trade start level and DCA levels stay."""
+    from test_trainer_launch import open_settings, press, type_into
+
+    win = open_settings(hub)
+    texts = label_texts(win)
+    for moved in (
+        "Start allocation %:",
+        "Max per coin %:",
+        "DCA multiplier:",
+        "Max DCA buys / coin (rolling 24h):",
+    ):
+        assert moved not in texts
+    assert "Trade start level (1-7):" in texts and "DCA levels (% list):" in texts
+    # the page's Save keeps the limits as saved
+    hub.settings["dca_multiplier"] = 3.5
+    type_into(win, "Trade start level (1-7):", "4")
+    press(win, "Save")
+    saved = hub._load_settings()
+    assert (saved["trade_start_level"], saved["dca_multiplier"]) == (4, 3.5)

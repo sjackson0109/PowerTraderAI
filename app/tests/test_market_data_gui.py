@@ -37,15 +37,37 @@ FORMATS = {  # each exchange's own name for a coin's dollar market
 
 
 class Connector:
-    """An exchange: its pair format, a ticker for every coin it lists."""
+    """An exchange: its pair format, a ticker for every coin it lists, and candles
+    of every size the chart offers, with ``volume`` (0: the exchange gives none)."""
 
     def __init__(self, name, unlisted=()):
         self.name = name
         self.unlisted = set(unlisted)
         self.asked = []
+        self.volume = 7.0
+        self.candle_error = None
 
     def market_symbol(self, symbol):
         return FORMATS[self.name].format(coin=symbol.split("-")[0])
+
+    def candle_timeframes(self):
+        return frozenset(gui_mod.CHART_TIMEFRAMES)
+
+    def max_history_bars(self, tf):
+        return None
+
+    def candles(self, symbol, tf, start_ms, end_ms):
+        from market_data.timeframes import candle_timeframe_seconds
+
+        self.asked.append(("candles", tf))
+        if self.candle_error:
+            raise self.candle_error
+        step = candle_timeframe_seconds(tf) * 1000
+        first = -(-int(start_ms) // step) * step
+        return [
+            [t, 100.0, 103.0, 98.0, 101.0 if (t // step) % 2 else 99.0, self.volume]
+            for t in range(first, int(end_ms) + 1, step)
+        ]
 
     def ticker(self, symbol):
         coin = symbol.split("-")[0]
@@ -241,6 +263,71 @@ def test_unsubscribing_removes_the_coins_rows(build):
     gui.unsubscribe_symbol()
     assert [r[0] for r in rows(gui)] == ["ETH-USD"]
     assert set(gui.subscribed()) == {"ETH"}
+
+
+# --- Price Charts -----------------------------------------------------------------------
+
+
+def chart(gui, tf, symbol=None):
+    if symbol is not None:
+        gui.chart_symbol_var.set(symbol)
+    gui.timeframe_var.set(tf)
+    gui.update_chart()
+    gui.chart_jobs.drain()
+
+
+def span_days(gui):
+    lo, hi = gui.price_ax.get_xlim()
+    return hi - lo
+
+
+def test_the_timeframe_sets_the_charts_time_span(build):
+    """The chart is CHART_BARS candles of the chosen timeframe from the candle cache
+    (it was the last 100 polled quotes, whatever the timeframe said)."""
+    gui = build(coins=("ETH",))
+    chart(gui, "1h")
+    hourly = span_days(gui)
+    assert hourly == pytest.approx((gui_mod.CHART_BARS + 0.4) / 24, rel=0.02)
+    assert len(gui.price_ax.patches) == gui_mod.CHART_BARS
+    assert gui.price_ax.get_title() == "ETH-USD · 1h · Coinbase"
+    chart(gui, "1d")
+    assert span_days(gui) / hourly == pytest.approx(24, rel=0.02)
+    assert gui.price_ax.get_title() == "ETH-USD · 1d · Coinbase"
+    connector = gui.market_manager.aggregator.layer().exchanges[ExchangeType.COINBASE]
+    assert ("candles", "1h") in connector.asked and ("candles", "1d") in connector.asked
+    # the cache: the same chart again asks the exchange for no older bar
+    before = len(connector.asked)
+    chart(gui, "1d")
+    assert len([a for a in connector.asked[before:] if a[0] == "candles"]) <= 1
+
+
+def test_the_volume_panel_shows_the_candles_volume_and_hides_without(build):
+    gui = build(coins=("ETH", "SOL"))
+    chart(gui, "1h", "ETH-USD")
+    assert gui.volume_ax is not None
+    assert [p.get_height() for p in gui.volume_ax.patches] == [7.0] * gui_mod.CHART_BARS
+    connector = gui.market_manager.aggregator.layer().exchanges[ExchangeType.COINBASE]
+    connector.volume = 0.0  # an exchange that gives no volume
+    chart(gui, "4h", "SOL-USD")
+    assert gui.volume_ax is None and gui.figure.axes == [gui.price_ax]
+    assert len(gui.price_ax.patches) == gui_mod.CHART_BARS
+
+
+def test_the_chart_is_drawn_when_its_tab_is_first_shown(build, root):
+    gui = build(coins=("ETH",))
+    assert len(gui.price_ax.patches) == 0  # nothing read while the tab is hidden
+    gui.notebook.select(gui.charts_tab)
+    root.update()
+    gui.chart_jobs.drain()
+    assert len(gui.price_ax.patches) == gui_mod.CHART_BARS
+
+
+def test_a_coin_with_no_candles_says_so(build):
+    gui = build(coins=("ETH",))
+    connector = gui.market_manager.aggregator.layer().exchanges[ExchangeType.COINBASE]
+    connector.candle_error = MarketNotFound("Coinbase has no market ETH-USD")
+    chart(gui, "1h")
+    assert [t.get_text() for t in gui.price_ax.texts] == ["ETH-USD (1h): no candles"]
 
 
 # --- nothing left running ---------------------------------------------------------------

@@ -20,6 +20,7 @@ import exchange_symbols
 import ui_table
 import ui_tokens
 from pt_exchange_abstraction import exchange_id, exchange_name
+from ui_jobs import BackgroundJobs
 
 try:
     from real_time_market_data import (
@@ -47,6 +48,28 @@ except ImportError:
 
 # A value the exchange does not give (never shown as 0)
 NA = "n/a"
+
+# Price Charts: this many candles of the chosen timeframe, so the timeframe sets the
+# time span (120 hours of 1h candles, 120 days of 1d candles)
+CHART_BARS = 120
+CHART_TIMEFRAMES = ("5m", "15m", "30m", "1h", "4h", "1d")
+
+
+def _candle_style():
+    """The candle colours and style chosen in Chart settings (gui_settings.json, read
+    only): ({"up": colour, "down": colour}, hollow up candles)."""
+    import json
+
+    import chart_settings
+    import pt_paths
+
+    try:
+        with open(pt_paths.gui_settings_file(), encoding="utf-8") as f:
+            raw = json.load(f).get("chart")
+    except (OSError, ValueError, AttributeError):
+        raw = None
+    cfg = chart_settings.normalize(raw)
+    return chart_settings.palette(cfg), cfg["candle_style"] == "hollow_up"
 
 
 def _price(value: Optional[float], signed: bool = False) -> str:
@@ -418,26 +441,32 @@ class MarketDataGUI:
         self.data_tree = self.data_table.tree
 
     def setup_charts_tab(self):
-        """Setup price charts tab"""
+        """Setup price charts tab: candles of the chosen timeframe from the candle
+        cache (the exchanges in Settings, primary first), with their volume."""
         # Chart controls
         chart_controls = ttk.LabelFrame(self.charts_tab, text="Chart Controls")
         chart_controls.pack(fill="x", padx=5, pady=5)
 
         ttk.Label(chart_controls, text="Symbol:").pack(side="left")
         self.chart_symbol_var = tk.StringVar(master=self.charts_tab)
-        self._symbol_box(chart_controls, self.chart_symbol_var).pack(
-            side="left", padx=5
-        )
+        symbol_box = self._symbol_box(chart_controls, self.chart_symbol_var)
+        symbol_box.pack(side="left", padx=5)
+        symbol_box.bind("<<ComboboxSelected>>", lambda e: self.update_chart(), add="+")
+        symbol_box.bind("<Return>", lambda e: self.update_chart(), add="+")
 
         ttk.Label(chart_controls, text="Timeframe:").pack(side="left", padx=(10, 0))
-        self.timeframe_var = tk.StringVar(value="1h")
+        self.timeframe_var = tk.StringVar(master=self.charts_tab, value="1h")
         timeframe_combo = ttk.Combobox(
             chart_controls,
             textvariable=self.timeframe_var,
             width=10,
-            values=["5m", "15m", "30m", "1h", "4h", "1d"],
+            values=CHART_TIMEFRAMES,
+            state="readonly",
         )
         timeframe_combo.pack(side="left", padx=5)
+        timeframe_combo.bind(
+            "<<ComboboxSelected>>", lambda e: self.update_chart(), add="+"
+        )
 
         ttk.Button(chart_controls, text="Update Chart", command=self.update_chart).pack(
             side="left", padx=5
@@ -447,31 +476,37 @@ class MarketDataGUI:
         chart_frame = ttk.Frame(self.charts_tab)
         chart_frame.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Create matplotlib figure
-        chart = ui_tokens.CHART
+        # Create matplotlib figure: the axes are made for each chart (the volume
+        # panel only when the candles have volume)
         self.figure = Figure(figsize=(12, 8), dpi=100)
-        self.figure.patch.set_facecolor(chart["figure"])
-
-        # Price subplot
-        self.price_ax = self.figure.add_subplot(211)
-        self.price_ax.set_facecolor(chart["plot"])
-        self.price_ax.tick_params(colors=chart["text"])
-        self.price_ax.set_title("Price Chart", color=chart["text"])
-        self.price_ax.set_ylabel("Price", color=chart["text"])
-
-        # Volume subplot
-        self.volume_ax = self.figure.add_subplot(212)
-        self.volume_ax.set_facecolor(chart["plot"])
-        self.volume_ax.tick_params(colors=chart["text"])
-        self.volume_ax.set_title("Volume", color=chart["text"])
-        self.volume_ax.set_ylabel("Volume", color=chart["text"])
-        self.volume_ax.set_xlabel("Time", color=chart["text"])
-
-        self.figure.tight_layout()
+        self.figure.patch.set_facecolor(ui_tokens.CHART["figure"])
+        self.price_ax = None
+        self.volume_ax = None
+        self.chart_source: Optional[str] = None  # the exchange the candles came from
+        self._chart_request: Optional[tuple] = None
+        self._chart_message("")
 
         # Canvas
         self.canvas = FigureCanvasTkAgg(self.figure, chart_frame)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        # the candles are read off the Tk thread; drawn the first time the tab shows
+        self.chart_jobs = BackgroundJobs(self.charts_tab, name="market-data-chart")
+        self._chart_shown = False
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_subtab, add="+")
+
+    def _on_subtab(self, _event=None) -> None:
+        try:
+            selected = self.notebook.select()
+        except tk.TclError:
+            return
+        if (
+            not self._chart_shown
+            and getattr(self, "charts_tab", None) is not None
+            and selected == str(self.charts_tab)
+        ):
+            self._chart_shown = True
+            self.update_chart()
 
     def setup_orderbook_tab(self):
         """Setup order book tab"""
@@ -793,7 +828,9 @@ class MarketDataGUI:
         self.data_tree.tag_configure("negative", foreground=ui_tokens.STATUS["bad"])
 
     def update_chart(self):
-        """Update price chart"""
+        """Draw the chosen coin's candles of the chosen timeframe: the last
+        ``CHART_BARS`` closed bars from the candle cache, topped up from the
+        exchanges in Settings (primary first), read off the Tk thread."""
         if not MATPLOTLIB_AVAILABLE:
             self._box.showwarning(
                 "Warning", "Charts not available - matplotlib not installed"
@@ -801,58 +838,132 @@ class MarketDataGUI:
             return
 
         coin = self.coin_from(self.chart_symbol_var.get())
-        symbol = self.pair_of(coin)
-        history = (
-            self.market_manager.aggregator.get_price_history(coin, minutes=24 * 60)
-            if self.market_manager and coin
-            else []
+        tf = self.timeframe_var.get()
+        if not coin:
+            self._chart_message("Choose a symbol")
+            return
+        request = (coin, tf)
+        self._chart_request = request
+        self._chart_message(f"{self.pair_of(coin)} ({tf}): loading candles")
+        self.chart_jobs.submit(
+            lambda: self._read_candles(coin, tf),
+            on_done=lambda df: self._draw_candles(request, df),
+            on_error=lambda exc: self._chart_failed(request, exc),
         )
 
-        if not history:
-            self._box.showwarning("Warning", f"No data available for {symbol}")
+    def _read_candles(self, coin: str, tf: str):
+        """The last ``CHART_BARS`` closed ``tf`` bars of ``coin`` (worker thread)."""
+        import pandas as pd
+        from market_data.candles import exchange_candles
+        from market_data.timeframes import candle_timeframe_seconds
+
+        step = candle_timeframe_seconds(tf)
+        end = pd.Timestamp.now(tz="UTC")
+        start = end - pd.Timedelta(seconds=step * (CHART_BARS + 1))
+        layer = self.market_manager.aggregator.layer() if self.market_manager else None
+        df = exchange_candles(coin, tf, start, end, manager=layer)
+        return df.tail(CHART_BARS)
+
+    def _chart_failed(self, request: tuple, exc: BaseException) -> None:
+        if request != self._chart_request or not self.alive:
             return
+        coin, tf = request
+        print(f"Market data chart {coin} {tf}: {exc}")
+        self._chart_message(f"{self.pair_of(coin)} ({tf}): no candles")
 
-        # Get data for chart
-        data = history[-100:]  # Last 100 data points
-
-        if len(data) < 2:
-            self._box.showwarning("Warning", "Not enough data for chart")
-            return
-
-        timestamps = [d["timestamp"] for d in data]
-        prices = [d["price"] for d in data]
-        volumes = [d["volume"] for d in data]
-
-        # Clear previous plots
-        self.price_ax.clear()
-        self.volume_ax.clear()
-
-        # Plot price
+    def _new_axes(self, volume: bool):
+        """The price axes, and the volume axes below them when ``volume``."""
+        self.figure.clear()
+        if volume:
+            price_ax, volume_ax = self.figure.subplots(
+                2, 1, sharex=True, gridspec_kw={"height_ratios": [3, 1]}
+            )
+        else:
+            price_ax, volume_ax = self.figure.add_subplot(111), None
         chart = ui_tokens.CHART
-        self.price_ax.plot(timestamps, prices, color=chart["series"], linewidth=1.5)
-        self.price_ax.set_facecolor(chart["plot"])
-        self.price_ax.tick_params(colors=chart["text"])
-        self.price_ax.set_title(f"{symbol} Price Chart", color=chart["text"])
-        self.price_ax.set_ylabel("Price", color=chart["text"])
-        self.price_ax.grid(True, alpha=0.3)
+        for ax in (price_ax, volume_ax):
+            if ax is None:
+                continue
+            ax.set_facecolor(chart["plot"])
+            ax.tick_params(colors=chart["text"])
+            ax.grid(True, color=chart["grid"], alpha=0.3)
+            for spine in ax.spines.values():
+                spine.set_color(chart["grid"])
+        price_ax.set_ylabel("Price", color=chart["text"])
+        if volume_ax is not None:
+            volume_ax.set_ylabel("Volume", color=chart["text"])
+            price_ax.tick_params(labelbottom=False)
+        self.price_ax, self.volume_ax = price_ax, volume_ax
+        return price_ax, volume_ax
 
-        # Plot volume
-        self.volume_ax.bar(
-            timestamps, volumes, color=chart["series2"], alpha=0.7, width=0.0001
+    def _chart_message(self, text: str) -> None:
+        """An empty chart saying ``text``."""
+        ax, _ = self._new_axes(volume=False)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_ylabel("")
+        ax.grid(False)
+        if text:
+            ax.text(
+                0.5,
+                0.5,
+                text,
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                color=ui_tokens.CHART["text"],
+            )
+        canvas = getattr(self, "canvas", None)
+        if canvas is not None:
+            canvas.draw_idle()
+
+    def _draw_candles(self, request: tuple, df) -> None:
+        """Candles, and their volume where the exchange gives it (Tk thread)."""
+        if request != self._chart_request or not self.alive:
+            return  # another symbol or timeframe was asked for since
+        from market_data.timeframes import candle_timeframe_seconds
+
+        coin, tf = request
+        pair = self.pair_of(coin)
+        if df is None or len(df) == 0:
+            self._chart_message(f"{pair} ({tf}): no candles")
+            return
+        colours, hollow_up = _candle_style()
+        x = mdates.date2num(
+            [datetime.fromtimestamp(t.timestamp()) for t in df["open_time"]]
         )
-        self.volume_ax.set_facecolor(chart["plot"])
-        self.volume_ax.tick_params(colors=chart["text"])
-        self.volume_ax.set_title("Volume", color=chart["text"])
-        self.volume_ax.set_ylabel("Volume", color=chart["text"])
-        self.volume_ax.set_xlabel("Time", color=chart["text"])
-        self.volume_ax.grid(True, alpha=0.3)
+        width = candle_timeframe_seconds(tf) / 86400.0 * 0.7
+        opens, closes = list(df["open"]), list(df["close"])
+        up = [c >= o for o, c in zip(opens, closes)]
+        edge = [colours["up"] if u else colours["down"] for u in up]
+        face = ["none" if (u and hollow_up) else e for u, e in zip(up, edge)]
+        volumes = [float(v) for v in df["volume"]]
+        has_volume = any(v > 0 for v in volumes)  # none at all: the exchange gives none
 
-        # Format x-axis
-        self.volume_ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-        self.volume_ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=5))
-
+        price_ax, volume_ax = self._new_axes(volume=has_volume)
+        price_ax.vlines(x, df["low"], df["high"], colors=edge, linewidth=1)
+        price_ax.bar(
+            x,
+            [max(abs(c - o), 1e-12) for o, c in zip(opens, closes)],
+            width,
+            bottom=[min(o, c) for o, c in zip(opens, closes)],
+            color=face,
+            edgecolor=edge,
+            linewidth=1,
+        )
+        if volume_ax is not None:
+            volume_ax.bar(x, volumes, width, color=edge, alpha=0.6)
+        self.chart_source = str(df.attrs.get("exchange") or "")
+        source = exchange_name(self.chart_source) if self.chart_source else ""
+        title = " · ".join(t for t in (pair, tf, source) if t)
+        price_ax.set_title(title, color=ui_tokens.CHART["text"])
+        locator = mdates.AutoDateLocator()
+        axis = (volume_ax or price_ax).xaxis
+        axis.set_major_locator(locator)
+        axis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+        price_ax.set_xlim(x[0] - width, x[-1] + width)
         self.figure.tight_layout()
-        self.canvas.draw()
+        self.canvas.draw_idle()
 
     def load_orderbook(self):
         """Load order book data"""
@@ -922,6 +1033,9 @@ class MarketDataGUI:
         self.alive = False
         for name in list(self._afters):
             self._cancel(name)
+        for jobs in (getattr(self, "chart_jobs", None),):
+            if jobs is not None:
+                jobs.stop()
         if self.market_manager:
             try:
                 self.market_manager.remove_update_callback(self.on_market_update)

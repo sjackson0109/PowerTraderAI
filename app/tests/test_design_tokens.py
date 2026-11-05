@@ -32,7 +32,6 @@ FEATURE_MODULES = (  # the bottom notebook's feature tabs and the exchange windo
     "exchange_config_gui.py",
     "llm_research_gui.py",
     "long_term_holdings_gui.py",
-    "advanced_order_gui.py",
     "real_time_market_data_gui.py",
     "portfolio_optimizer_gui.py",
     "backtesting_gui.py",

@@ -17,6 +17,10 @@ from typing import Dict, List, Optional, Tuple
 import coinbase_auth
 import requests
 from pt_exchange_abstraction import (
+    LIMIT_ORDER,
+    OCO_ORDER,
+    STOP_LIMIT_ORDER,
+    TRAILING_STOP_ORDER,
     AbstractExchange,
     ConnectionStatus,
     ConnectionTestResult,
@@ -25,6 +29,7 @@ from pt_exchange_abstraction import (
     MarketNotFound,
     MarketStatus,
     OrderBookSnapshot,
+    OrderRequest,
     OrderResult,
     PriceQuote,
     Ticker,
@@ -1328,6 +1333,164 @@ class BinanceExchange(AbstractExchange):
         return self._signed_request("DELETE", "/api/v3/orderList", params)
 
     # ------------------------------------------------------------------
+    # Order Management's order kinds (pt_exchange_abstraction.OrderRequest)
+    # ------------------------------------------------------------------
+
+    # trailingDelta is in basis points (0.01%); Binance takes 10 to 2,000 (0.1% to
+    # 20%) for STOP_LOSS orders (Binance spot API, Trailing Stop FAQ)
+    TRAILING_DELTA_BIPS = (10, 2000)
+    # an OCO order's id: the list's, so that cancelling it cancels both orders
+    _LIST_MARK = ":LIST:"
+
+    def native_order_kinds(self):
+        return frozenset(
+            {LIMIT_ORDER, STOP_LIMIT_ORDER, TRAILING_STOP_ORDER, OCO_ORDER}
+        )
+
+    def supports_native_order(self, request: OrderRequest) -> bool:
+        if request.kind == TRAILING_STOP_ORDER:
+            if request.trail_pct is None:
+                return False
+            low, high = self.TRAILING_DELTA_BIPS
+            return low <= round(float(request.trail_pct) * 100) <= high
+        return super().supports_native_order(request)
+
+    def place_native_order(self, request: OrderRequest) -> OrderResult:
+        """A limit order is a LIMIT order; a stop-limit order a STOP_LOSS_LIMIT
+        order (a buy's stop is reached when the price rises to it, a sell's when it
+        falls to it); a trailing stop a STOP_LOSS order with ``trailingDelta`` and no
+        stop price, which starts trailing at once; an OCO order an order list
+        (``place_oco_order``) whose take-profit is a LIMIT_MAKER order and whose stop
+        a STOP_LOSS order (above the price for a sell's take-profit, below it for a
+        buy's). The OCO order's id is its list's (``SYMBOL:LIST:id``), its two orders
+        are in ``legs`` as ``SYMBOL:id``."""
+        side = str(request.side).strip().lower()
+        if request.kind == LIMIT_ORDER:
+            return self.place_order(
+                request.symbol,
+                side,
+                request.amount,
+                request.price,
+                order_type="LIMIT",
+                client_order_id=request.client_order_id,
+            )
+        if request.kind == STOP_LIMIT_ORDER:
+            return self.place_order(
+                request.symbol,
+                side,
+                request.amount,
+                request.price,
+                order_type="STOP_LOSS_LIMIT",
+                stop_price=request.stop_price,
+                client_order_id=request.client_order_id,
+            )
+        if request.kind == TRAILING_STOP_ORDER:
+            if not self.supports_native_order(request):
+                raise ValueError(
+                    "Binance trails from 0.1% to 20%; this order is outside that"
+                )
+            return self.place_order(
+                request.symbol,
+                side,
+                request.amount,
+                order_type="STOP_LOSS",
+                trailing_delta=int(round(float(request.trail_pct) * 100)),
+                client_order_id=request.client_order_id,
+            )
+        if request.kind == OCO_ORDER:
+            return self._place_oco(request, side)
+        return super().place_native_order(request)
+
+    def _place_oco(self, request: OrderRequest, side: str) -> OrderResult:
+        if side == "sell":
+            prices = dict(
+                above_type="LIMIT_MAKER",
+                above_price=request.price,
+                below_type="STOP_LOSS",
+                below_stop_price=request.stop_price,
+            )
+        else:
+            prices = dict(
+                above_type="STOP_LOSS",
+                above_stop_price=request.stop_price,
+                below_type="LIMIT_MAKER",
+                below_price=request.price,
+            )
+        data = self.place_oco_order(
+            request.symbol,
+            side,
+            request.amount,
+            list_client_order_id=request.client_order_id,
+            **prices,
+        )
+        pair = self._convert_symbol(request.symbol)
+        legs: Dict[str, str] = {}
+        for report in data.get("orderReports") or []:
+            kind = str(report.get("type") or "").upper()
+            role = (
+                "take_profit"
+                if kind == "LIMIT_MAKER"
+                else "stop" if kind.startswith("STOP") else None
+            )
+            if role and report.get("orderId") is not None:
+                legs[role] = f"{pair}:{report['orderId']}"
+        if set(legs) != {"take_profit", "stop"}:
+            raise RuntimeError(
+                f"Binance placed OCO list {data.get('orderListId')} but its answer "
+                "does not say which order is which"
+            )
+        return OrderResult(
+            order_id=f"{pair}{self._LIST_MARK}{data['orderListId']}",
+            symbol=request.symbol,
+            side=side,
+            amount=0.0,
+            price=float(request.price or 0.0),
+            status=str(data.get("listOrderStatus") or "executing").lower(),
+            exchange="binance",
+            timestamp=data.get("transactionTime", time.time() * 1000) / 1000,
+            legs=legs,
+        )
+
+    def cancel_native_order(self, order_id: str) -> bool:
+        """An OCO order's list id cancels the list; any other id the order."""
+        if self._LIST_MARK in str(order_id):
+            pair, list_id = str(order_id).split(self._LIST_MARK, 1)
+            try:
+                data = self.cancel_order_list(pair, order_list_id=int(list_id))
+            except RuntimeError as exc:
+                if "-2011" in str(exc):
+                    return False  # the list is already done
+                raise
+            return str(data.get("listOrderStatus") or "").upper() == "ALL_DONE"
+        return self.cancel_order(order_id)
+
+    def native_order_status(self, order_id: str) -> OrderResult:
+        """``get_order_status``, with the value filled (``cummulativeQuoteQty``) and
+        the average fill price worked out from it, where the order has filled."""
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError("Binance API credentials required for order status")
+        if ":" not in str(order_id) or self._LIST_MARK in str(order_id):
+            raise ValueError(f"Binance order status needs 'SYMBOL:ID', not {order_id}")
+        pair, numeric_id = str(order_id).split(":", 1)
+        data = self._signed_request(
+            "GET", "/api/v3/order", {"symbol": pair, "orderId": int(numeric_id)}
+        )
+        filled = float(data.get("executedQty") or 0)
+        value = float(data.get("cummulativeQuoteQty") or 0)
+        price = value / filled if filled > 0 and value > 0 else 0.0
+        return OrderResult(
+            order_id=order_id,
+            symbol=pair.replace("USDT", "-USD"),
+            side=str(data.get("side") or "").lower(),
+            amount=filled,
+            price=price or float(data.get("price") or 0),
+            status=str(data.get("status") or "UNKNOWN").lower(),
+            exchange="binance",
+            timestamp=data.get("updateTime", time.time() * 1000) / 1000,
+            filled_value=value if filled > 0 and value > 0 else None,
+        )
+
+    # ------------------------------------------------------------------
     # User-data stream (listenKey lifecycle)
     # ------------------------------------------------------------------
 
@@ -1979,7 +2142,15 @@ class CoinbaseExchange(AbstractExchange):
         if client_order_id is None:
             client_order_id = str(uuid.uuid4())
         body = {"client_order_id": client_order_id, **body}
-        data = self._order_post("/orders", body)
+        return self._created(
+            self._order_post("/orders", body), body, symbol, side, amount
+        )
+
+    def _created(
+        self, data: dict, body: dict, symbol: str, side: str, amount: float
+    ) -> OrderResult:
+        """Coinbase's answer to ``POST /orders``: the order, pending, with Coinbase's
+        id; or the order refused, with Coinbase's reason."""
         if data.get("success"):
             order_id = (data.get("success_response") or {}).get("order_id")
             if not order_id:
@@ -2054,6 +2225,122 @@ class CoinbaseExchange(AbstractExchange):
             + (", " + ", ".join(parts[2:]) if parts[2:] else ""),
             fee=fee,
             filled_value=dollars,
+        )
+
+    # -- Order Management's order kinds (pt_exchange_abstraction.OrderRequest) -------
+
+    # Flags that stop every new order (a limit-only product takes limit orders)
+    _NO_ORDER_FLAGS = ("trading_disabled", "is_disabled", "cancel_only")
+
+    def native_order_kinds(self):
+        return frozenset({LIMIT_ORDER, STOP_LIMIT_ORDER, OCO_ORDER})
+
+    def supports_native_order(self, request: OrderRequest) -> bool:
+        """Coinbase's bracket order (an OCO order's take-profit and stop) sells only:
+        it closes a holding."""
+        if request.kind == OCO_ORDER and str(request.side).lower() != "sell":
+            return False
+        return super().supports_native_order(request)
+
+    def _native_body(self, request: OrderRequest):
+        """The body of ``request`` (``POST /orders``), or ``(None, reason)`` when
+        Coinbase would refuse it, so that nothing is sent.
+
+        Sized in coins (``base_size``, rounded down to ``base_increment``), with
+        prices rounded to ``price_increment``. A limit order is
+        ``limit_limit_gtc``; a stop-limit order ``stop_limit_stop_limit_gtc``, its
+        stop direction down for a sell and up for a buy; an OCO order (a sell)
+        ``trigger_bracket_gtc``: its take-profit is ``limit_price`` and its stop
+        ``stop_trigger_price`` (Advanced Trade, Create Order)."""
+        verb = str(request.side).strip().upper()
+        if verb not in ("BUY", "SELL"):
+            raise ValueError(f"Coinbase order side must be buy or sell, not {verb!r}")
+        rules = self.product_rules(request.symbol)
+        product = rules["product_id"]
+        flags = [f for f in rules["flags"] if f in self._NO_ORDER_FLAGS]
+        if flags:
+            return None, (
+                f"{flags[0].upper()}: Coinbase {product} is {flags[0].replace('_', ' ')}"
+            )
+        coin = product.split("-")[0]
+        coins = _round_to_increment(
+            Decimal(str(request.amount)), rules["base_increment"], ROUND_DOWN
+        )
+        if coins <= 0 or coins < rules["base_min_size"]:
+            return None, (
+                f"BELOW_MINIMUM: {format(coins, 'f')} {coin} is below Coinbase's "
+                f"minimum order of {format(rules['base_min_size'], 'f')} {coin}"
+            )
+
+        def price(value) -> str:
+            number = _round_to_increment(
+                Decimal(str(value)), rules["price_increment"], ROUND_HALF_UP
+            )
+            return format(number.normalize(), "f")
+
+        size = format(coins, "f")
+        if request.kind == LIMIT_ORDER:
+            config = {
+                "limit_limit_gtc": {
+                    "base_size": size,
+                    "limit_price": price(request.price),
+                    "post_only": False,
+                }
+            }
+            lowest = request.price
+        elif request.kind == STOP_LIMIT_ORDER:
+            config = {
+                "stop_limit_stop_limit_gtc": {
+                    "base_size": size,
+                    "limit_price": price(request.price),
+                    "stop_price": price(request.stop_price),
+                    "stop_direction": (
+                        "STOP_DIRECTION_STOP_DOWN"
+                        if verb == "SELL"
+                        else "STOP_DIRECTION_STOP_UP"
+                    ),
+                }
+            }
+            lowest = min(request.price, request.stop_price)
+        elif request.kind == OCO_ORDER and verb == "SELL":
+            config = {
+                "trigger_bracket_gtc": {
+                    "base_size": size,
+                    "limit_price": price(request.price),
+                    "stop_trigger_price": price(request.stop_price),
+                }
+            }
+            lowest = min(request.price, request.stop_price)
+        else:
+            raise NotImplementedError(
+                f"Coinbase places no {request.kind} {verb.lower()} orders"
+            )
+        value = coins * Decimal(str(lowest))
+        if value < rules["quote_min_size"]:
+            return None, (
+                f"BELOW_MINIMUM: about {format(value, 'f')} is below Coinbase's "
+                f"minimum order of {format(rules['quote_min_size'], 'f')} for {product}"
+            )
+        return {"product_id": product, "side": verb, "order_configuration": config}, ""
+
+    def place_native_order(self, request: OrderRequest) -> OrderResult:
+        """``POST /orders`` with ``_native_body``; ``pending`` with Coinbase's order
+        id once created, else ``rejected`` with the reason (see ``place_order``)."""
+        if (
+            request.client_order_id is not None
+            and not str(request.client_order_id).strip()
+        ):
+            raise ValueError("Coinbase: client_order_id must not be empty")
+        body, refusal = self._native_body(request)
+        if body is None:
+            return self._refused(request.symbol, request.side, request.amount, refusal)
+        body = {"client_order_id": request.client_order_id or str(uuid.uuid4()), **body}
+        return self._created(
+            self._order_post("/orders", body),
+            body,
+            request.symbol,
+            request.side,
+            request.amount,
         )
 
     # -- authenticated Advanced Trade calls ------------------------------------------
@@ -2167,6 +2454,10 @@ class CoinbaseExchange(AbstractExchange):
             "product_id": product,
             "base_increment": _coinbase_decimal(data.get("base_increment")),
             "quote_increment": _coinbase_decimal(data.get("quote_increment")),
+            # the step of a limit or stop price (the quote step where none is given)
+            "price_increment": _coinbase_decimal(
+                data.get("price_increment") or data.get("quote_increment")
+            ),
             "base_min_size": _coinbase_decimal(data.get("base_min_size")),
             "quote_min_size": _coinbase_decimal(data.get("quote_min_size")),
             "price": _coinbase_number(data.get("price")),

@@ -456,6 +456,42 @@ class OrderResult:
     fee_type: str = ""
     fee_exchange: str = ""
     fee_source: str = ""
+    # An OCO order's own orders on the exchange: "take_profit" and "stop" -> the
+    # exchange's id for each (empty for any other order)
+    legs: Dict[str, str] = field(default_factory=dict)
+
+
+# Order kinds beyond a market order. A connector places the ones its exchange has as
+# the exchange's own orders (AbstractExchange.native_order_kinds); Order Management
+# watches the price itself for the others.
+LIMIT_ORDER = "limit"
+STOP_LIMIT_ORDER = "stop_limit"
+TRAILING_STOP_ORDER = "trailing_stop"
+OCO_ORDER = "oco"
+ORDER_KINDS = (LIMIT_ORDER, STOP_LIMIT_ORDER, TRAILING_STOP_ORDER, OCO_ORDER)
+
+
+@dataclass(frozen=True)
+class OrderRequest:
+    """An order beyond a market order, for ``AbstractExchange.place_native_order``.
+
+    ``kind`` is one of ORDER_KINDS, ``symbol`` the ``COIN-USD`` form the connectors
+    take, ``side`` "buy" or "sell" and ``amount`` in coins. A limit order has
+    ``price``. A stop-limit order has ``stop_price``, the price that places it, and
+    ``price``, its limit. A trailing stop has ``trail_pct``: it follows the best
+    price since it was placed (the highest for a sell, the lowest for a buy) at that
+    distance, in percent, and becomes a market order when the price comes back to
+    it. An OCO order has ``price``, its take-profit limit, and ``stop_price``, its
+    stop (a market order once reached): when one fills the other is cancelled."""
+
+    kind: str
+    symbol: str
+    side: str
+    amount: float
+    price: Optional[float] = None
+    stop_price: Optional[float] = None
+    trail_pct: Optional[float] = None
+    client_order_id: Optional[str] = None
 
 
 class ConnectionStatus(str, Enum):
@@ -600,6 +636,38 @@ class AbstractExchange(abc.ABC):
         MarketNotFound when the exchange has no market for the coin, and passes on
         any other error."""
         return None
+
+    # --- orders beyond market orders -------------------------------------------------
+    # Optional: a connector that leaves these as they are places market orders only,
+    # and Order Management watches the price for the other kinds.
+
+    def native_order_kinds(self) -> FrozenSet[str]:
+        """The ORDER_KINDS this connector places as its exchange's own orders."""
+        return frozenset()
+
+    def supports_native_order(self, request: OrderRequest) -> bool:
+        """Whether ``request`` can be placed as the exchange's own order: a kind the
+        exchange has, with values it takes."""
+        return request.kind in self.native_order_kinds()
+
+    def place_native_order(self, request: OrderRequest) -> OrderResult:
+        """Place ``request`` as the exchange's own order. The OrderResult has the
+        exchange's order id (an OCO order's two orders in ``legs``), or status
+        "rejected" and the reason when it was not created. Raises
+        NotImplementedError for a kind this connector does not place."""
+        raise NotImplementedError(
+            f"{exchange_name(self.get_exchange_name())} places no {request.kind} orders"
+        )
+
+    def native_order_status(self, order_id: str) -> OrderResult:
+        """The state of an order ``place_native_order`` placed (or of one of an OCO
+        order's ``legs``)."""
+        return self.get_order_status(order_id)
+
+    def cancel_native_order(self, order_id: str) -> bool:
+        """Cancel an order ``place_native_order`` placed; for an OCO order, its id
+        cancels both of its orders. True when the exchange cancelled it."""
+        return self.cancel_order(order_id)
 
     @abc.abstractmethod
     def get_exchange_name(self) -> str:

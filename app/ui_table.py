@@ -44,6 +44,7 @@ LAYOUT_FILE = "table_layout.json"
 CELL_PAD = 18  # pixels round a column's widest text
 TREE = "#0"  # the tree column: a row's own name (show="tree headings")
 TREE_INDENT = 24  # the tree column's indicator and indent, ahead of the name
+CHILD_INDENT = 20  # a row's own rows sit this much further in (Treeview's indent)
 MIN_WIDTH = 40
 MAX_FIT = 420  # a fitted column is at most this wide: drag its edge for more
 FIT_SAMPLE = 30  # the longest values of a column are the ones measured
@@ -404,7 +405,17 @@ class DataTable(ttk.Frame):
             if self.tree_column
             else []
         )
-        self._fit_columns(values, names)
+        # a row's own rows (one level down, e.g. an order's legs) are named too
+        nested = (
+            [
+                str(ttk.Treeview.item(self.tree, kid, "text"))
+                for iid in rows
+                for kid in ttk.Treeview.get_children(self.tree, iid)
+            ]
+            if self.tree_column
+            else []
+        )
+        self._fit_columns(values, names, nested)
         self._show_empty(not rows)
         self._layout()
 
@@ -487,7 +498,10 @@ class DataTable(ttk.Frame):
         return ([TREE] if self.tree_column else []) + self.columns
 
     def _fit_columns(
-        self, values: Dict[str, List[str]], names: Sequence[str] = ()
+        self,
+        values: Dict[str, List[str]],
+        names: Sequence[str] = (),
+        nested: Sequence[str] = (),
     ) -> None:
         body, head = self._fonts()
         mark = max(head.measure(m) for m in SORT_MARKS.values())
@@ -504,7 +518,12 @@ class DataTable(ttk.Frame):
             self._fit[c] = max(floor, min(MAX_FIT, width))
         if self.tree_column:
             heading = head.measure(self._titles.get(TREE, ""))
-            width = max(widest(names) + TREE_INDENT, heading) + CELL_PAD
+            width = max(
+                widest(names) + TREE_INDENT,
+                widest(nested) + TREE_INDENT + CHILD_INDENT if nested else 0,
+                heading,
+            )
+            width += CELL_PAD
             self._fit[TREE] = max(MIN_WIDTH, min(MAX_FIT, width))
 
     def _base_width(self, column: str) -> int:

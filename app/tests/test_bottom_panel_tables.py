@@ -22,7 +22,6 @@ import ui_table  # noqa: E402
 MODULE_WINDOWS = (
     "llm_research_gui.py",
     "long_term_holdings_gui.py",
-    "advanced_order_gui.py",
     "real_time_market_data_gui.py",
     "portfolio_optimizer_gui.py",
     "backtesting_gui.py",

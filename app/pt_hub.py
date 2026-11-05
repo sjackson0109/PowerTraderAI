@@ -68,6 +68,7 @@ from trading_mode import (
     broker_places_orders,
     move_root_live_books,
     paper_book_path,
+    read_drawdown_levels,
     read_paper_book,
     read_trading_settings,
 )
@@ -7227,9 +7228,20 @@ Platform: {sys.platform}
         self._strategy_settings_win = win
         return win
 
+    def _shown_account_value(self) -> Optional[float]:
+        """The account value on the Account panel (from trader_status.json), or
+        None before the trader has reported one."""
+        try:
+            value = float(getattr(self, "_last_total_account_value", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return None
+        return value if value > 0.0 else None
+
     def open_risk_settings(self, parent=None, on_saved=None):
-        """Settings > Risk: the limits that protect the account
-        (``risk_settings_ui``)."""
+        """Settings > Risk: the account drawdown levels and the peak they are
+        measured from (``risk_settings_ui``). The levels are saved to
+        pt_config.json, which the trader reads before every drawdown check; the
+        peak is kept in the books folder this hub shows."""
         win = getattr(self, "_risk_settings_win", None)
         try:
             if win is not None and win.winfo_exists():
@@ -7243,13 +7255,29 @@ Platform: {sys.platform}
             from risk_settings_ui import RiskSettingsWindow
 
             win = RiskSettingsWindow(
-                parent or self, on_saved=on_saved, palette=ui_theme.active_palette()
+                parent or self,
+                books_dir=getattr(self, "_books_dir", None),
+                account_value=self._shown_account_value,
+                on_saved=on_saved,
+                palette=ui_theme.active_palette(),
             )
         except Exception as e:
             messagebox.showerror("Risk", f"Could not open the risk settings: {e}")
             return None
         self._risk_settings_win = win
         return win
+
+    @staticmethod
+    def _risk_summary() -> str:
+        """Settings' Risk line: the drawdown levels the trader uses."""
+        try:
+            levels = read_drawdown_levels()
+        except Exception as e:
+            return f"Could not read the risk settings: {e}"
+        return (
+            f"Trading stops at a {levels.emergency_pct:g}% drawdown from the peak; "
+            f"warnings at {levels.warning_pct:g}% and {levels.critical_pct:g}%"
+        )
 
     @staticmethod
     def _strategy_summary() -> str:
@@ -7665,9 +7693,17 @@ Platform: {sys.platform}
             row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
         )
         r += 1
+        risk_summary_var = tk.StringVar(master=win, value=self._risk_summary())
         ttk.Button(
-            frm, text="Risk...", command=lambda: self.open_risk_settings(win)
+            frm,
+            text="Risk...",
+            command=lambda: self.open_risk_settings(
+                win, on_saved=lambda: risk_summary_var.set(self._risk_summary())
+            ),
         ).grid(row=r, column=0, sticky="w", pady=6)
+        ttk.Label(frm, textvariable=risk_summary_var, wraplength=520).grid(
+            row=r, column=1, columnspan=2, sticky="w", pady=6
+        )
         r += 1
 
         ttk.Separator(frm, orient="horizontal").grid(

@@ -24,11 +24,17 @@ TRADING_MODES = ("paper", "live")
 PAPER_POLICY_KEY = "paper.price_fallback_policy"
 PAPER_MAX_QUOTE_AGE_KEY = "paper.max_quote_age_s"
 EMERGENCY_DRAWDOWN_KEY = "risk.emergency_drawdown_pct"
+DRAWDOWN_WARNING_KEY = "risk.drawdown_warning_pct"
+DRAWDOWN_CRITICAL_KEY = "risk.drawdown_critical_pct"
 PRICE_FALLBACK_POLICIES = ("pause", "simulate_and_flag")
 DEFAULT_PRICE_FALLBACK_POLICY = "pause"
 DEFAULT_MAX_QUOTE_AGE_S = 30.0
 DEFAULT_EMERGENCY_DRAWDOWN_PCT = 8.0
+DEFAULT_DRAWDOWN_WARNING_PCT = 3.0
+DEFAULT_DRAWDOWN_CRITICAL_PCT = 5.0
 EMERGENCY_DRAWDOWN_RANGE = (1.0, 50.0)
+# the warning and critical levels; each must also be below the next level up
+DRAWDOWN_LEVEL_RANGE = (0.5, 50.0)
 MAX_QUOTE_AGE_RANGE = (1.0, 3600.0)
 
 
@@ -40,6 +46,23 @@ def _is_number_in(value: Any, bounds: tuple) -> bool:
         and value == value  # not NaN
         and bounds[0] <= value <= bounds[1]
     )
+
+
+def drawdown_levels_problem(warning: Any, critical: Any, emergency: Any) -> str:
+    """What is wrong with three account drawdown levels (percent), or "" when each
+    is in its range and warning < critical < emergency stop."""
+    for name, value, bounds in (
+        ("Warning", warning, DRAWDOWN_LEVEL_RANGE),
+        ("Critical", critical, DRAWDOWN_LEVEL_RANGE),
+        ("Emergency stop", emergency, EMERGENCY_DRAWDOWN_RANGE),
+    ):
+        if not _is_number_in(value, bounds):
+            return f"{name} must be a number from {bounds[0]:g} to {bounds[1]:g}"
+    if not warning < critical:
+        return "Warning must be below Critical"
+    if not critical < emergency:
+        return "Critical must be below Emergency stop"
+    return ""
 
 
 def trading_testnet_key(broker: str) -> str:
@@ -95,8 +118,11 @@ DEFAULT_SETTINGS = {
         "price_fallback_policy": "pause",
         "max_quote_age_s": 30,
     },
-    # Account drawdown (from the peak the trader has seen) that halts trading.
+    # Account drawdown (from the peak the trader has seen): the levels that put a
+    # warning in the trader's log, and the one that halts trading (Settings > Risk).
     "risk": {
+        "drawdown_warning_pct": 3.0,
+        "drawdown_critical_pct": 5.0,
         "emergency_drawdown_pct": 8.0,
     },
     # Signal source (FDS-121). "catalogue" = deterministic rule-based strategies;
@@ -268,6 +294,21 @@ class SettingsValidator:
             lambda v: _is_number_in(v, EMERGENCY_DRAWDOWN_RANGE),
             "Emergency drawdown must be between 1 and 50 percent",
             lambda v: DEFAULT_EMERGENCY_DRAWDOWN_PCT,
+        )
+        # Each level on its own; the order between them (warning < critical <
+        # emergency) is checked by set_risk, and the trader reads an out-of-order
+        # pair as the defaults (trading_mode.read_drawdown_levels)
+        self.add_rule(
+            DRAWDOWN_WARNING_KEY,
+            lambda v: _is_number_in(v, DRAWDOWN_LEVEL_RANGE),
+            "Drawdown warning must be between 0.5 and 50 percent",
+            lambda v: DEFAULT_DRAWDOWN_WARNING_PCT,
+        )
+        self.add_rule(
+            DRAWDOWN_CRITICAL_KEY,
+            lambda v: _is_number_in(v, DRAWDOWN_LEVEL_RANGE),
+            "Drawdown critical must be between 0.5 and 50 percent",
+            lambda v: DEFAULT_DRAWDOWN_CRITICAL_PCT,
         )
 
         # Strategy engine settings. No auto-fix on purpose: a wrong engine / id is
@@ -635,6 +676,34 @@ class SettingsManager:
                     print(f"Invalid strategy settings: {refused}")
                 return False
             self._settings["strategy"] = strategy
+            return self.save_settings() if persist else True
+
+    def set_risk(self, values: Dict[str, Any], persist: bool = True) -> bool:
+        """Replace the ``risk`` keys given in ``values``, as Settings > Risk saves
+        them; the section's other keys are kept. Nothing changes when a level is out
+        of its range or the levels are not in order (warning < critical <
+        emergency stop)."""
+        with self._lock:
+            risk = copy.deepcopy(self._settings.get("risk") or {})
+            risk.update(copy.deepcopy(dict(values)))
+            candidate = copy.deepcopy(self._settings)
+            candidate["risk"] = risk
+            _, errors = self.validator.validate(candidate, auto_fix=False)
+            refused = [e for e in errors if e.startswith("risk.")]
+            problem = drawdown_levels_problem(
+                risk.get("drawdown_warning_pct"),
+                risk.get("drawdown_critical_pct"),
+                risk.get("emergency_drawdown_pct"),
+            )
+            if refused or problem:
+                try:
+                    from pt_logging_system import log_error
+
+                    log_error(f"Invalid risk settings: {refused or problem}")
+                except ImportError:
+                    print(f"Invalid risk settings: {refused or problem}")
+                return False
+            self._settings["risk"] = risk
             return self.save_settings() if persist else True
 
     def set_section(

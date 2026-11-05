@@ -14,6 +14,12 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
+from pt_settings_manager import (
+    DEFAULT_DRAWDOWN_CRITICAL_PCT,
+    DEFAULT_DRAWDOWN_WARNING_PCT,
+    DEFAULT_EMERGENCY_DRAWDOWN_PCT,
+)
+
 
 # Risk alert levels
 class RiskLevel(Enum):
@@ -103,12 +109,17 @@ class RiskManager:
         self.is_trading_halted = False
         self.emergency_stop_triggered = False
 
-        # Risk thresholds for different alert levels
+        # Risk thresholds for different alert levels. The account drawdown levels
+        # are settings (Settings > Risk, risk.*_pct): the defaults here, and
+        # set_drawdown_levels() for the saved values (the trader sets them before
+        # every drawdown check). Volatility and leverage are read only by the
+        # monitoring loop (start_monitoring), which the app never starts: neither
+        # blocks nor warns on a trade.
         self.risk_thresholds = {
             "portfolio_drawdown": {
-                "warning": 0.03,  # 3% drawdown warning
-                "critical": 0.05,  # 5% drawdown critical
-                "emergency": 0.08,  # 8% emergency stop
+                "warning": DEFAULT_DRAWDOWN_WARNING_PCT / 100.0,
+                "critical": DEFAULT_DRAWDOWN_CRITICAL_PCT / 100.0,
+                "emergency": DEFAULT_EMERGENCY_DRAWDOWN_PCT / 100.0,
             },
             "volatility": {
                 "warning": 0.25,  # 25% volatility warning
@@ -128,6 +139,16 @@ class RiskManager:
 
         # Logger
         self.logger = logging.getLogger(__name__)
+
+    def set_drawdown_levels(
+        self, warning_pct: float, critical_pct: float, emergency_pct: float
+    ) -> None:
+        """The account drawdown levels, in percent of the peak, from settings."""
+        self.risk_thresholds["portfolio_drawdown"] = {
+            "warning": float(warning_pct) / 100.0,
+            "critical": float(critical_pct) / 100.0,
+            "emergency": float(emergency_pct) / 100.0,
+        }
 
     def start_monitoring(self):
         """Start real-time risk monitoring"""

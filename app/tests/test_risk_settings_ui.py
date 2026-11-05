@@ -6,11 +6,17 @@ saves to a pt_config.json in a temporary folder.
 
 from __future__ import annotations
 
+import json
+import os
 import tkinter as tk
+from tkinter import ttk
 
 import pytest
 
 import risk_settings_ui as ui
+import risk_state
+import trading_mode as tm
+from pt_settings_manager import SettingsManager
 
 # --- the window ------------------------------------------------------------------------
 
@@ -31,6 +37,204 @@ def root():
     r.destroy()
 
 
+class Box:
+    """A messagebox that answers ``yes`` and records what it was shown."""
+
+    def __init__(self, yes=True):
+        self.yes = yes
+        self.errors = []
+        self.asked = []
+
+    def showerror(self, title, message, **_):
+        self.errors.append(message)
+
+    def askyesno(self, title, message, **_):
+        self.asked.append((title, message))
+        return self.yes
+
+
+@pytest.fixture
+def folder(tmp_path):
+    return str(tmp_path / "config")
+
+
+@pytest.fixture
+def books(tmp_path):
+    path = tmp_path / "paper"
+    path.mkdir()
+    return str(path)
+
+
+def manager(folder):
+    return SettingsManager("pt_config.json", folder)
+
+
+def settings_path(folder):
+    return os.path.join(folder, "pt_config.json")
+
+
+def on_disk(folder):
+    path = settings_path(folder)
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f).get("risk", {})
+
+
+def open_window(root, folder, books=None, account=None, box=None):
+    calls = []
+    win = ui.RiskSettingsWindow(
+        root,
+        books_dir=books,
+        account_value=lambda: account,
+        manager_factory=lambda: manager(folder),
+        on_saved=lambda: calls.append("saved"),
+        messagebox=box or Box(),
+    )
+    win.withdraw()
+    win.saved_calls = calls
+    return win
+
+
+def texts(win):
+    out = []
+    for w in widgets(win):
+        if isinstance(w, ttk.Label):
+            var = str(w.cget("textvariable"))
+            out.append(str(w.getvar(var)) if var else str(w.cget("text")))
+    return out
+
+
+def widgets(parent):
+    for child in parent.winfo_children():
+        yield child
+        yield from widgets(child)
+
+
+def test_a_new_install_shows_the_default_levels_and_no_peak(root, folder):
+    win = open_window(root, folder)
+    assert {k: v.get() for k, v in win.vars.items()} == {
+        "drawdown_warning_pct": "3",
+        "drawdown_critical_pct": "5",
+        "emergency_drawdown_pct": "8",
+    }
+    assert win.peak_var.get() == "none recorded yet"
+    assert win.account_var.get() == "not reported yet"
+    assert win.drawdown_var.get() == ""
+    assert all(h.get() == "" for h in win.hints.values())
+    shown = texts(win)
+    for label in ("Warning %:", "Critical %:", "Emergency stop %:"):
+        assert label in shown
+    win.destroy()
+
+
+def test_the_peak_the_drawdown_and_each_level_in_dollars(root, folder, books):
+    risk_state.write_state(books, {"peak_value": 10_000.0, "peak_ts": 1.7e9})
+    win = open_window(root, folder, books, account=9_500.0)
+    assert win.peak_var.get().startswith("$10,000.00, seen ")
+    assert win.account_var.get() == "$9,500.00, as last reported by the trader"
+    assert win.drawdown_var.get() == "5.00%"
+    assert {k: v.get() for k, v in win.hints.items()} == {
+        "drawdown_warning_pct": "at $9,700.00 ($300.00 below the peak)",
+        "drawdown_critical_pct": "at $9,500.00 ($500.00 below the peak)",
+        "emergency_drawdown_pct": "at $9,200.00 ($800.00 below the peak)",
+    }
+    win.vars["emergency_drawdown_pct"].set("12.5%")
+    assert win.hints["emergency_drawdown_pct"].get() == (
+        "at $8,750.00 ($1,250.00 below the peak)"
+    )
+    win.vars["emergency_drawdown_pct"].set("x")
+    assert win.hints["emergency_drawdown_pct"].get() == ""
+    win.destroy()
+
+
+def test_save_writes_what_the_trader_reads(root, folder):
+    win = open_window(root, folder)
+    win.vars["drawdown_warning_pct"].set("2")
+    win.vars["drawdown_critical_pct"].set("4.5")
+    win.vars["emergency_drawdown_pct"].set("6%")
+    assert win.save()
+    assert win.saved_calls == ["saved"]
+    assert on_disk(folder) == {
+        "drawdown_warning_pct": 2.0,
+        "drawdown_critical_pct": 4.5,
+        "emergency_drawdown_pct": 6.0,
+    }
+    assert tm.read_drawdown_levels(settings_path(folder)) == tm.DrawdownLevels(
+        2.0, 4.5, 6.0
+    )
+    again = open_window(root, folder)  # shows what was saved
+    assert again.vars["drawdown_critical_pct"].get() == "4.5"
+    again.destroy()
+
+
+@pytest.mark.parametrize(
+    "warning, critical, emergency, said",
+    [
+        ("5", "5", "8", "Warning % must be below Critical %."),
+        ("3", "9", "8", "Critical % must be below Emergency stop %."),
+        ("3", "5", "60", "Emergency stop % must be a number from 1 to 50."),
+        ("0.1", "5", "8", "Warning % must be a number from 0.5 to 50."),
+        ("abc", "5", "8", "Warning % must be a number from 0.5 to 50."),
+    ],
+)
+def test_a_wrong_level_is_refused_and_nothing_is_saved(
+    root, folder, warning, critical, emergency, said
+):
+    box = Box()
+    win = open_window(root, folder, box=box)
+    win.vars["drawdown_warning_pct"].set(warning)
+    win.vars["drawdown_critical_pct"].set(critical)
+    win.vars["emergency_drawdown_pct"].set(emergency)
+    assert not win.save()
+    assert box.errors == [said] and win.status_var.get() == said
+    assert on_disk(folder) == {} and win.saved_calls == []
+    win.destroy()
+
+
+def test_reset_peak_sets_the_peak_to_the_account_value_after_asking(
+    root, folder, books
+):
+    risk_state.write_state(books, {"peak_value": 10_000.0, "peak_ts": 1.7e9})
+    box = Box(yes=False)
+    win = open_window(root, folder, books, account=9_000.0, box=box)
+    assert not win.reset_peak()  # "No": nothing changes
+    assert risk_state.current(books).peak_value == 10_000.0
+    assert "$9,000.00" in box.asked[0][1]
+    box.yes = True
+    assert win.reset_peak()
+    assert risk_state.current(books).peak_value == 9_000.0
+    assert win.peak_var.get().startswith("$9,000.00, seen ")
+    assert win.drawdown_var.get() == "0.00%"
+    win.destroy()
+
+
+def test_reset_peak_needs_an_account_value(root, folder, books):
+    box = Box()
+    win = open_window(root, folder, books, account=None, box=box)
+    assert not win.reset_peak()
+    assert box.asked == [] and box.errors
+    assert not os.path.exists(risk_state.requests_path(books))
+    win.destroy()
+
+
+def test_the_emergency_stop_saved_in_the_window_is_what_the_trader_uses(root, folder):
+    """Acceptance: the stop % changed in the Risk window is the trader's stop."""
+    import pt_trader
+
+    adapter = pt_trader._TraderRiskAdapter(settings_source=settings_path(folder))
+    adapter.peak_value = 1000.0
+    assert not adapter.check_emergency_conditions(950.0)["emergency_stop"]  # 5% < 8%
+    win = open_window(root, folder)
+    win.vars["drawdown_warning_pct"].set("1")
+    win.vars["drawdown_critical_pct"].set("2")
+    win.vars["emergency_drawdown_pct"].set("4")
+    assert win.save()
+    status = adapter.check_emergency_conditions(950.0)  # the same, running trader
+    assert status["emergency_stop"]
+    assert status["reason"] == "Account drawdown 5.0% reached the 4% emergency limit"
+
+
 # --- the window in the hub ----------------------------------------------------------
 
 
@@ -46,14 +250,16 @@ def hub(monkeypatch):
 
 
 def test_settings_opens_the_risk_window_next_to_strategy(hub):
-    from test_settings_window import widgets_of
+    from test_settings_window import label_texts, widgets_of
     from test_trainer_launch import open_settings, press
 
     win = open_settings(hub)
     buttons = [
-        str(w.cget("text")) for w in widgets_of(win) if isinstance(w, tk.ttk.Button)
+        str(w.cget("text")) for w in widgets_of(win) if isinstance(w, ttk.Button)
     ]
     assert buttons.index("Risk...") == buttons.index("Strategy...") + 1
+    line = "Trading stops at a 8% drawdown from the peak; warnings at 3% and 5%"
+    assert line in label_texts(win)
     press(win, "Risk...")
     risk_win = hub._risk_settings_win
     assert isinstance(risk_win, ui.RiskSettingsWindow)
@@ -62,5 +268,22 @@ def test_settings_opens_the_risk_window_next_to_strategy(hub):
     press(win, "Risk...")  # raises the open one rather than opening another
     assert hub._risk_settings_win is risk_win
     risk_win.withdraw()
-    risk_win.destroy()
+
+    risk_win.vars["emergency_drawdown_pct"].set("10")
+    assert risk_win.save()
+    assert (
+        "Trading stops at a 10% drawdown from the peak; warnings at 3% and 5%"
+        in label_texts(win)
+    )
+    assert tm.read_drawdown_levels().emergency_pct == 10.0  # pt_config.json
+    win.destroy()
+
+
+def test_the_hub_shows_the_peak_of_the_books_it_shows(hub):
+    hub._last_total_account_value = 4_800.0
+    risk_state.write_state(hub._books_dir, {"peak_value": 5_000.0})
+    win = hub.open_risk_settings()
+    win.withdraw()
+    assert win.peak_var.get() == "$5,000.00"
+    assert win.drawdown_var.get() == "4.00%"
     win.destroy()

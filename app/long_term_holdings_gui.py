@@ -6,24 +6,36 @@ include them, and nothing here reads or changes the paper or live account. Four
 sub-tabs:
 
 * Holdings: a toolbar (Add Holding, Edit, Delete, Update Prices, Export CSV,
-  Refresh and a search through every column) over the holdings, in the shared
-  table (ui_table.DataTable), with each holding's share of the holdings' current
-  value ("% of Holdings").
-* Portfolio Overview: the holdings' totals beside the allocation, a pie of each
-  holding's share of their current value. With no holdings, only "No holdings to
-  display".
-* Rebalancing: the holdings whose share is further from their target % than their
-  rebalance threshold, worked out again whenever the holdings change, in the shared
-  table; Export CSV and a search.
+  Refresh, the tag filter and a search through every column) over the holdings,
+  in the shared table (ui_table.DataTable), with their tags and each holding's
+  share of the current value of the holdings the tag filter keeps ("% of
+  Holdings"); under the table, the totals of the rows shown. Export CSV writes
+  the holdings the tag filter keeps, with their tags and purchase dates.
+* Portfolio Overview: the tag filter over the totals of the holdings it keeps,
+  beside their allocation, a pie of each one's share of their current value. With
+  no holdings, only "No holdings to display".
+* Rebalancing: of the holdings the tag filter keeps, those whose share of their
+  current value is further from their target % than their rebalance threshold,
+  worked out again whenever the holdings or the filter change, in the shared
+  table; Export CSV, the tag filter and a search.
 * Analytics, from holdings.db: each holding's unrealised P&L % (its current price
   against its average cost) and the prices recorded with Update Prices, as the
   change since each coin's first recorded price. With no holdings, "No data yet".
+  The tag filter does not apply: every holding is charted.
+
+The tag filter (TagFilter) keeps every holding (All), the untagged ones, or those
+with any of the tags chosen; it is one choice for the three sub-tabs that have it,
+read and set from outside with ``tag_selection()``, ``filtered_holdings()`` and
+``set_tag_selection()`` (main_frame gets TAG_FILTER_EVENT when it changes).
 
 Add Holding and Edit open HoldingDialog: the coin from the hub's coins (Settings),
 the exchange from the exchanges in Settings, primary first (or typed, e.g. a
 wallet), and the coin's market on that exchange in the exchange layer's format
 (``BTC-USD`` on Coinbase, ``BTCUSDT`` on Binance). holdings.db keeps the coin as
-before (``BTC``); nothing here changes what it stores.
+before (``BTC``). The position is entered as a quantity or as the dollar amount
+invested (quantity = amount / average cost, to 8 places), the other shown beside
+it; the purchase date and time are optional (``YYYY-MM-DD HH:MM``, local time); tags
+are added (completed from the tags already used) and removed in the dialog.
 """
 
 import csv
@@ -39,7 +51,17 @@ import ui_theme
 import ui_tokens
 
 try:
-    from long_term_holdings import Holding, HoldingsManager, get_holdings_manager
+    from long_term_holdings import (
+        UNTAGGED,
+        Holding,
+        HoldingsManager,
+        clean_tags,
+        filter_holdings,
+        get_holdings_manager,
+        quantity_for_amount,
+        sorted_tags,
+        tags_text,
+    )
 
     HOLDINGS_AVAILABLE = True
 except ImportError:
@@ -73,6 +95,7 @@ HOLDINGS_COLUMNS = (
     "share",
     "target_pct",
     "exchange",
+    "tags",
 )
 HOLDINGS_HEADINGS = {
     "symbol": "Coin",
@@ -83,14 +106,34 @@ HOLDINGS_HEADINGS = {
     "current_value": "Current Value",
     "pnl": "P&L",
     "pnl_pct": "P&L %",
-    # the share of the holdings' own current value, not of the trading account
+    # the share of the current value of the holdings the tag filter keeps, not of
+    # the trading account
     "share": "% of Holdings",
     "target_pct": "Target %",
     "exchange": "Exchange",
+    "tags": "Tags",
 }
-HOLDINGS_NUMERIC = tuple(c for c in HOLDINGS_COLUMNS if c not in ("symbol", "exchange"))
+HOLDINGS_NUMERIC = tuple(
+    c for c in HOLDINGS_COLUMNS if c not in ("symbol", "exchange", "tags")
+)
 NO_HOLDINGS = "No holdings yet"
 NO_HOLDINGS_MATCH = "No holdings match the search"
+NO_TAG_MATCH = "No holdings match the tag filter"
+# the line under the holdings table: the totals of the rows shown
+SHOWN_SUMMARY = (
+    ("Holdings", "holdings_count"),
+    ("Total Cost", "total_cost"),
+    ("Current Value", "total_value"),
+    ("P&L", "total_pnl"),
+    ("P&L %", "total_pnl_pct"),
+)
+
+# ---- the tag filter ----
+
+ALL_LABEL, UNTAGGED_LABEL = "All", "Untagged"
+MENU_MARK = "▾"  # after the choice on the filter's button: it opens a menu
+FILTER_NAMES = 2  # the filter's button names this many of the tags chosen, then "+n"
+TAG_FILTER_EVENT = "<<HoldingsTagFilter>>"  # on main_frame, when the filter changes
 
 # ---- the rebalancing table ----
 
@@ -132,6 +175,34 @@ PNL_TITLE = "Unrealised P&L %"
 LEVEL_LABELS = 8  # past this many coins, the P&L chart's coin names stand upright
 PRICES_TITLE = "Recorded prices, % change"
 ALLOCATION_TITLE = "Allocation, % of Holdings"
+
+# ---- the Add / Edit Holding dialog ----
+
+BY_QUANTITY, BY_AMOUNT = "quantity", "amount"  # how the position is entered
+DATE_FORMAT, TIME_FORMAT = "%Y-%m-%d", "%H:%M"
+DATE_HINT = "YYYY-MM-DD  HH:MM, 24-hour"
+NO_TAGS = "No tags"
+TAGS_PER_ROW = 4  # the dialog's tag buttons wrap after this many
+# keys after which the tag field completes nothing
+NO_COMPLETION_KEYS = frozenset(
+    ("BackSpace", "Delete", "Left", "Right", "Up", "Down", "Home", "End")
+    + ("Return", "KP_Enter", "Tab", "Escape")
+)
+
+
+def split_purchase_date(text: str) -> Tuple[str, str]:
+    """A stored purchase date as the dialog's date and time fields: ("2024-01-15",
+    "10:30") for "2024-01-15 10:30" (or "2024-01-15T10:30:00"), ("2024-01-15", "")
+    for a date alone; text that is not a date stays whole in the date field."""
+    text = str(text or "").strip()
+    if not text:
+        return "", ""
+    try:
+        when = datetime.fromisoformat(text)
+    except ValueError:
+        return text, ""
+    clock = when.strftime(TIME_FORMAT) if len(text) > len("2024-01-15") else ""
+    return when.strftime(DATE_FORMAT), clock
 
 
 def _money(value: float) -> str:
@@ -224,6 +295,78 @@ class ExchangeSymbols:
             return symbol, chosen
 
 
+class TagFilter:
+    """A sub-tab's tag filter, packed left in a toolbar: "Tags" and a button whose
+    menu ticks All, Untagged and each tag in use (``tags()``) as chosen
+    (``chosen()``); a click calls ``on_pick(value)``, value None for All, UNTAGGED
+    or the tag. The window keeps one choice for every sub-tab's filter."""
+
+    def __init__(
+        self,
+        bar: tk.Misc,
+        *,
+        tags: Callable[[], Sequence[str]],
+        chosen: Callable[[], Sequence[str]],
+        on_pick: Callable[[Optional[str]], None],
+    ):
+        self._tags, self._chosen, self._on_pick = tags, chosen, on_pick
+        self._vars: List[tk.BooleanVar] = []
+        self.text = ALL_LABEL
+        ttk.Label(bar, text="Tags").pack(side="left", padx=(0, ui_tokens.SPACE["xs"]))
+        # a toolbar button (the theme's), whose menu opens under it
+        self.button = ttk.Button(bar, command=self.open)
+        self.menu = tk.Menu(self.button, tearoff=0)
+        self.button.pack(side="left", padx=(0, ui_tokens.SPACE["sm"]))
+        self.show(ALL_LABEL)
+        self.fill()
+
+    def open(self) -> None:
+        """The menu, under the button."""
+        self.fill()
+        b = self.button
+        try:
+            self.menu.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+        finally:
+            self.menu.grab_release()
+
+    def fill(self) -> None:
+        """The menu, from the tags in use and the choice now."""
+        menu = self.menu
+        menu.delete(0, "end")
+        self._vars = []
+        chosen = {str(c).casefold() for c in self._chosen()}
+
+        def item(label: str, value: Optional[str], ticked: bool) -> None:
+            var = tk.BooleanVar(master=menu, value=ticked)
+            self._vars.append(var)
+            menu.add_checkbutton(
+                label=label, variable=var, command=lambda: self._on_pick(value)
+            )
+
+        item(ALL_LABEL, None, not chosen)
+        item(UNTAGGED_LABEL, UNTAGGED, UNTAGGED in chosen)
+        tags = list(self._tags())
+        if tags:
+            menu.add_separator()
+        for tag in tags:
+            item(tag, tag, tag.casefold() in chosen)
+
+    def entries(self) -> List[Tuple[str, bool]]:
+        """The menu's items, (label, ticked), as it shows them now (tests)."""
+        self.fill()
+        labels = [
+            self.menu.entrycget(i, "label")
+            for i in range(self.menu.index("end") + 1)
+            if self.menu.type(i) == "checkbutton"
+        ]
+        return [(label, bool(v.get())) for label, v in zip(labels, self._vars)]
+
+    def show(self, text: str) -> None:
+        """The choice on the button: "All", "Pension, Steve" ..."""
+        self.text = text
+        self.button.configure(text=f"{text}  {MENU_MARK}")
+
+
 class HoldingsManagementGUI:
     """The Long-term Holdings tab's four sub-tabs; see the module docstring.
 
@@ -253,6 +396,9 @@ class HoldingsManagementGUI:
         self.holdings_manager = manager
         self.selected_holding: Optional["Holding"] = None
         self.dialog: Optional["HoldingDialog"] = None
+        # the tag filter: the tags chosen (UNTAGGED: the holdings with none), () All
+        self._tag_selection: Tuple[str, ...] = ()
+        self.tag_filters: List[TagFilter] = []
         # what the Analytics charts show (tests): [(label, P&L %)], {coin: [% change]}
         self.analytics_pnl: List[Tuple[str, float]] = []
         self.analytics_prices: Dict[str, List[float]] = {}
@@ -300,8 +446,21 @@ class HoldingsManagementGUI:
         bar.pack(side="top", fill="x", padx=gap, pady=(gap, gap))
         return bar
 
+    def _tag_filter(self, bar: tk.Widget) -> TagFilter:
+        """A tag filter in ``bar``, showing the window's one choice."""
+        tag_filter = TagFilter(
+            bar,
+            tags=self._tags_in_use,
+            chosen=self.tag_selection,
+            on_pick=self.pick_tag,
+        )
+        tag_filter.show(self.tag_filter_text())
+        self.tag_filters.append(tag_filter)
+        return tag_filter
+
     def setup_holdings_tab(self):
-        """A toolbar over the holdings table."""
+        """A toolbar (with the tag filter) over the holdings table, and the totals of
+        the rows shown under it."""
         gap = ui_tokens.SPACE["sm"]
         bar = self._toolbar(self.holdings_tab)
         for text, command in (
@@ -313,8 +472,20 @@ class HoldingsManagementGUI:
             ("Refresh", self.refresh_holdings_display),
         ):
             ttk.Button(bar, text=text, command=command).pack(side="left", padx=(0, gap))
+        self.holdings_filter = self._tag_filter(bar)
         self.holdings_search = ui_table.SearchBox(bar, self.show_holdings)
         self.search_var = self.holdings_search.var
+
+        # under the table (packed ahead of it: the table takes the room left)
+        self.holdings_summary = ttk.Frame(self.holdings_tab)
+        self.shown_labels: Dict[str, ttk.Label] = {}
+        for i, (text, key) in enumerate(SHOWN_SUMMARY):
+            ttk.Label(self.holdings_summary, text=text, style="Muted.TLabel").pack(
+                side="left", padx=(gap * 2 if i else 0, ui_tokens.SPACE["xs"])
+            )
+            value = ttk.Label(self.holdings_summary, text="")
+            value.pack(side="left")
+            self.shown_labels[key] = value
 
         self.holdings_table = ui_table.DataTable(
             self.holdings_tab,
@@ -333,9 +504,11 @@ class HoldingsManagementGUI:
         self.holdings_tree.bind("<<TreeviewSelect>>", self.on_holding_select)
 
     def setup_portfolio_tab(self):
-        """The totals beside the allocation chart; with no holdings, one message."""
+        """The tag filter over the totals and the allocation chart of the holdings it
+        keeps; with none, one message."""
         gap = ui_tokens.SPACE["sm"]
         tab = self.portfolio_tab
+        self.overview_filter = self._tag_filter(self._toolbar(tab))
         self.overview_empty = ttk.Label(
             tab, text=NO_OVERVIEW, style="Muted.TLabel", anchor="center"
         )
@@ -366,12 +539,13 @@ class HoldingsManagementGUI:
             self.portfolio_widget = self.portfolio_canvas.get_tk_widget()
 
     def setup_rebalancing_tab(self):
-        """A toolbar over the suggestions table."""
+        """A toolbar (with the tag filter) over the suggestions table."""
         gap = ui_tokens.SPACE["sm"]
         bar = self._toolbar(self.rebalancing_tab)
         ttk.Button(bar, text="Export CSV", command=self.export_suggestions).pack(
             side="left", padx=(0, gap)
         )
+        self.suggestions_filter = self._tag_filter(bar)
         self.suggestions_search = ui_table.SearchBox(bar, self.show_suggestions)
 
         self.suggestions_table = ui_table.DataTable(
@@ -417,13 +591,93 @@ class HoldingsManagementGUI:
                 "Long-term Holdings", f"Error reading the holdings: {e}"
             )
             return
+        # a tag no holding has any more leaves the filter (none left: All)
+        before = self._tag_selection
+        self._tag_selection = self._valid_selection(before)
+        self._show_tag_filter()
         self.show_holdings()
         self.update_portfolio_summary()
         self.show_suggestions()
         self.update_analytics()
+        if self._tag_selection != before:
+            self._tag_filter_changed()
 
     def _holdings(self) -> List["Holding"]:
         return list(getattr(self.holdings_manager, "holdings", None) or [])
+
+    # ---- the tag filter (Holdings, Portfolio Overview, Rebalancing) ----
+
+    def tag_selection(self) -> Tuple[str, ...]:
+        """The tags the filter keeps, UNTAGGED for the holdings with none; () for
+        All."""
+        return self._tag_selection
+
+    def filtered_holdings(self) -> List["Holding"]:
+        """The holdings the tag filter keeps, in holdings.db's order (by coin)."""
+        return filter_holdings(self._holdings(), self._tag_selection)
+
+    def set_tag_selection(self, selection: Optional[Sequence[str]] = ()) -> None:
+        """Filter by ``selection``: tags (in any case) and UNTAGGED; () or None for
+        All. Tags no holding has are dropped. The sub-tabs the filter applies to show
+        the holdings it keeps, and main_frame gets TAG_FILTER_EVENT."""
+        self._tag_selection = self._valid_selection(selection)
+        self._show_tag_filter()
+        self.show_filtered()
+        self._tag_filter_changed()
+
+    def pick_tag(self, value: Optional[str]) -> None:
+        """A click in a filter's menu: All (None) clears the choice; Untagged or a
+        tag joins it, or leaves it when it is in it already."""
+        if value is None:
+            self.set_tag_selection(())
+            return
+        chosen = list(self._tag_selection)
+        folded = [c.casefold() for c in chosen]
+        if value.casefold() in folded:
+            del chosen[folded.index(value.casefold())]
+        else:
+            chosen.append(value)
+        self.set_tag_selection(chosen)
+
+    def tag_filter_text(self) -> str:
+        """What the filters' buttons show: "All", or the choice ("Untagged",
+        "Pension, Steve", "Pension, Steve +1")."""
+        names = [UNTAGGED_LABEL if v == UNTAGGED else v for v in self._tag_selection]
+        if not names:
+            return ALL_LABEL
+        more = len(names) - FILTER_NAMES
+        shown = ", ".join(names[:FILTER_NAMES])
+        return f"{shown} +{more}" if more > 0 else shown
+
+    def _tags_in_use(self) -> List[str]:
+        return sorted_tags(t for h in self._holdings() for t in h.tags)
+
+    def _valid_selection(self, selection: Optional[Sequence[str]]) -> Tuple[str, ...]:
+        """``selection`` with only UNTAGGED and the tags in use (in their own
+        spelling), once each: UNTAGGED first, then the tags alphabetically."""
+        in_use = {t.casefold(): t for t in self._tags_in_use()}
+        values = [str(v).strip() for v in (selection or ())]
+        tags = sorted_tags(
+            in_use[v.casefold()] for v in values if v.casefold() in in_use
+        )
+        return ((UNTAGGED,) if UNTAGGED in values else ()) + tuple(tags)
+
+    def _show_tag_filter(self) -> None:
+        text = self.tag_filter_text()
+        for tag_filter in self.tag_filters:
+            tag_filter.show(text)
+
+    def _tag_filter_changed(self) -> None:
+        try:
+            self.main_frame.event_generate(TAG_FILTER_EVENT)
+        except tk.TclError:
+            pass  # the window is gone
+
+    def show_filtered(self) -> None:
+        """Show again what the tag filter applies to."""
+        self.show_holdings()
+        self.update_portfolio_summary()
+        self.show_suggestions()
 
     # ---- Holdings ----
 
@@ -443,15 +697,20 @@ class HoldingsManagementGUI:
             share,
             f"{h.target_percentage:.1f}%",
             h.exchange,
+            tags_text(h.tags),
         )
 
     def show_holdings(self) -> None:
-        """The holdings the search keeps; the selection stays where it can."""
+        """The holdings the tag filter and the search keep, each with its share of
+        the current value of those the tag filter keeps, and their totals under the
+        table; the selection stays where it can."""
         tree = self.holdings_tree
         selected = set(tree.selection())
-        holdings = self._holdings()
+        everything = self._holdings()
+        holdings = filter_holdings(everything, self._tag_selection)
         total = sum(max(0.0, h.current_value) for h in holdings)
         tree.delete(*tree.get_children())
+        shown = []
         for h in holdings:
             cells = self.holding_cells(h, total)
             if not self.holdings_search.matches(cells):
@@ -462,14 +721,53 @@ class HoldingsManagementGUI:
                 else ("loss",) if h.unrealized_pnl < 0 else ()
             )
             tree.insert("", "end", iid=str(h.id), values=cells, tags=tags)
+            shown.append(h)
         keep = [iid for iid in selected if tree.exists(iid)]
         if keep:
             tree.selection_set(keep)
         self.selected_holding = self._selected()
-        self.holdings_table.empty.configure(
-            text=NO_HOLDINGS_MATCH if holdings else NO_HOLDINGS
-        )
+        if not everything:
+            empty = NO_HOLDINGS
+        elif not holdings:
+            empty = NO_TAG_MATCH
+        else:
+            empty = NO_HOLDINGS_MATCH
+        self.holdings_table.empty.configure(text=empty)
+        self.show_totals(shown)
         self.holdings_table.settle()
+
+    def show_totals(self, shown: Sequence["Holding"]) -> None:
+        """The line under the holdings table: the totals of the rows shown (none:
+        no line)."""
+        self._pack_summary(bool(shown))
+        if not shown:
+            return
+        summary = self.holdings_manager.get_portfolio_summary(list(shown))
+        labels = self.shown_labels
+        labels["holdings_count"].configure(text=f"{summary['holdings_count']}")
+        labels["total_cost"].configure(text=self._money(summary["total_cost"]))
+        labels["total_value"].configure(text=self._money(summary["total_value"]))
+        pnl_style = "Good.TLabel" if summary["total_pnl"] >= 0 else "Bad.TLabel"
+        labels["total_pnl"].configure(
+            text=signed_money(summary["total_pnl"], self._money), style=pnl_style
+        )
+        labels["total_pnl_pct"].configure(
+            text=f"{summary['total_pnl_percentage']:+.2f}%", style=pnl_style
+        )
+
+    def _pack_summary(self, shown: bool) -> None:
+        frame = self.holdings_summary
+        if shown and not frame.winfo_manager():
+            gap = ui_tokens.SPACE["sm"]
+            frame.pack(
+                side="bottom",
+                fill="x",
+                padx=gap,
+                pady=(ui_tokens.SPACE["xs"], gap),
+                before=self.holdings_table,
+            )
+        elif not shown and frame.winfo_manager():
+            frame.pack_forget()
 
     def _selected(self) -> Optional["Holding"]:
         chosen = {str(iid) for iid in self.holdings_tree.selection()}
@@ -484,15 +782,19 @@ class HoldingsManagementGUI:
     # ---- Portfolio Overview ----
 
     def update_portfolio_summary(self):
-        """The totals and the allocation; with no holdings, only the message."""
-        holdings = self._holdings()
+        """The totals and the allocation of the holdings the tag filter keeps; with
+        none, only the message."""
+        holdings = self.filtered_holdings()
+        self.overview_empty.configure(
+            text=NO_TAG_MATCH if self._holdings() and not holdings else NO_OVERVIEW
+        )
         _show(self.overview_empty, not holdings)
         _show(self.overview_body, bool(holdings))
         if not holdings:
             if MATPLOTLIB_AVAILABLE:
                 self.portfolio_fig.clear()
             return
-        summary = self.holdings_manager.get_portfolio_summary()
+        summary = self.holdings_manager.get_portfolio_summary(holdings)
         labels = self.summary_labels
         labels["holdings_count"].config(text=f"{summary['holdings_count']}")
         labels["total_cost"].config(text=self._money(summary["total_cost"]))
@@ -523,12 +825,13 @@ class HoldingsManagementGUI:
         ]
 
     def update_portfolio_chart(self):
-        """The allocation pie: each holding's share of the holdings' current value."""
+        """The allocation pie: each holding's share of the current value of the
+        holdings the tag filter keeps."""
         if not MATPLOTLIB_AVAILABLE:
             self.chart_note.configure(text=NO_CHARTS)
             _show(self.chart_note, True)
             return
-        priced = [h for h in self._holdings() if h.current_value > 0]
+        priced = [h for h in self.filtered_holdings() if h.current_value > 0]
         self.portfolio_fig.clear()
         if not priced:
             self.chart_note.configure(text=NO_PRICES)
@@ -570,14 +873,17 @@ class HoldingsManagementGUI:
         )
 
     def show_suggestions(self) -> None:
-        """The holdings to buy or sell to reach their target %, as the search keeps
-        them; worked out from the holdings each time they change."""
+        """The holdings the tag filter keeps to buy or sell to reach their target %
+        of those holdings' current value, as the search keeps them; worked out each
+        time the holdings or the filter change."""
         tree = self.suggestions_tree
         tree.delete(*tree.get_children())
-        holdings = self._holdings()
+        holdings = self.filtered_holdings()
         try:
             suggestions = (
-                self.holdings_manager.get_rebalancing_suggestions() if holdings else []
+                self.holdings_manager.get_rebalancing_suggestions(holdings)
+                if holdings
+                else []
             )
         except Exception as e:
             print(f"Error generating suggestions: {e}")
@@ -588,8 +894,10 @@ class HoldingsManagementGUI:
                 continue
             tag = "buy" if str(s["action"]).upper() == "BUY" else "sell"
             tree.insert("", "end", values=cells, tags=(tag,))
-        if not holdings:
+        if not self._holdings():
             empty = NO_HOLDINGS
+        elif not holdings:
+            empty = NO_TAG_MATCH
         elif suggestions:
             empty = NO_SUGGESTIONS_MATCH
         elif not any(h.target_percentage > 0 for h in holdings):
@@ -739,12 +1047,17 @@ class HoldingsManagementGUI:
                     return self.dialog
             except tk.TclError:
                 pass
+        try:
+            used = self.holdings_manager.all_tags()
+        except Exception:
+            used = []
         self.dialog = HoldingDialog(
             self.main_frame,
             coins=self._coin_list(),
             symbols=self.symbols,
             holding=holding,
             on_save=self.save_holding,
+            tags=used,
         )
         return self.dialog
 
@@ -816,22 +1129,26 @@ class HoldingsManagementGUI:
         if dialog.updated:
             self.refresh_holdings_display()
 
-    def export_holdings(self):
-        """Export the holdings to a CSV file."""
+    def export_holdings(self, file_path: Optional[str] = None) -> bool:
+        """Export the holdings the tag filter keeps (every one for All), with their
+        tags and purchase dates, to a CSV file."""
         if not HOLDINGS_AVAILABLE or not self.holdings_manager:
-            return
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            title="Export Holdings",
-        )
-        if file_path:
-            if self.holdings_manager.export_holdings_csv(file_path):
-                messagebox.showinfo("Export Holdings", f"Exported to {file_path}")
-            else:
-                messagebox.showerror(
-                    "Export Holdings", "The holdings were not exported."
-                )
+            return False
+        if file_path is None:
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                title="Export Holdings",
+            )
+        if not file_path:
+            return False
+        if not self.holdings_manager.export_holdings_csv(
+            file_path, self.filtered_holdings()
+        ):
+            messagebox.showerror("Export Holdings", "The holdings were not exported.")
+            return False
+        messagebox.showinfo("Export Holdings", f"Exported to {file_path}")
+        return True
 
     def export_suggestions(self, file_path: Optional[str] = None) -> bool:
         """Export the suggestions shown, in their order, to a CSV file."""
@@ -866,7 +1183,8 @@ class HoldingDialog(tk.Toplevel):
     ``coins`` are the hub's coins (a holding of a coin no longer among them keeps
     it); ``symbols`` an ExchangeSymbols; ``holding`` the holding edited (None: a new
     one); ``on_save(holding)`` saves the new or edited Holding and says whether it
-    did; the dialog closes once it has."""
+    did; the dialog closes once it has. ``tags`` are the tags already used, which
+    the tag field completes and lists."""
 
     def __init__(
         self,
@@ -876,6 +1194,7 @@ class HoldingDialog(tk.Toplevel):
         symbols: ExchangeSymbols,
         on_save: Callable[["Holding"], bool],
         holding: Optional["Holding"] = None,
+        tags: Sequence[str] = (),
     ):
         from pt_exchange_abstraction import exchange_name
 
@@ -888,6 +1207,10 @@ class HoldingDialog(tk.Toplevel):
         self.on_save = on_save
         self.result: Optional["Holding"] = None
         self.market: Tuple[str, str] = ("", "")
+        self.known_tags = sorted_tags(tags)
+        self.tags: List[str] = sorted_tags(holding.tags) if holding is not None else []
+        self.tag_buttons: Dict[str, ttk.Button] = {}
+        self._working = False  # the quantity or the amount is being worked out
 
         self.coins = [str(c).strip().upper() for c in coins if str(c).strip()]
         if holding is not None and holding.symbol and holding.symbol not in self.coins:
@@ -902,10 +1225,20 @@ class HoldingDialog(tk.Toplevel):
             master=self, value=h.symbol if h else (self.coins[0] if self.coins else "")
         )
         self.exchange_var = tk.StringVar(master=self, value=h.exchange if h else "")
+        self.entry_mode = tk.StringVar(master=self, value=BY_QUANTITY)
         self.quantity_var = tk.StringVar(master=self, value=text(h and h.quantity))
+        self.amount_var = tk.StringVar(
+            master=self,
+            value=f"{h.total_cost:.2f}" if h and h.total_cost > 0 else "",
+        )
         self.cost_var = tk.StringVar(master=self, value=text(h and h.average_cost))
         self.price_var = tk.StringVar(master=self, value=text(h and h.current_price))
-        self.date_var = tk.StringVar(master=self, value=h.purchase_date if h else "")
+        # a purchase date that is not a date (typed before) is kept as it is
+        day, clock = split_purchase_date(h.purchase_date if h else "")
+        self._kept_date = day if (h and day == (h.purchase_date or "").strip()) else ""
+        self.date_var = tk.StringVar(master=self, value=day)
+        self.time_var = tk.StringVar(master=self, value=clock)
+        self.tag_var = tk.StringVar(master=self)
         self.target_var = tk.StringVar(
             master=self, value=text(h and h.target_percentage)
         )
@@ -947,13 +1280,43 @@ class HoldingDialog(tk.Toplevel):
         field("Exchange", self.exchange_box)
         self.market_label = ttk.Label(body, text="", style="Muted.TLabel")
         field("Market", self.market_label)
+        # the position: a quantity, or the dollars invested; the other is worked out
+        modes = ttk.Frame(body)
+        for label, value in (("Quantity", BY_QUANTITY), ("Amount ($)", BY_AMOUNT)):
+            ttk.Radiobutton(
+                modes, text=label, value=value, variable=self.entry_mode
+            ).pack(side="left", padx=(0, gap))
+        field("Position", modes)
         self.quantity_entry = ttk.Entry(body, textvariable=self.quantity_var, width=20)
         field("Quantity", self.quantity_entry)
+        self.amount_entry = ttk.Entry(body, textvariable=self.amount_var, width=20)
+        field("Amount Invested ($)", self.amount_entry)
         field("Average Cost ($)", ttk.Entry(body, textvariable=self.cost_var, width=20))
         field(
             "Current Price ($)", ttk.Entry(body, textvariable=self.price_var, width=20)
         )
-        field("Purchase Date", ttk.Entry(body, textvariable=self.date_var, width=20))
+        when = ttk.Frame(body)
+        self.date_entry = ttk.Entry(when, textvariable=self.date_var, width=11)
+        self.date_entry.pack(side="left")
+        self.time_entry = ttk.Entry(when, textvariable=self.time_var, width=6)
+        self.time_entry.pack(side="left", padx=(gap, 0))
+        ttk.Label(when, text=DATE_HINT, style="Muted.TLabel").pack(
+            side="left", padx=(gap, 0)
+        )
+        field("Purchase Date", when)
+        # the tags: typed (completed from the tags already used) or picked from the
+        # list, each shown as a button that removes it
+        tag_area = ttk.Frame(body)
+        typing = ttk.Frame(tag_area)
+        typing.pack(side="top", fill="x")
+        self.tag_box = ttk.Combobox(typing, textvariable=self.tag_var, width=18)
+        self.tag_box.pack(side="left", fill="x", expand=True)
+        ttk.Button(typing, text="Add", command=self.add_tag).pack(
+            side="left", padx=(gap, 0)
+        )
+        self.tags_frame = ttk.Frame(tag_area)
+        self.tags_frame.pack(side="top", fill="x", pady=(ui_tokens.SPACE["xs"], 0))
+        field("Tags", tag_area)
         field("Target %", ttk.Entry(body, textvariable=self.target_var, width=20))
         field(
             "Rebalance Threshold %",
@@ -973,8 +1336,16 @@ class HoldingDialog(tk.Toplevel):
 
         self.coin_var.trace_add("write", lambda *_: self.update_market())
         self.exchange_var.trace_add("write", lambda *_: self.update_market())
+        self.entry_mode.trace_add("write", lambda *_: self.set_entry_mode())
+        for var in (self.quantity_var, self.amount_var, self.cost_var):
+            var.trace_add("write", lambda *_: self.update_position())
+        for key in ("<Return>", "<KP_Enter>", "<<ComboboxSelected>>"):
+            self.tag_box.bind(key, self._add_typed_tag)
+        self.tag_box.bind("<KeyRelease>", self.complete_tag)
         self.bind("<Escape>", lambda _e: self.destroy())
         self.update_market()
+        self.set_entry_mode()
+        self.show_tags()
         self.quantity_entry.focus_set()
         try:
             self.grab_set()
@@ -999,8 +1370,172 @@ class HoldingDialog(tk.Toplevel):
         where = f" on {exchange_name(exchange)}" if exchange else ""
         self.market_label.configure(text=f"{pair}{where}")
 
+    # ---- the position: a quantity or an amount ----
+
+    def by_amount(self) -> bool:
+        return self.entry_mode.get() == BY_AMOUNT
+
+    def set_entry_mode(self) -> None:
+        """The field typed in (the quantity or the amount) takes input; the other
+        shows what is worked out from it."""
+        typed, worked = (
+            (self.amount_entry, self.quantity_entry)
+            if self.by_amount()
+            else (self.quantity_entry, self.amount_entry)
+        )
+        typed.state(["!disabled"])
+        worked.state(["disabled"])
+
+    def update_position(self) -> None:
+        """Work out the field not typed in: the quantity from the amount (amount /
+        average cost, rounded to 8 places) or the amount from the quantity
+        (quantity x average cost)."""
+        if self._working:
+            return
+        self._working = True
+        try:
+            by_amount = self.by_amount()
+            typed = self.amount_var if by_amount else self.quantity_var
+            try:
+                value, cost = _number(typed.get()), _number(self.cost_var.get())
+            except ValueError:
+                value, cost = 0.0, 0.0
+            worked = ""
+            if value > 0 and cost > 0:
+                worked = (
+                    plain_number(quantity_for_amount(value, cost))
+                    if by_amount
+                    else f"{value * cost:.2f}"
+                )
+            (self.quantity_var if by_amount else self.amount_var).set(worked)
+        finally:
+            self._working = False
+
+    # ---- the tags ----
+
+    def _offered(self) -> List[str]:
+        """The tags already used that the holding does not have."""
+        own = {t.casefold() for t in self.tags}
+        return [t for t in self.known_tags if t.casefold() not in own]
+
+    def _offer(self, typed: str = "") -> None:
+        """The tag field's list: the tags offered that hold what is typed."""
+        typed = typed.strip().casefold()
+        self.tag_box.configure(
+            values=[t for t in self._offered() if typed in t.casefold()]
+        )
+
+    def add_tag(self, text: Optional[str] = None) -> List[str]:
+        """Add ``text``'s tags (None: those typed in the tag field, which is then
+        cleared), several separated by commas; a tag already used keeps its own
+        spelling. The holding's tags, after."""
+        typed = text is None
+        text = self.tag_var.get() if typed else text
+        spelling = {t.casefold(): t for t in self.known_tags}
+        for tag in clean_tags([text]):
+            if tag.casefold() not in {t.casefold() for t in self.tags}:
+                self.tags.append(spelling.get(tag.casefold(), tag))
+        self.tags = sorted_tags(self.tags)
+        if typed:
+            self.tag_var.set("")
+        self.show_tags()
+        return list(self.tags)
+
+    def _add_typed_tag(self, _event=None) -> str:
+        self.add_tag()
+        return "break"
+
+    def remove_tag(self, tag: str) -> List[str]:
+        """Take ``tag`` off the holding. The holding's tags, after."""
+        self.tags = [t for t in self.tags if t.casefold() != tag.casefold()]
+        self.show_tags()
+        return list(self.tags)
+
+    def show_tags(self) -> None:
+        """A button for each of the holding's tags (a click removes it), or "No
+        tags"; the tags already used, less these, in the tag field's list."""
+        gap = ui_tokens.SPACE["sm"]
+        for child in self.tags_frame.winfo_children():
+            child.destroy()
+        self.tag_buttons = {}
+        if not self.tags:
+            ttk.Label(self.tags_frame, text=NO_TAGS, style="Muted.TLabel").grid(
+                row=0, column=0, sticky="w"
+            )
+        for n, tag in enumerate(self.tags):
+            button = ttk.Button(
+                self.tags_frame,
+                text=f"{tag}  ×",
+                command=lambda t=tag: self.remove_tag(t),
+            )
+            button.grid(
+                row=n // TAGS_PER_ROW,
+                column=n % TAGS_PER_ROW,
+                sticky="w",
+                padx=(0, gap),
+                pady=(0, ui_tokens.SPACE["xs"]),
+            )
+            self.tag_buttons[tag] = button
+        self._offer(self.tag_var.get())
+
+    def complete_tag(self, event=None) -> None:
+        """Complete the tag being typed (after the last comma) from the tags already
+        used: the rest of the first that starts with it, selected, so the next key
+        replaces it. The list shows the tags that hold what is typed."""
+        box = self.tag_box
+        text = box.get()
+        typed = text.rpartition(",")[2].lstrip()
+        if event is not None:
+            char = getattr(event, "char", "") or ""
+            if event.keysym in NO_COMPLETION_KEYS or not char.isprintable():
+                self._offer(typed)
+                return
+        if typed and box.index("insert") == len(text):
+            for tag in self._offered():
+                if len(tag) > len(typed) and tag.casefold().startswith(
+                    typed.casefold()
+                ):
+                    box.insert("end", tag[len(typed) :])
+                    box.selection_range(len(text), "end")
+                    box.icursor(len(text))
+                    break
+        self._offer(typed)
+
+    # ---- saving ----
+
     def _refuse(self, message: str) -> None:
         messagebox.showerror(self.title(), message, parent=self)
+
+    def purchase_date(self) -> Optional[str]:
+        """The purchase date and time as kept: "YYYY-MM-DD HH:MM", "YYYY-MM-DD" or
+        "" (neither given); None, after saying why, when they are not a date and a
+        time. A purchase date typed before, not a date, is kept as it is."""
+        day, clock = self.date_var.get().strip(), self.time_var.get().strip()
+        if not day and not clock:
+            return ""
+        if self._kept_date and day == self._kept_date and not clock:
+            return day
+        if not day:
+            self._refuse("Enter the purchase date for the time.")
+            return None
+        try:
+            when = datetime.strptime(day, DATE_FORMAT)
+        except ValueError:
+            self._refuse("Enter the purchase date as YYYY-MM-DD.")
+            return None
+        text = when.strftime(DATE_FORMAT)
+        if clock:
+            try:
+                at = datetime.strptime(clock, TIME_FORMAT)
+            except ValueError:
+                self._refuse("Enter the purchase time as HH:MM, 24-hour.")
+                return None
+            when = when.replace(hour=at.hour, minute=at.minute)
+            text = when.strftime(f"{DATE_FORMAT} {TIME_FORMAT}")
+        if when > datetime.now():
+            self._refuse("The purchase date cannot be in the future.")
+            return None
+        return text
 
     def save(self) -> Optional["Holding"]:
         """Check the fields and save the holding; the dialog closes once it is."""
@@ -1008,14 +1543,22 @@ class HoldingDialog(tk.Toplevel):
         if not coin:
             self._refuse("Choose a coin.")
             return None
+        by_amount = self.by_amount()
         try:
-            quantity = _number(self.quantity_var.get())
+            quantity = _number(self.quantity_var.get())  # by amount: worked out
+            amount = _number(self.amount_var.get()) if by_amount else 0.0
             cost = _number(self.cost_var.get())
             price = _number(self.price_var.get())
             target = _number(self.target_var.get())
             threshold = _number(self.threshold_var.get(), 5.0)
         except ValueError:
             self._refuse("Enter numbers in the number fields.")
+            return None
+        if by_amount and amount <= 0:
+            self._refuse("Amount invested must be greater than 0.")
+            return None
+        if by_amount and cost <= 0:
+            self._refuse("Average cost must be greater than 0.")
             return None
         if quantity <= 0:
             self._refuse("Quantity must be greater than 0.")
@@ -1032,6 +1575,11 @@ class HoldingDialog(tk.Toplevel):
         if threshold < 0:
             self._refuse("Rebalance threshold cannot be negative.")
             return None
+        purchased = self.purchase_date()
+        if purchased is None:
+            return None
+        if self.tag_var.get().strip():  # typed but not added yet
+            self.add_tag()
         holding = Holding(
             id=self.holding.id if self.holding is not None else None,
             symbol=coin,  # the coin, as holdings.db has always kept it
@@ -1039,10 +1587,11 @@ class HoldingDialog(tk.Toplevel):
             average_cost=cost,
             current_price=price,
             exchange=self.exchange_var.get().strip(),
-            purchase_date=self.date_var.get().strip(),
+            purchase_date=purchased,
             notes=self.notes_text.get("1.0", tk.END).strip(),
             target_percentage=target,
             rebalance_threshold=threshold,
+            tags=list(self.tags),
         )
         if not self.on_save(holding):
             return None

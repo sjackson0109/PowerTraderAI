@@ -1,18 +1,27 @@
 """
 Long-term Holdings Management System (Item 20)
 Manages cryptocurrency portfolios with long-term investment tracking
+
+Tags (owner, 2026-11-04): each holding has none, one or more free-text labels
+("Steve", "Pension"), kept in holdings.db's ``holding_tags`` table, one row per
+holding and tag. The table is created when holdings.db is opened if it is not there
+yet; the ``holdings`` table and its rows are left exactly as they are, so a holding
+from before has no tags. Tags compare without regard to case and hold no commas.
+A tag selection (``filter_holdings``) keeps the holdings with any of its tags;
+UNTAGGED in it keeps those with none, and an empty one keeps every holding.
 """
 
 import json
 import os
+import re
 import sqlite3
 import tkinter as tk
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:
     import pandas as pd
@@ -46,6 +55,82 @@ def _connect(path: str):
         conn.close()
 
 
+# ---- tags ----
+
+UNTAGGED = ""  # in a tag selection: the holdings with no tags (no tag is blank)
+TAG_SEPARATOR = ", "  # between a holding's tags in the table and the CSV export
+QUANTITY_DECIMALS = 8  # a quantity worked out from an amount is rounded to this
+EXPORT_COLUMNS = (  # Export CSV's columns, in order
+    "Symbol",
+    "Quantity",
+    "Average Cost",
+    "Current Price",
+    "Total Cost",
+    "Current Value",
+    "Unrealized P&L",
+    "P&L %",
+    "Exchange",
+    "Purchase Date",
+    "Tags",
+    "Target %",
+    "Notes",
+)
+
+
+def clean_tags(tags: Iterable[str]) -> List[str]:
+    """``tags`` as kept: each trimmed, its inner spaces made single, commas split it,
+    blanks dropped, and only the first of tags differing only in case."""
+    kept: List[str] = []
+    seen = set()
+    for text in tags or ():
+        for part in str(text).split(","):
+            tag = re.sub(r"\s+", " ", part).strip()
+            if tag and tag.casefold() not in seen:
+                seen.add(tag.casefold())
+                kept.append(tag)
+    return kept
+
+
+def sorted_tags(tags: Iterable[str]) -> List[str]:
+    return sorted(clean_tags(tags), key=lambda t: (t.casefold(), t))
+
+
+def tags_text(tags: Iterable[str]) -> str:
+    """A holding's tags in one line, in alphabetical order: "Pension, Steve"."""
+    return TAG_SEPARATOR.join(sorted_tags(tags))
+
+
+def matches_tags(holding: "Holding", selection: Iterable[str] = ()) -> bool:
+    """Whether ``holding`` is kept by the tag selection: any of its tags is in it
+    (UNTAGGED: it has none); an empty selection keeps every holding."""
+    wanted = {str(t).strip().casefold() for t in selection or ()}
+    if not wanted:
+        return True
+    own = {t.casefold() for t in clean_tags(holding.tags)}
+    if not own:
+        return UNTAGGED in wanted
+    return bool(own & wanted)
+
+
+def filter_holdings(
+    holdings: Iterable["Holding"], selection: Iterable[str] = ()
+) -> List["Holding"]:
+    """The holdings the tag selection keeps, in their order (see matches_tags)."""
+    selection = tuple(selection or ())
+    return [h for h in holdings if matches_tags(h, selection)]
+
+
+def quantity_for_amount(amount: float, average_cost: float) -> float:
+    """The quantity ``amount`` dollars buy at ``average_cost`` dollars a coin,
+    rounded half up to QUANTITY_DECIMALS places; ValueError unless the cost is
+    above 0."""
+    if not average_cost > 0:
+        raise ValueError("the average cost must be greater than 0")
+    step = Decimal(1).scaleb(-QUANTITY_DECIMALS)
+    exact = Decimal(str(amount)) / Decimal(str(average_cost))
+    return float(exact.quantize(step, rounding=ROUND_HALF_UP))
+
+
 @dataclass
 class Holding:
     """Represents a long-term cryptocurrency holding"""
@@ -56,11 +141,14 @@ class Holding:
     average_cost: float = 0.0
     current_price: float = 0.0
     exchange: str = ""
+    # "YYYY-MM-DD" or "YYYY-MM-DD HH:MM" (local time) from the dialog; "" unknown.
+    # Older rows keep whatever was typed.
     purchase_date: str = ""
     notes: str = ""
     target_percentage: float = 0.0
     rebalance_threshold: float = 5.0  # Percentage deviation before rebalancing
     last_updated: str = ""
+    tags: List[str] = field(default_factory=list)  # holding_tags; [] untagged
 
     @property
     def total_cost(self) -> float:
@@ -133,7 +221,26 @@ class HoldingsDatabase:
                     notes TEXT DEFAULT ''
                 )
             """)
+
+            # The tags (2026-11-04): a table of their own, so a holdings.db from
+            # before only gains it, empty; its holdings rows stay as they are.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS holding_tags (
+                    holding_id INTEGER NOT NULL,
+                    tag TEXT NOT NULL COLLATE NOCASE,
+                    PRIMARY KEY (holding_id, tag)
+                )
+            """)
             conn.commit()
+
+    @staticmethod
+    def _write_tags(conn: sqlite3.Connection, holding_id: int, tags) -> None:
+        """Replace the tags of holding ``holding_id`` with ``tags`` (clean_tags)."""
+        conn.execute("DELETE FROM holding_tags WHERE holding_id=?", (holding_id,))
+        conn.executemany(
+            "INSERT OR IGNORE INTO holding_tags (holding_id, tag) VALUES (?, ?)",
+            [(holding_id, tag) for tag in clean_tags(tags)],
+        )
 
     def add_holding(self, holding: Holding) -> int:
         """Add a new holding to the database"""
@@ -159,8 +266,10 @@ class HoldingsDatabase:
                     holding.last_updated,
                 ),
             )
+            holding_id = cursor.lastrowid
+            self._write_tags(conn, holding_id, holding.tags)
             conn.commit()
-            return cursor.lastrowid
+            return holding_id
 
     def update_holding(self, holding: Holding):
         """Update an existing holding"""
@@ -188,13 +297,16 @@ class HoldingsDatabase:
                     holding.id,
                 ),
             )
+            if holding.id is not None and cursor.rowcount:  # the holding is there
+                self._write_tags(conn, holding.id, holding.tags)
             conn.commit()
 
     def delete_holding(self, holding_id: int):
-        """Delete a holding from the database"""
+        """Delete a holding (and its tags) from the database"""
         with _connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute("DELETE FROM holdings WHERE id=?", (holding_id,))
+            cursor.execute("DELETE FROM holding_tags WHERE holding_id=?", (holding_id,))
             conn.commit()
 
     def get_all_holdings(self) -> List[Holding]:
@@ -203,6 +315,11 @@ class HoldingsDatabase:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM holdings ORDER BY symbol")
             rows = cursor.fetchall()
+            tags: Dict[int, List[str]] = {}
+            for holding_id, tag in cursor.execute(
+                "SELECT holding_id, tag FROM holding_tags ORDER BY holding_id, rowid"
+            ):
+                tags.setdefault(holding_id, []).append(tag)
 
             holdings = []
             for row in rows:
@@ -218,6 +335,7 @@ class HoldingsDatabase:
                     target_percentage=row[8],
                     rebalance_threshold=row[9],
                     last_updated=row[10],
+                    tags=sorted_tags(tags.get(row[0], ())),
                 )
                 holdings.append(holding)
             return holdings
@@ -306,10 +424,29 @@ class HoldingsManager:
             print(f"Error deleting holding: {e}")
             return False
 
-    def get_portfolio_summary(self) -> Dict[str, float]:
-        """Get overall portfolio summary"""
-        total_cost = sum(h.total_cost for h in self.holdings)
-        total_value = sum(h.current_value for h in self.holdings)
+    # ---- tags ----
+
+    def all_tags(self) -> List[str]:
+        """Every tag the holdings have, once each (whatever its case), in
+        alphabetical order."""
+        return sorted_tags(t for h in self.holdings for t in h.tags)
+
+    def filter_by_tags(self, selection: Iterable[str] = ()) -> List[Holding]:
+        """The holdings the tag selection keeps: those with any of its tags, the
+        untagged ones for UNTAGGED, and every holding for an empty selection."""
+        return filter_holdings(self.holdings, selection)
+
+    def _chosen(self, holdings: Optional[Sequence[Holding]]) -> List[Holding]:
+        return list(self.holdings if holdings is None else holdings)
+
+    def get_portfolio_summary(
+        self, holdings: Optional[Sequence[Holding]] = None
+    ) -> Dict[str, float]:
+        """Get overall portfolio summary (of ``holdings``, e.g. filter_by_tags;
+        None: every holding)"""
+        holdings = self._chosen(holdings)
+        total_cost = sum(h.total_cost for h in holdings)
+        total_value = sum(h.current_value for h in holdings)
         total_pnl = total_value - total_cost
         total_pnl_pct = (total_pnl / total_cost * 100) if total_cost > 0 else 0.0
 
@@ -318,18 +455,23 @@ class HoldingsManager:
             "total_value": total_value,
             "total_pnl": total_pnl,
             "total_pnl_percentage": total_pnl_pct,
-            "holdings_count": len(self.holdings),
+            "holdings_count": len(holdings),
         }
 
-    def get_rebalancing_suggestions(self) -> List[Dict[str, Any]]:
-        """Generate rebalancing suggestions based on target allocations"""
+    def get_rebalancing_suggestions(
+        self, holdings: Optional[Sequence[Holding]] = None
+    ) -> List[Dict[str, Any]]:
+        """Generate rebalancing suggestions based on target allocations: each
+        holding's share of the current value of ``holdings`` (e.g. filter_by_tags;
+        None: every holding) against its target %"""
+        holdings = self._chosen(holdings)
         suggestions = []
-        portfolio_value = sum(h.current_value for h in self.holdings)
+        portfolio_value = sum(h.current_value for h in holdings)
 
         if portfolio_value == 0:
             return suggestions
 
-        for holding in self.holdings:
+        for holding in holdings:
             if holding.target_percentage > 0:
                 current_percentage = (holding.current_value / portfolio_value) * 100
                 target_value = (holding.target_percentage / 100) * portfolio_value
@@ -359,71 +501,44 @@ class HoldingsManager:
 
         return sorted(suggestions, key=lambda x: x["deviation"], reverse=True)
 
-    def export_holdings_csv(self, file_path: str) -> bool:
-        """Export holdings to CSV file"""
+    @staticmethod
+    def export_row(holding: Holding) -> Dict[str, Any]:
+        """A holding as one row of the CSV export (EXPORT_COLUMNS)."""
+        return {
+            "Symbol": holding.symbol,
+            "Quantity": holding.quantity,
+            "Average Cost": holding.average_cost,
+            "Current Price": holding.current_price,
+            "Total Cost": holding.total_cost,
+            "Current Value": holding.current_value,
+            "Unrealized P&L": holding.unrealized_pnl,
+            "P&L %": holding.unrealized_pnl_percentage,
+            "Exchange": holding.exchange,
+            "Purchase Date": holding.purchase_date,
+            "Tags": tags_text(holding.tags),
+            "Target %": holding.target_percentage,
+            "Notes": holding.notes,
+        }
+
+    def export_holdings_csv(
+        self, file_path: str, holdings: Optional[Sequence[Holding]] = None
+    ) -> bool:
+        """Export holdings to CSV file (``holdings``, e.g. filter_by_tags; None:
+        every holding)"""
+        rows = [self.export_row(h) for h in self._chosen(holdings)]
         try:
             if PANDAS_AVAILABLE:
-                data = []
-                for holding in self.holdings:
-                    data.append(
-                        {
-                            "Symbol": holding.symbol,
-                            "Quantity": holding.quantity,
-                            "Average Cost": holding.average_cost,
-                            "Current Price": holding.current_price,
-                            "Total Cost": holding.total_cost,
-                            "Current Value": holding.current_value,
-                            "Unrealized P&L": holding.unrealized_pnl,
-                            "P&L %": holding.unrealized_pnl_percentage,
-                            "Exchange": holding.exchange,
-                            "Purchase Date": holding.purchase_date,
-                            "Target %": holding.target_percentage,
-                            "Notes": holding.notes,
-                        }
-                    )
-
-                df = pd.DataFrame(data)
+                df = pd.DataFrame(rows, columns=list(EXPORT_COLUMNS))
                 df.to_csv(file_path, index=False)
                 return True
             else:
                 # Fallback CSV writing without pandas
                 import csv
 
-                with open(file_path, "w", newline="") as csvfile:
-                    fieldnames = [
-                        "Symbol",
-                        "Quantity",
-                        "Average Cost",
-                        "Current Price",
-                        "Total Cost",
-                        "Current Value",
-                        "Unrealized P&L",
-                        "P&L %",
-                        "Exchange",
-                        "Purchase Date",
-                        "Target %",
-                        "Notes",
-                    ]
-                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                with open(file_path, "w", newline="", encoding="utf-8") as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=list(EXPORT_COLUMNS))
                     writer.writeheader()
-
-                    for holding in self.holdings:
-                        writer.writerow(
-                            {
-                                "Symbol": holding.symbol,
-                                "Quantity": holding.quantity,
-                                "Average Cost": holding.average_cost,
-                                "Current Price": holding.current_price,
-                                "Total Cost": holding.total_cost,
-                                "Current Value": holding.current_value,
-                                "Unrealized P&L": holding.unrealized_pnl,
-                                "P&L %": holding.unrealized_pnl_percentage,
-                                "Exchange": holding.exchange,
-                                "Purchase Date": holding.purchase_date,
-                                "Target %": holding.target_percentage,
-                                "Notes": holding.notes,
-                            }
-                        )
+                    writer.writerows(rows)
                 return True
         except Exception as e:
             print(f"Error exporting to CSV: {e}")

@@ -100,6 +100,7 @@ BANNER: Dict[str, Tuple[str, str]] = {  # (background, text)
     "paper": ("#FFC400", "#0A1B3A"),
     "live": ("#B00020", "#FFFFFF"),
     "testnet": ("#E67E00", "#1A1A1A"),  # dark text: white on this orange is 2.9:1
+    "halted": ("#C62828", "#FFFFFF"),  # TRADING HALTED, over any mode's header
 }
 
 # --- type scale ---------------------------------------------------------------------

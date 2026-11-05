@@ -51,9 +51,14 @@ from pt_paper_trading import (
 )
 from pt_logging import get_logger
 from pt_settings_manager import (
+    DEFAULT_DRAWDOWN_CRITICAL_PCT,
+    DEFAULT_DRAWDOWN_WARNING_PCT,
     DEFAULT_EMERGENCY_DRAWDOWN_PCT,
     DEFAULT_MAX_QUOTE_AGE_S,
     DEFAULT_PRICE_FALLBACK_POLICY,
+    DRAWDOWN_CRITICAL_KEY,
+    DRAWDOWN_LEVEL_RANGE,
+    DRAWDOWN_WARNING_KEY,
     EMERGENCY_DRAWDOWN_KEY,
     EMERGENCY_DRAWDOWN_RANGE,
     MAX_QUOTE_AGE_RANGE,
@@ -335,6 +340,50 @@ def read_emergency_drawdown_pct(settings: Any = None) -> float:
             f"{DEFAULT_EMERGENCY_DRAWDOWN_PCT}"
         )
     return DEFAULT_EMERGENCY_DRAWDOWN_PCT
+
+
+@dataclass(frozen=True)
+class DrawdownLevels:
+    """Account drawdown levels in percent of the peak (Settings > Risk)."""
+
+    warning_pct: float
+    critical_pct: float
+    emergency_pct: float
+
+
+# problems already logged, so a bad file is reported once, not on every check
+_drawdown_logged: set = set()
+
+
+def _log_drawdown_once(message: str) -> None:
+    if message not in _drawdown_logged:
+        _drawdown_logged.add(message)
+        logger.warning(message)
+
+
+def read_drawdown_levels(settings: Any = None) -> DrawdownLevels:
+    """``risk.drawdown_warning_pct`` and ``risk.drawdown_critical_pct`` (each
+    0.5-50) with the emergency stop (``read_emergency_drawdown_pct``). A level out
+    of range, or a pair not in order (warning < critical < emergency), reads as the
+    defaults for the warning and critical levels, logged; they never change the
+    stop."""
+    settings = _settings_mapping(settings)
+    emergency = read_emergency_drawdown_pct(settings)
+    warning = _lookup(settings, DRAWDOWN_WARNING_KEY, DEFAULT_DRAWDOWN_WARNING_PCT)
+    critical = _lookup(settings, DRAWDOWN_CRITICAL_KEY, DEFAULT_DRAWDOWN_CRITICAL_PCT)
+    if not (
+        _in_range(warning, DRAWDOWN_LEVEL_RANGE)
+        and _in_range(critical, DRAWDOWN_LEVEL_RANGE)
+        and warning < critical < emergency
+    ):
+        _log_drawdown_once(
+            f"Invalid {DRAWDOWN_WARNING_KEY}={warning!r} / {DRAWDOWN_CRITICAL_KEY}="
+            f"{critical!r} (each {DRAWDOWN_LEVEL_RANGE[0]:g}-"
+            f"{DRAWDOWN_LEVEL_RANGE[1]:g}, below the {emergency:g}% stop); using "
+            f"{DEFAULT_DRAWDOWN_WARNING_PCT:g} and {DEFAULT_DRAWDOWN_CRITICAL_PCT:g}"
+        )
+        warning, critical = DEFAULT_DRAWDOWN_WARNING_PCT, DEFAULT_DRAWDOWN_CRITICAL_PCT
+    return DrawdownLevels(float(warning), float(critical), float(emergency))
 
 
 # --- Quotes with provenance --------------------------------------------------

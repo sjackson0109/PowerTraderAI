@@ -101,6 +101,12 @@ class Order:
     quote_ts: Optional[float] = None
     age_s: Optional[float] = None
     price_exchange: str = ""  # the exchange whose quote priced the fill
+    # The fee rate the fill pays (a fraction of its value; None: the account's own
+    # rate), "maker" or "taker", and whose rates they were and from where
+    commission_rate: Optional[Decimal] = None
+    fee_type: str = ""
+    fee_exchange: str = ""
+    fee_source: str = ""
 
     @property
     def is_filled(self) -> bool:
@@ -289,8 +295,10 @@ class PaperTradingAccount:
         quantity: Decimal,
         price: Optional[Decimal] = None,
         stop_price: Optional[Decimal] = None,
+        commission_rate: Optional[Decimal] = None,
     ) -> str:
-        """Place a trading order."""
+        """Place a trading order. ``commission_rate`` is the fee rate its fill pays (a
+        fraction of the filled value); None: the account's own ``commission_rate``."""
         # Validate inputs
         symbol = InputValidator.validate_crypto_symbol(symbol)
         quantity = Decimal(str(InputValidator.validate_volume(float(quantity))))
@@ -303,6 +311,7 @@ class PaperTradingAccount:
             quantity=quantity,
             price=price or Decimal("0"),
             stop_price=stop_price,
+            commission_rate=commission_rate,
         )
 
         # Risk checks
@@ -356,6 +365,12 @@ class PaperTradingAccount:
         decision D7, 2026-10-25)."""
         return True
 
+    def _commission_rate(self, order: Order) -> Decimal:
+        """The fee rate ``order``'s fill pays: its own, else the account's."""
+        if order.commission_rate is None:
+            return self.commission_rate
+        return order.commission_rate
+
     def _estimate_order_cost(self, order: Order) -> Decimal:
         """Estimate the total cost of an order including commission."""
         if order.side == OrderSide.BUY:
@@ -365,7 +380,7 @@ class PaperTradingAccount:
                 current_price = order.price
 
             gross_amount = order.quantity * current_price
-            commission = gross_amount * self.commission_rate
+            commission = gross_amount * self._commission_rate(order)
             return gross_amount + commission
         else:
             return Decimal("0")  # Selling doesn't require cash
@@ -389,12 +404,14 @@ class PaperTradingAccount:
 
         # Calculate commission
         gross_amount = order.quantity * execution_price
-        commission = gross_amount * self.commission_rate
+        rate = self._commission_rate(order)
+        commission = gross_amount * rate
 
         # Update order
         order.filled_quantity = order.quantity
         order.filled_price = execution_price
         order.commission = commission
+        order.commission_rate = rate
         order.status = OrderStatus.FILLED
         order.filled_time = datetime.now()
 

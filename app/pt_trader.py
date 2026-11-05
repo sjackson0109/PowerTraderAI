@@ -827,6 +827,7 @@ class CryptoAPITrading:
                             buying_power_after=bp_after,
                             buying_power_delta=bp_delta,
                             closes_position=not getattr(order, "partial", False),
+                            fee_detail=self._fee_detail(order),
                             **self._provenance(order, self._target),
                         )
 
@@ -863,6 +864,7 @@ class CryptoAPITrading:
         age_s: Optional[float] = None,
         price_exchange: Optional[str] = None,
         closes_position: bool = True,
+        fee_detail: Optional[dict] = None,
     ) -> None:
         """
         Minimal local ledger for GUI:
@@ -872,7 +874,8 @@ class CryptoAPITrading:
 
         A sell row says whether it ended the trade (``closes_position``): a sell
         that stopped part-way did not, so the DCA stages and the 24h DCA window
-        rebuilt from the history carry on past it.
+        rebuilt from the history carry on past it. ``fee_detail`` (``_fee_detail``)
+        says how the fee in ``fees_usd`` was worked out.
         """
         ts = time.time()
 
@@ -1011,6 +1014,8 @@ class CryptoAPITrading:
                 float(position_cost_after) if position_cost_after is not None else None
             ),
         }
+        if fee_detail:
+            entry.update(fee_detail)
         if price_source is not None:
             # Paper fills record where their price came from (live/stale/simulated)
             entry["price_source"] = price_source
@@ -1865,6 +1870,7 @@ class CryptoAPITrading:
             buying_power_after=buying_power_after,
             buying_power_delta=buying_power_delta,
             closes_position=not getattr(final, "partial", False),
+            fee_detail=self._fee_detail(final),
             **self._provenance(final, target),
         )
         self._clear_pending(order_id)
@@ -1879,6 +1885,24 @@ class CryptoAPITrading:
             "mode": target.key,
             # the order stopped part-way: the rest of the position is still held
             "partial": bool(getattr(final, "partial", False)),
+        }
+
+    @staticmethod
+    def _fee_detail(order: OrderResult) -> dict:
+        """Ledger columns for how a fill's fee was worked out, where the exchange (or
+        the paper account) says: its currency, the rate charged (a fraction of the
+        filled value), "maker" or "taker", and whose rates and from where."""
+        detail = {
+            "fee_currency": getattr(order, "fee_currency", ""),
+            "fee_rate": getattr(order, "fee_rate", None),
+            "fee_type": getattr(order, "fee_type", ""),
+            "fee_exchange": getattr(order, "fee_exchange", ""),
+            "fee_source": getattr(order, "fee_source", ""),
+        }
+        return {
+            k: v
+            for k, v in detail.items()
+            if isinstance(v, (str, int, float)) and v != ""
         }
 
     @staticmethod

@@ -10,7 +10,7 @@ import unittest
 from unittest import mock
 
 import requests
-from helpers import FakeQuotes
+from helpers import FakeFees, FakeQuotes
 
 import demo_paper_trading as demo
 import trading_mode as tm
@@ -25,10 +25,14 @@ class DemoTests(unittest.TestCase):
         self.addCleanup(tm.reset_paper_exchange)
         self.addCleanup(tm._quote_cache.clear)
         self.quotes = FakeQuotes()
+        self.fees = FakeFees()  # 0.1% maker and taker
         self.lines = []
-        patcher = mock.patch.object(tm, "_layer_quote", self.quotes.layer_quote)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for patcher in (
+            mock.patch.object(tm, "_layer_quote", self.quotes.layer_quote),
+            mock.patch.object(tm, "_layer_fees", self.fees.layer_fees),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def run_demo(self, **kwargs):
         code = demo.run_demo(out=self.lines.append, **kwargs)
@@ -51,7 +55,8 @@ class DemoTests(unittest.TestCase):
     def test_realized_pnl_includes_fees(self):
         code, output = self.run_demo()
         self.assertEqual(code, 0)
-        # buy at ask 101, sell at bid 99, 0.01 BTC, 0.1% commission each way
+        # buy at ask 101, sell at bid 99, 0.01 BTC, the exchange's 0.1% taker fee
+        # each way
         gross = (99.0 - 101.0) * 0.01
         fees = (101.0 + 99.0) * 0.01 * 0.001
         net = gross - fees

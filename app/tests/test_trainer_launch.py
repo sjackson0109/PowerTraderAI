@@ -30,11 +30,8 @@ import pt_hub  # noqa: E402
 import pt_paths  # noqa: E402
 
 TRAINER = os.path.join(
-    pt_paths.program_dir(), pt_hub.DEFAULT_SETTINGS["script_neural_trainer"]
+    pt_paths.program_dir(), pt_hub.SYSTEM_SCRIPTS["script_neural_trainer"]
 )
-# Another trainer script shipped in the program folder (what a user could type
-# into Settings). It is a mock, so it runs only with allow_mock_trainer.
-STANDALONE = os.path.join(pt_paths.program_dir(), "pt_trainer_standalone.py")
 
 
 @pytest.fixture
@@ -109,7 +106,7 @@ def test_every_coin_runs_the_program_folder_trainer_in_its_user_data_folder(
 ):
     hub = real_hub
     home = isolated_user_dirs["home"]
-    assert pt_hub.DEFAULT_SETTINGS["script_neural_trainer"] == "pt_pattern_trainer.py"
+    assert pt_hub.SYSTEM_SCRIPTS["script_neural_trainer"] == "pt_pattern_trainer.py"
     assert hub.proc_trainer_path == TRAINER  # set by __init__ (_refresh_trainer_path)
     assert os.path.isfile(TRAINER)
     hc.seed_trainer_window(monkeypatch, ["BTC", "ETH"])
@@ -212,34 +209,28 @@ def press(win, text):
     ).invoke()
 
 
-def test_a_trainer_script_saved_in_settings_is_used_by_the_next_launch(
-    real_hub, records, isolated_user_dirs, monkeypatch
+def test_a_trainer_script_saved_by_an_older_release_is_ignored(
+    records, isolated_user_dirs, monkeypatch
 ):
-    hub = real_hub
-    home = isolated_user_dirs["home"]
-    hc.seed_trainer_window(monkeypatch, ["BTC"])
-
-    assert launched(hub, "BTC", records)["orig_argv"][4] == TRAINER
-    # the standalone script is a mock (test_mock_trainer_refusal.py)
-    ht.configure_trainer(allow_mock=True)
-
-    win = open_settings(hub)
-    type_into(win, "pt_trainer.py path:", "pt_trainer_standalone.py")
-    type_into(win, "Coins (comma):", "BTC,ETH,SOL")
-    press(win, "Save")
-
-    assert [d for d in hub.test_dialogs if d[0] != "showinfo"] == []
-    assert [d[1][0] for d in hub.test_dialogs if d[0] == "showinfo"] == ["Saved"]
-    assert hub._load_settings()["script_neural_trainer"] == "pt_trainer_standalone.py"
-    assert hub.proc_trainer_path == STANDALONE
-    assert os.path.isfile(STANDALONE)
-
-    # same hub, no restart: the next launches use the saved script
-    for coin, folder in (
-        ("BTC", pt_paths.models_dir()),
-        (
-            "SOL",
-            os.path.join(pt_paths.models_dir(), "SOL"),
-        ),  # coin added in the same save
-    ):
-        assert_launch(launched(hub, coin, records), STANDALONE, coin, folder, home)
+    """The scripts are part of the program (pt_hub.SYSTEM_SCRIPTS): a trainer saved
+    in gui_settings.json by an older release is not run, Settings has no row for
+    it, and the next save drops it."""
+    ht.configure_trainer(allow_mock=True)  # even a mock that would be allowed
+    path = pt_paths.gui_settings_file()
+    pt_paths.write_private_text(
+        path, json.dumps({"script_neural_trainer": "pt_trainer_standalone.py"})
+    )
+    hub = ht.build_real_hub(monkeypatch)
+    try:
+        assert hub.proc_trainer_path == TRAINER
+        assert "script_neural_trainer" not in hub.settings
+        win = open_settings(hub)
+        texts = [str(w.cget("text")) for w in widgets(win) if isinstance(w, ttk.Label)]
+        assert not [t for t in texts if t.endswith(".py path:")]
+        press(win, "Save")
+        with open(path, encoding="utf-8") as f:
+            assert "script_neural_trainer" not in json.load(f)
+        hc.seed_trainer_window(monkeypatch, ["BTC"])
+        assert launched(hub, "BTC", records)["orig_argv"][4] == TRAINER
+    finally:
+        ht.close_hub(hub)

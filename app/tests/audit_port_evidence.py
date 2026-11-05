@@ -113,7 +113,7 @@ def evidence_file(tmp_path_factory):
         "helpers_candles": file_identity(os.path.abspath(hc.__file__)),
         "child_site_sha256": hashlib.sha256(ht.CHILD_SITE.encode("utf-8")).hexdigest(),
         "fixtures": {os.path.basename(p): file_identity(p) for p in (BTC_CSV, ETH_CSV)},
-        "hub_default_trainer": pt_hub.DEFAULT_SETTINGS["script_neural_trainer"],
+        "hub_default_trainer": pt_hub.SYSTEM_SCRIPTS["script_neural_trainer"],
     }
     yield
     EVIDENCE["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")

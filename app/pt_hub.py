@@ -65,6 +65,7 @@ import trainer_status
 from strategies import descriptions as strategy_words
 from strategies.settings import read_strategy_settings
 from trading_mode import (
+    MAX_QUOTE_AGE_RANGE,
     PaperBookError,
     PaperBookInvalid,
     TradingSettings,
@@ -73,7 +74,9 @@ from trading_mode import (
     paper_book_path,
     read_drawdown_levels,
     read_paper_book,
+    read_paper_settings,
     read_trading_settings,
+    save_paper_settings,
 )
 from trading_mode_ui import TradingModeDialog, TradingModeIndicator, pack_at_top
 
@@ -555,12 +558,7 @@ DEFAULT_SETTINGS = {
     "ui_refresh_seconds": 1.0,
     "chart_refresh_seconds": 10.0,
     "hub_data_dir": "",  # if blank, defaults to <this_dir>/hub_data
-    # FDS-MDL: the pattern-matching trainer (a port of upstream's); the old stub
-    # pt_trainer.py is marked MOCK and refused unless allow_mock_trainer is set.
-    "script_neural_trainer": "pt_pattern_trainer.py",
-    "script_neural_runner2": "pt_thinker.py",
-    "script_trader": "pt_trader.py",
-    "auto_start_scripts": False,  # Disabled to prevent auto-triggering
+    "auto_start_scripts": False,  # start the runner, then the trader, at launch
     # --- Training Automation Settings ---
     "training_auto_interval_hours": 6,  # Auto re-train every 6 hours after manual training
     "training_stale_warning_hours": 3,  # Show warning when training is 3+ hours old
@@ -722,6 +720,26 @@ def _clock(ts: float) -> str:
         return time.strftime("%H:%M:%S", at)
     return time.strftime("%d %b %H:%M:%S", at)
 
+
+# The scripts the hub runs, in the program folder: part of the program, not settings
+# (a value saved by an older release is dropped when the settings are read).
+# FDS-MDL: the pattern-matching trainer (a port of upstream's); the old stub
+# pt_trainer.py is marked MOCK and refused unless allow_mock_trainer is set.
+SYSTEM_SCRIPTS = {
+    "script_neural_trainer": "pt_pattern_trainer.py",
+    "script_neural_runner2": "pt_thinker.py",
+    "script_trader": "pt_trader.py",
+}
+
+# Settings > System, Start ... when the hub opens: after the window is up
+AUTO_START_DELAY_MS = 1500
+# How long a notice (a training run ending, an auto start skipped) stays up
+NOTICE_SECONDS = 8.0
+# Settings > Paper trading, With no fresh price: the shown words for each policy
+PAPER_PRICE_RULES = {
+    "pause": "Don't fill; wait for a fresh price",
+    "simulate_and_flag": "Fill on the last price and flag the trade",
+}
 
 # A retrain that fell due while the hub was closed waits this long after start-up,
 # so the window is up before trainers start
@@ -2541,17 +2559,16 @@ class PowerTraderHub(tk.Tk):
         self.proc_neural = ProcInfo(
             name="Neural Runner",
             path=os.path.abspath(
-                os.path.join(self.project_dir, self.settings["script_neural_runner2"])
+                os.path.join(self.project_dir, SYSTEM_SCRIPTS["script_neural_runner2"])
             ),
         )
         self.proc_trader = ProcInfo(
             name="Trader",
             path=os.path.abspath(
-                os.path.join(self.project_dir, self.settings["script_trader"])
+                os.path.join(self.project_dir, SYSTEM_SCRIPTS["script_trader"])
             ),
         )
 
-        # Resolved again on every Settings save (see _refresh_trainer_path).
         self._refresh_trainer_path()
 
         # live log queues
@@ -2601,9 +2618,8 @@ class PowerTraderHub(tk.Tk):
 
         self._last_chart_refresh = 0.0
 
-        # Disabled auto-start to prevent accidental triggering
-        # if bool(self.settings.get("auto_start_scripts", False)):
-        #     self.start_all_scripts()
+        # Settings > System: the runner and trader start once the window is up
+        self.after(AUTO_START_DELAY_MS, self._auto_start_on_launch)
 
         # NOTE: API server auto-start is handled inside _init_api_server() above.
         # No second toggle here — that would risk a double-bind on the same port.
@@ -2627,11 +2643,24 @@ class PowerTraderHub(tk.Tk):
             print(f"Warning: could not show the migration report: {exc}")
 
     @staticmethod
-    def _user_folder_rows() -> List[Tuple[str, str]]:
-        """(label, folder) for the Settings window's Paths section."""
+    def _user_folder_rows(settings: Optional[dict] = None) -> List[Tuple[str, str]]:
+        """(label, folder) for Settings > Working Directories: the folders in use.
+        A Models or Hub data folder chosen in an older release is still used."""
+        settings = settings or {}
         return [
             ("Config folder:", pt_paths.config_dir()),
             ("Data folder:", pt_paths.data_dir()),
+            ("Models folder:", pt_paths.trainer_root(settings.get("main_neural_dir"))),
+            (
+                "Hub data folder:",
+                pt_paths.user_dir_setting(
+                    settings.get("hub_data_dir"),
+                    pt_paths.hub_dir(create=False),
+                    "hub_data_dir",
+                    create=False,
+                ),
+            ),
+            ("Cache folder:", pt_paths.cache_dir()),
             ("Log folder:", pt_paths.log_dir()),
         ]
 
@@ -2824,6 +2853,8 @@ class PowerTraderHub(tk.Tk):
 
         merged = dict(DEFAULT_SETTINGS)
         merged.update(data)
+        for key in SYSTEM_SCRIPTS:  # part of the program now; saved without them
+            merged.pop(key, None)
         # normalize
         merged["coins"] = [c.upper().strip() for c in merged.get("coins", [])]
         return merged
@@ -2872,14 +2903,10 @@ class PowerTraderHub(tk.Tk):
             pass
 
     def _refresh_trainer_path(self) -> str:
-        """
-        Set ``proc_trainer_path`` from the ``script_neural_trainer`` setting,
-        resolved against the (read-only) program folder. Called at start-up and
-        on every Settings save, so a changed trainer script is used by the next
-        training run without restarting the hub.
-        """
+        """Set ``proc_trainer_path``: the system trainer script, resolved against the
+        (read-only) program folder."""
         self.proc_trainer_path = os.path.abspath(
-            os.path.join(self.project_dir, self.settings["script_neural_trainer"])
+            os.path.join(self.project_dir, SYSTEM_SCRIPTS["script_neural_trainer"])
         )
         return self.proc_trainer_path
 
@@ -4737,6 +4764,85 @@ Platform: {sys.platform}
         except Exception:
             pass
 
+    def _auto_start_on_launch(self) -> None:
+        """Settings > System: start the Neural Runner, then the Trader once the runner
+        is ready. Like Start All it needs every coin trained; without that, a notice
+        says which are not and nothing starts."""
+        if not self.settings.get("auto_start_scripts", False):
+            return
+        untrained = [c for c in self.coins if not self._coin_is_trained(c)]
+        if not self.coins or untrained:
+            self._show_notice(
+                "Auto start skipped: "
+                + (
+                    f"{', '.join(untrained)} not trained yet."
+                    if untrained
+                    else "no coins in Settings."
+                )
+            )
+            return
+        self.start_all_scripts()
+
+    def _show_notice(self, text: str, seconds: float = NOTICE_SECONDS) -> None:
+        """A small window at the hub's bottom-right corner that closes itself after
+        ``seconds``; a click closes it at once. Newer notices stack above older ones.
+        Every notice is kept in ``self.notices``; a hidden hub shows none."""
+        print(f"NOTICE: {text}")
+        if not hasattr(self, "notices"):
+            self.notices = []
+        self.notices.append(text)
+        try:
+            if not self.winfo_viewable():
+                return
+            p = ui_theme.active_palette()
+            note = tk.Toplevel(self)
+            note.wm_overrideredirect(True)
+            note.attributes("-topmost", True)
+            label = tk.Label(
+                note,
+                text=text,
+                background=p["PANEL2"],
+                foreground=p["FG"],
+                highlightthickness=1,
+                highlightbackground=p["BORDER"],
+                highlightcolor=p["BORDER"],
+                font=ui_tokens.font("body"),
+                padx=12,
+                pady=8,
+                justify="left",
+                wraplength=380,
+            )
+            label.pack()
+            shown = [
+                n for n in getattr(self, "_notice_windows", []) if n.winfo_exists()
+            ]
+            note.update_idletasks()
+            x = self.winfo_rootx() + self.winfo_width() - note.winfo_reqwidth() - 16
+            y = (
+                self.winfo_rooty()
+                + self.winfo_height()
+                - 16
+                - sum(n.winfo_height() + 8 for n in shown)
+                - note.winfo_reqheight()
+            )
+            note.wm_geometry(f"+{max(0, x)}+{max(0, y)}")
+            self._notice_windows = shown + [note]
+            for widget in (note, label):
+                widget.bind("<Button-1>", lambda _e: note.destroy())
+            note.after(int(seconds * 1000), note.destroy)
+        except tk.TclError:
+            pass
+
+    @staticmethod
+    def _training_ended_text(coin: str, code) -> str:
+        """The notice for a training run that ended with exit code ``code``."""
+        if code == 0:
+            return f"{coin}: training finished; its new model is saved."
+        return (
+            f"{coin}: training ended without a model (exit code {code}); the "
+            f"Neural Runner gives {coin} no signals until it is trained."
+        )
+
     def _coin_is_trained(self, coin: str) -> bool:
         coin = coin.upper().strip()
 
@@ -5212,6 +5318,10 @@ Platform: {sys.platform}
                         self._schedule_auto_retrain(coin)
                     else:
                         self._mark_training_ended(coin, proc.returncode)
+                    if self.settings.get("training_notifications", True):
+                        self._show_notice(
+                            self._training_ended_text(coin, proc.returncode)
+                        )
 
                     # Try to get any remaining output
                     try:
@@ -7406,261 +7516,160 @@ Platform: {sys.platform}
             pass
 
     def open_settings_dialog(self) -> None:
+        """One tab per section; Save writes every tab. Strategy, Risk, LLM
+        Providers, the paper account and the chart overlays keep their own windows,
+        opened from their tab."""
         p = ui_theme.active_palette()
         win = tk.Toplevel(self)
         win.title("Settings")
-        # Big enough for the bottom buttons on most screens + still scrolls if someone resizes smaller.
-        win.geometry("860x680")
-        win.minsize(760, 560)
+        win.geometry("900x640")
+        win.minsize(780, 560)
         win.configure(bg=p["BG"])
 
-        # Scrollable settings content (auto-hides the scrollbar if everything fits),
-        # using the same pattern as the Neural Levels scrollbar.
-        viewport = ttk.Frame(win)
-        viewport.pack(fill="both", expand=True, padx=12, pady=12)
-        viewport.grid_rowconfigure(0, weight=1)
-        viewport.grid_columnconfigure(0, weight=1)
+        outer = ttk.Frame(win)
+        outer.pack(fill="both", expand=True, padx=12, pady=12)
+        notebook = ttk.Notebook(outer)
+        notebook.pack(fill="both", expand=True)
+        btns = ttk.Frame(outer)
+        btns.pack(fill="x", pady=(12, 0))
 
-        settings_canvas = tk.Canvas(
-            viewport,
-            bg=p["BG"],
-            highlightthickness=1,
-            highlightbackground=p["BORDER"],
-            bd=0,
-        )
-        settings_canvas.grid(row=0, column=0, sticky="nsew")
+        def new_page(title: str) -> ttk.Frame:
+            page = ttk.Frame(notebook, padding=12)
+            page.columnconfigure(0, weight=0)  # labels
+            page.columnconfigure(1, weight=1)  # entries
+            page.columnconfigure(2, weight=0)  # buttons and hints
+            notebook.add(page, text=title)
+            return page
 
-        settings_scroll = ttk.Scrollbar(
-            viewport,
-            orient="vertical",
-            command=settings_canvas.yview,
-        )
-        settings_scroll.grid(row=0, column=1, sticky="ns")
-
-        settings_canvas.configure(yscrollcommand=settings_scroll.set)
-
-        frm = ttk.Frame(settings_canvas)
-        settings_window = settings_canvas.create_window((0, 0), window=frm, anchor="nw")
-
-        def _update_settings_scrollbars(event=None) -> None:
-            """Update scrollregion + hide/show the scrollbar depending on overflow."""
-            try:
-                c = settings_canvas
-                win_id = settings_window
-
-                c.update_idletasks()
-                bbox = c.bbox(win_id)
-                if not bbox:
-                    settings_scroll.grid_remove()
-                    return
-
-                c.configure(scrollregion=bbox)
-                content_h = int(bbox[3] - bbox[1])
-                view_h = int(c.winfo_height())
-
-                if content_h > (view_h + 1):
-                    settings_scroll.grid()
-                else:
-                    settings_scroll.grid_remove()
-                    try:
-                        c.yview_moveto(0)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        def _on_settings_canvas_configure(e) -> None:
-            # Keep the inner frame exactly the canvas width so wrapping is correct.
-            try:
-                settings_canvas.itemconfigure(settings_window, width=int(e.width))
-            except Exception:
-                pass
-            _update_settings_scrollbars()
-
-        settings_canvas.bind("<Configure>", _on_settings_canvas_configure, add="+")
-        frm.bind("<Configure>", _update_settings_scrollbars, add="+")
-
-        # Mousewheel scrolling when the mouse is over the settings window.
-        def _wheel(e):
-            try:
-                if settings_scroll.winfo_ismapped():
-                    settings_canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
-            except Exception:
-                pass
-
-        settings_canvas.bind("<Enter>", lambda _e: settings_canvas.focus_set(), add="+")
-        settings_canvas.bind("<MouseWheel>", _wheel, add="+")  # Windows / Mac
-        settings_canvas.bind(
-            "<Button-4>", lambda _e: settings_canvas.yview_scroll(-3, "units"), add="+"
-        )  # Linux
-        settings_canvas.bind(
-            "<Button-5>", lambda _e: settings_canvas.yview_scroll(3, "units"), add="+"
-        )  # Linux
-
-        # Make the entry column expand
-        frm.columnconfigure(0, weight=0)  # labels
-        frm.columnconfigure(1, weight=1)  # entries
-        frm.columnconfigure(2, weight=0)  # browse buttons
-
-        def add_row(r: int, label: str, var: tk.Variable, browse: Optional[str] = None):
-            """
-            browse: "dir" to attach a directory chooser, else None.
-            """
-            ttk.Label(frm, text=label).grid(
+        def add_row(
+            page: ttk.Frame, r: int, label: str, var: tk.Variable, wide: bool = False
+        ) -> None:
+            ttk.Label(page, text=label).grid(
                 row=r, column=0, sticky="w", padx=(0, 10), pady=6
             )
-
-            ent = ttk.Entry(frm, textvariable=var)
-            ent.grid(row=r, column=1, sticky="ew", pady=6)
-
-            if browse == "dir":
-
-                def do_browse():
-                    picked = filedialog.askdirectory()
-                    if picked:
-                        var.set(picked)
-
-                ttk.Button(frm, text="Browse", command=do_browse).grid(
-                    row=r, column=2, sticky="e", padx=(10, 0), pady=6
-                )
+            entry = ttk.Entry(page, textvariable=var, width=24)
+            if wide:  # a list: as wide as the page
+                entry.grid(row=r, column=1, columnspan=2, sticky="ew", pady=6)
             else:
-                # keep column alignment consistent
-                ttk.Label(frm, text="").grid(
-                    row=r, column=2, sticky="e", padx=(10, 0), pady=6
-                )
+                entry.grid(row=r, column=1, sticky="w", pady=6)
 
-        main_dir_var = tk.StringVar(value=self.settings["main_neural_dir"])
-        coins_var = tk.StringVar(value=",".join(self.settings["coins"]))
+        def add_heading(page: ttk.Frame, r: int, text: str) -> None:
+            ttk.Label(page, text=text, font=ui_tokens.font("body", "bold")).grid(
+                row=r, column=0, columnspan=3, sticky="w", pady=(12, 4)
+            )
+
+        def add_check(page: ttk.Frame, r: int, text: str, var: tk.Variable) -> None:
+            ttk.Checkbutton(page, text=text, variable=var).grid(
+                row=r, column=0, columnspan=3, sticky="w", pady=6
+            )
+
+        def add_window_row(
+            page: ttk.Frame, r: int, text: str, command, summary: tk.Variable
+        ) -> None:
+            """A button opening a section's own window, with a line saying what it
+            holds now."""
+            ttk.Button(page, text=text, command=command).grid(
+                row=r, column=0, sticky="w", pady=6
+            )
+            ttk.Label(page, textvariable=summary, wraplength=560).grid(
+                row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=6
+            )
+
+        def add_choice(
+            page: ttk.Frame,
+            r: int,
+            label: str,
+            var: tk.Variable,
+            values,
+            width: int = 22,
+        ) -> ttk.Combobox:
+            ttk.Label(page, text=label).grid(
+                row=r, column=0, sticky="w", padx=(0, 10), pady=6
+            )
+            box = ttk.Combobox(
+                page,
+                textvariable=var,
+                values=list(values),
+                state="readonly",
+                width=width,
+            )
+            box.grid(row=r, column=1, sticky="w", pady=6)
+            return box
+
+        def setting_text(key: str, default) -> str:
+            value = self.settings.get(key, DEFAULT_SETTINGS.get(key, default))
+            return str(default if value is None else value)
+
+        # --- Trading: the coins, the entry level, DCA and the trailing exit --------
+        page = new_page("Trading")
+        coins_var = tk.StringVar(master=win, value=",".join(self.settings["coins"]))
         trade_start_level_var = tk.StringVar(
-            value=str(self.settings.get("trade_start_level", 3))
+            master=win, value=setting_text("trade_start_level", 3)
         )
         _dca_levels = self.settings.get(
             "dca_levels", DEFAULT_SETTINGS.get("dca_levels", [])
         )
         if not isinstance(_dca_levels, list):
             _dca_levels = DEFAULT_SETTINGS.get("dca_levels", [])
-        dca_levels_var = tk.StringVar(value=",".join(str(x) for x in _dca_levels))
-
-        # --- Trailing PM settings (editable; hot-reload friendly) ---
+        dca_levels_var = tk.StringVar(
+            master=win, value=",".join(str(x) for x in _dca_levels)
+        )
         pm_no_dca_var = tk.StringVar(
-            value=str(
-                self.settings.get(
-                    "pm_start_pct_no_dca",
-                    DEFAULT_SETTINGS.get("pm_start_pct_no_dca", 5.0),
-                )
-            )
+            master=win, value=setting_text("pm_start_pct_no_dca", 5.0)
         )
         pm_with_dca_var = tk.StringVar(
-            value=str(
-                self.settings.get(
-                    "pm_start_pct_with_dca",
-                    DEFAULT_SETTINGS.get("pm_start_pct_with_dca", 2.5),
-                )
-            )
+            master=win, value=setting_text("pm_start_pct_with_dca", 2.5)
         )
         trailing_gap_var = tk.StringVar(
-            value=str(
-                self.settings.get(
-                    "trailing_gap_pct", DEFAULT_SETTINGS.get("trailing_gap_pct", 0.5)
-                )
-            )
+            master=win, value=setting_text("trailing_gap_pct", 0.5)
         )
-
-        hub_dir_var = tk.StringVar(value=self.settings.get("hub_data_dir", ""))
-
-        neural_script_var = tk.StringVar(value=self.settings["script_neural_runner2"])
-        trainer_script_var = tk.StringVar(
-            value=self.settings.get(
-                "script_neural_trainer", DEFAULT_SETTINGS["script_neural_trainer"]
-            )
-        )
-        trader_script_var = tk.StringVar(value=self.settings["script_trader"])
-
-        ui_refresh_var = tk.StringVar(value=str(self.settings["ui_refresh_seconds"]))
-        chart_refresh_var = tk.StringVar(
-            value=str(self.settings["chart_refresh_seconds"])
-        )
-        candles_limit_var = tk.StringVar(value=str(self.settings["candles_limit"]))
-        auto_start_var = tk.BooleanVar(
-            value=bool(self.settings.get("auto_start_scripts", False))
-        )
-
         r = 0
-        add_row(r, "Main neural folder:", main_dir_var, browse="dir")
+        add_row(page, r, "Coins (comma):", coins_var, wide=True)
         r += 1
-        add_row(r, "Coins (comma):", coins_var)
+        add_row(page, r, "Trade start level (1-7):", trade_start_level_var)
         r += 1
-        add_row(r, "Trade start level (1-7):", trade_start_level_var)
-        r += 1
-
         # Start allocation %, Max per coin %, DCA multiplier and Max DCA buys are in
         # Settings > Risk (Position and DCA limits)
-        add_row(r, "DCA levels (% list):", dca_levels_var)
+        add_row(page, r, "DCA levels (% list):", dca_levels_var, wide=True)
         r += 1
-
-        add_row(r, "Trailing PM start % (no DCA):", pm_no_dca_var)
+        add_row(page, r, "Trailing PM start % (no DCA):", pm_no_dca_var)
         r += 1
-        add_row(r, "Trailing PM start % (with DCA):", pm_with_dca_var)
+        add_row(page, r, "Trailing PM start % (with DCA):", pm_with_dca_var)
         r += 1
-        add_row(r, "Trailing gap % (behind peak):", trailing_gap_var)
+        add_row(page, r, "Trailing gap % (behind peak):", trailing_gap_var)
         r += 1
-
-        add_row(r, "Hub data dir (optional):", hub_dir_var, browse="dir")
-        r += 1
-
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=10
-        )
-        r += 1
-
-        # --- Strategy: what decides each buy and sale (its own window, saved there)
-        ttk.Label(frm, text="Strategy", font=ui_tokens.font("body", "bold")).grid(
-            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
-        )
+        # Strategy: what decides each buy and sale (its own window, saved there)
+        add_heading(page, r, "Strategy")
         r += 1
         strategy_summary_var = tk.StringVar(master=win, value=self._strategy_summary())
-        ttk.Button(
-            frm,
-            text="Strategy...",
-            command=lambda: self.open_strategy_settings(
+        add_window_row(
+            page,
+            r,
+            "Strategy...",
+            lambda: self.open_strategy_settings(
                 win,
                 on_saved=lambda: strategy_summary_var.set(self._strategy_summary()),
             ),
-        ).grid(row=r, column=0, sticky="w", pady=6)
-        ttk.Label(frm, textvariable=strategy_summary_var, wraplength=520).grid(
-            row=r, column=1, columnspan=2, sticky="w", pady=6
+            strategy_summary_var,
         )
         r += 1
-
-        # --- Risk: the limits that protect the account (its own window, saved there)
-        ttk.Label(frm, text="Risk", font=ui_tokens.font("body", "bold")).grid(
-            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
-        )
+        # Risk: the limits that protect the account (its own window, saved there)
+        add_heading(page, r, "Risk")
         r += 1
         risk_summary_var = tk.StringVar(master=win, value=self._risk_summary())
-        ttk.Button(
-            frm,
-            text="Risk...",
-            command=lambda: self.open_risk_settings(
+        add_window_row(
+            page,
+            r,
+            "Risk...",
+            lambda: self.open_risk_settings(
                 win, on_saved=lambda: risk_summary_var.set(self._risk_summary())
             ),
-        ).grid(row=r, column=0, sticky="w", pady=6)
-        ttk.Label(frm, textvariable=risk_summary_var, wraplength=520).grid(
-            row=r, column=1, columnspan=2, sticky="w", pady=6
+            risk_summary_var,
         )
-        r += 1
 
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=10
-        )
-        r += 1
-
-        # --- Training: when a source of signals has earned its place in trading
-        # (training_settings; the LLM signal gate reads them)
-        ttk.Label(frm, text="Training", font=ui_tokens.font("body", "bold")).grid(
-            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
-        )
-        r += 1
+        # --- Training: when a model may be used, and when coins retrain -----------
+        # (training_settings; the LLM signal gate reads the first two)
+        page = new_page("Training")
         _training = training_settings.read_training_settings()
         min_signals_var = tk.StringVar(
             master=win, value=str(_training["holdout_min_signals"])
@@ -7668,10 +7677,6 @@ Platform: {sys.platform}
         min_hit_rate_var = tk.StringVar(
             master=win, value=f"{_training['holdout_min_hit_rate'] * 100:g}"
         )
-        add_row(r, "Minimum scored signals:", min_signals_var)
-        r += 1
-        add_row(r, "Minimum hit rate after fees %:", min_hit_rate_var)
-        r += 1
         auto_retrain_var = tk.BooleanVar(
             master=win, value=bool(self.settings.get("training_auto_enabled", True))
         )
@@ -7680,119 +7685,64 @@ Platform: {sys.platform}
         except (TypeError, ValueError):
             retrain_hours = 6.0
         retrain_hours_var = tk.StringVar(master=win, value=f"{retrain_hours:g}")
-        ttk.Checkbutton(
-            frm,
-            text="Retrain each trained coin automatically",
-            variable=auto_retrain_var,
-        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=6)
+        notifications_var = tk.BooleanVar(
+            master=win, value=bool(self.settings.get("training_notifications", True))
+        )
+        r = 0
+        add_row(page, r, "Minimum scored signals:", min_signals_var)
         r += 1
-        add_row(r, "Retrain every (hours):", retrain_hours_var)
+        add_row(page, r, "Minimum hit rate after fees %:", min_hit_rate_var)
         r += 1
+        add_check(page, r, "Retrain each trained coin automatically", auto_retrain_var)
+        r += 1
+        add_row(page, r, "Retrain every (hours):", retrain_hours_var)
+        r += 1
+        add_check(page, r, "Show a notice when a training run ends", notifications_var)
 
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=10
-        )
-        r += 1
-
-        # --- LLM Providers: providers, their order, LLM signals (its own window)
-        ttk.Label(frm, text="LLM Providers", font=ui_tokens.font("body", "bold")).grid(
-            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
-        )
-        r += 1
-        llm_summary_var = tk.StringVar(master=win, value=self._llm_summary())
-        ttk.Button(
-            frm,
-            text="LLM Providers...",
-            command=lambda: self.open_llm_settings(
-                win, on_saved=lambda: llm_summary_var.set(self._llm_summary())
-            ),
-        ).grid(row=r, column=0, sticky="w", pady=6)
-        ttk.Label(frm, textvariable=llm_summary_var, wraplength=520).grid(
-            row=r, column=1, columnspan=2, sticky="w", pady=6
-        )
-        r += 1
-
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=10
-        )
-        r += 1
-
-        # --- Exchange Provider Settings ---
-        ttk.Label(
-            frm,
-            text="🌍 Exchange Provider Settings",
-            font=ui_tokens.font("body", "bold"),
-        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=(10, 5))
-        r += 1
-
-        # User region selection
-        ttk.Label(frm, text="Your region:").grid(
-            row=r, column=0, sticky="w", padx=(0, 10), pady=6
-        )
-        region_var = tk.StringVar(value=self.settings.get("region", "us"))
-        region_combo = ttk.Combobox(
-            frm,
-            textvariable=region_var,
-            values=["us", "eu", "global"],
-            state="readonly",
-        )
-        region_combo.grid(row=r, column=1, sticky="ew", pady=6)
-        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
-        r += 1
-
-        # Primary exchange selection
-        ttk.Label(frm, text="Primary exchange:").grid(
-            row=r, column=0, sticky="w", padx=(0, 10), pady=6
-        )
+        # --- Exchanges: where prices come from and orders go ----------------------
+        page = new_page("Exchanges")
+        region_var = tk.StringVar(master=win, value=self.settings.get("region", "us"))
         # The user's choice is shown and kept as it is: the window never fills one
         # in. It lists each exchange by name ("KuCoin") and saves its id ("kucoin").
         primary_exchange = self._primary_exchange()
-        primary_exchange_var = tk.StringVar(value=exchange_name(primary_exchange))
-        exchange_combo = ttk.Combobox(
-            frm,
-            textvariable=primary_exchange_var,
-            values=sorted(
+        primary_exchange_var = tk.StringVar(
+            master=win, value=exchange_name(primary_exchange)
+        )
+        price_comparison_var = tk.BooleanVar(
+            master=win, value=self.settings.get("price_comparison_enabled", True)
+        )
+        auto_best_price_var = tk.BooleanVar(
+            master=win, value=self.settings.get("auto_best_price", False)
+        )
+        r = 0
+        add_choice(page, r, "Your region:", region_var, ["us", "eu", "global"])
+        r += 1
+        add_choice(
+            page,
+            r,
+            "Primary exchange:",
+            primary_exchange_var,
+            sorted(
                 (
                     exchange_name(e)
                     for e in self._primary_exchange_choices(primary_exchange)
                 ),
                 key=str.lower,
             ),
-            state="readonly",
         )
-        exchange_combo.grid(row=r, column=1, sticky="ew", pady=6)
-        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
+        r += 1
+        add_check(
+            page, r, "Enable price comparison across exchanges", price_comparison_var
+        )
+        r += 1
+        add_check(page, r, "Automatically use best price exchange", auto_best_price_var)
         r += 1
 
-        # Price comparison options
-        price_comparison_var = tk.BooleanVar(
-            value=self.settings.get("price_comparison_enabled", True)
-        )
-        ttk.Checkbutton(
-            frm,
-            text="Enable price comparison across exchanges",
-            variable=price_comparison_var,
-        ).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
-        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
-        r += 1
-
-        auto_best_price_var = tk.BooleanVar(
-            value=self.settings.get("auto_best_price", False)
-        )
-        ttk.Checkbutton(
-            frm,
-            text="Automatically use best price exchange",
-            variable=auto_best_price_var,
-        ).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
-        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
-        r += 1
-
-        # Exchange setup button
         def open_exchange_setup():
             try:
                 from exchange_config_gui import ExchangeConfigGUI
 
-                exchange_gui = ExchangeConfigGUI(parent=self)
+                ExchangeConfigGUI(parent=self)
                 messagebox.showinfo(
                     "Exchange Setup",
                     "Exchange configuration tool opened in separate window.",
@@ -7801,42 +7751,38 @@ Platform: {sys.platform}
                 messagebox.showerror("Error", f"Failed to open exchange setup: {e}")
 
         ttk.Button(
-            frm, text="Configure Exchange APIs...", command=open_exchange_setup
-        ).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
-        ttk.Label(frm, text="").grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
+            page, text="Configure Exchange APIs...", command=open_exchange_setup
+        ).grid(row=r, column=0, sticky="w", pady=(12, 6))
+        ttk.Label(page, text="API keys and which exchanges are enabled").grid(
+            row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(12, 6)
+        )
         r += 1
-
         ttk.Button(
-            frm,
+            page,
             text="Check Exchanges...",
             command=lambda: self.open_exchange_check(win),
-        ).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
+        ).grid(row=r, column=0, sticky="w", pady=6)
         ttk.Label(
-            frm, text="prices, candles and minimum orders from each enabled exchange"
-        ).grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
-        r += 1
+            page, text="prices, candles and minimum orders from each enabled exchange"
+        ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=6)
 
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=10
-        )
-        r += 1
-
-        # --- Paper trading ---
-        ttk.Label(frm, text="Paper trading", font=ui_tokens.font("body", "bold")).grid(
-            row=r, column=0, columnspan=3, sticky="w", pady=(10, 5)
-        )
-        r += 1
-
-        # The coins paper trading opens new trades in: the coins above, or a chosen
-        # set of them (paper_coins.py)
+        # --- Paper trading ---------------------------------------------------------
+        page = new_page("Paper trading")
+        # The coins paper trading opens new trades in: the coins on the Trading tab,
+        # or a chosen set of them (paper_coins.py)
         paper_mode_var = tk.StringVar(master=win, value=paper_coins.mode(self.settings))
         saved_paper_coins = paper_coins.chosen(self.settings)
         paper_coin_vars: Dict[str, tk.BooleanVar] = {}
-
-        ttk.Label(frm, text="Paper-trading coins:").grid(
+        _paper = read_paper_settings()
+        quote_age_var = tk.StringVar(master=win, value=f"{_paper.max_quote_age_s:g}")
+        price_rule_var = tk.StringVar(
+            master=win, value=PAPER_PRICE_RULES[_paper.price_fallback_policy]
+        )
+        r = 0
+        ttk.Label(page, text="Paper-trading coins:").grid(
             row=r, column=0, sticky="nw", padx=(0, 10), pady=6
         )
-        paper_box = ttk.Frame(frm)
+        paper_box = ttk.Frame(page)
         paper_box.grid(row=r, column=1, columnspan=2, sticky="ew", pady=6)
         ttk.Radiobutton(
             paper_box,
@@ -7856,10 +7802,11 @@ Platform: {sys.platform}
         )
         ttk.Label(
             paper_box,
-            wraplength=520,
+            wraplength=560,
             text=(
                 "New paper trades open only in these coins. A position already held "
-                "is still sold by its exit rules. Live trading uses the coins above."
+                "is still sold by its exit rules. Live trading uses the coins on the "
+                "Trading tab."
             ),
         ).grid(row=3, column=0, sticky="w", pady=(4, 0))
 
@@ -7867,15 +7814,15 @@ Platform: {sys.platform}
             return paper_coins.normalise(coins_var.get().split(","))
 
         def _show_paper_coins(*_) -> None:
-            """One tick box per coin above, usable when overriding. A coin keeps its
-            tick while the list above is edited."""
+            """One tick box per coin on the Trading tab, usable when overriding. A
+            coin keeps its tick while that list is edited."""
             for child in paper_coin_frame.winfo_children():
                 child.destroy()
             override = paper_mode_var.get() == paper_coins.OVERRIDE
             for i, coin in enumerate(_typed_coins()):
                 var = paper_coin_vars.get(coin)
                 if var is None:
-                    # nothing chosen yet: start from every coin above
+                    # nothing chosen yet: start from every coin
                     ticked = coin in saved_paper_coins if saved_paper_coins else True
                     var = paper_coin_vars[coin] = tk.BooleanVar(
                         master=win, value=ticked
@@ -7895,111 +7842,152 @@ Platform: {sys.platform}
         coins_var.trace_add("write", _show_paper_coins)
         paper_mode_var.trace_add("write", _show_paper_coins)
         r += 1
-
+        # Paper fills: how old a price may be, and what happens without a fresh one
+        add_row(page, r, "Oldest price a paper fill uses (s):", quote_age_var)
+        r += 1
+        add_choice(
+            page,
+            r,
+            "With no fresh price:",
+            price_rule_var,
+            PAPER_PRICE_RULES.values(),
+            width=40,
+        )
+        r += 1
         # Paper account: the paper trader's book (balances and positions)
         ttk.Button(
-            frm,
+            page,
             text="Paper Account...",
             command=lambda: self.open_paper_account_dialog(win),
-        ).grid(row=r, column=0, columnspan=2, sticky="w", pady=6)
+        ).grid(row=r, column=0, sticky="w", pady=(12, 6))
         ttk.Label(
-            frm, text="starting balance, cash and positions for paper trading"
-        ).grid(row=r, column=2, sticky="e", padx=(10, 0), pady=6)
-        r += 1
+            page, text="starting balance, cash and positions for paper trading"
+        ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(12, 6))
 
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        # --- LLM: providers, their order and LLM signals (its own window) ----------
+        page = new_page("LLM")
+        llm_summary_var = tk.StringVar(master=win, value=self._llm_summary())
+        add_window_row(
+            page,
+            0,
+            "LLM Providers...",
+            lambda: self.open_llm_settings(
+                win, on_saved=lambda: llm_summary_var.set(self._llm_summary())
+            ),
+            llm_summary_var,
         )
-        r += 1
 
-        add_row(r, "pt_thinker.py path:", neural_script_var)
-        r += 1
-        add_row(r, "pt_trainer.py path:", trainer_script_var)
-        r += 1
-        add_row(r, "pt_trader.py path:", trader_script_var)
-        r += 1
-
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        # --- Display: refresh rates and charts --------------------------------------
+        page = new_page("Display")
+        ui_refresh_var = tk.StringVar(
+            master=win, value=str(self.settings["ui_refresh_seconds"])
         )
-        r += 1
-
-        # --- Paths (FDS-108a): where settings, data and logs live ---
-        ttk.Label(
-            frm, text="Paths (read-only program folder is not used for your files):"
-        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=(0, 4))
-        r += 1
-        for label, folder in self._user_folder_rows():
-            ttk.Label(frm, text=label).grid(
-                row=r, column=0, sticky="w", padx=(0, 10), pady=4
-            )
-            path_row = ttk.Frame(frm)
-            path_row.grid(row=r, column=1, columnspan=2, sticky="ew", pady=4)
-            path_row.columnconfigure(0, weight=1)
-            path_entry = ttk.Entry(path_row)
-            path_entry.insert(0, folder)
-            path_entry.configure(state="readonly")
-            path_entry.grid(row=0, column=0, sticky="ew")
-            ttk.Button(
-                path_row,
-                text="Open folder",
-                command=lambda f=folder: self._open_user_folder(f),
-            ).grid(row=0, column=1, sticky="e", padx=(10, 0))
-            r += 1
-
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        chart_refresh_var = tk.StringVar(
+            master=win, value=str(self.settings["chart_refresh_seconds"])
         )
+        candles_limit_var = tk.StringVar(
+            master=win, value=str(self.settings["candles_limit"])
+        )
+        timeframes = list(
+            self.settings.get("timeframes") or DEFAULT_SETTINGS["timeframes"]
+        )
+        default_tf_var = tk.StringVar(
+            master=win,
+            value=self.settings.get("default_timeframe")
+            or DEFAULT_SETTINGS["default_timeframe"],
+        )
+        dark_theme_var = tk.BooleanVar(
+            master=win, value=bool(self.settings.get("dark_theme", True))
+        )
+        r = 0
+        add_row(page, r, "UI refresh seconds:", ui_refresh_var)
         r += 1
-
-        add_row(r, "UI refresh seconds:", ui_refresh_var)
+        add_row(page, r, "Chart refresh seconds:", chart_refresh_var)
         r += 1
-        add_row(r, "Chart refresh seconds:", chart_refresh_var)
+        add_row(page, r, "Candles limit:", candles_limit_var)
         r += 1
-        add_row(r, "Candles limit:", candles_limit_var)
+        add_choice(page, r, "Chart timeframe at start-up:", default_tf_var, timeframes)
         r += 1
-
         # Chart overlays and candlestick patterns: their own pop-out (FDS-CHART-001)
-        ttk.Label(frm, text="Chart overlays:").grid(row=r, column=0, sticky="w", pady=6)
+        ttk.Label(page, text="Chart overlays:").grid(
+            row=r, column=0, sticky="w", padx=(0, 10), pady=6
+        )
         ttk.Button(
-            frm,
-            text="Chart settings\u2026",
+            page,
+            text="Chart settings…",
             command=lambda: self.open_chart_settings(parent=win),
         ).grid(row=r, column=1, sticky="w", pady=6)
         r += 1
+        add_check(page, r, "Use dark theme (default: enabled)", dark_theme_var)
 
-        # --- Public API Server Section ---
-        ttk.Separator(frm, orient="horizontal").grid(
-            row=r, column=0, columnspan=3, sticky="ew", pady=10
+        # --- Working Directories: where settings, data and logs live (read-only) ---
+        page = new_page("Working Directories")
+        ttk.Label(
+            page,
+            wraplength=760,
+            text=(
+                "Where PowerTrader keeps your settings, models, data and logs. The "
+                "program folder itself is read-only and holds none of your files."
+            ),
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        for r, (label, folder) in enumerate(
+            self._user_folder_rows(self.settings), start=1
+        ):
+            ttk.Label(page, text=label).grid(
+                row=r, column=0, sticky="w", padx=(0, 10), pady=4
+            )
+            path_entry = ttk.Entry(page)
+            path_entry.insert(0, folder)
+            path_entry.configure(state="readonly")
+            path_entry.grid(row=r, column=1, sticky="ew", pady=4)
+            ttk.Button(
+                page,
+                text="Open folder",
+                command=lambda f=folder: self._open_user_folder(f),
+            ).grid(row=r, column=2, sticky="e", padx=(10, 0), pady=4)
+
+        # --- System: start-up and the public API server -----------------------------
+        page = new_page("System")
+        auto_start_var = tk.BooleanVar(
+            master=win, value=bool(self.settings.get("auto_start_scripts", False))
         )
-        r += 1
-
         api_enabled_var = tk.BooleanVar(
-            value=bool(self.settings.get("api_server_enabled", False))
+            master=win, value=bool(self.settings.get("api_server_enabled", False))
         )
         api_host_var = tk.StringVar(
-            value=self.settings.get("api_server_host", "127.0.0.1")
+            master=win, value=self.settings.get("api_server_host", "127.0.0.1")
         )
         api_port_var = tk.StringVar(
-            value=str(self.settings.get("api_server_port", 8080))
+            master=win, value=str(self.settings.get("api_server_port", 8080))
         )
-
-        chk_api = ttk.Checkbutton(
-            frm, text="Enable Public API Server", variable=api_enabled_var
+        r = 0
+        add_check(
+            page,
+            r,
+            "Start the Neural Runner and Trader when the hub opens",
+            auto_start_var,
         )
-        chk_api.grid(row=r, column=0, columnspan=3, sticky="w", pady=(0, 5))
         r += 1
-
-        add_row(r, "API Host:", api_host_var)
+        ttk.Label(
+            page,
+            wraplength=760,
+            text=(
+                "Every coin must be trained. The Trader starts once the Neural Runner "
+                "is ready, in the trading mode that is set (paper or live)."
+            ),
+        ).grid(row=r, column=0, columnspan=3, sticky="w", padx=(20, 0))
         r += 1
-        add_row(r, "API Port:", api_port_var)
+        add_heading(page, r, "Public API server")
         r += 1
-
-        # API Status and test button
-        api_status_frame = ttk.Frame(frm)
+        add_check(page, r, "Enable Public API Server", api_enabled_var)
+        r += 1
+        add_row(page, r, "API Host:", api_host_var)
+        r += 1
+        add_row(page, r, "API Port:", api_port_var)
+        r += 1
+        api_status_frame = ttk.Frame(page)
         api_status_frame.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(5, 10))
         api_status_frame.columnconfigure(1, weight=1)
-
         ttk.Label(api_status_frame, text="Status:").grid(row=0, column=0, sticky="w")
         api_status_lbl = ttk.Label(api_status_frame, text="Unknown")
         api_status_lbl.grid(row=0, column=1, sticky="w", padx=(10, 0))
@@ -8015,37 +8003,6 @@ Platform: {sys.platform}
             row=0, column=2, sticky="e"
         )
         test_api()  # Initial status check
-        r += 1
-
-        chk = ttk.Checkbutton(
-            frm, text="Auto start scripts on GUI launch", variable=auto_start_var
-        )
-        chk.grid(row=r, column=0, columnspan=3, sticky="w", pady=(10, 0))
-        r += 1
-
-        # --- UI Theme and Notification Settings ---
-        dark_theme_var = tk.BooleanVar(
-            value=bool(self.settings.get("dark_theme", True))
-        )
-        notifications_var = tk.BooleanVar(
-            value=bool(self.settings.get("training_notifications", True))
-        )
-
-        dark_theme_chk = ttk.Checkbutton(
-            frm, text="Use dark theme (default: enabled)", variable=dark_theme_var
-        )
-        dark_theme_chk.grid(row=r, column=0, columnspan=3, sticky="w", pady=(10, 0))
-        r += 1
-
-        notif_chk = ttk.Checkbutton(
-            frm, text="Enable training notifications", variable=notifications_var
-        )
-        notif_chk.grid(row=r, column=0, columnspan=3, sticky="w", pady=(5, 0))
-        r += 1
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=r, column=0, columnspan=3, sticky="ew", pady=12)
-        btns.columnconfigure(0, weight=1)
 
         def save():
             # checked before anything changes, so a refused save changes nothing
@@ -8078,6 +8035,15 @@ Platform: {sys.platform}
                         "Retrain every is between {:g} and {:g} hours (a model counts "
                         "as trained for 14 days)".format(*RETRAIN_HOURS_RANGE)
                     )
+                quote_age = float(quote_age_var.get().strip())
+                if not MAX_QUOTE_AGE_RANGE[0] <= quote_age <= MAX_QUOTE_AGE_RANGE[1]:
+                    raise ValueError(
+                        "The oldest price a paper fill uses is between {:g} and {:g} "
+                        "seconds".format(*MAX_QUOTE_AGE_RANGE)
+                    )
+                price_rule = next(
+                    k for k, v in PAPER_PRICE_RULES.items() if v == price_rule_var.get()
+                )
 
                 # Track coins before changes so we can detect newly added coins
                 prev_coins = set(
@@ -8088,9 +8054,6 @@ Platform: {sys.platform}
                     ]
                 )
 
-                self.settings["main_neural_dir"] = pt_paths.neural_dir(
-                    main_dir_var.get().strip()
-                )
                 self.settings["coins"] = [
                     c.strip().upper() for c in coins_var.get().split(",") if c.strip()
                 ]
@@ -8110,62 +8073,26 @@ Platform: {sys.platform}
                 self.settings["dca_levels"] = dca_levels
 
                 # --- Trailing PM settings ---
-                try:
-                    pm0 = float(
-                        (pm_no_dca_var.get() or "").strip().replace("%", "") or 0.0
-                    )
-                except Exception:
-                    pm0 = float(
-                        self.settings.get(
-                            "pm_start_pct_no_dca",
-                            DEFAULT_SETTINGS.get("pm_start_pct_no_dca", 5.0),
+                for key, var, default in (
+                    ("pm_start_pct_no_dca", pm_no_dca_var, 5.0),
+                    ("pm_start_pct_with_dca", pm_with_dca_var, 2.5),
+                    ("trailing_gap_pct", trailing_gap_var, 0.5),
+                ):
+                    try:
+                        value = float((var.get() or "").strip().replace("%", "") or 0.0)
+                    except Exception:
+                        value = float(
+                            self.settings.get(key, DEFAULT_SETTINGS.get(key, default))
+                            or default
                         )
-                        or 5.0
-                    )
-                if pm0 < 0.0:
-                    pm0 = 0.0
-                self.settings["pm_start_pct_no_dca"] = pm0
-
-                try:
-                    pm1 = float(
-                        (pm_with_dca_var.get() or "").strip().replace("%", "") or 0.0
-                    )
-                except Exception:
-                    pm1 = float(
-                        self.settings.get(
-                            "pm_start_pct_with_dca",
-                            DEFAULT_SETTINGS.get("pm_start_pct_with_dca", 2.5),
-                        )
-                        or 2.5
-                    )
-                if pm1 < 0.0:
-                    pm1 = 0.0
-                self.settings["pm_start_pct_with_dca"] = pm1
-
-                try:
-                    tg = float(
-                        (trailing_gap_var.get() or "").strip().replace("%", "") or 0.0
-                    )
-                except Exception:
-                    tg = float(
-                        self.settings.get(
-                            "trailing_gap_pct",
-                            DEFAULT_SETTINGS.get("trailing_gap_pct", 0.5),
-                        )
-                        or 0.5
-                    )
-                if tg < 0.0:
-                    tg = 0.0
-                self.settings["trailing_gap_pct"] = tg
-
-                self.settings["hub_data_dir"] = hub_dir_var.get().strip()
+                    self.settings[key] = max(0.0, value)
 
                 # --- Paper trading coins (an inherit keeps the chosen coins for later)
                 self.settings[paper_coins.MODE_KEY] = paper_mode
                 if paper_mode == paper_coins.OVERRIDE:
                     self.settings[paper_coins.COINS_KEY] = paper_ticked
 
-                # --- Exchange Provider Settings ---
+                # --- Exchanges ---
                 self.settings["region"] = region_var.get().strip()
                 self.settings["primary_exchange"] = exchange_id(
                     primary_exchange_var.get()
@@ -8175,14 +8102,7 @@ Platform: {sys.platform}
                 )
                 self.settings["auto_best_price"] = bool(auto_best_price_var.get())
 
-                self.settings["script_neural_runner2"] = neural_script_var.get().strip()
-                self.settings["script_neural_trainer"] = (
-                    trainer_script_var.get().strip()
-                )
-                self.settings["script_trader"] = trader_script_var.get().strip()
-                # The next training run uses the new trainer script (no restart).
-                self._refresh_trainer_path()
-
+                # --- Display ---
                 self.settings["ui_refresh_seconds"] = float(
                     ui_refresh_var.get().strip()
                 )
@@ -8192,9 +8112,12 @@ Platform: {sys.platform}
                 self.settings["candles_limit"] = int(
                     float(candles_limit_var.get().strip())
                 )
-                self.settings["auto_start_scripts"] = bool(auto_start_var.get())
+                if default_tf_var.get() in timeframes:
+                    self.settings["default_timeframe"] = default_tf_var.get()
+                self.settings["dark_theme"] = dark_theme_var.get()
 
-                # --- API Server Settings ---
+                # --- System ---
+                self.settings["auto_start_scripts"] = bool(auto_start_var.get())
                 self.settings["api_server_enabled"] = api_enabled_var.get()
                 self.settings["api_server_host"] = api_host_var.get()
                 try:
@@ -8203,8 +8126,7 @@ Platform: {sys.platform}
                 except ValueError:
                     self.settings["api_server_port"] = 8080
 
-                # --- Dark Theme and Notifications ---
-                self.settings["dark_theme"] = dark_theme_var.get()
+                # --- Training ---
                 self.settings["training_notifications"] = notifications_var.get()
                 retrain_was = (
                     self.settings.get("training_auto_enabled", True),
@@ -8213,6 +8135,10 @@ Platform: {sys.platform}
                 self.settings["training_auto_enabled"] = bool(auto_retrain_var.get())
                 self.settings["training_auto_interval_hours"] = retrain_hours
 
+                # pt_config.json first: a refusal there leaves gui_settings.json as
+                # it was
+                if not save_paper_settings(price_rule, quote_age):
+                    raise ValueError("the paper-trading price rules were not saved")
                 self._save_settings()
                 training_settings.save_training_settings(
                     {

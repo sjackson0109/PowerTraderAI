@@ -39,7 +39,7 @@ def test_settings_has_no_robinhood_api_row(hub):
     assert "Setup Wizard" not in texts
     assert not any("no API key / private key saved" in t for t in texts)
     # the rows around it are still there
-    assert "pt_trader.py path:" in texts and "Paper Account..." in texts
+    assert "Configure Exchange APIs..." in texts and "Paper Account..." in texts
     win.destroy()
 
 

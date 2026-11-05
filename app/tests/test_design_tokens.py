@@ -765,9 +765,8 @@ def test_the_hubs_classic_widgets_take_the_active_palette(hub):
         if isinstance(w, tk.Toplevel) and w.title() == "Settings"
     ][-1]
     assert colour(settings, "background") == p["BG"].upper()
-    canvases = [w for w in _classic_widgets(settings) if w.winfo_class() == "Canvas"]
-    assert canvases
-    assert all(colour(c, "background") == p["BG"].upper() for c in canvases)
+    # one ttk tab per section, styled by the theme: no classic widget of its own
+    assert list(_classic_widgets(settings)) == []
     assert colour(hub.open_chart_settings(), "background") == p["BG"].upper()
 
 

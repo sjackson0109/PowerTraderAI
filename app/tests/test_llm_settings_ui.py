@@ -264,11 +264,13 @@ def test_settings_has_llm_providers_and_the_training_gate(hub):
     ]
     for text in (
         "LLM Providers...",
-        "Training",
         "Minimum scored signals:",
         "Minimum hit rate after fees %:",
     ):
         assert text in texts
+    (notebook,) = [w for w in widgets(win) if isinstance(w, ttk.Notebook)]
+    tabs = [notebook.tab(t, "text") for t in notebook.tabs()]
+    assert "Training" in tabs and "LLM" in tabs
     type_into(win, "Minimum scored signals:", "40")
     type_into(win, "Minimum hit rate after fees %:", "60")
     press(win, "Save")

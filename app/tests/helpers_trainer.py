@@ -298,23 +298,24 @@ def guard_trainer_children(monkeypatch, tmp_path):
     return records
 
 
-def configure_trainer(script=None, allow_mock=None):
-    """Write the user's settings files under POWERTRADER_HOME, as a user would:
-    ``script_neural_trainer`` in gui_settings.json (read by the hub at start-up)
-    and ``allow_mock_trainer`` in pt_config.json (read at every launch)."""
+def configure_trainer(script=None, allow_mock=None, monkeypatch=None):
+    """``script``: the trainer the hub runs, for this test (the scripts are part of
+    the program, ``pt_hub.SYSTEM_SCRIPTS``; set through ``monkeypatch``, read by the
+    hub at start-up). ``allow_mock``: ``allow_mock_trainer`` in pt_config.json under
+    POWERTRADER_HOME, as a user would set it (read at every launch)."""
     import pt_paths
 
-    for path, key, value in (
-        (pt_paths.gui_settings_file(), "script_neural_trainer", script),
-        (pt_paths.settings_file(), "allow_mock_trainer", allow_mock),
-    ):
-        if value is None:
-            continue
+    if script is not None:
+        import pt_hub
+
+        monkeypatch.setitem(pt_hub.SYSTEM_SCRIPTS, "script_neural_trainer", script)
+    if allow_mock is not None:
+        path = pt_paths.settings_file()
         data = {}
         if os.path.isfile(path):
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
-        data[key] = value
+        data["allow_mock_trainer"] = allow_mock
         pt_paths.write_private_text(path, json.dumps(data, indent=2))
 
 

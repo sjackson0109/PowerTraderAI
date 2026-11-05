@@ -50,9 +50,7 @@ def test_every_stub_trainer_carries_the_mock_header_on_line_2():
 def test_the_default_trainer_is_the_real_one_and_mocks_are_off_by_default():
     real = os.path.join(APP_DIR, trainer_guard.REAL_TRAINER)
     assert not trainer_guard.is_mock_trainer(real)
-    assert (
-        pt_hub.DEFAULT_SETTINGS["script_neural_trainer"] == trainer_guard.REAL_TRAINER
-    )
+    assert pt_hub.SYSTEM_SCRIPTS["script_neural_trainer"] == trainer_guard.REAL_TRAINER
     defaults = pt_settings_manager.DEFAULT_SETTINGS
     assert defaults["script_neural_trainer"] == trainer_guard.REAL_TRAINER
     assert defaults["allow_mock_trainer"] is False
@@ -103,7 +101,7 @@ def records(monkeypatch, tmp_path, isolated_user_dirs):
 def mock_hub(monkeypatch, records):
     """A real hub whose saved trainer script is the root mock (gui_settings.json),
     with no allow_mock_trainer setting."""
-    ht.configure_trainer(script="pt_trainer.py")
+    ht.configure_trainer(script="pt_trainer.py", monkeypatch=monkeypatch)
     hub = ht.build_real_hub(monkeypatch)
     hub.test_neural_stops = []
     monkeypatch.setattr(

@@ -333,6 +333,25 @@ def read_paper_settings(settings: Any = None) -> PaperSettings:
     return PaperSettings(price_fallback_policy=policy, max_quote_age_s=float(max_age))
 
 
+def save_paper_settings(
+    policy: str, max_quote_age_s: float, manager: Any = None
+) -> bool:
+    """Write both paper-fill rules (Settings > Paper trading). False, and nothing
+    written, for a policy or an age out of range."""
+    from pt_settings_manager import SettingsManager
+
+    if policy not in PRICE_FALLBACK_POLICIES or not _in_range(
+        max_quote_age_s, MAX_QUOTE_AGE_RANGE
+    ):
+        return False
+    manager = manager if manager is not None else SettingsManager()
+    if not manager.set(PAPER_MAX_QUOTE_AGE_KEY, float(max_quote_age_s)):
+        return False
+    if not manager.set_price_fallback_policy(policy, persist=False):
+        return False
+    return bool(manager.save_settings())
+
+
 def read_emergency_drawdown_pct(settings: Any = None) -> float:
     """``risk.emergency_drawdown_pct`` (1-50); anything invalid is 8.0, logged."""
     value = _lookup(_settings_mapping(settings), EMERGENCY_DRAWDOWN_KEY)

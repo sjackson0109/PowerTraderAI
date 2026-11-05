@@ -780,6 +780,25 @@ def test_the_fee_rate_comes_from_the_exchange_layer_else_the_default_0_6_percent
         assert lth.trading_fee_rate("BTC", layer=lambda: layer) == (0.006, False)
 
 
+def test_the_fee_rate_reads_the_exchange_managers_answer():
+    """The exchange layer's managers answer trading_fees() with a Sourced whose value
+    is a TradingFees, primary exchange first."""
+    from pt_exchange_abstraction import ExchangeManager, ExchangeType, TradingFees
+
+    class Connector:
+        def market_symbol(self, market):
+            return market
+
+        def trading_fees(self, symbol):
+            return TradingFees(0.004, 0.0025, "kraken", "exchange")
+
+    manager = ExchangeManager()
+    manager.exchanges[ExchangeType.KRAKEN] = Connector()
+    on_manager = SimpleNamespace(exchange_manager=manager)
+    assert lth.trading_fee_rate("BTC", layer=lambda: on_manager) == (0.0025, True)
+    assert lth.trading_fee_rate("BTC", layer=lambda: manager) == (0.0025, True)
+
+
 def two_holdings_to_rebalance(manager):
     """BTC 30,000 and ETH 10,000, both with a 50% target: BTC sells 10,000 and ETH
     buys 10,000."""

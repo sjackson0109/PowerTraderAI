@@ -152,6 +152,9 @@ def trading_fee_rate(
             )
         if callable(fees):
             answer = fees(symbol)
+            # the managers answer with a Sourced whose value is the TradingFees
+            if hasattr(getattr(answer, "value", None), "taker"):
+                answer = answer.value
             taker = (
                 answer.get("taker")
                 if isinstance(answer, dict)

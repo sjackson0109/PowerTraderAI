@@ -31,7 +31,9 @@ A round's registration and the run's refusals (FDS-SIG-001 sections 11 and 12).
 
 Steps 2 and 6 together allow changed code only as a superseding defect fix after
 results; step 4 lists dirty frozen paths, and committed changes after the freeze are
-refused on the same footing (owner's review of PR #228, 2026-11-06).
+refused on the same footing (the PR #228 review, finding 2). Step 4's own list names
+neither refusal 6 nor a changed freeze record (refusal 5): that wording awaits the owner
+(``docs/dev/RUN-LOG-sig-1.md``).
 
 Git is local only: no network, no credentials.
 """

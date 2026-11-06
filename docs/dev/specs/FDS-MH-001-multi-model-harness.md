@@ -243,7 +243,17 @@ That makes 26 features, with a longest look-back of 50 days (A-classic §2.2). T
   - Eighteen months pooled is about three times the 50–150 trades C-evidence §4.6 gives for six. The lockbox catches overfitting and leaks; the walk-forward test carries the evidence.
 - **Failing.** A finalist that fails is retired. A changed version is a new contestant in a new batch.
 - **Limits.** Every opening is logged with its months. Each month can be in at most 5 openings, across all batches. A batch whose last 18 months include a month opened 5 times waits for newer data (C-evidence §4.6; Dwork et al. 2015).
-- **Seen already.** The pattern model's results on the last 7 months were seen in the diagnostic (§4). Its lockbox line is shown and is not evidence.
+- **Seen already** (`model_lab/catalogue.py`, `LOOKS`; owner's review, 2026-11-06). Every earlier look at a contestant's results is recorded in code, with the months it covered and where it is written up; adding one is a reviewed change.
+  - A batch records, when it is frozen, which of them cover any of its lockbox.
+  - A contestant with any is never given "Beats random entries". A finalist's verdict is "Passed; its lockbox was seen before, so a final check would not be unseen evidence", and its final check is shown, not counted as evidence.
+  - **The pattern model's looks:**
+    - FDS-MDL Tests A and B (BTC and ETH, 2024-07-01 to 2026-10-01, as STRAT-003 with that strategy's exits);
+    - the volume research (10 coins, 2026-03-31 to 2026-11-05);
+    - the entry gate's held-out slices of the models in use (from about 2026-04);
+    - the gate diagnostic (13 coins, 2026-04-05 to 2026-11-05).
+
+    With batch 1's lockbox (from 2025-05-06), its final check cannot be unseen evidence for it.
+  - **The seven rules and the pattern model:** the phase B timing run (2021-01-01 to 2025-05-06), which read the walk-forward only. Its 8 trials count in phase E's report.
 
 ### 5.8 Batches, the trial log and results
 
@@ -288,14 +298,14 @@ The trainer's per-coin gate keeps its place and its Settings fields, and changes
 - **Its score becomes return per capital-day.**
   - Rule b (the minimum return), rule d (beat the percentile) and rule f (no worse than the model in use) use the new score.
   - Rules a (minimum entries), c (capital-weighted return above 0) and e (drawdown no worse than random's median) stay as they are.
-- **A new setting replaces the old one.**
-  - "Minimum return per day held after fees %" (default 0) replaces "Minimum mean return after fees %".
-  - The saved per-trade value is not carried over, because it measured something else. `training_settings.normalise` drops the old key.
+- **A trained model gets a minimum of its own.**
+  - "Minimum return per day held after fees %" (`gate_min_return_per_day`, default 0) is rule b's minimum for a trained model. A saved per-trade value is never turned into it, because it measured something else.
+  - The per-trade minimum, `gate_min_return_after_fees`, stays as saved, as the LLM signals' rule b ("Minimum mean return per LLM signal after fees %"). An LLM gate decision is the same as before for any saved value (owner's review, 2026-11-06: the first version of phase A fixed it at 0%, which changed decisions for anyone who had saved another value).
   - A model in use whose record has no per-day score skips rule f once, and the check window says it has none recorded.
 - **The check window and `model_gate.json`** add the smallest detectable edge. When that edge is above 50% of the random median, they say "too few trades to tell".
 - **Entry counts.** R1's entry count varies around the model's, so "the same number of entries as the model" no longer holds. The decision records both counts.
 - **R2 is not used here,** because a 7-month held-out slice is shorter than 2D.
-- **The LLM signal gate is unchanged** (§3 row 7).
+- **The LLM signal gate is unchanged** (§3 row 7): the same score, baseline and settings, its per-trade minimum included. Its decisions are checked against main's at the default and at other saved settings.
 - **Settings text.** Settings > Training's description changes to match: "per day held", "random entries made with the same waits".
 
 ## 7. Batch 1 (declared here, before any result)
@@ -426,6 +436,7 @@ There is no command line for users (§2); tests drive the package.
 - **Run** batch 1 (§7) in a sandbox, on public candles, with Coinbase as the primary exchange (the owner's trading exchange).
 - **Write** `docs/dev/MODEL-LAB-REPORT-batch-1.md`, with:
   - the data: series, exchange and SHA-256;
+  - each contestant's earlier looks (§5.7), and the trials logged before this run;
   - the frozen batch file and every trial's lines;
   - the verdicts, the smallest detectable edges and PBO;
   - the per-coin, rising/falling and fee lines;

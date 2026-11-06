@@ -51,11 +51,11 @@ def bars(coin="ETH", tf="1h", n=200, seed=0, drop=(), start=T0):
     )
 
 
-def ref_cmf(h, l, c, v):
+def ref_cmf(h, lows, c, v):
     """The textbook Chaikin Money Flow over the given bars, written out."""
     num = 0.0
     den = 0.0
-    for hi, lo, cl, vo in zip(h, l, c, v):
+    for hi, lo, cl, vo in zip(h, lows, c, v):
         mfm = 0.0 if hi == lo else ((cl - lo) - (hi - cl)) / (hi - lo)
         num += mfm * vo
         den += vo

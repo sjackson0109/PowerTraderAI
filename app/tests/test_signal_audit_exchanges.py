@@ -84,20 +84,23 @@ def test_binance_lists_its_usdt_markets_and_states_field_7(get):
             },
         ]
     }
-    kline = lambda t, qv: [
-        t,
-        "1",
-        "2",
-        "0.5",
-        "1.5",
-        "10",
-        t + DAY - 1,
-        str(qv),
-        5,
-        "4",
-        "6",
-        "0",
-    ]
+
+    def kline(t, qv):
+        return [
+            t,
+            "1",
+            "2",
+            "0.5",
+            "1.5",
+            "10",
+            t + DAY - 1,
+            str(qv),
+            5,
+            "4",
+            "6",
+            "0",
+        ]
+
     fake = get(
         **{
             "api__v3__exchangeInfo": info,

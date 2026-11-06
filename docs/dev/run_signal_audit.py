@@ -123,23 +123,36 @@ def rank(n: int, ranking_date: str, window_days: int) -> Dict[str, Any]:
     conn = _connector(manager, choice.exchange)
     fetched_at = datetime.now(timezone.utc)
     day = datetime.strptime(ranking_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-    if not (day <= fetched_at <= day + timedelta(days=8)):
-        raise Stop("the ranking fetch must happen within 7 days after the ranking date")
+    problem = ranking.ranking_fetch_problem(ranking_date, fetched_at)
+    if problem:
+        raise Stop(problem)
     listing = conn.spot_markets()
     days = ranking.ranking_days(ranking_date)
-    volumes: Dict[str, Any] = {}
+    volumes = ranking.gather_volumes(
+        conn, choice.exchange, listing, days, lambda t: print(t, flush=True)
+    )
     answers = list(listing.answers)
-    for m in listing.markets:
-        try:
-            dq = conn.daily_quote_volume(m.pair, days[0], days[-1])
-        except Exception as exc:  # a market the exchange no longer serves
-            print(f"{m.pair}: no daily quote volume ({exc})", flush=True)
-            dq = None
-        volumes[m.pair] = dq
-        if dq is not None:
-            answers.extend(dq.answers)
+    for v in volumes.values():
+        if not isinstance(v, ranking.VolumeFailure):
+            answers.extend(v.answers)
     exclusions = ranking.Exclusions()
-    ranked = ranking.rank_markets(listing, volumes, ranking_date, exclusions)
+    out = reg.round_dir(REPO, n)
+    try:
+        ranked = ranking.rank_markets(listing, volumes, ranking_date, exclusions)
+    except ranking.RankingRefused as exc:
+        # every market whose volume is not established, with its error or missing
+        # days and the exchange, kept for diagnosis; nothing is ranked or registered
+        _write_json(
+            os.path.join(out, "ranking", "refused.json"),
+            {
+                "exchange": choice.exchange,
+                "ranking_date": ranking_date,
+                "fetched_at": reg.iso(fetched_at),
+                "reason": str(exc),
+                "markets": [e.to_dict() for e in exc.markets],
+            },
+        )
+        raise Stop(f"ranking refused: {exc}")
     span_start = int(day.timestamp()) - ranking.RANKING_DAYS * 86400
     span_end = int(fetched_at.timestamp()) // 3600 * 3600
     files = {}
@@ -166,7 +179,6 @@ def rank(n: int, ranking_date: str, window_days: int) -> Dict[str, Any]:
         return ranking.check_history(open_s, span_start, span_end)
 
     selection = ranking.select_coins(ranked, history_of)
-    out = reg.round_dir(REPO, n)
     os.makedirs(os.path.join(out, "ranking"), exist_ok=True)
     raw = ranking.write_raw_answers(
         os.path.join(out, "ranking", "raw.jsonl.gz"), answers
@@ -178,7 +190,14 @@ def rank(n: int, ranking_date: str, window_days: int) -> Dict[str, Any]:
         "ranking_date": ranking_date,
         "fetched_at": reg.iso(fetched_at),
         "quote": listing.quote,
-        "measure": next((v.measure for v in volumes.values() if v is not None), None),
+        "measure": next(
+            (
+                v.measure
+                for v in volumes.values()
+                if not isinstance(v, ranking.VolumeFailure)
+            ),
+            None,
+        ),
         "universe": f"every spot market {choice.exchange} lists against {listing.quote}, "
         "any status",
         "exclusions": exclusions.to_dict(),

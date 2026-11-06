@@ -12,8 +12,17 @@ exchange whose connector lists its spot markets and states daily quote volume (o
   dollar markets use there (USDT, USD), in any status, at the ranking fetch.
 * **Ranking.** By 30-day quote volume: the sum of the daily quote volumes of the 30 UTC
   days ending on the ranking date (the last opening at 00:00 on it), as the exchange
-  states them (``DailyQuoteVolume.measure`` says which fields). A market with fewer days
-  sums the days it has.
+  states them (``DailyQuoteVolume.measure`` says which fields).
+* **Every day accounted for** (``volume_evidence``). A market's 30 days are established
+  only when each day is one of: a daily bar (its stated volume, zero included: a genuine
+  zero); a day before the market's first bar, when its bars then run unbroken to the
+  ranking date (listed within the span); or a day after its last bar, when its bars run
+  unbroken from the span's start or its first bar and the exchange lists it as not
+  trading (stopped). A request that failed, an answer with no bar for a day the market
+  traded, or a volume that is not a finite number at least 0 is not evidence: **the
+  ranking is refused** (``RankingRefused``) when any included market's volume is not
+  established, with every such market's error or missing days recorded. Nothing is
+  estimated or filled.
 * **Exclusions** (registered lists, each excluded symbol recorded with its reason):
   stablecoins and fiat- or commodity-pegged tokens; wrapped or staking-derivative
   tokens; leveraged tokens: a base asset that is a listed base plus one of the
@@ -227,6 +236,235 @@ def ranking_days(ranking_date: str) -> List[int]:
     return [last - k * DAY_MS for k in range(RANKING_DAYS - 1, -1, -1)]
 
 
+class RankingRefused(RuntimeError):
+    """The ranking cannot be established: an included market's 30-day quote volume
+    is missing, incomplete or failed. ``markets`` holds each one's evidence."""
+
+    def __init__(self, message: str, markets: Sequence["VolumeEvidence"]):
+        super().__init__(message)
+        self.markets = list(markets)
+
+
+@dataclass(frozen=True)
+class VolumeFailure:
+    """A quote-volume request that did not give an answer: the exchange, the market
+    and the error, kept as they came."""
+
+    exchange: str
+    pair: str
+    error: str
+
+
+COMPLETE = "complete"
+LISTED_IN_SPAN = "listed within the span"
+NOT_TRADING = "not trading in the span"
+STOPPED_IN_SPAN = "stopped trading within the span"
+INCOMPLETE = "incomplete"
+FAILED = "failed"
+ESTABLISHED = (COMPLETE, LISTED_IN_SPAN, NOT_TRADING, STOPPED_IN_SPAN)
+
+
+@dataclass(frozen=True)
+class VolumeEvidence:
+    pair: str
+    status: str
+    total: Optional[float]  # None unless established
+    days_present: int
+    first_bar: Optional[str]
+    last_bar: Optional[str]
+    missing_days: List[str]
+    detail: str
+    measure: Optional[str]
+    answers: List[str]  # each answer's SHA-256
+
+    @property
+    def established(self) -> bool:
+        return self.status in ESTABLISHED
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self.__dict__)
+
+
+def _day(ms: int) -> str:
+    return datetime.fromtimestamp(ms // 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+
+
+def volume_evidence(market, answer: Any, days: Sequence[int]) -> VolumeEvidence:
+    """How far ``answer`` (a DailyQuoteVolume, a VolumeFailure, or None for no
+    answer) establishes ``market``'s quote volume on each of ``days`` (the module
+    docstring)."""
+    if answer is None or isinstance(answer, VolumeFailure):
+        error = answer.error if answer is not None else "no answer"
+        return VolumeEvidence(
+            market.pair,
+            FAILED,
+            None,
+            0,
+            None,
+            None,
+            [_day(d) for d in days],
+            error,
+            None,
+            [],
+        )
+    shas = [a.sha256 for a in answer.answers]
+    wanted = set(days)
+    present: Dict[int, float] = {}
+    for t, v in answer.days:
+        if t not in wanted:
+            continue
+        v = float(v)
+        if not (v == v and v not in (float("inf"), float("-inf")) and v >= 0.0):
+            return VolumeEvidence(
+                market.pair,
+                FAILED,
+                None,
+                len(present),
+                None,
+                None,
+                [],
+                f"{_day(t)}: a stated volume of {v!r}",
+                answer.measure,
+                shas,
+            )
+        present[t] = v
+    order = list(days)
+    have = [t in present for t in order]
+    missing = [_day(t) for t, h in zip(order, have) if not h]
+    if all(have):
+        return VolumeEvidence(
+            market.pair,
+            COMPLETE,
+            float(sum(present.values())),
+            len(present),
+            _day(order[0]),
+            _day(order[-1]),
+            [],
+            "",
+            answer.measure,
+            shas,
+        )
+    if not any(have):
+        if market.trading is False:
+            return VolumeEvidence(
+                market.pair,
+                NOT_TRADING,
+                0.0,
+                0,
+                None,
+                None,
+                missing,
+                f"no bar in the span; the exchange lists it as " f"{market.status}",
+                answer.measure,
+                shas,
+            )
+        return VolumeEvidence(
+            market.pair,
+            INCOMPLETE,
+            None,
+            0,
+            None,
+            None,
+            missing,
+            "no bar in the span, while the exchange lists it as "
+            f"{market.status or 'trading'}",
+            answer.measure,
+            shas,
+        )
+    first = have.index(True)
+    last = len(have) - 1 - have[::-1].index(True)
+    unbroken = all(have[first : last + 1])
+    total = float(sum(present.values()))
+    first_s, last_s = _day(order[first]), _day(order[last])
+    if unbroken and last == len(have) - 1 and first > 0:
+        return VolumeEvidence(
+            market.pair,
+            LISTED_IN_SPAN,
+            total,
+            len(present),
+            first_s,
+            last_s,
+            missing,
+            f"no bar before {first_s}",
+            answer.measure,
+            shas,
+        )
+    if unbroken and last < len(have) - 1 and market.trading is False:
+        return VolumeEvidence(
+            market.pair,
+            STOPPED_IN_SPAN,
+            total,
+            len(present),
+            first_s,
+            last_s,
+            missing,
+            f"no bar after {last_s}; the exchange " f"lists it as {market.status}",
+            answer.measure,
+            shas,
+        )
+    inner = [
+        _day(t)
+        for t, h in zip(order[first : last + 1], have[first : last + 1])
+        if not h
+    ]
+    why = (
+        f"no bar on {len(inner)} day(s) between its first and last bars"
+        if inner
+        else f"no bar after {last_s}, while the exchange lists it as "
+        f"{market.status or 'trading'}"
+    )
+    return VolumeEvidence(
+        market.pair,
+        INCOMPLETE,
+        None,
+        len(present),
+        first_s,
+        last_s,
+        missing,
+        why,
+        answer.measure,
+        shas,
+    )
+
+
+def gather_volumes(
+    connector, exchange: str, listing, days: Sequence[int], log: Callable = print
+) -> Dict[str, Any]:
+    """Every listed market's daily quote volume over ``days``: its
+    ``DailyQuoteVolume``, or a ``VolumeFailure`` with the error as it came (an
+    exception, or no answer at all)."""
+    out: Dict[str, Any] = {}
+    for m in listing.markets:
+        try:
+            answer = connector.daily_quote_volume(m.pair, days[0], days[-1])
+        except Exception as exc:  # kept, never turned into a volume
+            answer = VolumeFailure(exchange, m.pair, f"{type(exc).__name__}: {exc}")
+        if answer is None:
+            answer = VolumeFailure(exchange, m.pair, "the connector gave no answer")
+        if isinstance(answer, VolumeFailure):
+            log(f"{m.pair}: no daily quote volume ({answer.error})")
+        out[m.pair] = answer
+    return out
+
+
+def ranking_fetch_problem(ranking_date: str, fetched_at: datetime) -> str:
+    """Why a fetch at ``fetched_at`` cannot rank on ``ranking_date`` ("" when it
+    can): the ranking date's UTC day must have ended, so that its daily bar is closed
+    and its volume final, and the fetch must be within 7 days after the ranking date
+    (section 10.1: by the end of the seventh calendar day after it)."""
+    day = datetime.strptime(ranking_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    closed = day.timestamp() + 86400
+    at = fetched_at.timestamp()
+    if at < closed:
+        return (
+            f"the ranking date {ranking_date} has not ended: its daily bar is still "
+            "forming, so its volume is not final"
+        )
+    if at >= day.timestamp() + 8 * 86400:
+        return f"the fetch is more than 7 days after the ranking date {ranking_date}"
+    return ""
+
+
 @dataclass
 class Ranked:
     rank: int
@@ -237,6 +475,8 @@ class Ranked:
     days: int
     included: bool
     reason: str
+    volume_status: str = COMPLETE
+    volume_detail: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
@@ -249,30 +489,46 @@ def rank_markets(
     exclusions: Exclusions,
 ) -> List[Ranked]:
     """Every listed market ranked by 30-day quote volume (largest first; ties by
-    pair name), each included or excluded with its reason. ``volumes`` maps a pair to
-    its ``DailyQuoteVolume`` (None or absent: no volume stated, ranked as 0)."""
-    days = set(ranking_days(ranking_date))
+    pair name), each included or excluded with its reason and its volume evidence.
+    ``volumes`` maps a pair to its ``DailyQuoteVolume`` or ``VolumeFailure`` (absent:
+    no answer). Raises ``RankingRefused`` when any included market's volume is not
+    established (the module docstring): an excluded market cannot be selected, so its
+    evidence is recorded and does not refuse the ranking."""
+    days = ranking_days(ranking_date)
     bases = [m.base for m in listing.markets]
     rows = []
+    unestablished = []
     for m in listing.markets:
-        dq = volumes.get(m.pair)
-        in_span = [(t, v) for t, v in (dq.days if dq else ()) if t in days]
-        total = float(sum(v for _t, v in in_span))
+        ev = volume_evidence(m, volumes.get(m.pair), days)
         reason = exclusions.reason(m, bases)
-        rows.append([m, total, len(in_span), reason])
-    rows.sort(key=lambda r: (-r[1], r[0].pair))
+        if reason is None and not ev.established:
+            unestablished.append(ev)
+        rows.append([m, ev, reason])
+    if unestablished:
+        listed = "; ".join(
+            f"{e.pair}: {e.status} ({e.detail})" for e in unestablished[:10]
+        )
+        more = f" and {len(unestablished) - 10} more" if len(unestablished) > 10 else ""
+        raise RankingRefused(
+            f"the 30-day quote volume of {len(unestablished)} included market(s) is not "
+            f"established, so the ranking cannot be: {listed}{more}",
+            unestablished,
+        )
+    rows.sort(key=lambda r: (-(r[1].total or 0.0), r[0].pair))
     return [
         Ranked(
             i + 1,
             m.coin.upper(),
             m.pair,
             m.status,
-            total,
-            n,
+            float(ev.total or 0.0),
+            ev.days_present,
             reason is None,
             reason or "",
+            ev.status,
+            ev.detail,
         )
-        for i, (m, total, n, reason) in enumerate(rows)
+        for i, (m, ev, reason) in enumerate(rows)
     ]
 
 

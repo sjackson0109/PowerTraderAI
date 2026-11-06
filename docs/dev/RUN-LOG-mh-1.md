@@ -90,3 +90,40 @@ The run ended "done". The coins joined where §5.4 says they should:
 Phase C adds pooled fits: 6 contestants × 18 folds.
 
 **These are trials.** The run logged 8 trials in the sandbox's trial log. Phase E's report counts them.
+
+## 2026-11-06: the owner's review of #225 and #226
+
+### 1. The LLM gate's per-trade minimum
+
+**The finding.** #226, as first pushed, retired `gate_min_return_after_fees` and fixed the LLM signal gate's rule b at 0%. Anyone who had saved another value would see different LLM gate decisions, and the tests compared decisions at the default settings only.
+
+**Checked.** I ran `main`'s gate code (500a355) and #226 as pushed (`a652b5b`) on the same LLM fixtures, at seven saved settings: minimums of 0%, +0.5%, +3%, −5% and −10%, plus two with other non-default fields.
+- At +3%, the "edge" model (mean return after fees +2.39%) **passed under `a652b5b` and is rejected by `main`**.
+- At every setting, `a652b5b`'s records lacked the minimum's key.
+
+**Fixed** (`09f9fa6` on #226). The owner offered two routes, a separate LLM threshold or an explicit approval of the change; this keeps the threshold.
+- `gate_min_return_after_fees` stays as saved and is the LLM signals' rule b (`GateSettings.min_mean_return`). Its field is back in Settings > Training as "Minimum mean return per LLM signal after fees %".
+- A trained model keeps its own per-day minimum. The per-trade value is never turned into it.
+- `llm_settings_ui.py` is `main`'s again.
+- With the fix, every decision figure equals `main`'s at all seven settings. The tests pin `main`'s texts at +3%, at −5%, and at +1% with the 90th percentile.
+
+### 2. Provenance: earlier looks at results
+
+**The finding.** The pattern model has already been evaluated on part of the proposed holdout. Those observations are not unseen evidence for it.
+
+**Built** in #227: `model_lab/catalogue.py`'s `LOOKS` records every earlier look at a contestant's results, with the months covered and where each is written up. A batch records, when frozen, which looks cover its lockbox. A contestant with any is never given "Beats random entries": a finalist reads "Passed; its lockbox was seen before, so a final check would not be unseen evidence".
+
+The pattern model's looks:
+
+| Look | Coins | Months | On |
+|---|---|---|---|
+| FDS-MDL Tests A and B (as STRAT-003, that strategy's exits) | BTC, ETH | 2024-07-01 to 2026-10-01 | 2026-10-07 |
+| Volume research, held-out replay and model experiment | 10 | 2026-03-31 to 2026-11-05 | 2026-11-05 |
+| The entry gate's held-out slices of the models in use | the coins with a model | from about 2026-04 | 2026-11-05 |
+| Gate diagnostic | 13 | 2026-04-05 to 2026-11-05 | 2026-11-05 |
+
+With batch 1's lockbox (from 2025-05-06), the pattern model's final check cannot be unseen evidence for it. The seven rules have no earlier look at their lockbox.
+
+The phase B timing run (2021-01-01 to 2025-05-06, walk-forward only) is recorded for all 8 of its contestants, and its 8 trials count in phase E's report.
+
+No substantive Copilot review was received on #225 or #226: GitHub reported insufficient review quota.

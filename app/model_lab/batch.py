@@ -36,10 +36,15 @@ is the screen, shown only. A finalist passes Holm at 5% and every one of:
 
 **Verdicts.** "Worse than random entries" when its lower-tail p (against both) is at
 most 0.05/K; a finalist "Passed; final check not run" (the lockbox is opened later, once
-per finalist); "Better than random entries here, not by enough to pass" past the screen;
-"Too few trades to tell" when the smallest detectable edge (at the Holm level, 80%
-power, the larger spread of R1 and R2) is above half of R1's median; otherwise "No better
-than random entries".
+per finalist), or, when its lockbox months were seen before, "Passed; its lockbox was
+seen before, so a final check would not be unseen evidence"; "Better than random entries
+here, not by enough to pass" past the screen; "Too few trades to tell" when the smallest
+detectable edge (at the Holm level, 80% power, the larger spread of R1 and R2) is above
+half of R1's median; otherwise "No better than random entries".
+
+**Earlier looks** (``catalogue.LOOKS``). A batch records, when frozen, each contestant's
+earlier looks and those that cover any of its lockbox (``lockbox_seen``). A contestant
+with any is never given "Beats random entries".
 
 **Files.** Under ``<data dir>/model_lab`` (``pt_paths.data_dir``): ``trials.jsonl``, one
 line per trial scored, and ``batches/<id>/`` with ``batch.json``, ``status.json``,
@@ -99,6 +104,8 @@ CODE = (
 VERDICTS = {
     "beats": "Beats random entries",
     "passed": "Passed; final check not run",
+    "passed_seen": "Passed; its lockbox was seen before, so a final check would not be "
+    "unseen evidence",
     "screen": "Better than random entries here, not by enough to pass",
     "no_better": "No better than random entries",
     "too_few": "Too few trades to tell: this test could only see an edge above {edge}",
@@ -364,7 +371,16 @@ def freeze(
             "id": batch_id,
             "frozen_at": iso(now_s),
             "coins": coins,
-            "contestants": [known[k].to_dict() for k in chosen],
+            "contestants": [
+                {
+                    **known[k].to_dict(),
+                    "looks": [look.to_dict() for look in catalogue.looks(k)],
+                    "lockbox_seen": [
+                        look.to_dict() for look in catalogue.seen_in(k, *cal.lockbox)
+                    ],
+                }
+                for k in chosen
+            ],
             "calendar": cal.to_dict(),
             "series": series_record,
             "rules": rules.to_dict(),
@@ -467,6 +483,20 @@ def _on_shared(a: Mapping[str, Decisions], b: Mapping[str, Decisions], tables):
         ta += [t for _i, t in schedule(a[coin].ones(), tables[coin], start)]
         tb += [t for _i, t in schedule(b[coin].ones(), tables[coin], start)]
     return figures(ta), figures(tb)
+
+
+def verdict_code(
+    worse: bool, finalist: bool, lockbox_seen: bool, screen: bool, too_few: bool
+) -> str:
+    """A tested contestant's verdict (the module docstring), before its final check.
+    One whose lockbox months were seen before is never a plain finalist."""
+    if worse:
+        return "worse"
+    if finalist:
+        return "passed_seen" if lockbox_seen else "passed"
+    if screen:
+        return "screen"
+    return "too_few" if too_few else "no_better"
 
 
 def verdict_text(code: str, edge: Optional[float] = None) -> str:
@@ -617,6 +647,9 @@ def _run(record, progress, stop, manager, seconds) -> Dict[str, Any]:
             stop,
         )
         _timed(seconds, "draws", t0)
+        frozen = next(c for c in record["contestants"] if c["key"] == contestant.key)
+        out[contestant.key]["looks"] = frozen["looks"]
+        out[contestant.key]["lockbox_seen"] = frozen["lockbox_seen"]
         if contestant.tested:
             r = out[contestant.key]
             _log_trial(
@@ -855,16 +888,13 @@ def _judge(contestants, decisions, out, tables, streams, rule, cal) -> Dict[str,
             else:
                 conditions["above_best_rule"] = True
         finalist = holm[j] and all(conditions.values())
-        if r["p_lower"] <= rule["holm_alpha"] / max(1, k):
-            code = "worse"
-        elif finalist:
-            code = "passed"
-        elif screen[j]:
-            code = "screen"
-        elif r["too_few"]:
-            code = "too_few"
-        else:
-            code = "no_better"
+        code = verdict_code(
+            r["p_lower"] <= rule["holm_alpha"] / max(1, k),
+            finalist,
+            bool(r["lockbox_seen"]),
+            screen[j],
+            r["too_few"],
+        )
         r.update(
             {
                 "screen": screen[j],
@@ -996,6 +1026,17 @@ def report(record: Mapping[str, Any], results: Mapping[str, Any]) -> str:
                 )
                 + f"; Holm {'yes' if r['holm'] else 'no'}; screen "
                 f"{'yes' if r['screen'] else 'no'}."
+            )
+        for look in r.get("looks") or []:
+            lines.append(
+                f"- An earlier look at its results: {look['start']} to {look['end']}, "
+                f"{look['coins']}, on {look['when']}: {look['what']}."
+            )
+        if r.get("lockbox_seen"):
+            lines.append(
+                "- Its lockbox months were seen before (the looks from "
+                + ", ".join(sorted({look["start"] for look in r["lockbox_seen"]}))
+                + "), so a final check is shown and is not unseen evidence."
             )
         n = r.get("neural_dca")
         if n:

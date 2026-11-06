@@ -569,6 +569,66 @@ def test_freezing_records_the_series_fees_seeds_and_pass_rule():
     assert set(record["code"]) >= {"model_lab/batch.py", "model_gate.py"}
 
 
+def test_earlier_looks_mark_a_lockbox_seen_before():
+    """The pattern model's results were looked at in FDS-MDL, the volume research, the
+    gate diagnostic and the entry gate itself (section 5.7). With batch 1's calendar
+    they cover its lockbox; nothing covers the rules' lockbox."""
+    cal = walkforward.make_calendar(
+        datetime(2020, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 11, 6, 13, 30, tzinfo=timezone.utc),
+    )
+    seen = catalogue.seen_in("pattern", *cal.lockbox)
+    assert [look.start for look in seen] == [
+        "2024-07-01",
+        "2026-03-31",
+        "2026-04-01",
+        "2026-04-05",
+    ]
+    for key in RULES_ONLY:
+        assert catalogue.seen_in(key, *cal.lockbox) == [], key
+    # the phase B timing run read the walk-forward only: it ends where batch 1's
+    # lockbox starts, and covers an earlier lockbox
+    phase_b = [look for look in catalogue.looks("rule.btc50")]
+    assert [(look.start, look.end) for look in phase_b] == [
+        ("2021-01-01", "2025-05-06")
+    ]
+    earlier = (series_mod.epoch("2024-01-01"), series_mod.epoch("2024-07-01"))
+    assert catalogue.seen_in("rule.btc50", *earlier) == phase_b
+    # every look is a contestant in the catalogue, with dates in order
+    known = catalogue.by_key()
+    for look in catalogue.LOOKS:
+        assert look.key in known
+        assert series_mod.epoch(look.start) < series_mod.epoch(look.end)
+
+
+def test_a_contestant_whose_lockbox_was_seen_is_never_a_plain_finalist():
+    assert batch.verdict_code(False, True, False, True, False) == "passed"
+    assert batch.verdict_code(False, True, True, True, False) == "passed_seen"
+    assert batch.VERDICTS["passed_seen"] == (
+        "Passed; its lockbox was seen before, so a final check would not be unseen "
+        "evidence"
+    )
+    assert batch.verdict_code(True, True, True, True, True) == "worse"
+    assert batch.verdict_code(False, False, True, True, True) == "screen"
+    assert batch.verdict_code(False, False, True, False, True) == "too_few"
+    assert batch.verdict_code(False, False, False, False, False) == "no_better"
+
+
+def test_a_frozen_batch_records_each_contestants_earlier_looks():
+    batch_id = frozen_batch(keys=["rule.sma20", "pattern"], draws=20)
+    record = batch.read_batch(batch_id)
+    by_key = {c["key"]: c for c in record["contestants"]}
+    assert by_key["pattern"]["looks"] == [
+        look.to_dict() for look in catalogue.looks("pattern")
+    ]
+    lock = [series_mod.epoch(t) for t in record["calendar"]["lockbox"]]
+    for key in ("rule.sma20", "pattern"):
+        assert by_key[key]["lockbox_seen"] == [
+            look.to_dict() for look in catalogue.seen_in(key, *lock)
+        ]
+    assert by_key["pattern"]["lockbox_seen"]  # the fixture's lockbox is in 2024-25
+
+
 def test_no_harness_file_names_an_exchange():
     folder = os.path.join(APP_DIR, "model_lab")
     names = re.compile(r"binance|coinbase|kraken|kucoin|robinhood", re.IGNORECASE)

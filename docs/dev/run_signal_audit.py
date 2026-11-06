@@ -15,9 +15,12 @@ FDS-SIG-001: the signal-candidate audit script (section 12). Round N's files are
         step 2: freeze.json, for its own commit (the code freeze)
     python docs/dev/run_signal_audit.py fetch --round 1
         step 3, after the window ends: every audited and input coin's candles from the
-        registered exchange, each file's SHA-256 recorded (network: public data only)
+        registered exchange, checked against a second fetch from it without the cache
+        and against any earlier record, written as window-scoped snapshots in the
+        sandbox, each snapshot's SHA-256 recorded (network: public data only)
     python docs/dev/run_signal_audit.py run --round 1 [--supersede "<what and why>"]
-        steps 4 and 5: the refusals, every row, both Holm procedures, the verdicts
+        steps 4 and 5: the refusals, the snapshots checked against their record (the
+        candle cache is not read), every row, both Holm procedures, the verdicts
         (asserted and re-derived), the evidence series, results.json and the report
 
 Every command needs ``POWERTRADER_HOME`` set to a scratch folder outside the repo (the
@@ -33,16 +36,15 @@ import json
 import os
 import shutil
 import sys
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "app")
 sys.path.insert(0, APP)
 
-from signal_audit import candidates as cd  # noqa: E402
 from signal_audit import round_one  # noqa: E402
-from signal_audit import engine, ranking  # noqa: E402
+from signal_audit import engine, evidence, ranking  # noqa: E402
 from signal_audit import registration as reg  # noqa: E402
 from signal_audit import report as rp  # noqa: E402
 from signal_audit import stats as st  # noqa: E402
@@ -170,11 +172,15 @@ def rank(n: int, ranking_date: str, window_days: int) -> Dict[str, Any]:
         except Exception as exc:
             return ranking.History(False, 0, 0, 0, 1.0, 0, f"no 1h candles ({exc})")
         open_s = (df["open_time"].astype("int64") // 10**9).to_numpy()
-        path = candles.cache_path(df.attrs["pair"], "1h", None, choice.exchange)
+        rows = evidence.rows_of(df)
+        # the bars read, not the cache file: the cache is shared and grows
         files[r.coin] = {
+            "exchange": df.attrs["exchange"],
             "pair": df.attrs["pair"],
-            "file": os.path.relpath(path, sandbox()),
-            "sha256": reg.file_sha256(path),
+            "bars": len(rows),
+            "first_open_ms": rows[0][0] if rows else None,
+            "last_open_ms": rows[-1][0] if rows else None,
+            "sha256": evidence.bars_sha256(rows),
         }
         return ranking.check_history(open_s, span_start, span_end)
 
@@ -184,7 +190,7 @@ def rank(n: int, ranking_date: str, window_days: int) -> Dict[str, Any]:
         os.path.join(out, "ranking", "raw.jsonl.gz"), answers
     )
     raw["file"] = os.path.relpath(raw["file"], REPO).replace("\\", "/")
-    evidence = {
+    record = {
         "exchange": choice.exchange,
         "exchanges_considered": choice.considered,
         "ranking_date": ranking_date,
@@ -219,11 +225,11 @@ def rank(n: int, ranking_date: str, window_days: int) -> Dict[str, Any]:
         },
         "raw_answers": raw,
     }
-    _write_json(os.path.join(out, "ranking", "ranking.json"), evidence)
+    _write_json(os.path.join(out, "ranking", "ranking.json"), record)
     print(
         f"round {n}: ranked on {choice.exchange}; coins {selection.coins}", flush=True
     )
-    return evidence
+    return record
 
 
 # --- the draft registration -------------------------------------------------------------
@@ -235,12 +241,12 @@ def draft(
     """A draft registration from round one's candidates and step 0's evidence. Its
     window starts at the first 00:00 UTC after now (the registration is committed
     before then) unless given."""
-    evidence = _read_json(
+    ranked_record = _read_json(
         os.path.join(reg.round_dir(REPO, n), "ranking", "ranking.json")
     )
     cands = round_one.candidates()
-    coins = evidence["coins"]
-    rows = reg.family_rows(cands, coins, reg.TIMEFRAMES, evidence["exchange"])
+    coins = ranked_record["coins"]
+    rows = reg.family_rows(cands, coins, reg.TIMEFRAMES, ranked_record["exchange"])
     F = reg.family_size(rows)
     start = window_start or reg.iso(reg.next_midnight(datetime.now(timezone.utc)))
     record = {
@@ -248,20 +254,20 @@ def draft(
         "spec": reg.SPEC,
         "candidates_spec": reg.CANDIDATES_SPEC,
         "kind": "round",
-        "exchange": evidence["exchange"],
-        "exchanges_considered": evidence["exchanges_considered"],
+        "exchange": ranked_record["exchange"],
+        "exchanges_considered": ranked_record["exchanges_considered"],
         "ranking": {
-            "date": evidence["ranking_date"],
-            "fetched_at": evidence["fetched_at"],
-            "measure": evidence["measure"],
-            "universe": evidence["universe"],
-            "exclusions": evidence["exclusions"],
+            "date": ranked_record["ranking_date"],
+            "fetched_at": ranked_record["fetched_at"],
+            "measure": ranked_record["measure"],
+            "universe": ranked_record["universe"],
+            "exclusions": ranked_record["exclusions"],
             "evidence": f"{reg.rel_round_dir(n)}/ranking/ranking.json",
-            "raw_answers_sha256": evidence["raw_answers"]["file_sha256"],
+            "raw_answers_sha256": ranked_record["raw_answers"]["file_sha256"],
         },
         "coins": coins,
         "input_coins": [round_one.INPUT_COIN],
-        "replacements": evidence["replacements"],
+        "replacements": ranked_record["replacements"],
         "timeframes": list(reg.TIMEFRAMES),
         "window": {"start": start, "end": window_end},
         "target": "the direction of the next bar: up if close[t+1] > close[t], down if "
@@ -315,33 +321,12 @@ def freeze(n: int) -> None:
 # --- step 3 ----------------------------------------------------------------------------
 
 
-def _bars_from_frame(coin: str, tf: str, df) -> cd.Bars:
-    import numpy as np
-
-    return cd.Bars(
-        coin,
-        tf,
-        (df["open_time"].astype("int64") // 10**9).to_numpy(dtype=np.int64),
-        df["high"].to_numpy(float),
-        df["low"].to_numpy(float),
-        df["close"].to_numpy(float),
-        df["volume"].to_numpy(float),
-    )
-
-
-def _span(record: Mapping[str, Any], tf: str):
-    start = reg.parse_time(record["window"]["start"])
-    end = reg.parse_time(record["window"]["end"])
-    warm = max(c["warmup_bars"] for c in record["candidates"])
-    step = cd.TIMEFRAME_SECONDS[tf]
-    return start - timedelta(seconds=(warm + 1) * step), end
+def snapshot_dir(n: int) -> str:
+    """Round N's candle snapshots, in the sandbox (``signal_audit.evidence``)."""
+    return os.path.join(sandbox(), "sig-audit", f"round-{n}", "candles")
 
 
 def fetch(n: int) -> Dict[str, Any]:
-    import pandas as pd
-
-    from market_data import candles
-
     sandbox()
     folder = reg.round_dir(REPO, n)
     record = _read_json(os.path.join(folder, "registration.json"))
@@ -349,39 +334,20 @@ def fetch(n: int) -> Dict[str, Any]:
         raise Stop("the window has not ended: no fetch before its end")
     manager = _manager()
     data_path = os.path.join(folder, "data.json")
-    earlier = _read_json(data_path) if os.path.exists(data_path) else {}
-    files = {}
-    for coin in sorted(set(record["coins"]) | set(record["input_coins"])):
-        for tf in record["timeframes"]:
-            a, b = _span(record, tf)
-            df = candles.exchange_candles(
-                coin,
-                tf,
-                pd.Timestamp(a),
-                pd.Timestamp(b),
-                manager=manager,
-                exchanges=[record["exchange"]],
-            )
-            path = candles.cache_path(df.attrs["pair"], tf, None, record["exchange"])
-            sha = reg.file_sha256(path)
-            key = f"{coin}/{tf}"
-            if (
-                key in earlier.get("files", {})
-                and earlier["files"][key]["sha256"] != sha
-            ):
-                raise Stop(f"{key}: the candle file differs from its earlier record")
-            files[key] = {
-                "pair": df.attrs["pair"],
-                "sha256": sha,
-                "bars": int(len(df)),
-                "file": os.path.relpath(path, sandbox()),
-            }
+    earlier = _read_json(data_path) if os.path.exists(data_path) else None
+    try:
+        data = evidence.fetch_round(record, manager, snapshot_dir(n), earlier)
+    except evidence.EvidenceError as exc:
+        raise Stop(str(exc)) from exc
     out = {
         "round": n,
-        "exchange": record["exchange"],
-        "files": files,
+        "exchange": data["exchange"],
+        "files": data["files"],
+        "snapshots": os.path.relpath(snapshot_dir(n), sandbox()).replace("\\", "/"),
         "fetched_at": reg.iso(datetime.now(timezone.utc)),
     }
+    if earlier and earlier.get("fetched_at"):
+        out["first_fetched_at"] = earlier.get("first_fetched_at", earlier["fetched_at"])
     _write_json(data_path, out)
     return out
 
@@ -390,10 +356,6 @@ def fetch(n: int) -> Dict[str, Any]:
 
 
 def run(n: int, supersede: Optional[str] = None) -> Dict[str, Any]:
-    import pandas as pd
-
-    from market_data import candles
-
     sandbox()
     folder = reg.round_dir(REPO, n)
     state = reg.check_can_run(
@@ -404,25 +366,12 @@ def run(n: int, supersede: Optional[str] = None) -> Dict[str, Any]:
     )
     record = _read_json(os.path.join(folder, "registration.json"))
     data = _read_json(os.path.join(folder, "data.json"))
-    for key, f in data["files"].items():
-        path = os.path.join(sandbox(), f["file"])
-        if reg.file_sha256(path) != f["sha256"]:
-            raise Stop(f"{key}: the candle file differs from its fetch record")
+    try:
+        bars = evidence.load_round(record, data, snapshot_dir(n))
+    except evidence.EvidenceError as exc:
+        raise Stop(str(exc)) from exc
     superseded = _supersede(folder, n, supersede)
     cands = round_one.by_key()
-    bars: Dict[tuple, cd.Bars] = {}
-    for key, f in data["files"].items():
-        coin, tf = key.split("/")
-        a, b = _span(record, tf)
-        df = candles.exchange_candles(
-            coin,
-            tf,
-            pd.Timestamp(a),
-            pd.Timestamp(b),
-            offline=True,
-            exchanges=[record["exchange"]],
-        )
-        bars[(coin, tf)] = _bars_from_frame(coin, tf, df)
     start = int(reg.parse_time(record["window"]["start"]).timestamp())
     end = int(reg.parse_time(record["window"]["end"]).timestamp())
     rows_data = []

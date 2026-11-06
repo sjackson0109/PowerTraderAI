@@ -253,7 +253,7 @@ def test_paper_trading_refuses_a_price_age_out_of_range(hub, age):
         ("Random-entry baselines:", "50"),
         ("Random-entry baselines:", "1500.5"),
         ("Beat this percentile of random entries:", "100"),
-        ("Minimum mean return after fees %:", "lots"),
+        ("Minimum return per day held after fees %:", "lots"),
         ("Minimum scored signals:", "0"),
     ],
 )
@@ -392,6 +392,29 @@ def gate_record(published, kept=None):
         "kept_model_id": kept,
         "gate": decision.to_dict(),
     }
+
+
+def per_day_record(published, kept=None):
+    """A model_gate.json record judged by the return per day held (FDS-MH-001 §6)."""
+    import entry_gate
+
+    record = gate_record(published, kept)
+    decision = entry_gate.Decision.from_dict(record["gate"])
+    decision.measure = entry_gate.PER_DAY
+    decision.candidate = entry_gate.Score(25, 0.02, 0.02, -0.05, 0.9, 0.0004)
+    decision.baseline = dict(decision.baseline, median=0.0001)
+    record["gate"] = decision.to_dict()
+    return record
+
+
+def test_a_notice_names_the_return_per_day_held():
+    hub = notice_hub(0, gate=per_day_record(True))
+    Hub._monitor_trainer_process(hub, "ETH")
+    hub._show_notice.assert_called_once_with(
+        "ETH: training finished; its new model passed the entry gate (return per day "
+        "held after fees vs random: +0.040% vs +0.010% a day (99th percentile)) and "
+        "is in use."
+    )
 
 
 def test_a_notice_says_whether_the_new_model_passed_the_entry_gate():

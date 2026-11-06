@@ -4848,11 +4848,13 @@ Platform: {sys.platform}
             import entry_gate
 
             decision = entry_gate.Decision.from_dict(gate["gate"])
-            figures = decision.short() or "no entries"
+            figures = f"{decision.figure_name()} vs random: " + (
+                decision.short() or "no entries"
+            )
             if gate.get("published"):
                 return (
                     f"{coin}: training finished; its new model passed the entry gate "
-                    f"(return after fees vs random: {figures}) and is in use."
+                    f"({figures}) and is in use."
                 )
             kept = (
                 "the model in use is kept."
@@ -4861,7 +4863,7 @@ Platform: {sys.platform}
             )
             return (
                 f"{coin}: training finished, but the new model did not pass the entry "
-                f"gate (return after fees vs random: {figures}); {kept}"
+                f"gate ({figures}); {kept}"
             )
         return (
             f"{coin}: training ended without a model (exit code {code}); the "
@@ -6847,17 +6849,21 @@ Platform: {sys.platform}
             decision = entry_gate.Decision.from_dict(record["gate"])
         except Exception:
             return ""
+        name = decision.figure_name()
         figures = decision.short() or "no entries"
         if record.get("published"):
-            return f"Return after fees vs random: {figures}; passed the entry gate.\n"
+            return (
+                f"{name[0].upper()}{name[1:]} vs random: {figures}; passed the entry "
+                "gate.\n"
+            )
         kept = (
             f"the model in use ({record['kept_model_id']}) is kept"
             if record.get("kept_model_id")
             else "no model is in use"
         )
         return (
-            f"Last training: return after fees vs random {figures}; the new model "
-            f"did not pass the entry gate, so {kept}.\n"
+            f"Last training: {name} vs random {figures}; the new model did not "
+            f"pass the entry gate, so {kept}.\n"
         )
 
     def _coin_tooltip(self, coin: str, field: str) -> str:
@@ -7814,7 +7820,7 @@ Platform: {sys.platform}
             master=win, value=str(_training["holdout_min_signals"])
         )
         min_return_var = tk.StringVar(
-            master=win, value=f"{_training['gate_min_return_after_fees'] * 100:g}"
+            master=win, value=f"{_training['gate_min_return_per_day'] * 100:g}"
         )
         baseline_runs_var = tk.StringVar(
             master=win, value=str(_training["gate_baseline_runs"])
@@ -7836,7 +7842,7 @@ Platform: {sys.platform}
         r = 0
         add_row(page, r, "Minimum scored signals:", min_signals_var)
         r += 1
-        add_row(page, r, "Minimum mean return after fees %:", min_return_var)
+        add_row(page, r, "Minimum return per day held after fees %:", min_return_var)
         r += 1
         add_row(page, r, "Random-entry baselines:", baseline_runs_var)
         r += 1
@@ -7847,12 +7853,15 @@ Platform: {sys.platform}
         ttk.Label(
             page,
             text=(
-                "A new model is used, and an LLM model may confirm or veto entries, "
-                "only when its entries' mean return after fees on bars it never saw "
-                "is above both figures, its return over all the capital it committed "
-                "is above 0%, and its worst drawdown is no worse than the random "
-                "entries' median. A new model must also do as well as the model in "
-                "use. The hit rate is shown only."
+                "A new model is used only when, on bars it never saw, its entries' "
+                "return per day held after fees is above the minimum and above this "
+                "percentile of random entries made with the same waits, its return "
+                "over all the capital it committed is above 0%, its worst drawdown is "
+                "no worse than the random entries' median, and it does at least as "
+                "well per day held as the model in use. An LLM model may confirm or "
+                "veto entries only when its signals' mean return after fees is above "
+                "0% and above this percentile of random signals, on the same terms. "
+                "The hit rate is shown only."
             ),
             style="Muted.TLabel",
             wraplength=560,
@@ -8199,8 +8208,8 @@ Platform: {sys.platform}
                         1,
                     ),
                     (
-                        "gate_min_return_after_fees",
-                        "Minimum mean return after fees %",
+                        "gate_min_return_per_day",
+                        "Minimum return per day held after fees %",
                         min_return_var,
                         100,
                     ),

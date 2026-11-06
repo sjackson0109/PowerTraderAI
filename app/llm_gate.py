@@ -8,10 +8,11 @@ known (llm_signals.score_signal). ``evaluate`` judges them: each is scored again
 the fee the trader's orders pay now, and compared with random signals on the same
 coins over the same months, each made with the same direction, horizon, and target
 and stop at the same distances from its price, scored by the same rules. The pass
-rule is entry_gate's (at least ``holdout_min_signals``, a mean return after fees
-above ``gate_min_return_after_fees`` and above the ``gate_baseline_percentile`` of
-``gate_baseline_runs`` random runs, and so on: training_settings). The hit rate is
-shown and decides nothing.
+rule is entry_gate's, scored by the mean return after fees per trade
+(``entry_gate.MEAN_RETURN``, since each signal is a trade of its own): at least
+``holdout_min_signals``, a mean return after fees above 0% and above the
+``gate_baseline_percentile`` of ``gate_baseline_runs`` random runs, and so on
+(training_settings). The hit rate is shown and decides nothing.
 
 ``evaluate`` runs when signals are scored (the LLM Research tab) and keeps its
 decision (``llm_store.gate_results``); ``gate_status`` reads it. A decision made from

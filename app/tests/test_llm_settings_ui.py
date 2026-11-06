@@ -271,18 +271,22 @@ def test_settings_has_llm_providers_and_the_training_gate(hub):
     for text in (
         "LLM Providers...",
         "Minimum scored signals:",
-        "Minimum mean return after fees %:",
+        "Minimum return per day held after fees %:",
         "Random-entry baselines:",
         "Beat this percentile of random entries:",
         "Check the models in use...",
     ):
         assert text in texts
     assert "Minimum hit rate after fees %:" not in texts  # it decides nothing now
+    assert "Minimum mean return after fees %:" not in texts  # judged per day held now
+    (gate_text,) = [t for t in texts if t.startswith("A new model is used only when")]
+    assert "return per day held after fees" in gate_text
+    assert "random entries made with the same waits" in gate_text
     (notebook,) = [w for w in widgets(win) if isinstance(w, ttk.Notebook)]
     tabs = [notebook.tab(t, "text") for t in notebook.tabs()]
     assert "Training" in tabs and "LLM" in tabs
     type_into(win, "Minimum scored signals:", "40")
-    type_into(win, "Minimum mean return after fees %:", "0.5")
+    type_into(win, "Minimum return per day held after fees %:", "0.5")
     type_into(win, "Random-entry baselines:", "2000")
     type_into(win, "Beat this percentile of random entries:", "97.5")
     press(win, "Save")
@@ -290,7 +294,7 @@ def test_settings_has_llm_providers_and_the_training_gate(hub):
         training = json.load(f)["training"]
     assert training == {
         "holdout_min_signals": 40,
-        "gate_min_return_after_fees": 0.005,
+        "gate_min_return_per_day": 0.005,
         "gate_baseline_runs": 2000,
         "gate_baseline_percentile": 97.5,
     }

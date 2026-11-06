@@ -3,16 +3,19 @@ The entry gate's settings: what a source of trade entries (a trained model, an L
 provider/model/prompt version, an entry filter) must show before it is used in trading
 (``pt_config.json``'s ``training`` section; Settings, Training). entry_gate applies them.
 
-``holdout_min_signals``         the fewest entries it must have made (20)
-``gate_min_return_after_fees``  its mean return after fees per trade must be above this,
-                                a fraction (0.0)
-``gate_baseline_runs``          random-entry baselines to compare it with (1000)
-``gate_baseline_percentile``    its mean return after fees must be above this percentile
-                                of the baselines' (95)
+``holdout_min_signals``       the fewest entries it must have made (20)
+``gate_min_return_per_day``   a trained model's return per day held after fees must be
+                              above this, a fraction a day (0.0)
+``gate_baseline_runs``        random-entry baselines to compare it with (1000)
+``gate_baseline_percentile``  its score must be above this percentile of the
+                              baselines' (95)
 
 A hit rate decides nothing (random entries with the trader's exits win about 91% of the
 time), so ``holdout_min_hit_rate``, which an earlier release saved, is no longer read;
 it is kept in the file as it is, like the section's other keys.
+``gate_min_return_after_fees``, the minimum mean return per trade an earlier release
+saved, is dropped (``RETIRED``): a model is now judged per day held, which that value
+did not measure, so it is not carried over.
 """
 
 from __future__ import annotations
@@ -23,17 +26,18 @@ from typing import Any, Dict, Mapping
 SECTION = "training"
 DEFAULTS: Dict[str, Any] = {
     "holdout_min_signals": 20,
-    "gate_min_return_after_fees": 0.0,
+    "gate_min_return_per_day": 0.0,
     "gate_baseline_runs": 1000,
     "gate_baseline_percentile": 95.0,
 }
 BOUNDS = {
     "holdout_min_signals": (1, 100000),
-    "gate_min_return_after_fees": (-1.0, 1.0),
+    "gate_min_return_per_day": (-0.01, 0.01),
     "gate_baseline_runs": (100, 100000),
     "gate_baseline_percentile": (50.0, 99.9),
 }
 WHOLE = ("holdout_min_signals", "gate_baseline_runs")
+RETIRED = ("gate_min_return_after_fees",)  # dropped when read (the module docstring)
 
 
 def _bounded(value: Any, name: str):
@@ -68,8 +72,11 @@ def problem(name: str, value: Any) -> str:
 
 
 def normalise(raw: Any) -> Dict[str, Any]:
-    """The section with every gate setting usable (others kept as they are)."""
+    """The section with every gate setting usable, the retired ones dropped (others
+    kept as they are)."""
     out = dict(raw) if isinstance(raw, Mapping) else {}
+    for name in RETIRED:
+        out.pop(name, None)
     for name in DEFAULTS:
         out[name] = _bounded(out.get(name, DEFAULTS[name]), name)
     return out

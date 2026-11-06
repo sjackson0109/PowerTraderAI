@@ -343,6 +343,16 @@ def test_the_status_dot_gives_the_last_training_runs_entry_gate_result():
     )
     tip = Hub._coin_tooltip(tooltip_hub(gate=record(False)), "ZEC", "status")
     assert "none did before, so the neural runner gives ZEC no signals" in tip
+    # a model judged per day held (FDS-MH-001 §6) is described so
+    from test_settings_tabs import per_day_record
+
+    tip = Hub._coin_tooltip(tooltip_hub(gate=per_day_record(True)), "ZEC", "status")
+    assert (
+        "Return per day held after fees vs random: +0.040% vs +0.010% a day (99th "
+        "percentile); passed the entry gate." in tip
+    )
+    tip = Hub._coin_tooltip(tooltip_hub(gate=per_day_record(False)), "ZEC", "status")
+    assert "Last training: return per day held after fees vs random +0.040%" in tip
 
 
 def test_the_trained_for_time_says_when_and_how_long_it_lasts():

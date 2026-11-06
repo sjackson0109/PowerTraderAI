@@ -348,10 +348,12 @@ def model_entries(
     return out
 
 
-def waits_of(entries: Sequence[Tuple[int, entry_gate.Trade]]) -> List[int]:
+def waits_of(
+    entries: Sequence[Tuple[int, entry_gate.Trade]], start: int = 0
+) -> List[int]:
     """The waits of ``model_entries``'s trades (the module docstring): hours from being
-    free (the first hour, then a trade's end) to the next entry."""
-    waits, free = [], 0
+    free (the first hour, ``start``, then a trade's end) to the next entry."""
+    waits, free = [], start
     for i, t in entries:
         waits.append(i - free)
         free = max(t.end, i + 1)
@@ -359,13 +361,14 @@ def waits_of(entries: Sequence[Tuple[int, entry_gate.Trade]]) -> List[int]:
 
 
 def same_waits(
-    decided: Sequence[int], waits: Sequence[int], trade, rng
+    decided: Sequence[int], waits: Sequence[int], trade, rng, start: int = 0
 ) -> List[entry_gate.Trade]:
     """One run of random entries made with the same waits, in random order (the module
-    docstring): ``decided`` are the decided hours, ascending, and ``trade(i)`` the
-    trade an entry at hour ``i`` makes. Draws use ``rng.random()`` alone."""
+    docstring): ``decided`` are the decided hours, ascending, ``trade(i)`` the trade an
+    entry at hour ``i`` makes, and ``start`` the first hour. Draws use
+    ``rng.random()`` alone."""
     out: List[entry_gate.Trade] = []
-    free = 0
+    free = start
     if not waits:
         return out
     while True:

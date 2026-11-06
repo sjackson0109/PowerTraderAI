@@ -12,7 +12,9 @@ outcomes given the regimes (no skill), in the forms section 16 item 2 lists:
 * ``persistent``: calls in runs of 100-200 bars over regime-drifting returns (month-long
   regimes in the up share, +-4 points, and in the mean return);
 * ``drift``: calls drawn with a probability that drifts slowly (a cycle of two weeks to a
-  month, random phase) by +-0.15 or +-0.30 around 0.5, over regime-drifting returns: a
+  month, random phase; or a fixed ``period_days``, such as exactly a month, the cycle
+  the Bartlett window cannot see) by +-0.15 or +-0.30 around 0.5, over regime-drifting
+  returns: a
   one-sided (up-only) candidate for the one-sided hit test, a two-sided one for the
   two-sided magnitude test.
 
@@ -68,7 +70,10 @@ def scenario(name: str, rng: np.random.Generator, E: int, **kw) -> st.Pairs:
         return st.Pairs(calls, up, ret, st.TWO_SIDED, tf)
     if name == "drift":
         amp = kw["amplitude"]
-        period = rng.uniform(14 * 24, 30 * 24)
+        if kw.get("period_days"):
+            period = float(kw["period_days"]) * 24  # a fixed cycle (the worst case)
+        else:
+            period = rng.uniform(14 * 24, 30 * 24)
         phase = rng.uniform(0, 2 * math.pi)
         prob = 0.5 + amp * np.sin(2 * math.pi * np.arange(E) / period + phase)
         draw = rng.random(E) < prob

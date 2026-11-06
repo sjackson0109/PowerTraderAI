@@ -82,6 +82,14 @@ SCENARIOS = [
     ("drift", st.HIT, {"amplitude": 0.30, "kind": st.UP_ONLY}),
     ("drift", st.MAGNITUDE, {"amplitude": 0.15, "kind": st.TWO_SIDED}),
     ("drift", st.MAGNITUDE, {"amplitude": 0.30, "kind": st.TWO_SIDED}),
+    # a cycle of exactly a month, which the Bartlett window cannot see (block length
+    # one day): the worst case for section 7.4's rule
+    ("drift", st.HIT, {"amplitude": 0.30, "kind": st.UP_ONLY, "period_days": 30}),
+    (
+        "drift",
+        st.MAGNITUDE,
+        {"amplitude": 0.30, "kind": st.TWO_SIDED, "period_days": 30},
+    ),
 ]
 
 

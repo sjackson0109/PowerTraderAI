@@ -37,6 +37,20 @@ SCENARIOS = [
     ("drift", st.HIT, {"amplitude": 0.30, "kind": st.UP_ONLY}),
     ("drift", st.MAGNITUDE, {"amplitude": 0.15, "kind": st.TWO_SIDED}),
     ("drift", st.MAGNITUDE, {"amplitude": 0.30, "kind": st.TWO_SIDED}),
+    # a cycle of exactly a month: its autocorrelations cancel in the Bartlett window,
+    # so the block length stays at one day (the worst case for section 7.4's rule)
+    ("drift", st.HIT, {"amplitude": 0.30, "kind": st.UP_ONLY, "period_days": 30}),
+    (
+        "drift",
+        st.MAGNITUDE,
+        {"amplitude": 0.30, "kind": st.TWO_SIDED, "period_days": 30},
+    ),
+    ("drift", st.HIT, {"amplitude": 0.15, "kind": st.UP_ONLY, "period_days": 30}),
+    (
+        "drift",
+        st.MAGNITUDE,
+        {"amplitude": 0.15, "kind": st.TWO_SIDED, "period_days": 30},
+    ),
 ]
 
 
@@ -48,6 +62,9 @@ def main(argv=None) -> int:
     parser.add_argument("--E", type=int, default=4380)  # six months of 1h pairs
     parser.add_argument("--seed", type=int, default=7_000_000)
     parser.add_argument(
+        "--only", type=int, nargs="*", help="run these scenario numbers only"
+    )
+    parser.add_argument(
         "--out",
         default=os.path.join(
             REPO, "docs", "dev", "sig-audit", "verification", "false-pass-study.json"
@@ -56,6 +73,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     results = []
     for i, (name, stat, kw) in enumerate(SCENARIOS):
+        if args.only and i not in args.only:
+            continue
         t0 = time.time()
         r = nullsim.false_pass_rates(
             name,

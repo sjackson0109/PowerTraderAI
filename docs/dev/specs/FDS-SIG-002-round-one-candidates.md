@@ -5,7 +5,7 @@
 **Branch:** `docs/fds-sig-001-signal-audit`, together with FDS-SIG-001. The audit code and round one's registration go on `feat/signal-audit-1` (FDS-SIG-001's header).
 **Recommended model:** Claude Sonnet 5.5, effort high: two small rules and their tests, built inside FDS-SIG-001's implementation.
 **Run log:** none of its own. Round one is logged in FDS-SIG-001's run log, `docs/dev/RUN-LOG-sig-1.md`.
-**Status:** draft for owner review. This version adopts the owner's decisions of 2026-10-12 (§6). Nothing is implemented yet, and this document changes no code, trainer or strategy.
+**Status:** draft for owner review. This version adopts the owner's decisions of 2026-10-12 (§6). Implemented on `feat/signal-audit-1` (2026-11-06, `app/signal_audit/round_one.py`); round one is not registered. This document changes no trainer or strategy.
 **Depends on:** FDS-SIG-001, `docs/dev/specs/FDS-SIG-001-signal-candidate-audit.md`. This spec defines no audit process. It defines the round-one candidates that FDS-SIG-001 §15.2 item 2 refers to, written as the rules FDS-SIG-001 §5 requires, for copying into round one's registration (FDS-SIG-001 §12, step 1).
 
 ---
@@ -101,7 +101,8 @@ Both candidates are registered as written below, with no parameter left open. Bo
 ### 3.2 SIG-B: BTC one-bar lead
 
 - **Inputs:** BTCUSDT's close on the same timeframe. BTC is listed as an input coin in the registration (FDS-SIG-001 §4)
-  and is fetched and hashed whether or not it is among the audited coins.
+  and is fetched and hashed whether or not it is among the audited coins. *(Since FDS-SIG-001 §15.4, 2026-11-06: BTC's
+  close on the round's exchange, in that exchange's dollar market.)*
 - **Parameters:** none beyond the one-bar lag.
 - **Rule at bar t,** for an audited coin other than BTC:
   - **up** if BTC close[t] > BTC close[t − 1];

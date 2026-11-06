@@ -5,7 +5,7 @@
 **Branch:** this spec is on `docs/fds-sig-001-signal-audit`, cut from `main` at `00d9c99`. The implementation and round one's registration go on `feat/signal-audit-1`, cut from `main` after this spec is merged.
 **Recommended model:** Claude Opus 5.5, effort high, for the statistics module and the report generator. Sonnet 5.5, effort high, for fetching and plumbing.
 **Run log:** `docs/dev/RUN-LOG-sig-<N>.md` for round N, in the same format as batch 1.
-**Status:** draft for owner review. This version adopts the owner's decisions of 2026-10-12 (§15.1) and lists the defaults it sets that still need confirming (§15.3). Nothing is implemented yet, and this document changes no code, trainer or strategy.
+**Status:** draft for owner review. This version adopts the owner's decisions of 2026-10-12 (§15.1) and of 2026-11-06 (§15.4), and lists the defaults it sets that still need confirming (§15.3). Implemented on `feat/signal-audit-1` (2026-11-06); round one is not registered. This document changes no trainer or strategy.
 **Related:** FDS-SIG-002, `docs/dev/specs/FDS-SIG-002-round-one-candidates.md`, names round one's candidates and depends on this spec.
 
 ---
@@ -115,7 +115,7 @@ It narrows the timeframes compared with 11.8: round one uses 1h and 4h only.
 The audit may use only data the repo can fetch and cache with integrity checks today:
 
 - **The candle cache** (`app/market_data/candles.py`) stores `open_time, open, high, low, close, volume` for Binance spot
-  klines, where `volume` is the base-asset volume.
+  klines, where `volume` is the base-asset volume. *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
   - The fetch keeps kline fields 0–5 only. Binance's quote-asset volume (field 7), trade count (field 8) and taker-buy
     volumes (fields 9–10) are **dropped**.
   - `app/market_data/runner_history.py` parses quote volume, but only in memory, for recent bars.
@@ -479,9 +479,9 @@ block-bootstrap and batch-means standard errors**, matching §7.4.
 ### 10.1 Coin selection
 
 - **Universe:** Binance spot pairs quoted in USDT. This includes every symbol Binance's exchange information returns, of
-  any status, at the ranking fetch (§12, step 0).
+  any status, at the ranking fetch (§12, step 0). *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
 - **Ranking:** by 30-day quote volume, the sum of kline field 7 over the 30 UTC days of 1d klines ending on the
-  **ranking date**.
+  **ranking date**. *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
 - **Ranking date:** fixed in the registration, and before the window starts. That avoids ranking coins on volume or
   performance from inside the window, and the survivorship bias that would follow.
 - **The ranking fetch** happens within 7 days after the ranking date. A pair removed from exchange information before
@@ -561,7 +561,7 @@ of bars needs about 3.3 times the span. The end is a single date that trades tim
 The process inherits FDS-MDL's registration discipline, including the integrity checks that made PR #154's verdict
 checkable. The audit script is `docs/dev/run_signal_audit.py`.
 
-0. **Ranking and history fetch, through public endpoints, before registration.**
+0. **Ranking and history fetch, through public endpoints, before registration.** *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
    - Fetch 1d klines with quote volume, and exchange information. The raw responses and their SHA-256 are committed with
      the registration.
    - Fetch the 1h klines that the §10.1 history check needs, for each ranked coin down to the last one considered. The
@@ -582,7 +582,7 @@ checkable. The audit script is `docs/dev/run_signal_audit.py`.
      - the sandbox home.
 2. **Code freeze, in its own commit:** the frozen paths. A commit that changes the registration may not touch a frozen
    path, as `docs/dev/run_backtest_model1.py` checks its header commits.
-3. **Fetch, after the window ends,** through public Binance endpoints: candles for every audited and input coin, for the
+3. **Fetch, after the window ends,** through public Binance endpoints *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*: candles for every audited and input coin, for the
    round's timeframes and for every timeframe a registered trained candidate's trainer reads. Each candle file's SHA-256 is recorded, and the run stops if a file differs from an earlier record of it.
 4. **Run.** The script refuses to run, and logs an ERROR, if any of these holds:
    - the registration file is missing, uncommitted, or changed since its registration commit;
@@ -747,6 +747,25 @@ Nothing is wired to a strategy, the trainer or paper trading by this spec.
 9. **Registration before the window starts** (§11). This is stricter than "after the last examined bar": the bars since
    2026-10-01 have already been visible in the hub.
 
+### 15.4 Owner decisions of 2026-11-06
+
+1. **No single-exchange logic** ("Each exchange needs to do this - no single exchange logic allowed!"). This spec predates
+   the multi-exchange design (FDS-MX-001, 2026-10-26), and its §4, §10.1, §12 and §17 name Binance. They now apply to
+   every exchange alike:
+   - **The round's exchange** is the first in Settings order (the primary first) whose connector lists its spot markets,
+     states daily quote volume and serves the round's candle history. Every exchange passed over is recorded in the
+     registration with its reason. One round's coins are ranked, history-checked and fetched on that one exchange.
+   - **The universe** is every spot market that exchange lists against the quote currency the app's dollar markets use on
+     it (USDT, USD), in any status, at the ranking fetch.
+   - **The ranking measure** is the daily quote volume as that exchange states it: Binance's 1d kline field 7, KuCoin's
+     1day candle turnover, Kraken's daily OHLC vwap × volume. An exchange that states no quote volume (Coinbase's candles
+     carry base volume only) cannot rank a round: base volume times a price is not quote volume (§4).
+   - **Leveraged tokens:** a token the exchange itself marks as leveraged is excluded, as Binance's marks are.
+   - **Network (§17):** only the public market data of the exchanges in Settings.
+2. **Every simulation runs locally, ten times over** ("Do all the 'simulations' locally, run 10x of them"): each
+   simulation (the two-sided minimum detectable effect of §9, and §16 item 2's false-pass study) runs as 10 independent
+   runs with registered seeds, and reports the pooled figure with each run's own beside it.
+
 ## 16. Acceptance criteria (for the implementation)
 
 1. **Statistics module (unit tests).** Hand-worked values, independent scalar reference implementations, and a 1e-6
@@ -808,7 +827,7 @@ Nothing is wired to a strategy, the trainer or paper trading by this spec.
 Same as `00-RUN-ORDER.md` and FDS-MDL §10:
 - **Paper only.** No API keys are read, created or requested.
 - **Network:** only public Binance market-data endpoints, and only in the ranking and history fetch (§12, step 0) and the
-  candle fetch (§12, step 3).
+  candle fetch (§12, step 3). *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
 - **Sandbox:** runs use a sandboxed `POWERTRADER_HOME`.
 - **Commits:** one commit per step (registration, freeze, results), with the full suite no worse than before.
 - **Blocked steps:** log BLOCKED with the reason. Never weaken a test or a criterion to make it pass.

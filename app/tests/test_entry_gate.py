@@ -17,8 +17,9 @@ random moments, as before.
 * The fee is the trader's: the taker rate (market orders), from the account first.
 * The trainer publishes only a model that passes, puts the model in use back
   otherwise, and records the decision; ``--check-gate`` changes nothing.
-* The LLM gate judges a provider/model/prompt version's signals as before: the figures
-  main's gate gave (500a355) are pinned.
+* The LLM gate judges a provider/model/prompt version's signals as before, at the
+  default and at other saved minimums: the figures main's gate gave (500a355) are
+  pinned.
 
 All prices are synthetic; nothing reaches an exchange or a provider.
 """
@@ -226,14 +227,22 @@ def test_each_rule_fails_a_candidate_on_its_own():
 
 def test_the_llm_signal_rules_score_the_mean_return_per_trade():
     """An LLM signal is a trade of its own: its mean return after fees per trade
-    against distinct random moments, rule b's minimum 0% (the per-day minimum is not
-    its)."""
+    against distinct random moments, rule b's minimum its own saved
+    ``gate_min_return_after_fees`` (the per-day minimum is not its)."""
     counts = {"X": 25}
     ok = eg.decide(trades(), flat_slots(), counts, SETTINGS, FEES)
     assert ok.passed and ok.measure == eg.MEAN_RETURN
     assert ok.baseline["kind"] == eg.DISTINCT
     high = eg.GateSettings(min_return_per_day=0.05)
     assert eg.decide(trades(), flat_slots(), counts, high, FEES).passed
+    strict = eg.GateSettings(min_mean_return=0.03)
+    d = eg.decide(trades(), flat_slots(), counts, strict, FEES)
+    assert d.failed == ["mean return after fees +2.00% is not above +3.00%"]
+    lenient = eg.GateSettings(min_mean_return=-0.02)
+    d = eg.decide(trades(ret=-0.01), flat_slots(ret=-0.03), counts, lenient, FEES)
+    assert d.failed == [
+        "capital-weighted return after fees -1.00% is not above 0%"
+    ]  # rule b passes at -1.00% against -2.00%
     d = eg.decide(trades(ret=-0.01), flat_slots(ret=-0.02), counts, SETTINGS, FEES)
     assert d.failed[0] == "mean return after fees -1.00% is not above +0.00%"
     # c. capital-weighted return not above 0: small winners, one large loser
@@ -485,7 +494,8 @@ def test_a_record_from_the_earlier_gate_still_reads():
     d = eg.Decision.from_dict(old)
     assert d.measure == eg.MEAN_RETURN and d.figure_name() == "return after fees"
     assert d.short() == "+1.00% vs +2.00% (10th percentile)"
-    assert d.settings == eg.GateSettings()  # the per-trade minimum is not carried over
+    # its per-trade minimum reads as the LLM signals' (no per-day minimum then)
+    assert d.settings == eg.GateSettings(min_mean_return=0.001)
     assert d.edge_text() == "" and "random entries (1000 runs of 25 entries" in (
         "\n".join(d.lines())
     )
@@ -642,6 +652,7 @@ def test_the_gate_settings_and_their_bounds():
     assert training_settings.normalise({}) == {
         "holdout_min_signals": 20,
         "gate_min_return_per_day": 0.0,
+        "gate_min_return_after_fees": 0.0,
         "gate_baseline_runs": 1000,
         "gate_baseline_percentile": 95.0,
     }
@@ -656,15 +667,24 @@ def test_the_gate_settings_and_their_bounds():
     assert problem("gate_min_return_per_day", "x") == "not a number"
     assert problem("gate_min_return_per_day", -0.001) == ""
     assert problem("gate_min_return_per_day", 0.02) == "outside -0.01 .. 0.01"
+    assert problem("gate_min_return_after_fees", -0.5) == ""
+    assert problem("gate_min_return_after_fees", 1.5) == "outside -1 .. 1"
 
 
-def test_the_per_trade_minimum_is_not_carried_over():
-    """It measured the mean return per trade, which the gate no longer scores a model
-    by: dropped when read and when saved, never turned into a per-day minimum."""
+def test_the_per_trade_minimum_is_kept_for_llm_signals_only():
+    """``gate_min_return_after_fees`` measures the mean return per trade: an LLM
+    signal's score. It is kept as saved, read and saved again, and judges LLM signals
+    as before; a trained model, judged per day held, has its own minimum, and the
+    per-trade value is never turned into it."""
     saved = {"gate_min_return_after_fees": 0.001, "holdout_min_signals": 30}
     read = training_settings.normalise(saved)
-    assert "gate_min_return_after_fees" not in read
+    assert read["gate_min_return_after_fees"] == 0.001
     assert read["gate_min_return_per_day"] == 0.0 and read["holdout_min_signals"] == 30
+    settings = eg.GateSettings.from_training(read)
+    assert (settings.min_mean_return, settings.min_return_per_day) == (0.001, 0.0)
+    assert settings.minimum(eg.MEAN_RETURN) == 0.001
+    assert settings.minimum(PER_DAY) == 0.0
+    assert eg.GateSettings.from_dict(settings.to_dict()) == settings
 
     class Manager:
         def __init__(self):
@@ -684,6 +704,7 @@ def test_the_per_trade_minimum_is_not_carried_over():
     assert manager.sections["training"] == {
         "holdout_min_signals": 30,
         "gate_min_return_per_day": 0.0005,
+        "gate_min_return_after_fees": 0.001,
         "gate_baseline_runs": 1000,
         "gate_baseline_percentile": 95.0,
         "other": "kept",
@@ -916,7 +937,7 @@ def llm_signals_at(store, bars, moments, model):
         store.set_outcome(s.id, "scored", 0.0, True, price)
 
 
-def judge(store, bars, model):
+def judge(store, bars, model, saved=None):
     now = bars[-1][0] / 1000.0 + HOUR
     return llm_gate.evaluate(
         store,
@@ -925,7 +946,7 @@ def judge(store, bars, model):
         1,
         bars_for=lambda coin, a, b: [r for r in bars if a <= r[0] <= b],
         costs_for=lambda coin: llm_signals.Costs(0.012, 0.0005, "test", FEES),
-        training=training_settings.normalise({}),
+        training=training_settings.normalise(saved or {}),
         now=now,
     )
 
@@ -969,3 +990,20 @@ def test_llm_signals_are_judged_against_random_signals(tmp_path):
     ).passed
     # the same seeds, the same decision
     assert judge(store, bars, "noise").to_dict() == luck.to_dict()
+    # a saved per-trade minimum other than 0% judges as main's did, too
+    strict = judge(store, bars, "edge", {"gate_min_return_after_fees": 0.03})
+    assert strict.failed == ["mean return after fees +2.39% is not above +3.00%"]
+    assert strict.settings.min_mean_return == 0.03
+    lenient = judge(store, bars, "noise", {"gate_min_return_after_fees": -0.05})
+    assert lenient.failed == luck.failed[1:]  # rule b passes at -4.67% against -5%
+    tight = judge(
+        store,
+        bars,
+        "noise",
+        {"gate_min_return_after_fees": 0.01, "gate_baseline_percentile": 90.0},
+    )
+    assert tight.failed[0] == "mean return after fees -4.67% is not above +1.00%"
+    assert tight.failed[2] == (
+        "mean return after fees -4.67% is not above the random entries' 90th "
+        "percentile -3.19%"
+    )

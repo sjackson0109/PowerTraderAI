@@ -254,6 +254,7 @@ def test_paper_trading_refuses_a_price_age_out_of_range(hub, age):
         ("Random-entry baselines:", "1500.5"),
         ("Beat this percentile of random entries:", "100"),
         ("Minimum return per day held after fees %:", "lots"),
+        ("Minimum mean return per LLM signal after fees %:", "150"),
         ("Minimum scored signals:", "0"),
     ],
 )

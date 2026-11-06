@@ -54,7 +54,7 @@ The pass rule (all must hold)
 -----------------------------
 a. at least ``holdout_min_signals`` entries;
 b. the score above its minimum: for a trained model ``gate_min_return_per_day`` (0%
-   a day), for an LLM signal 0% (``MIN_MEAN_RETURN``);
+   a day), for an LLM signal ``gate_min_return_after_fees`` (0%);
 c. capital-weighted return after fees (profit over all capital committed, DCA buys
    included) above 0%;
 d. the score above the ``gate_baseline_percentile`` (95th) percentile of the random
@@ -86,7 +86,6 @@ ORDER_TYPE = "market"  # the trader's entry, DCA and exit orders (pt_trader.py)
 
 MEAN_RETURN = "mean_return"  # mean return after fees per trade (an LLM signal)
 PER_DAY = "per_day"  # return per day held after fees (a trained model)
-MIN_MEAN_RETURN = 0.0  # rule b for MEAN_RETURN
 POWER = 0.8  # the smallest detectable edge is the one rule d catches 4 times in 5
 TOO_FEW = 0.5  # ...and above this share of the random median: too few trades to tell
 SAME_WAITS = "same waits"  # the kinds of random baseline (module docstring)
@@ -320,6 +319,7 @@ class GateSettings:
     min_return_per_day: float = 0.0  # a fraction a day (rule b for PER_DAY)
     runs: int = 1000
     percentile: float = 95.0
+    min_mean_return: float = 0.0  # a fraction (rule b for MEAN_RETURN: LLM signals)
 
     @classmethod
     def from_training(cls, training: Mapping[str, Any]) -> "GateSettings":
@@ -329,6 +329,7 @@ class GateSettings:
             float(training["gate_min_return_per_day"]),
             int(training["gate_baseline_runs"]),
             float(training["gate_baseline_percentile"]),
+            float(training["gate_min_return_after_fees"]),
         )
 
     @classmethod
@@ -340,16 +341,18 @@ class GateSettings:
             float(data.get("gate_min_return_per_day", 0.0)),
             int(data.get("gate_baseline_runs", 1000)),
             float(data.get("gate_baseline_percentile", 95.0)),
+            float(data.get("gate_min_return_after_fees", 0.0)),
         )
 
     def minimum(self, measure: str) -> float:
         """Rule b's minimum for ``measure``."""
-        return self.min_return_per_day if measure == PER_DAY else MIN_MEAN_RETURN
+        return self.min_return_per_day if measure == PER_DAY else self.min_mean_return
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "holdout_min_signals": self.min_entries,
             "gate_min_return_per_day": self.min_return_per_day,
+            "gate_min_return_after_fees": self.min_mean_return,
             "gate_baseline_runs": self.runs,
             "gate_baseline_percentile": self.percentile,
         }

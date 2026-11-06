@@ -636,7 +636,7 @@ class LLMProvidersWindow(tk.Toplevel):
                 f"Gate: a provider, model and prompt version may confirm or veto "
                 f"entries once at least {t['holdout_min_signals']} of the signals it "
                 "made in paper trading are scored and their mean return after fees is "
-                f"above {entry_gate.MIN_MEAN_RETURN:.0%} and above the "
+                f"above {t['gate_min_return_after_fees']:+.2%} and above the "
                 f"{entry_gate.ordinal(t['gate_baseline_percentile'])} percentile of "
                 f"{t['gate_baseline_runs']} sets of random signals on the same coins "
                 "and months (Settings, Training). The hit rate is shown only. Live "

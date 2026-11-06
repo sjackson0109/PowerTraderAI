@@ -5,7 +5,7 @@
 **Branch:** this spec is on `docs/fds-mh-001-model-harness`, cut from `main` at `500a355`. Each phase is built on its own `feat/mh-<letter>-…` branch, cut from `main` after the previous phase is merged.
 **Recommended model:** Claude Opus 5.5, effort high, for phases A, B and C (statistics, look-ahead, the replay). Sonnet 5.5, effort high, for phase D (the window).
 **Run log:** `docs/dev/RUN-LOG-mh-1.md`.
-**Status:** draft for the owner's approval, 2026-11-06. On 2026-11-05 the owner agreed the scope: models only, with the strategy held fixed. On 2026-11-06 the owner asked for the harness to be written first and then built, as recommended (gate fix included, batch 1 as in §7). §10 lists the decisions with the recommended answers.
+**Status:** draft for the owner's approval, 2026-11-06. On 2026-11-05 the owner agreed the scope: models only, with the strategy held fixed. On 2026-11-06 the owner asked for the harness to be written first and then built, as recommended (gate fix included, batch 1 as in §7). §10 lists the decisions with the recommended answers. On 2026-11-06 the owner set the lockbox to 18 months (D11), after phase B found that R2 cannot be drawn on 6 months.
 **Related:**
 - FDS-MDL: the pattern model and its single-split test.
 - PR #224: the entry gate.
@@ -29,7 +29,7 @@ The harness:
 - scores each one walk-forward, over years, on bars it was not trained on;
 - compares each with random entries that keep its patience, pooled over coins;
 - corrects for the number of contestants tried;
-- keeps the last 6 months locked until finalists are chosen;
+- keeps the last 18 months locked until finalists are chosen;
 - reports "too few trades to tell" when the test could not have seen a realistic edge.
 
 It also fixes the entry gate's random baseline and score (§6), which the diagnostic found biased.
@@ -84,15 +84,17 @@ Every replayed trade matched `model_gate.replay`, and the gate's recorded percen
 - **Batch:** a set of contestants, run on a set of series with one set of trade rules and fees. It is frozen before it runs (§5.8).
 - **Trial:** one contestant scored on one batch's held-out bars. Every trial is logged.
 - **Stream:** for one coin, the walk-forward held-out hours joined end to end. Each hour is decided by a fit that saw only earlier bars (§5.4).
-- **Lockbox:** the last 6 months of every series, held back until finalists are chosen (§5.7).
+- **Lockbox:** the last 18 months of every series, held back until finalists are chosen (§5.7).
 
 ### 5.2 Data series
 
 - **Source.** `exchange_candles(coin, "1h", start, end)`: the primary exchange first, then the others in Settings order. Each series comes from one exchange. It records:
   - its `exchange` and `pair`;
   - its first and last bar;
-  - the SHA-256 of its cache file;
+  - the SHA-256 of the bars it uses, in the candle cache's CSV format. The cache file is shared and grows, so its own hash would not identify them; the trainer's `candle_sha256` works the same way;
   - its gap report.
+
+  A frozen batch reads each series again from the exchange it came from.
 - **Higher timeframes.** Daily, 4-hour and weekly values are built from the 1-hour bars (`market_data.resample.build_candles`), aligned to UTC.
   - A value at an hour uses only bars that have closed by that hour.
   - A daily value uses the last *completed* UTC day.
@@ -124,7 +126,7 @@ Every replayed trade matched `model_gate.replay`, and the gate's recorded percen
 - **Fits.**
   - A trained contestant is fitted at the start of each fold on every bar before it (an expanding window). That fit, frozen, decides the fold's hours.
   - A pooled contestant fits once per fold on all coins. A per-coin contestant (the pattern model) fits once per coin per fold.
-  - The cadence is 3 months, not monthly, because each pattern-model fit takes 25–78 s (§3 row 11). At 3 months that is about 21 folds × 13 coins.
+  - The cadence is 3 months, not monthly, because each pattern-model fit takes 25–78 s (§3 row 11). At 3 months that is 18 folds × 13 coins for batch 1.
 - **Purge.** Training rows whose label looks past the fold's start are dropped: that is the last H hours before the fold, where H is the label's horizon (§5.5). Training never comes after a test fold, so no embargo is needed.
 - **Joining late.**
   - A coin joins the stream once it has the history its contestants need: 100 days for the longest rule, 50 days for the features.
@@ -197,11 +199,14 @@ That makes 26 features, with a longest look-back of 50 days (A-classic §2.2). T
   - The contestant's entry signal for every coin is moved by one random offset δ, then replayed one trade at a time. δ is the same for every coin in a draw, and wraps round each coin's stream.
   - This keeps how its entries cluster in time and across coins, which R1 does not.
   - δ stays at least D = 160 days from 0 and from the stream's length. D is the longest look-back (100 days) plus 60 days for a trade. So a moved signal is never built from the prices of the trade it starts.
-  - A coin whose stream is shorter than 2D takes no part in R2. The report lists it.
+  - A draw takes one number u in [0, 1). Each coin's δ is that share of its own allowed range, from D to its stream's length minus D. Coins whose streams have the same length, as most do, move by the same δ.
+  - A coin whose stream is shorter than 2D takes no part in R2. The report lists it. R2 is compared with the contestant's trades on the coins that do take part.
 - **Draws.** There are B = 10,000 draws of each baseline, seeded `seed + b`. In draw b, R2 uses the same offset for every contestant.
   - Draws use only `random()`, as the gate's do, so a seed repeats exactly across Python versions.
 
 **p-values.** p₁ = (1 + the number of R1 draws scoring at least the contestant's score) / (B + 1) (Phipson & Smyth 2010). p₂ is computed the same way for R2. A contestant's p is the larger of the two, because it must beat both.
+- When no coin's stream is long enough for R2, p₂ = 1.
+- Every tested contestant counts in K. One that made no entries counts at p = 1.
 
 **Pass rule.** For a batch of K contestants:
 1. **Screen.** Benjamini-Hochberg at q = 0.10 over the batch's K p-values. Shown, decides nothing.
@@ -230,14 +235,14 @@ That makes 26 features, with a longest look-back of 50 days (A-classic §2.2). T
 
 ### 5.7 The lockbox
 
-- **What it is.** The last 6 months of the batch's window, for every coin. No fit, threshold or choice uses it before it is opened.
+- **What it is.** The last 18 months of the batch's window, for every coin (D11). No fit, threshold or choice uses it before it is opened. 18 months is longer than 2D (320 days), so R2 can be drawn on its hours.
 - **Opening.** It is opened once per finalist, for at most 3 finalists per batch, smallest p first.
   - The finalist is refitted at the lockbox's start on everything before it, and keeps its 3-month cadence inside.
   - It is replayed with the same rules, and R1 and R2 are drawn on the lockbox's hours.
 - **Passing.** It passes when its return per capital-day is above the medians of R1 and R2, and its total profit after fees is above 0.
-  - Six months pooled is about 50–150 trades (C-evidence §4.6). The lockbox catches overfitting and leaks; the walk-forward test carries the evidence.
+  - Eighteen months pooled is about three times the 50–150 trades C-evidence §4.6 gives for six. The lockbox catches overfitting and leaks; the walk-forward test carries the evidence.
 - **Failing.** A finalist that fails is retired. A changed version is a new contestant in a new batch.
-- **Limits.** Every opening is logged with its months. Each month can be in at most 5 openings, across all batches. A batch whose last 6 months include a month opened 5 times waits for newer data (C-evidence §4.6; Dwork et al. 2015).
+- **Limits.** Every opening is logged with its months. Each month can be in at most 5 openings, across all batches. A batch whose last 18 months include a month opened 5 times waits for newer data (C-evidence §4.6; Dwork et al. 2015).
 - **Seen already.** The pattern model's results on the last 7 months were seen in the diagnostic (§4). Its lockbox line is shown and is not evidence.
 
 ### 5.8 Batches, the trial log and results
@@ -252,7 +257,8 @@ That makes 26 features, with a longest look-back of 50 days (A-classic §2.2). T
   - its fees (rate, order type, exchange, source);
   - its seeds, fold dates and lockbox dates;
   - the file's own SHA-256.
-- **Trial log:** `<data dir>/model_lab/trials.jsonl` (`pt_paths.data_dir()`), one line per trial. The window shows the count.
+- **Refusals.** A batch whose file, code or candles have changed since it was frozen is refused.
+- **Trial log:** `<data dir>/model_lab/trials.jsonl` (`pt_paths.data_dir()`), one line per trial. A trial is logged as soon as it is scored, so a stopped batch's scored trials stay counted. The window shows the count of distinct trials.
 - **Results:** `<data dir>/model_lab/batches/<id>/`, holding `batch.json`, `results.json` and `report.md`.
 - **Deterministic.** The same batch on the same cached candles gives the same results.
 - **Running.** The harness runs off the Tk thread, as "Check the models in use…" does, and can be stopped. A stopped batch keeps its frozen record and is marked as stopped.
@@ -300,7 +306,7 @@ The trainer's per-coin gate keeps its place and its Settings fields, and changes
 - **Window:**
   - from 2020-01-01 00:00 UTC, or each series' first bar if later, to the last closed hour when frozen;
   - fold 1 starts 2021-01-01;
-  - the last 6 months are locked.
+  - the last 18 months are locked (D11). Frozen on 2026-11-06, that would be from 2025-05-06.
 - **Trade rules:** the trader's defaults (`model_gate.TRADER_DEFAULTS`), with neural DCA off.
 - **Fees:** for each coin, the taker rate `entry_gate.trading_fees` gives, plus 0.05% slippage. The report run cannot read the account, so it uses 0.50%: the owner's account rate, from the check window on 2026-11-05.
 - **Seeds:** R1 from 300000, R2 from 400000, fits from 0.
@@ -432,9 +438,9 @@ There is no command line for users (§2); tests drive the package.
 - **One strategy.** Every result holds for these exits only. A model that is no better than random here could still matter under other exits. That belongs to the strategy project.
 - **R2 and trained contestants.** A signal moved forward comes from a fit that saw later bars. Its effect on one hour's decision is expected to be negligible (that hour is one of tens of thousands of training rows), and it is not corrected.
 - **Coins move together.** R2 keeps that dependence and R1 does not, so requiring both guards against it.
-- **Late coins.** BNB and HYPE have short Coinbase histories. They add few trades and take no part in R2.
+- **Late coins.** BNB and HYPE have short Coinbase histories: on Coinbase they start after the lockbox does, so they add no walk-forward trades. They join the final check only, where their streams are shorter than 2D, so they take no part in R2 there.
 - **Fees.** The account's rate can change. Each batch records the rate it used.
-- **Run time.** Not measured yet; phase B measures it. The pattern fits alone are about 21 folds × 13 coins × 25–40 s, roughly 2–3 hours on the sandbox machine. Building the trade cache and drawing 10,000 random sets per baseline add an unmeasured amount.
+- **Run time.** Measured in phase B on the sandbox machine (`docs/dev/RUN-LOG-mh-1.md`): batch 1 without the trained contestants took 86 minutes. That is 155 pattern fits in 59 minutes, the trade cache (380,539 replays) in 4, and 10,000 draws of R1 and R2 for 8 contestants in 22. Phase C adds pooled fits: 6 contestants × 18 folds.
 
 ## 10. Decisions for the owner
 
@@ -443,13 +449,14 @@ There is no command line for users (§2); tests drive the package.
 | D1 | Neural DCA in the comparison | Off for every contestant, so the exits are the same for all. The pattern model is also shown with it on |
 | D2 | The gate fix (§6) | R1 baseline and per-day score in the trainer's gate; the LLM gate unchanged. Included in the recommendation the owner accepted on 2026-11-06 |
 | D3 | Random baselines | A contestant must beat both R1 and R2 |
-| D4 | Walk-forward | From 2020-01-01, 12 months before the first fold, 3-month folds, the last 6 months locked |
+| D4 | Walk-forward | From 2020-01-01, 12 months before the first fold, 3-month folds, the last 18 months locked (D11) |
 | D5 | Pass rule | B = 10,000; Benjamini-Hochberg q = 0.10 as a screen; finalists by Holm at 5% plus the conditions in §5.6; "too few trades to tell" above 50% of random's median |
 | D6 | Trees library | scikit-learn's histogram trees (one new dependency, BSD-3-Clause). LightGBM later, only if the trees show something |
 | D7 | Batch 1 | As in §7: 14 contestants and the reference |
 | D8 | Where it lives | Settings > Training > "Compare models…". Contestants are fixed in code, with no parameter fields on screen |
 | D9 | The report run | In a sandbox, on public candles, at 0.50%, with the default trade rules. The owner can repeat it in the app, with the account's rate and their own trade rules; if either differs, that is a different trial |
 | D10 | A winner | Not wired into trading by this spec. A passing contestant gets its own spec |
+| D11 | R2 on the lockbox (found in phase B) | **Decided by the owner, 2026-11-06: an 18-month lockbox**, so R1 and R2 are both drawn on it. (R2 needs a stream of at least 2D, 320 days; 6 months was too short. The alternative offered was R1 only.) |
 
 ## 11. Out of scope
 

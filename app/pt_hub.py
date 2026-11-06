@@ -7822,6 +7822,9 @@ Platform: {sys.platform}
         min_return_var = tk.StringVar(
             master=win, value=f"{_training['gate_min_return_per_day'] * 100:g}"
         )
+        llm_min_return_var = tk.StringVar(
+            master=win, value=f"{_training['gate_min_return_after_fees'] * 100:g}"
+        )
         baseline_runs_var = tk.StringVar(
             master=win, value=str(_training["gate_baseline_runs"])
         )
@@ -7844,6 +7847,13 @@ Platform: {sys.platform}
         r += 1
         add_row(page, r, "Minimum return per day held after fees %:", min_return_var)
         r += 1
+        add_row(
+            page,
+            r,
+            "Minimum mean return per LLM signal after fees %:",
+            llm_min_return_var,
+        )
+        r += 1
         add_row(page, r, "Random-entry baselines:", baseline_runs_var)
         r += 1
         add_row(
@@ -7860,7 +7870,8 @@ Platform: {sys.platform}
                 "no worse than the random entries' median, and it does at least as "
                 "well per day held as the model in use. An LLM model may confirm or "
                 "veto entries only when its signals' mean return after fees is above "
-                "0% and above this percentile of random signals, on the same terms. "
+                "the minimum per LLM signal and above this percentile of random "
+                "signals, on the same terms. "
                 "The hit rate is shown only."
             ),
             style="Muted.TLabel",
@@ -8211,6 +8222,12 @@ Platform: {sys.platform}
                         "gate_min_return_per_day",
                         "Minimum return per day held after fees %",
                         min_return_var,
+                        100,
+                    ),
+                    (
+                        "gate_min_return_after_fees",
+                        "Minimum mean return per LLM signal after fees %",
+                        llm_min_return_var,
                         100,
                     ),
                     (

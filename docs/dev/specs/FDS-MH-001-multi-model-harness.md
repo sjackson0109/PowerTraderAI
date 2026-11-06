@@ -365,7 +365,9 @@ They need PyTorch, which is a large install.
 - the LLM gate's decisions are unchanged on its existing fixtures;
 - a contestant that is itself an R1 draw ranks above R1's 95th percentile in about 5% of 200 seeds.
 
-**Check:** with seed 200000, the 13 diagnostic coins' held-out hours (re-captured in a sandbox) give exactly the diagnostic's B3 percentiles.
+**Check:** with seed 200000, the 13 diagnostic coins' held-out hours (captured in a sandbox) give exactly the diagnostic's B3 percentiles when R1 is fed the diagnostic's own picks. The diagnostic drew a wait with `rng.choice`, while the gate draws with `random()` alone (§5.6), so the gate's own draws match only within the noise between two sets of 1,000 draws.
+
+Capital-days count each hour by its length in clock time, so a gap in the candles still counts its time.
 
 ### Phase B — the harness core, no new dependency
 

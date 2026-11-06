@@ -127,3 +127,5 @@ With batch 1's lockbox (from 2025-05-06), the pattern model's final check cannot
 The phase B timing run (2021-01-01 to 2025-05-06, walk-forward only) is recorded for all 8 of its contestants, and its 8 trials count in phase E's report.
 
 No substantive Copilot review was received on #225 or #226: GitHub reported insufficient review quota.
+
+**Full suites after the review:** #226 on its own, 2635 passed, 13 skipped, 0 failed; #227 with everything, 2663 passed, 13 skipped, 0 failed.

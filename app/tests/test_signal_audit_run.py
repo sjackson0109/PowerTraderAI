@@ -224,6 +224,102 @@ def test_refused_when_a_trained_model_ends_after_the_window_start(repo, caplog):
     _refused(repo, "train_end", caplog)
 
 
+def _commit(repo, rel, text, when=datetime(2026, 11, 7, tzinfo=UTC), msg="change"):
+    _write(repo, rel, text)
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", msg, when=when)
+
+
+def test_refused_when_frozen_code_changed_in_a_commit_after_the_freeze(repo, caplog):
+    """The review's case: a committed change to frozen code after the freeze was only
+    listed, and the round would have been scored with other code."""
+    registered(repo)
+    _commit(repo, "app/code.py", "x = 2  # another rule\n")
+    _refused(
+        repo, r"frozen paths changed since the freeze commit .*app/code.py", caplog
+    )
+    # a note alone does not allow it: before results there is nothing to supersede
+    with pytest.raises(reg.Refused, match="no results exist"):
+        reg.check_can_run(str(repo), 1, now=AFTER, supersede="a fix")
+    # after results, only with the defect fix's note
+    with pytest.raises(reg.Refused, match="needs --supersede"):
+        reg.check_can_run(str(repo), 1, now=AFTER, results_exist=True)
+    with pytest.raises(reg.Refused, match="needs --supersede"):
+        reg.check_can_run(str(repo), 1, now=AFTER, supersede="  ", results_exist=True)
+    state = reg.check_can_run(
+        str(repo), 1, now=AFTER, supersede=" the CMF sign ", results_exist=True
+    )
+    assert state.frozen_files_changed_since_freeze == ["app/code.py"]
+    assert state.supersede == "the CMF sign"
+    assert state.to_dict()["supersede"] == "the CMF sign"
+
+
+def test_a_new_frozen_file_after_the_freeze_is_refused_too(repo, caplog):
+    registered(repo)
+    _commit(repo, "docs/dev/run_signal_audit.py", "# another script\n")
+    _refused(repo, "run_signal_audit.py", caplog)
+    _git(repo, "reset", "-q", "--hard", "HEAD~1")
+    _commit(repo, "app/signal_audit/extra.py", "y = 1\n")
+    _refused(repo, "extra.py", caplog)
+
+
+def test_code_changed_before_the_freeze_is_the_frozen_code(repo):
+    """Between the registration and the freeze the code may change (step 2 freezes
+    it as it then is): the freeze commit's code is what is run."""
+    registered(repo, freeze=False)
+    before = datetime(2026, 11, 6, 12, 30, tzinfo=UTC)
+    _commit(repo, "app/code.py", "x = 5\n", when=before)
+    _commit(repo, FREEZE, "{}\n", when=before + timedelta(minutes=30), msg="freeze")
+    state = reg.check_can_run(str(repo), 1, now=AFTER)
+    assert state.frozen_files_changed_since_freeze == [] and state.supersede is None
+
+
+def test_uncommitted_frozen_changes_are_refused_before_and_after_the_freeze(
+    repo, caplog
+):
+    registered(repo, freeze=False)
+    _write(repo, "app/code.py", "x = 6\n")  # uncommitted when the freeze is committed
+    _write(repo, FREEZE, "{}\n")
+    _git(repo, "add", FREEZE)
+    _git(
+        repo, "commit", "-q", "-m", "freeze", when=datetime(2026, 11, 6, 13, tzinfo=UTC)
+    )
+    _refused(repo, "frozen paths have uncommitted changes", caplog)
+    _git(repo, "checkout", "--", "app/code.py")
+    assert reg.check_can_run(str(repo), 1, now=AFTER).frozen_files_dirty == []
+    _write(repo, "app/code.py", "x = 7\n")  # uncommitted after the freeze
+    _refused(repo, "frozen paths have uncommitted changes", caplog)
+    # with results and a note: still refused (an uncommitted fix is never run)
+    with pytest.raises(reg.Refused, match="uncommitted"):
+        reg.check_can_run(
+            str(repo), 1, now=AFTER, supersede="a fix", results_exist=True
+        )
+
+
+def test_a_change_reverted_or_outside_the_frozen_paths_is_not_refused(repo):
+    registered(repo)
+    _commit(repo, "app/code.py", "x = 2\n")
+    _commit(repo, "app/code.py", "x = 1\n", when=datetime(2026, 11, 8, tzinfo=UTC))
+    _commit(
+        repo, "docs/dev/notes.md", "a note\n", when=datetime(2026, 11, 9, tzinfo=UTC)
+    )
+    state = reg.check_can_run(str(repo), 1, now=AFTER)
+    assert state.frozen_files_changed_since_freeze == []  # the frozen code, as frozen
+
+
+def test_refused_when_the_freeze_record_changes_after_its_freeze_commit(repo, caplog):
+    """The review's case: committing freeze.json again moved the freeze point past a
+    code change, which then was not even listed."""
+    registered(repo)
+    _commit(repo, "app/code.py", "x = 2\n")
+    again = datetime(2026, 11, 8, tzinfo=UTC)
+    _commit(repo, FREEZE, '{"round": 1, "again": true}\n', when=again)
+    _refused(repo, "changed after its freeze commit", caplog)
+    _git(repo, "reset", "-q", "--hard", "HEAD~2")
+    _write(repo, FREEZE, '{"round": 1, "edited": true}\n')
+    _refused(repo, "freeze record .* has uncommitted changes", caplog)
+
+
 # --- rows, floors, Holm and verdicts ------------------------------------------------------
 
 

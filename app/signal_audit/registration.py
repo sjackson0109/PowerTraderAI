@@ -6,7 +6,8 @@ A round's registration and the run's refusals (FDS-SIG-001 sections 11 and 12).
 * ``registration.json`` (section 12, step 1), committed in its own commit, dated before
   the window starts;
 * ``freeze.json`` (step 2), committed in its own commit: the frozen paths (at least
-  ``app/`` and the audit script). Its commit is the freeze commit;
+  ``app/`` and the audit script). The commit that first added it is the freeze commit,
+  and it never changes afterwards;
 * the ranking and history evidence (step 0) and, after the window, the candle records,
   results and evidence series (steps 3 to 5).
 
@@ -19,9 +20,18 @@ A round's registration and the run's refusals (FDS-SIG-001 sections 11 and 12).
    after the registration commit (section 11);
 3. a commit that changes the registration also touches a frozen path;
 4. any frozen path is dirty (``git status --porcelain`` over the frozen paths);
-5. the registration commit is not an ancestor of the freeze commit;
-6. the window's end has not yet passed;
-7. a registered trained model's ``train_end`` is after the window start.
+5. the registration commit is not an ancestor of the freeze commit, or the freeze
+   record changed after its freeze commit (a second freeze would move the freeze point);
+6. a frozen path changed in any commit after the freeze commit (step 2's code freeze).
+   The one exception is step 6's: after results, a defect fix through ``--supersede``
+   ("<what changed and why>"), and only when results exist; the changed files and the
+   note are then recorded, and the earlier verdict stays beside the new one;
+7. the window's end has not yet passed;
+8. a registered trained model's ``train_end`` is after the window start.
+
+Steps 2 and 6 together allow changed code only as a superseding defect fix after
+results; step 4 lists dirty frozen paths, and committed changes after the freeze are
+refused on the same footing (owner's review of PR #228, 2026-11-06).
 
 Git is local only: no network, no credentials.
 """
@@ -166,6 +176,7 @@ class RunState:
     frozen_files_changed_since_freeze: List[str]
     python: str
     powertrader_home: Optional[str]
+    supersede: Optional[str] = None  # the defect fix's note, when one is run
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
@@ -181,9 +192,12 @@ def check_can_run(
     n: int,
     now: Optional[datetime] = None,
     frozen: Sequence[str] = FROZEN_PATHS,
+    supersede: Optional[str] = None,
+    results_exist: bool = False,
 ) -> RunState:
     """Every refusal of section 12, step 4 (module docstring), in order; the state the
-    outputs record (step 5) when none applies."""
+    outputs record (step 5) when none applies. ``supersede`` is the note of a defect fix
+    after results (step 6), and ``results_exist`` whether the round has results."""
     now = now or datetime.now(timezone.utc)
     rel_reg = f"{rel_round_dir(n)}/registration.json"
     rel_freeze = f"{rel_round_dir(n)}/freeze.json"
@@ -230,10 +244,19 @@ def check_can_run(
     dirty = git(repo, "status", "--porcelain", "--", *frozen).splitlines()
     if dirty:
         refuse(f"frozen paths have uncommitted changes: {dirty}")
-    # 5. the registration commit is an ancestor of the freeze commit
-    freeze_commit = _last_commit(repo, rel_freeze)
-    if not freeze_commit:
+    # 5. the registration commit is an ancestor of the freeze commit, which is the one
+    # that first added the freeze record; the record never changes afterwards
+    freeze_commits = _commits_touching(repo, rel_freeze)
+    if not freeze_commits:
         refuse(f"no code freeze committed ({rel_freeze})")
+    freeze_commit = freeze_commits[-1]
+    if len(freeze_commits) > 1:
+        refuse(
+            f"the freeze record {rel_freeze} changed after its freeze commit "
+            f"{freeze_commit[:7]} (in {[c[:7] for c in freeze_commits[:-1]]})"
+        )
+    if git(repo, "status", "--porcelain", "--", rel_freeze).strip():
+        refuse(f"the freeze record {rel_freeze} has uncommitted changes")
     ancestor = subprocess.run(
         ["git", "-C", repo, "merge-base", "--is-ancestor", reg_commit, freeze_commit],
         capture_output=True,
@@ -243,10 +266,30 @@ def check_can_run(
             f"the registration commit {reg_commit[:7]} is not an ancestor of the freeze "
             f"commit {freeze_commit[:7]}"
         )
-    # 6. the window has ended
+    # 6. no frozen path changed since the freeze, but a defect fix after results
+    changed = [
+        p
+        for p in git(
+            repo, "diff", "--name-only", freeze_commit, "HEAD", "--", *frozen
+        ).splitlines()
+        if p.strip()
+    ]
+    note = (supersede or "").strip() or None
+    if changed and not (note and results_exist):
+        why = (
+            'a defect fix after results needs --supersede "<what changed and why>"'
+            if results_exist
+            else "no results exist, and section 12 allows changed code only as a "
+            "defect fix after results, through --supersede"
+        )
+        refuse(
+            f"frozen paths changed since the freeze commit {freeze_commit[:7]}: "
+            f"{changed}; {why}"
+        )
+    # 7. the window has ended
     if not now >= end:
         refuse(f"the window ends {iso(end)}: no scoring before then ({iso(now)} now)")
-    # 7. trained models end their training by the window start
+    # 8. trained models end their training by the window start
     for c in record.get("candidates", []):
         train_end = (c.get("model") or {}).get("train_end")
         if train_end and parse_time(train_end) > start:
@@ -254,16 +297,16 @@ def check_can_run(
                 f"{c['key']}: its model's train_end {train_end} is after the window start"
             )
     head = git(repo, "rev-parse", "HEAD").strip()
-    changed = git(repo, "diff", "--name-only", freeze_commit, "HEAD", "--", *frozen)
     return RunState(
         head,
         reg_commit,
         file_sha256(path),
         freeze_commit,
         dirty,
-        [p for p in changed.splitlines() if p.strip()],
+        changed,
         sys.version,
         os.environ.get("POWERTRADER_HOME"),
+        note if changed else None,
     )
 
 

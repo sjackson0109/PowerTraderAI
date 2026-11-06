@@ -395,8 +395,13 @@ def run(n: int, supersede: Optional[str] = None) -> Dict[str, Any]:
     from market_data import candles
 
     sandbox()
-    state = reg.check_can_run(REPO, n)
     folder = reg.round_dir(REPO, n)
+    state = reg.check_can_run(
+        REPO,
+        n,
+        supersede=supersede,
+        results_exist=os.path.exists(os.path.join(folder, "results.json")),
+    )
     record = _read_json(os.path.join(folder, "registration.json"))
     data = _read_json(os.path.join(folder, "data.json"))
     for key, f in data["files"].items():

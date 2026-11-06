@@ -4,15 +4,23 @@ provider/model/prompt version, an entry filter) must show before it is used in t
 (``pt_config.json``'s ``training`` section; Settings, Training). entry_gate applies them.
 
 ``holdout_min_signals``         the fewest entries it must have made (20)
-``gate_min_return_after_fees``  its mean return after fees per trade must be above this,
+``gate_min_return_per_day``     a trained model's return per day held after fees must
+                                be above this, a fraction a day (0.0)
+``gate_min_return_after_fees``  an LLM model's signals' mean return after fees (each
+                                signal scored as a trade of its own) must be above this,
                                 a fraction (0.0)
 ``gate_baseline_runs``          random-entry baselines to compare it with (1000)
-``gate_baseline_percentile``    its mean return after fees must be above this percentile
-                                of the baselines' (95)
+``gate_baseline_percentile``    its score must be above this percentile of the
+                                baselines' (95)
 
 A hit rate decides nothing (random entries with the trader's exits win about 91% of the
 time), so ``holdout_min_hit_rate``, which an earlier release saved, is no longer read;
 it is kept in the file as it is, like the section's other keys.
+
+``gate_min_return_after_fees`` once applied to trained models too. A trained model is
+now judged per day held, which that value does not measure, so it has its own minimum
+(``gate_min_return_per_day``), and the per-trade value, as saved, applies to LLM
+signals only: an LLM gate decision is the same as it was for any saved value.
 """
 
 from __future__ import annotations
@@ -23,12 +31,14 @@ from typing import Any, Dict, Mapping
 SECTION = "training"
 DEFAULTS: Dict[str, Any] = {
     "holdout_min_signals": 20,
+    "gate_min_return_per_day": 0.0,
     "gate_min_return_after_fees": 0.0,
     "gate_baseline_runs": 1000,
     "gate_baseline_percentile": 95.0,
 }
 BOUNDS = {
     "holdout_min_signals": (1, 100000),
+    "gate_min_return_per_day": (-0.01, 0.01),
     "gate_min_return_after_fees": (-1.0, 1.0),
     "gate_baseline_runs": (100, 100000),
     "gate_baseline_percentile": (50.0, 99.9),

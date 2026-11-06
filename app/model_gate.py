@@ -39,11 +39,28 @@ Prices are the hourly closes (the trader watches the live price and buys at the 
 sells at the bid), and an entry is not raised to the exchange's minimum order; both are
 the same for the model's entries and the random ones.
 
-Random entries
---------------
-Every decided held-out hour is a moment a random entry could be made (one group: the
-coin). Each random entry is replayed as a trade of its own with the same rules, its
-neural DCA read from the same long counts.
+The score
+---------
+Return per day held after fees (entry_gate.PER_DAY): the trades' profit over their
+capital-days. A trade's capital-days add, for each hour after its entry up to its exit,
+the capital committed at the start of that hour times the hour's length in days (by
+the close times, so an hour missing from the candles still counts its time).
+
+Random entries: same waits, random order
+----------------------------------------
+The model holds one trade at a time, and so do the random entries (``same_waits``).
+The model's waits are the hours (held-out hour positions) from being free to entering:
+from the first held-out hour to its first entry, then from each trade's end to its
+next entry; the time after its last trade is not a wait, as it never ended in an entry.
+A random run starts free at the first hour; it draws one of those waits with
+replacement, enters at the first decided hour at least that far on, holds the trade
+exactly as the model would (its neural DCA read from the same long counts), and from
+the trade's end draws again, until the held-out hours run out. Only the order of the
+waits is random, so the run keeps the model's patience, and its entry count varies
+around the model's. (An earlier version drew distinct hours and replayed each as a
+trade of its own, so random trades overlapped; buys made part-way down a drawdown, while
+a real trade would still be open, recover well, so that baseline favoured random
+entries: docs/dev/GATE-DIAGNOSTIC-2026-11-05.md, finding 1.)
 """
 
 from __future__ import annotations
@@ -251,11 +268,14 @@ def replay(
     dca_times: List[int] = []
     trail: Optional[Dict[str, Any]] = None
     worst = 0.0
+    held = 0.0  # capital-days
     levels = rules.dca_levels
     gap = rules.trailing_gap_pct / 100.0
     last = len(prices) - 1
     for j in range(i, last + 1):
         price, now = prices[j], times[j]
+        if j > i:
+            held += committed * (now - times[j - 1]) / DAY_S
         avg = committed / qty
         gain_pct = (price - avg) / avg * 100.0
         worst = min(worst, gain_pct / 100.0)
@@ -280,7 +300,7 @@ def replay(
             if trail["was_above"] and price < trail["line"]:
                 proceeds = qty * price * (1.0 - s) * (1.0 - f)
                 net = proceeds - committed
-                return entry_gate.Trade(net, committed, worst, net > 0.0, j)
+                return entry_gate.Trade(net, committed, worst, net > 0.0, j, held)
         trail["was_above"] = above
         # DCA: the stage's hard level, or the neural level below cost
         hard = (
@@ -306,7 +326,9 @@ def replay(
     proceeds = qty * prices[last] * (1.0 - s) * (1.0 - f)
     net = proceeds - committed
     too_long = times[last] - times[i] > OPEN_TOO_LONG_S
-    return entry_gate.Trade(net, committed, worst, net > 0.0 and not too_long, last)
+    return entry_gate.Trade(
+        net, committed, worst, net > 0.0 and not too_long, last, held
+    )
 
 
 def model_entries(
@@ -324,6 +346,37 @@ def model_entries(
             out.append((i, t))
             free_from = max(t.end, i + 1)
     return out
+
+
+def waits_of(entries: Sequence[Tuple[int, entry_gate.Trade]]) -> List[int]:
+    """The waits of ``model_entries``'s trades (the module docstring): hours from being
+    free (the first hour, then a trade's end) to the next entry."""
+    waits, free = [], 0
+    for i, t in entries:
+        waits.append(i - free)
+        free = max(t.end, i + 1)
+    return waits
+
+
+def same_waits(
+    decided: Sequence[int], waits: Sequence[int], trade, rng
+) -> List[entry_gate.Trade]:
+    """One run of random entries made with the same waits, in random order (the module
+    docstring): ``decided`` are the decided hours, ascending, and ``trade(i)`` the
+    trade an entry at hour ``i`` makes. Draws use ``rng.random()`` alone."""
+    out: List[entry_gate.Trade] = []
+    free = 0
+    if not waits:
+        return out
+    while True:
+        wait = waits[int(rng.random() * len(waits))]
+        p = bisect.bisect_left(decided, free + wait)
+        if p >= len(decided):
+            return out
+        i = decided[p]
+        t = trade(i)
+        out.append(t)
+        free = max(t.end, i + 1)
 
 
 @dataclass
@@ -361,7 +414,9 @@ def evaluate(
     seed: int = entry_gate.DEFAULT_SEED,
     note: str = "",
 ) -> ModelGateResult:
-    """The gate's decision on a model whose held-out hours are ``hours``."""
+    """The gate's decision on a model whose held-out hours are ``hours``: its return
+    per day held after fees against random entries made with the same waits.
+    ``current`` is the model in use's own return per day held, when recorded."""
     decided = hours.decided()
     signal_hours = sum(
         1
@@ -369,7 +424,9 @@ def evaluate(
         if hours.longs[i] >= rules.trade_start_level and hours.shorts[i] == 0
     )
     if fees is None:
-        decision = entry_gate.decide([], {}, {}, settings, None, seed, current, note)
+        decision = entry_gate.decide(
+            [], {}, {}, settings, None, seed, current, note, entry_gate.PER_DAY
+        )
         return ModelGateResult(
             decision, len(hours.price), len(decided), signal_hours, rules
         )
@@ -380,10 +437,19 @@ def evaluate(
             cache[i] = replay(i, hours, rules, fees)
         return cache[i]
 
-    trades = [t for _i, t in model_entries(hours, rules, trade)]
-    slots = {coin: entry_gate.Slots(len(decided), lambda k: trade(decided[k]))}
+    entries = model_entries(hours, rules, trade)
+    waits = waits_of(entries)
     decision = entry_gate.decide(
-        trades, slots, {coin: len(trades)}, settings, fees, seed, current, note
+        [t for _i, t in entries],
+        {},
+        {},
+        settings,
+        fees,
+        seed,
+        current,
+        note,
+        entry_gate.PER_DAY,
+        draw_run=lambda rng: same_waits(decided, waits, trade, rng),
     )
     return ModelGateResult(
         decision, len(hours.price), len(decided), signal_hours, rules

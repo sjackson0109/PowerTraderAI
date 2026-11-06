@@ -100,8 +100,9 @@ Deviations from upstream, each with its reason:
 13. The entry gate (owner, 2026-11-05). Upstream used every model it trained; a model is
     now published only when its entries pass the gate (model_gate, entry_gate): on its
     held-out bars, the validation fit's entries replayed with the trader's rules must
-    earn more after fees than random entries with the same rules, and more than the
-    current model did on its own held-out bars. Otherwise the coin's current model (its
+    earn more per day held after fees than random entries made with the same waits and
+    rules, and at least as much as the current model did on its own held-out bars
+    (FDS-MH-001 §6). Otherwise the coin's current model (its
     newest published one) is copied back into the folder and stays in use; a coin with
     none keeps the new files unpublished, so the neural runner gives it no signals. The
     decision is printed, recorded in ``model_gate.json`` in the coin's folder and in the
@@ -1406,11 +1407,12 @@ def _empty_frame():
     )
 
 
-def gate_mean(manifest):
-    """A published model's own mean return after fees on its held-out bars, from its
-    manifest's gate record (None: none recorded, e.g. published before the gate)."""
+def gate_per_day(manifest):
+    """A published model's own return per day held after fees on its held-out bars,
+    from its manifest's gate record (None: none recorded, e.g. published before the
+    gate, or judged by an earlier gate that scored the mean return per trade)."""
     gate = (manifest or {}).get("gate") or {}
-    value = (gate.get("candidate") or {}).get("mean_return")
+    value = (gate.get("candidate") or {}).get("per_day")
     return float(value) if isinstance(value, (int, float)) else None
 
 
@@ -1428,22 +1430,31 @@ def check_gate(
         training_settings.read_training_settings()
     )
     rules = model_gate.read_trade_rules()
-    current_mean = gate_mean(current)
+    current_score = None if checking else gate_per_day(current)
     notes = []
     if checking:
         notes.append("a check of the model in use (it is not compared with itself)")
+        if current is not None and gate_per_day(current) is None:
+            notes.append(
+                no_per_day_note(current)
+                + f": the next {coin} model trained is not compared with it"
+            )
     elif current is None:
         notes.append("no current model, so it is not compared with one")
-    elif current_mean is None:
-        notes.append(
-            f"the current model {current.get('model_id')} has no recorded gate score "
-            "(published before the gate), so it is not compared with it"
-        )
+    elif current_score is None:
+        notes.append(no_per_day_note(current) + ", so it is not compared with it")
     fees = (gate_fees or entry_gate.trading_fees)(coin)
     if sibling is None:
         notes.append("no validation fit: there are no held-out bars to judge it on")
         decision = entry_gate.decide(
-            [], {}, {}, settings, fees, current=current_mean, note="; ".join(notes)
+            [],
+            {},
+            {},
+            settings,
+            fees,
+            current=current_score,
+            note="; ".join(notes),
+            measure=entry_gate.PER_DAY,
         )
         return model_gate.ModelGateResult(decision, 0, 0, 0, rules)
     start = max(sibling["start"], sibling["cut"] - GATE_LOOKBACK)
@@ -1466,7 +1477,22 @@ def check_gate(
         int(sibling["end"].timestamp()),
     )
     return model_gate.evaluate(
-        hours, rules, fees, settings, coin, current_mean, note="; ".join(notes)
+        hours, rules, fees, settings, coin, current_score, note="; ".join(notes)
+    )
+
+
+def no_per_day_note(manifest):
+    """Why the model in use is not compared with (rule f): it has no recorded return
+    per day held."""
+    gate = (manifest or {}).get("gate")
+    why = (
+        "it was published before the entry gate"
+        if not gate
+        else "an earlier version of the entry gate recorded its mean return per trade"
+    )
+    return (
+        f"the model in use {manifest.get('model_id')} has no recorded return per day "
+        f"held ({why})"
     )
 
 
@@ -1843,7 +1869,9 @@ def check_current_model(coin, offline, log=print):
                 "WARNING: the refitted validation fit's files differ from the ones its "
                 "manifest records (the code or the candles changed since)"
             )
-        gate = check_gate(coin, sibling, offline, log=log, checking=True)
+        gate = check_gate(
+            coin, sibling, offline, log=log, current=manifest, checking=True
+        )
     except (TrainerError, OSError, KeyError, ValueError) as exc:
         print(f"ERROR: the entry gate could not be run on {coin}'s model: {exc}")
         record["error"] = str(exc)

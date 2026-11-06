@@ -10,35 +10,58 @@ On the same held-out months, random entries with those exits won about 91% of th
 and the trained model's entries 90.5% (docs/research/volume-module.md, research/volume
 branch). So the hit rate is calculated and shown, and decides nothing.
 
-Candidates
-----------
+Candidates and their score
+--------------------------
 A trained model of one coin (model_gate: its entries on its held-out bars), the paper
 signals of one LLM provider/model/prompt version (llm_gate), or any entry filter. A
-candidate gives its trades (``Trade``), and for the random baseline the trade a random
-entry would have made at each moment it could have entered (``Slots``), in groups: the
-same coin, and for an LLM signal also the same direction, horizon, target and stop.
-Every slot's trade is replayed with exactly the rules the candidate's trades were: the
-same sizing, exits, DCA, trailing, stops and the same treatment of a trade still open
-when the held-out bars end.
+candidate gives its trades (``Trade``) and how a run of random entries is drawn. Every
+random entry's trade is replayed with exactly the rules the candidate's trades were:
+the same sizing, exits, DCA, trailing, stops and the same treatment of a trade still
+open when the held-out bars end. Each kind of candidate is judged by one score:
+
+* a trained model (``PER_DAY``): its return per day held after fees, the profit over
+  every unit of capital times the days it was committed. Its trades hold one at a time
+  and last from hours to weeks, and a long trade with DCA buys can look good per trade
+  while tying capital up for weeks, so time held counts
+  (docs/dev/GATE-DIAGNOSTIC-2026-11-05.md, finding 3);
+* an LLM signal (``MEAN_RETURN``): its mean return after fees per trade. Each signal is
+  scored as a trade of its own, with no capital held between them.
 
 The random baseline
 -------------------
-``gate_baseline_runs`` runs (1000). Run k draws, with ``random.Random(seed + k)``, as
-many distinct slots from each group as the candidate made entries in that group (all of
-them when the group has fewer). Draws use only ``random()``, whose sequence Python keeps
-for a seed across versions, so a recorded seed repeats a run exactly.
+``gate_baseline_runs`` runs (1000); run k uses ``random.Random(seed + k)``. Draws use
+only ``random()``, whose sequence Python keeps for a seed across versions, so a
+recorded seed repeats a run exactly. Two kinds:
+
+* same waits, random order (``draw_run``: a trained model, model_gate.same_waits): one
+  trade at a time, as the model and the trader hold them. From the first held-out hour,
+  and after each exit, a random entry waits one of the model's own waits (hours from
+  being free to entering), drawn with replacement, then enters. Only the timing is
+  random, so the run keeps the model's patience, and its entry count varies around the
+  model's;
+* distinct moments (``Slots``: an LLM signal): as many distinct moments from each group
+  (the same coin, direction, horizon, target and stop) as the candidate made entries in
+  it (all of them when the group has fewer), each replayed as a trade of its own, so
+  random trades can overlap, as signals do.
+
+The smallest detectable edge is the gain over the random median that the candidate
+would have needed to pass rule d four times in five: (z at the percentile + z at 0.8) x
+the spread (standard deviation) of the runs' scores. When it is more than half the size
+of the random median, the result is "too few trades to tell"; that is shown, and
+decides nothing.
 
 The pass rule (all must hold)
 -----------------------------
 a. at least ``holdout_min_signals`` entries;
-b. mean return after fees per trade above ``gate_min_return_after_fees`` (0%);
+b. the score above its minimum: for a trained model ``gate_min_return_per_day`` (0%
+   a day), for an LLM signal ``gate_min_return_after_fees`` (0%);
 c. capital-weighted return after fees (profit over all capital committed, DCA buys
    included) above 0%;
-d. mean return after fees above the ``gate_baseline_percentile`` (95th) percentile of the
-   random runs' mean returns;
+d. the score above the ``gate_baseline_percentile`` (95th) percentile of the random
+   runs' scores;
 e. worst drawdown no worse than the median of the random runs' worst drawdowns;
-f. where a current model has a recorded score, a mean return after fees not below the
-   current model's own (each on its own held-out bars).
+f. where a current model has a recorded score, a score not below the current model's
+   own (each on its own held-out bars).
 
 Fees
 ----
@@ -54,11 +77,19 @@ from __future__ import annotations
 
 import math
 import random
+import statistics
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 DEFAULT_SEED = 0  # run k of a baseline uses random.Random(DEFAULT_SEED + k)
 ORDER_TYPE = "market"  # the trader's entry, DCA and exit orders (pt_trader.py)
+
+MEAN_RETURN = "mean_return"  # mean return after fees per trade (an LLM signal)
+PER_DAY = "per_day"  # return per day held after fees (a trained model)
+POWER = 0.8  # the smallest detectable edge is the one rule d catches 4 times in 5
+TOO_FEW = 0.5  # ...and above this share of the random median: too few trades to tell
+SAME_WAITS = "same waits"  # the kinds of random baseline (module docstring)
+DISTINCT = "distinct moments"
 
 
 # --- trades and their score -----------------------------------------------------------
@@ -71,13 +102,15 @@ class Trade:
     fees included); ``drawdown`` its worst fall below its average cost while it was
     open, a fraction (0 or less); ``hit`` whether it counts as a win (the hit rate is
     shown, never decides); ``end`` the index it ended at (replays that hold one trade
-    at a time read it)."""
+    at a time read it); ``capital_days`` the capital it had committed times the days
+    it was held, summed hour by hour (a DCA buy counts from the next hour on)."""
 
     net: float
     committed: float
     drawdown: float
     hit: bool
     end: int = -1
+    capital_days: float = 0.0
 
     @property
     def ret(self) -> float:
@@ -92,6 +125,11 @@ class Score:
     capital_return: Optional[float]  # total profit / total capital committed
     drawdown: Optional[float]  # the worst trade's drawdown
     hit_rate: Optional[float]  # shown only
+    per_day: Optional[float] = None  # total profit / total capital-days held
+
+    def value(self, measure: str) -> Optional[float]:
+        """The score ``measure`` (PER_DAY or MEAN_RETURN) names."""
+        return self.per_day if measure == PER_DAY else self.mean_return
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -100,6 +138,7 @@ class Score:
             "capital_return": self.capital_return,
             "drawdown": self.drawdown,
             "hit_rate": self.hit_rate,
+            "per_day": self.per_day,
         }
 
     @classmethod
@@ -110,19 +149,23 @@ class Score:
             data.get("capital_return"),
             data.get("drawdown"),
             data.get("hit_rate"),
+            data.get("per_day"),
         )
 
 
 def score(trades: Sequence[Trade]) -> Score:
     if not trades:
-        return Score(0, None, None, None, None)
+        return Score(0, None, None, None, None, None)
     committed = sum(t.committed for t in trades)
+    net = sum(t.net for t in trades)
+    capital_days = sum(t.capital_days for t in trades)
     return Score(
         entries=len(trades),
         mean_return=sum(t.ret for t in trades) / len(trades),
-        capital_return=(sum(t.net for t in trades) / committed) if committed else None,
+        capital_return=(net / committed) if committed else None,
         drawdown=min(t.drawdown for t in trades),
         hit_rate=sum(1 for t in trades if t.hit) / len(trades),
+        per_day=(net / capital_days) if capital_days > 0 else None,
     )
 
 
@@ -178,22 +221,66 @@ def percentile_rank(value: float, values: Sequence[float]) -> float:
 class Baseline:
     runs: int
     seed: int  # run k used random.Random(seed + k)
-    means: Tuple[float, ...]  # each run's mean return after fees
+    values: Tuple[float, ...]  # each run's score (``measure``)
     drawdowns: Tuple[float, ...]  # each run's worst drawdown
-    entries: int  # entries drawn in each run
+    entries: Tuple[int, ...]  # each run's entry count
     short: Tuple[str, ...] = ()  # groups with fewer slots than the candidate's entries
+    measure: str = MEAN_RETURN
+    kind: str = DISTINCT
 
     def median(self) -> float:
-        return percentile(self.means, 50.0)
+        return percentile(self.values, 50.0)
 
     def at(self, p: float) -> float:
-        return percentile(self.means, p)
+        return percentile(self.values, p)
 
     def median_drawdown(self) -> float:
         return percentile(self.drawdowns, 50.0)
 
-    def rank(self, mean_return: float) -> float:
-        return percentile_rank(mean_return, self.means)
+    def rank(self, value: float) -> float:
+        return percentile_rank(value, self.values)
+
+    def spread(self) -> float:
+        """The standard deviation of the runs' scores (0 for a single run)."""
+        return statistics.pstdev(self.values) if len(self.values) > 1 else 0.0
+
+
+def run_draws(
+    draw_run: Callable[[random.Random], Sequence[Optional[Trade]]],
+    runs: int,
+    seed: int = DEFAULT_SEED,
+    measure: str = MEAN_RETURN,
+    kind: str = SAME_WAITS,
+    short: Tuple[str, ...] = (),
+) -> Optional[Baseline]:
+    """``runs`` random baselines: run k is ``draw_run(random.Random(seed + k))``'s
+    entries, each a trade or None (a moment where none could be replayed: it counts as
+    an entry drawn, and is not scored), scored by ``measure``. A run with no score is
+    left out. None when no run is left."""
+    values: List[float] = []
+    drawdowns: List[float] = []
+    entries: List[int] = []
+    for k in range(int(runs)):
+        drawn = list(draw_run(random.Random(int(seed) + k)))
+        s = score([t for t in drawn if t is not None])
+        value = s.value(measure)
+        if value is None:
+            continue
+        values.append(value)
+        drawdowns.append(s.drawdown)
+        entries.append(len(drawn))
+    if not values:
+        return None
+    return Baseline(
+        len(values),
+        int(seed),
+        tuple(values),
+        tuple(drawdowns),
+        tuple(entries),
+        short,
+        measure,
+        kind,
+    )
 
 
 def run_baseline(
@@ -201,34 +288,26 @@ def run_baseline(
     counts: Mapping[str, int],
     runs: int,
     seed: int = DEFAULT_SEED,
+    measure: str = MEAN_RETURN,
 ) -> Optional[Baseline]:
-    """``runs`` random baselines: run k draws ``counts[group]`` slots of each group
-    (groups in sorted order) with ``random.Random(seed + k)``. A slot's trade is
-    replayed once and reused. None when no run gets a trade."""
+    """``runs`` random baselines of distinct moments: run k draws ``counts[group]``
+    slots of each group (groups in sorted order) with ``random.Random(seed + k)``. A
+    slot's trade is replayed once and reused. None when no run gets a trade."""
     cache: Dict[Tuple[str, int], Optional[Trade]] = {}
     groups = sorted(g for g in slots if counts.get(g, 0) > 0)
-    short = tuple(g for g in groups if slots[g].size < counts[g])
-    means: List[float] = []
-    drawdowns: List[float] = []
-    entries = sum(min(counts[g], slots[g].size) for g in groups)
-    for k in range(int(runs)):
-        rng = random.Random(int(seed) + k)
-        trades: List[Trade] = []
+
+    def draw_run(rng: random.Random) -> List[Optional[Trade]]:
+        out: List[Optional[Trade]] = []
         for g in groups:
             for i in draw(rng, slots[g].size, counts[g]):
                 key = (g, i)
                 if key not in cache:
                     cache[key] = slots[g].trade(i)
-                if cache[key] is not None:
-                    trades.append(cache[key])
-        if trades:
-            means.append(sum(t.ret for t in trades) / len(trades))
-            drawdowns.append(min(t.drawdown for t in trades))
-    if not means:
-        return None
-    return Baseline(
-        len(means), int(seed), tuple(means), tuple(drawdowns), entries, short
-    )
+                out.append(cache[key])
+        return out
+
+    short = tuple(g for g in groups if slots[g].size < counts[g])
+    return run_draws(draw_run, runs, seed, measure, DISTINCT, short)
 
 
 # --- settings and fees ----------------------------------------------------------------
@@ -237,24 +316,43 @@ def run_baseline(
 @dataclass(frozen=True)
 class GateSettings:
     min_entries: int = 20
-    min_return: float = 0.0  # a fraction
+    min_return_per_day: float = 0.0  # a fraction a day (rule b for PER_DAY)
     runs: int = 1000
     percentile: float = 95.0
+    min_mean_return: float = 0.0  # a fraction (rule b for MEAN_RETURN: LLM signals)
 
     @classmethod
     def from_training(cls, training: Mapping[str, Any]) -> "GateSettings":
         """From the ``training`` section (training_settings.normalise)."""
         return cls(
             int(training["holdout_min_signals"]),
-            float(training["gate_min_return_after_fees"]),
+            float(training["gate_min_return_per_day"]),
             int(training["gate_baseline_runs"]),
             float(training["gate_baseline_percentile"]),
+            float(training["gate_min_return_after_fees"]),
         )
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "GateSettings":
+        """From ``to_dict``'s keys (a record an earlier version wrote has no per-day
+        minimum: its default)."""
+        return cls(
+            int(data.get("holdout_min_signals", 20)),
+            float(data.get("gate_min_return_per_day", 0.0)),
+            int(data.get("gate_baseline_runs", 1000)),
+            float(data.get("gate_baseline_percentile", 95.0)),
+            float(data.get("gate_min_return_after_fees", 0.0)),
+        )
+
+    def minimum(self, measure: str) -> float:
+        """Rule b's minimum for ``measure``."""
+        return self.min_return_per_day if measure == PER_DAY else self.min_mean_return
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "holdout_min_signals": self.min_entries,
-            "gate_min_return_after_fees": self.min_return,
+            "gate_min_return_per_day": self.min_return_per_day,
+            "gate_min_return_after_fees": self.min_mean_return,
             "gate_baseline_runs": self.runs,
             "gate_baseline_percentile": self.percentile,
         }
@@ -376,6 +474,18 @@ def trading_fees(
 
 # --- the decision ---------------------------------------------------------------------
 
+MEASURE_NAMES = {
+    MEAN_RETURN: "mean return after fees",
+    PER_DAY: "return per day held after fees",
+}
+
+
+def _fmt(value: float, measure: str, sign: bool = True) -> str:
+    """A score as shown: a return per trade to 0.01%, a return per day to 0.001%."""
+    if measure == PER_DAY:
+        return (f"{value:+.3%}" if sign else f"{value:.3%}") + " a day"
+    return f"{value:+.2%}" if sign else f"{value:.2%}"
+
 
 @dataclass
 class Decision:
@@ -385,41 +495,90 @@ class Decision:
     fees: Optional[Fees]
     settings: GateSettings
     baseline: Dict[str, Any] = field(default_factory=dict)  # see summary_of
-    current: Optional[float] = None  # the current model's own mean return (rule f)
+    current: Optional[float] = None  # the current model's own score (rule f)
     note: str = ""  # anything else the reader should know
+    measure: str = (
+        MEAN_RETURN  # the score it was judged by (a record before: per trade)
+    )
+
+    def value(self) -> Optional[float]:
+        return self.candidate.value(self.measure)
+
+    def figure_name(self) -> str:
+        """What ``short`` shows, for a sentence: "return after fees" (per trade) or
+        "return per day held after fees"."""
+        return (
+            MEASURE_NAMES[PER_DAY] if self.measure == PER_DAY else "return after fees"
+        )
 
     def headline(self) -> str:
         """ "Return after fees vs random", in one line."""
-        c = self.candidate
-        if c.mean_return is None:
-            return "no entries to score"
-        text = f"{c.mean_return:+.2%} after fees"
+        value = self.value()
+        if value is None:
+            return (
+                "no entries to score"
+                if not self.candidate.entries
+                else ("no time held to score")
+            )
+        m = self.measure
+        if m == PER_DAY:
+            text = f"{_fmt(value, m)} held after fees"
+        else:
+            text = f"{value:+.2%} after fees"
         b = self.baseline
         if b:
             text += (
-                f" vs random {b['median']:+.2%} (median; "
-                f"{ordinal(b['percentile'])} percentile {b['at_percentile']:+.2%}): "
+                f" vs random {_fmt(b['median'], m)} (median; "
+                f"{ordinal(b['percentile'])} percentile {_fmt(b['at_percentile'], m)}): "
                 f"{ordinal(b['rank'], whole=True)} percentile"
             )
         return text
 
     def short(self) -> str:
         """ "Return after fees vs random" for a table cell."""
-        c, b = self.candidate, self.baseline
-        if c.mean_return is None:
+        value, b, m = self.value(), self.baseline, self.measure
+        if value is None:
             return ""
         if not b:
-            return f"{c.mean_return:+.2%}"
+            return _fmt(value, m)
+        if m == PER_DAY:
+            return (
+                f"{value:+.3%} vs {b['median']:+.3%} a day "
+                f"({ordinal(b['rank'], whole=True)} percentile)"
+            )
         return (
-            f"{c.mean_return:+.2%} vs {b['median']:+.2%} "
+            f"{value:+.2%} vs {b['median']:+.2%} "
             f"({ordinal(b['rank'], whole=True)} percentile)"
         )
 
+    def entries_text(self) -> str:
+        """The candidate's entries and the random runs' ("" with no baseline)."""
+        b = self.baseline
+        if not b:
+            return str(self.candidate.entries) if self.candidate.entries else ""
+        return f"{self.candidate.entries} (random {b['entries']:g})"
+
+    def edge_text(self) -> str:
+        """The smallest detectable edge, for a table cell ("" when none is recorded)."""
+        b = self.baseline
+        if not b or b.get("smallest_edge") is None:
+            return ""
+        text = _fmt(b["smallest_edge"], self.measure, sign=False)
+        return f"{text}: too few trades to tell" if b.get("too_few") else text
+
     def lines(self) -> List[str]:
         """Everything a decision is logged and shown with."""
-        c = self.candidate
+        c, m = self.candidate, self.measure
         out = [("PASSED" if self.passed else "NOT PASSED") + ": " + self.headline()]
-        if c.entries:
+        if c.entries and m == PER_DAY:
+            out.append(
+                f"entries {c.entries}; return per day held after fees "
+                f"{_pct(c.per_day, digits=3)}; mean return after fees per trade "
+                f"{_pct(c.mean_return)}; capital-weighted {_pct(c.capital_return)}; "
+                f"worst drawdown {_pct(c.drawdown)}; hit rate "
+                f"{_pct(c.hit_rate, sign=False)} (shown only, it decides nothing)"
+            )
+        elif c.entries:
             out.append(
                 f"entries {c.entries}; mean return after fees {c.mean_return:+.2%}; "
                 f"capital-weighted {_pct(c.capital_return)}; worst drawdown "
@@ -431,21 +590,51 @@ class Decision:
         b = self.baseline
         if b:
             seeds = f"seeds {b['seed']}..{b['seed'] + b['runs'] - 1}"
-            out.append(
-                f"random entries ({b['runs']} runs of {b['entries']} entries, {seeds}): "
-                f"mean return median {b['median']:+.2%}, "
-                f"{ordinal(b['percentile'])} percentile {b['at_percentile']:+.2%}; "
-                f"worst drawdown median {b['median_drawdown']:+.2%}; the candidate is "
-                f"at the {ordinal(b['rank'], whole=True)} percentile"
-                + (
-                    f"; fewer moments than entries in {', '.join(b['short'])}"
-                    if b.get("short")
-                    else ""
+            if b.get("kind") == SAME_WAITS:
+                low, high = b.get("entries_low"), b.get("entries_high")
+                counts = (
+                    f"{b['runs']} runs of {low} to {high} entries, median "
+                    f"{b['entries']:g}"
+                    if low != high
+                    else f"{b['runs']} runs of {b['entries']:g} entries"
                 )
-            )
+                out.append(
+                    "random entries made with the same waits as the candidate's, in "
+                    f"random order ({counts}; {seeds}): {MEASURE_NAMES[m]} median "
+                    f"{_fmt(b['median'], m)}, {ordinal(b['percentile'])} percentile "
+                    f"{_fmt(b['at_percentile'], m)}; worst drawdown median "
+                    f"{b['median_drawdown']:+.2%}; the candidate is at the "
+                    f"{ordinal(b['rank'], whole=True)} percentile"
+                )
+            else:
+                out.append(
+                    f"random entries ({b['runs']} runs of {b['entries']} entries, "
+                    f"{seeds}): mean return median {b['median']:+.2%}, "
+                    f"{ordinal(b['percentile'])} percentile {b['at_percentile']:+.2%}; "
+                    f"worst drawdown median {b['median_drawdown']:+.2%}; the candidate "
+                    f"is at the {ordinal(b['rank'], whole=True)} percentile"
+                    + (
+                        f"; fewer moments than entries in {', '.join(b['short'])}"
+                        if b.get("short")
+                        else ""
+                    )
+                )
+            if b.get("smallest_edge") is not None:
+                out.append(
+                    "smallest detectable edge "
+                    f"{_fmt(b['smallest_edge'], m, sign=False)}: the gain over the "
+                    "random median that would put it above the random entries' "
+                    f"{ordinal(b['percentile'])} percentile 4 times in 5"
+                    + (
+                        "; that is more than half the size of the random median, so "
+                        "there are too few trades to tell"
+                        if b.get("too_few")
+                        else ""
+                    )
+                )
         if self.current is not None:
             out.append(
-                f"current model's own mean return after fees {self.current:+.2%}"
+                f"current model's own {MEASURE_NAMES[m]} {_fmt(self.current, m)}"
             )
         out.append(
             "fees: "
@@ -467,33 +656,32 @@ class Decision:
             "baseline": dict(self.baseline),
             "current": self.current,
             "note": self.note,
+            "measure": self.measure,
             "headline": self.headline(),
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Decision":
-        s = data.get("settings") or {}
+        measure = data.get("measure")
         return cls(
             passed=bool(data.get("passed")),
             failed=list(data.get("failed") or []),
             candidate=Score.from_dict(data.get("candidate") or {}),
             fees=Fees.from_dict(data["fees"]) if data.get("fees") else None,
-            settings=GateSettings(
-                int(s.get("holdout_min_signals", 20)),
-                float(s.get("gate_min_return_after_fees", 0.0)),
-                int(s.get("gate_baseline_runs", 1000)),
-                float(s.get("gate_baseline_percentile", 95.0)),
-            ),
+            settings=GateSettings.from_dict(data.get("settings") or {}),
             baseline=dict(data.get("baseline") or {}),
             current=data.get("current"),
             note=str(data.get("note") or ""),
+            measure=measure if measure in MEASURE_NAMES else MEAN_RETURN,
         )
 
 
-def _pct(value: Optional[float], sign: bool = True) -> str:
+def _pct(value: Optional[float], sign: bool = True, digits: int = 2) -> str:
     if value is None:
         return "n/a"
-    return f"{value:+.2%}" if sign else f"{value:.1%}"
+    if sign:
+        return f"{value:+.{digits}%}"
+    return f"{value:.1%}"
 
 
 def ordinal(value: float, whole: bool = False) -> str:
@@ -509,18 +697,41 @@ def ordinal(value: float, whole: bool = False) -> str:
     return f"{number}{suffix}"
 
 
+def smallest_edge(spread: float, percentile_: float, power: float = POWER) -> float:
+    """The gain over the random median a candidate needs to be above the random runs'
+    ``percentile_`` with probability ``power``: (z at the percentile + z at the power)
+    x the runs' spread (a normal approximation of their scores)."""
+    z = statistics.NormalDist()
+    p = min(max(float(percentile_) / 100.0, 1e-6), 1.0 - 1e-6)
+    return (z.inv_cdf(p) + z.inv_cdf(power)) * spread
+
+
+def _whole(value: float):
+    return int(value) if float(value).is_integer() else value
+
+
 def summary_of(
-    baseline: Baseline, settings: GateSettings, mean: float
+    baseline: Baseline, settings: GateSettings, value: float
 ) -> Dict[str, Any]:
+    median = baseline.median()
+    spread = baseline.spread()
+    edge = smallest_edge(spread, settings.percentile)
     return {
         "runs": baseline.runs,
         "seed": baseline.seed,
-        "entries": baseline.entries,
-        "median": baseline.median(),
+        "kind": baseline.kind,
+        "measure": baseline.measure,
+        "entries": _whole(percentile(baseline.entries, 50.0)),
+        "entries_low": min(baseline.entries),
+        "entries_high": max(baseline.entries),
+        "median": median,
         "percentile": settings.percentile,
         "at_percentile": baseline.at(settings.percentile),
-        "rank": baseline.rank(mean),
+        "rank": baseline.rank(value),
         "median_drawdown": baseline.median_drawdown(),
+        "spread": spread,
+        "smallest_edge": edge,
+        "too_few": edge > TOO_FEW * abs(median),
         "short": list(baseline.short),
     }
 
@@ -534,11 +745,16 @@ def decide(
     seed: int = DEFAULT_SEED,
     current: Optional[float] = None,
     note: str = "",
+    measure: str = MEAN_RETURN,
+    draw_run: Optional[Callable[[random.Random], Sequence[Optional[Trade]]]] = None,
 ) -> Decision:
-    """The gate's decision on a candidate's ``trades`` (``counts``: its entries per
-    group of ``slots``). ``current`` is the current model's own mean return after
-    fees, when one is recorded (rule f)."""
+    """The gate's decision on a candidate's ``trades``, by the score ``measure``
+    names. The random baseline is ``draw_run``'s runs (same waits) when given, else
+    distinct moments: ``counts`` of each group of ``slots`` (the candidate's entries
+    per group). ``current`` is the current model's own score, when one is recorded
+    (rule f)."""
     cand = score(trades)
+    name = MEASURE_NAMES[measure]
     failed: List[str] = []
     if fees is None:
         failed.append("no fee rate: no exchange states one")
@@ -546,36 +762,42 @@ def decide(
         failed.append(f"{cand.entries} entries, {settings.min_entries} needed")
     summary: Dict[str, Any] = {}
     if cand.entries:
-        if not cand.mean_return > settings.min_return:
+        value = cand.value(measure)
+        minimum = settings.minimum(measure)
+        if value is None:
+            failed.append(f"{name} cannot be scored: its trades held no time")
+        elif not value > minimum:
             failed.append(
-                f"mean return after fees {cand.mean_return:+.2%} is not above "
-                f"{settings.min_return:+.2%}"
+                f"{name} {_fmt(value, measure)} is not above {_fmt(minimum, measure)}"
             )
         if cand.capital_return is None or not cand.capital_return > 0.0:
             failed.append(
                 f"capital-weighted return after fees {_pct(cand.capital_return)} is "
                 "not above 0%"
             )
-        baseline = run_baseline(slots, counts, settings.runs, seed)
+        if draw_run is not None:
+            baseline = run_draws(draw_run, settings.runs, seed, measure, SAME_WAITS)
+        else:
+            baseline = run_baseline(slots, counts, settings.runs, seed, measure)
         if baseline is None:
             failed.append("no random baseline: no moment a random entry could be made")
-        else:
-            summary = summary_of(baseline, settings, cand.mean_return)
-            if not cand.mean_return > summary["at_percentile"]:
+        elif value is not None:
+            summary = summary_of(baseline, settings, value)
+            if not value > summary["at_percentile"]:
                 failed.append(
-                    f"mean return after fees {cand.mean_return:+.2%} is not above the "
-                    f"random entries' {ordinal(settings.percentile)} percentile "
-                    f"{summary['at_percentile']:+.2%}"
+                    f"{name} {_fmt(value, measure)} is not above the random entries' "
+                    f"{ordinal(settings.percentile)} percentile "
+                    f"{_fmt(summary['at_percentile'], measure)}"
                 )
             if not cand.drawdown >= summary["median_drawdown"]:
                 failed.append(
                     f"worst drawdown {cand.drawdown:+.2%} is worse than the random "
                     f"entries' median {summary['median_drawdown']:+.2%}"
                 )
-        if current is not None and not cand.mean_return >= current:
+        if current is not None and value is not None and not value >= current:
             failed.append(
-                f"mean return after fees {cand.mean_return:+.2%} is below the current "
-                f"model's {current:+.2%}"
+                f"{name} {_fmt(value, measure)} is below the current model's "
+                f"{_fmt(current, measure)}"
             )
     return Decision(
         passed=not failed,
@@ -586,4 +808,5 @@ def decide(
         baseline=summary,
         current=current,
         note=note,
+        measure=measure,
     )

@@ -3,7 +3,9 @@ Settings > Training, "Check the models in use...": the entry gate run again on e
 coin's model in use (``pt_pattern_trainer.py COIN --check-gate``: its validation fit
 is refitted from its manifest and its entries replayed on its own held-out bars;
 nothing is trained, published or changed). One coin at a time, off the Tk thread
-(ui_jobs); the window lists each coin's result as it arrives.
+(ui_jobs); the window lists each coin's result as it arrives: its score against random
+entries made with the same waits, both entry counts, the smallest edge the check can
+detect, and the gate's decision.
 
 ``run_check(coin)`` does the work and returns ``{"code": exit code, "record": the
 coin's ``<coin>_gate_check.json`` (or None), "output": the last lines it printed}``;
@@ -20,14 +22,17 @@ import ui_table
 import ui_tokens
 from ui_jobs import BackgroundJobs
 
-COLUMNS = ("coin", "model", "vs_random", "gate", "hit_rate")
+COLUMNS = ("coin", "model", "vs_random", "entries", "edge", "gate", "hit_rate")
 HEADINGS = {
     "coin": "Coin",
     "model": "Model in use",
-    "vs_random": "Return after fees vs random",
+    "vs_random": "Return per day held vs random",
+    "entries": "Entries",
+    "edge": "Smallest detectable edge",
     "gate": "Gate",
     "hit_rate": "Hit rate",
 }
+WAITING = ("", "", "", "", "waiting", "")  # every column after the coin
 
 
 def row_values(coin: str, result: Dict[str, Any]) -> tuple:
@@ -39,13 +44,15 @@ def row_values(coin: str, result: Dict[str, Any]) -> tuple:
     gate = record.get("gate")
     if not gate:
         why = record.get("error") or _last_line(result.get("output", ""))
-        return (coin, model, "", why or "could not be checked", "")
+        return (coin, model, "", "", "", why or "could not be checked", "")
     decision = entry_gate.Decision.from_dict(gate)
     rate = decision.candidate.hit_rate
     return (
         coin,
         model,
         decision.short() or "no entries",
+        decision.entries_text(),
+        decision.edge_text(),
         "passed" if decision.passed else "not passed",
         "" if rate is None else f"{rate:.0%}",
     )
@@ -96,8 +103,11 @@ class GateCheckWindow(tk.Toplevel):
             text=(
                 "Each coin's model in use, judged again by the entry gate: its "
                 "validation fit is trained again and its entries replayed on the bars "
-                "it never saw, against random entries with the same trade rules. "
-                "Nothing is changed. A coin takes about as long as a training run."
+                "it never saw, against random entries made with the same waits and "
+                "trade rules, by the return per day held after fees. The smallest "
+                "detectable edge is the gain over the random median the check would "
+                "catch 4 times in 5. Nothing is changed. A coin takes about as long "
+                "as a training run."
             ),
             style="Muted.TLabel",
             wraplength=640,
@@ -115,7 +125,7 @@ class GateCheckWindow(tk.Toplevel):
         self.table.pack(fill="both", expand=True, pady=(gap, 0))
         tree = self.table.tree
         for coin in self.coins:
-            tree.insert("", "end", iid=coin, values=(coin, "", "", "waiting", ""))
+            tree.insert("", "end", iid=coin, values=(coin, *WAITING))
         tree.bind("<<TreeviewSelect>>", lambda _e: self._show_detail())
         self.detail = tk.Text(body, height=8, wrap="word")
         self.detail.pack(fill="both", expand=True, pady=(gap, 0))
@@ -139,7 +149,7 @@ class GateCheckWindow(tk.Toplevel):
         coin = self.coins[self._next]
         self._next += 1
         self.status_var.set(f"Checking {coin} ({self._next} of {len(self.coins)})...")
-        self._set_row(coin, (coin, "", "", "checking...", ""))
+        self._set_row(coin, (coin, "", "", "", "", "checking...", ""))
         self.jobs.submit(
             lambda c=coin: self._run_check(c),
             lambda result, c=coin: self._done(c, result),

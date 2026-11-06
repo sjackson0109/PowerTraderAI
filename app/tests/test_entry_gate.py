@@ -1,17 +1,25 @@
 """The entry gate (entry_gate, model_gate, llm_gate.evaluate, pt_pattern_trainer
 deviation 13): a candidate passes only on what its entries earn after fees against
-random entries with exactly the same trade rules, never on its hit rate.
+random entries with exactly the same trade rules, never on its hit rate. A trained
+model is judged by its return per day held against random entries made with the same
+waits (FDS-MH-001 §6); an LLM signal by its mean return per trade against distinct
+random moments, as before.
 
 * A candidate with no skill (random entries) fails, even with a hit rate above 90%.
 * A candidate with a planted edge (entries placed before known rises) passes.
 * Results are identical when re-run with the same seeds.
 * Each rule (a-f) fails a candidate on its own; the hit rate never decides.
+* Same waits, random order (R1) and the return per day held, checked by hand; a
+  candidate that is itself an R1 draw beats R1's 95th percentile about 5% of the time.
+* The smallest detectable edge, and "too few trades to tell".
 * The replay follows the trader's rules (checked by hand), and reads them as the
   trader does.
 * The fee is the trader's: the taker rate (market orders), from the account first.
 * The trainer publishes only a model that passes, puts the model in use back
   otherwise, and records the decision; ``--check-gate`` changes nothing.
-* The LLM gate judges a provider/model/prompt version's signals the same way.
+* The LLM gate judges a provider/model/prompt version's signals as before, at the
+  default and at other saved minimums: the figures main's gate gave (500a355) are
+  pinned.
 
 All prices are synthetic; nothing reaches an exchange or a provider.
 """
@@ -40,8 +48,9 @@ from llm_store import LLMStore, SignalRecord  # noqa: E402
 from pt_exchange_abstraction import TradingFees  # noqa: E402
 
 FEES = eg.Fees(0.012, "taker", "coinbase", "default", 0.0005)
-SETTINGS = eg.GateSettings()  # 20 entries, 0%, 1000 runs, 95th percentile
+SETTINGS = eg.GateSettings()  # 20 entries, 0% a day, 1000 runs, 95th percentile
 RULES = mg.trade_rules({})  # the trader's defaults
+PER_DAY = eg.PER_DAY
 T0 = 1_700_000_000
 HOUR = 3600
 
@@ -95,7 +104,7 @@ def test_a_candidate_with_no_skill_fails_even_with_a_hit_rate_above_90_percent()
     result = mg.evaluate(hours_of(prices, entries), RULES, FEES, SETTINGS, "SYN")
     d = result.decision
     assert d.candidate.hit_rate >= 0.9 and d.candidate.entries >= 20
-    assert d.candidate.mean_return > 0  # it even makes money after fees...
+    assert d.candidate.per_day > 0  # it even makes money after fees...
     assert not d.passed  # ...but no more than random entries do
     assert any("95th percentile" in why for why in d.failed)
     assert not any("hit rate" in why for why in d.failed)
@@ -107,8 +116,9 @@ def test_a_candidate_with_a_planted_edge_passes():
     result = mg.evaluate(hours_of(prices, before_rise), RULES, FEES, SETTINGS, "SYN")
     d = result.decision
     assert d.passed, d.failed
+    assert d.measure == PER_DAY and d.baseline["kind"] == eg.SAME_WAITS
     assert d.candidate.entries == len(before_rise) >= 20
-    assert d.candidate.mean_return > d.baseline["at_percentile"]
+    assert d.candidate.per_day > d.baseline["at_percentile"]
     assert d.candidate.drawdown >= d.baseline["median_drawdown"]
     assert d.baseline["rank"] == 100.0
 
@@ -121,11 +131,15 @@ def test_the_same_seeds_give_the_same_results():
     again = mg.evaluate(hours, RULES, FEES, SETTINGS, "SYN", seed=11).to_dict()
     assert first == again
     assert first["baseline"]["seed"] == 11 and first["baseline"]["runs"] == 1000
-    other = mg.evaluate(hours, RULES, FEES, SETTINGS, "SYN", seed=12).to_dict()
+    # seeds 1011..2010 share no run with 11..1010
+    other = mg.evaluate(hours, RULES, FEES, SETTINGS, "SYN", seed=1011).to_dict()
     assert other["baseline"]["median"] != first["baseline"]["median"]
     # the draws rest on random() alone, which Python keeps for a seed: pinned here
     assert eg.draw(random.Random(0), 1000, 5) == [844, 758, 421, 261, 513]
     assert eg.draw(random.Random(0), 3, 5) == [2, 0, 1]  # all of them when short
+    stub = lambda i: eg.Trade(0.0, 1.0, 0.0, False, i + 5)  # noqa: E731
+    run = mg.same_waits(list(range(100)), [3, 7, 20], stub, random.Random(0))
+    assert [t.end - 5 for t in run] == [20, 45, 57, 65, 77, 89]
 
 
 # --- the pass rule --------------------------------------------------------------------
@@ -141,17 +155,96 @@ def trades(n=25, ret=0.02, drawdown=-0.01, hit=True, committed=1.0):
     return [eg.Trade(ret * committed, committed, drawdown, hit) for _ in range(n)]
 
 
+def held(n=25, ret=0.02, days=2.0, drawdown=-0.01, hit=True, committed=1.0):
+    """Trades that each return ``ret`` over ``days`` held (``ret / days`` a day)."""
+    return [
+        eg.Trade(ret * committed, committed, drawdown, hit, -1, committed * days)
+        for _ in range(n)
+    ]
+
+
+def random_runs(ret=0.0, days=2.0, drawdown=-0.05, n=25):
+    """A same-waits ``draw_run`` whose every run is ``n`` trades returning ``ret``
+    over ``days``."""
+    trade = eg.Trade(ret, 1.0, drawdown, ret > 0, -1, days)
+    return lambda rng: [trade] * n
+
+
+def per_day(trades_, settings=SETTINGS, runs=None, fees=FEES, current=None):
+    return eg.decide(
+        trades_,
+        {},
+        {},
+        settings,
+        fees,
+        current=current,
+        measure=PER_DAY,
+        draw_run=runs or random_runs(),
+    )
+
+
 def test_each_rule_fails_a_candidate_on_its_own():
+    ok = per_day(held())  # +1% a day held, against random's 0%
+    assert ok.passed and ok.failed == [] and ok.candidate.per_day == 0.01
+    # a. too few entries
+    assert per_day(held(n=19)).failed == ["19 entries, 20 needed"]
+    # b. return per day held not above the minimum set
+    strict = eg.GateSettings(min_return_per_day=0.02)
+    assert per_day(held(), strict).failed == [
+        "return per day held after fees +1.000% a day is not above +2.000% a day"
+    ]
+    # c. capital-weighted return not above 0 (with a minimum per day below 0, and
+    # random entries that lose more): small winners, one larger loser
+    lenient = eg.GateSettings(min_return_per_day=-0.01)
+    mixed = held(n=24) + [eg.Trade(-0.5, 10.0, -0.01, False, -1, 20.0)]
+    d = per_day(mixed, lenient, random_runs(ret=-0.5))
+    assert -0.01 < d.candidate.per_day < 0 and d.candidate.capital_return < 0
+    assert d.failed == [
+        f"capital-weighted return after fees {d.candidate.capital_return:+.2%} is not "
+        "above 0%"
+    ]
+    # d. not above the random entries' 95th percentile
+    assert per_day(held(), runs=random_runs(ret=0.02)).failed == [
+        "return per day held after fees +1.000% a day is not above the random "
+        "entries' 95th percentile +1.000% a day"
+    ]
+    # e. worst drawdown worse than the random entries' median
+    assert per_day(held(drawdown=-0.2)).failed == [
+        "worst drawdown -20.00% is worse than the random entries' median -5.00%"
+    ]
+    # f. below the current model's own return per day held
+    assert per_day(held(), current=0.02).failed == [
+        "return per day held after fees +1.000% a day is below the current model's "
+        "+2.000% a day"
+    ]
+    # no fee rate: never judged at a rate nobody states
+    assert per_day(held(), fees=None).failed == ["no fee rate: no exchange states one"]
+    # trades that held no time cannot be scored per day
+    assert per_day(held(days=0.0)).failed == [
+        "return per day held after fees cannot be scored: its trades held no time"
+    ]
+
+
+def test_the_llm_signal_rules_score_the_mean_return_per_trade():
+    """An LLM signal is a trade of its own: its mean return after fees per trade
+    against distinct random moments, rule b's minimum its own saved
+    ``gate_min_return_after_fees`` (the per-day minimum is not its)."""
     counts = {"X": 25}
     ok = eg.decide(trades(), flat_slots(), counts, SETTINGS, FEES)
-    assert ok.passed and ok.failed == []
-    # a. too few entries
-    d = eg.decide(trades(n=19), flat_slots(), {"X": 19}, SETTINGS, FEES)
-    assert d.failed == ["19 entries, 20 needed"]
-    # b. mean return not above the minimum set
-    strict = eg.GateSettings(min_return=0.03)
+    assert ok.passed and ok.measure == eg.MEAN_RETURN
+    assert ok.baseline["kind"] == eg.DISTINCT
+    high = eg.GateSettings(min_return_per_day=0.05)
+    assert eg.decide(trades(), flat_slots(), counts, high, FEES).passed
+    strict = eg.GateSettings(min_mean_return=0.03)
     d = eg.decide(trades(), flat_slots(), counts, strict, FEES)
     assert d.failed == ["mean return after fees +2.00% is not above +3.00%"]
+    lenient = eg.GateSettings(min_mean_return=-0.02)
+    d = eg.decide(trades(ret=-0.01), flat_slots(ret=-0.03), counts, lenient, FEES)
+    assert d.failed == [
+        "capital-weighted return after fees -1.00% is not above 0%"
+    ]  # rule b passes at -1.00% against -2.00%
+    d = eg.decide(trades(ret=-0.01), flat_slots(ret=-0.02), counts, SETTINGS, FEES)
+    assert d.failed[0] == "mean return after fees -1.00% is not above +0.00%"
     # c. capital-weighted return not above 0: small winners, one large loser
     mixed = trades(n=24, ret=0.02) + [eg.Trade(-2.0, 10.0, -0.01, False)]
     d = eg.decide(mixed, flat_slots(), counts, SETTINGS, FEES)
@@ -160,25 +253,15 @@ def test_each_rule_fails_a_candidate_on_its_own():
         f"capital-weighted return after fees {d.candidate.capital_return:+.2%} is not "
         "above 0%"
     ]
-    # d. not above the random entries' 95th percentile
     d = eg.decide(trades(), flat_slots(ret=0.02), counts, SETTINGS, FEES)
     assert d.failed == [
         "mean return after fees +2.00% is not above the random entries' 95th "
         "percentile +2.00%"
     ]
-    # e. worst drawdown worse than the random entries' median
-    d = eg.decide(trades(drawdown=-0.2), flat_slots(), counts, SETTINGS, FEES)
-    assert d.failed == [
-        "worst drawdown -20.00% is worse than the random entries' median -5.00%"
-    ]
-    # f. below the current model's own mean return
     d = eg.decide(trades(), flat_slots(), counts, SETTINGS, FEES, current=0.03)
     assert d.failed == [
         "mean return after fees +2.00% is below the current model's +3.00%"
     ]
-    # no fee rate: never judged at a rate nobody states
-    d = eg.decide(trades(), flat_slots(), counts, SETTINGS, None)
-    assert d.failed == ["no fee rate: no exchange states one"]
 
 
 def test_the_hit_rate_never_decides():
@@ -198,14 +281,19 @@ def test_every_decision_reports_what_the_brief_lists():
     )
     for text in (
         "PASSED",
-        "mean return after fees",
+        "a day held after fees vs random",
+        "entries 30; return per day held after fees",
+        "mean return after fees per trade",
         "capital-weighted",
         "worst drawdown",
         "hit rate",
-        "random entries (1000 runs of 30 entries, seeds 0..999)",
-        "median",
+        "random entries made with the same waits as the candidate's, in random order "
+        "(1000 runs of",
+        "seeds 0..999): return per day held after fees median",
         "95th percentile",
         "the candidate is at the 100th percentile",
+        "smallest detectable edge",
+        "4 times in 5",
         "fees: 1.20% a side (Coinbase taker rate, the exchange's published standard "
         "rate; the account's own could not be read) and 0.05% slippage a fill",
         "trade rules",
@@ -227,6 +315,194 @@ def test_draws_are_distinct_moments():
     for seed in range(50):
         drawn = eg.draw(random.Random(seed), 40, 25)
         assert len(set(drawn)) == 25 and all(0 <= i < 40 for i in drawn)
+
+
+# --- same waits, random order (R1), and the return per day held -------------------------
+
+
+class Picks:
+    """An rng whose random() gives ``values`` in turn."""
+
+    def __init__(self, *values):
+        self.values = list(values)
+
+    def random(self):
+        return self.values.pop(0)
+
+
+def test_same_waits_by_hand():
+    """Waits [2, 5]; every trade ends 3 hours after its entry; hour 10 is undecided.
+    The picks are 2, 5, 2, 5, 5: entries at 2 (free from 5), 10 is undecided so 11
+    (free from 14), 16 (free 19), 24 (free 27), then 32 is past the last hour."""
+    decided = [i for i in range(30) if i != 10]
+
+    def trade(i):
+        return eg.Trade(0.0, 1.0, 0.0, False, i + 3)
+
+    run = mg.same_waits(decided, [2, 5], trade, Picks(0.1, 0.9, 0.1, 0.9, 0.9))
+    assert [t.end - 3 for t in run] == [2, 11, 16, 24]
+    assert mg.same_waits(decided, [], trade, Picks()) == []
+    # the model's waits: from the first hour, then from each trade's end; a trade that
+    # ends at its entry hour leaves the next hour free
+    entries = [(3, trade(3)), (9, eg.Trade(0, 1, 0, False, 9)), (14, trade(14))]
+    assert mg.waits_of(entries) == [3, 3, 4]
+
+
+def test_return_per_day_held_by_hand():
+    """The trade by hand of test_one_trade_by_hand (a DCA at hour 1, sold at hour 5),
+    and one without a DCA whose hours include a 3-hour gap in the candles."""
+    fees = eg.Fees(0.01, "taker", "coinbase", "default", 0.0)
+    a = mg.replay(0, hours_of([100, 97, 97, 106, 110, 109], longs=[0] * 6), RULES, fees)
+    dca = 1.0 * 0.99 / 100 * 97 * 2.0
+    # hour 1 holds the entry's 1.0; the DCA made at hour 1 counts from hour 2 on
+    assert a.capital_days == pytest.approx((1.0 + 4 * (1.0 + dca)) / 24)
+    prices = [100, 103, 106, 108, 107]
+    gap = mg.Hours(
+        tuple(T0 + HOUR * k for k in (1, 2, 5, 6, 7)),  # hours 3 and 4 are missing
+        tuple(float(p) for p in prices),
+        (0,) * 5,
+        (0,) * 5,
+    )
+    b = mg.replay(0, gap, RULES, fees)
+    assert b.end == 4 and b.committed == 1.0  # sold when 107 fell below the line
+    assert b.capital_days == pytest.approx(1.0 * 6 / 24)  # 6 hours by the clock
+    s = eg.score([a, b])
+    assert s.per_day == pytest.approx(
+        (a.net + b.net) / (a.capital_days + b.capital_days)
+    )
+    assert s.value(PER_DAY) == s.per_day and s.value(eg.MEAN_RETURN) == s.mean_return
+
+
+def test_an_r1_draw_beats_r1_about_as_often_as_chance():
+    """A candidate that is itself a run of random entries made with some waits, judged
+    against R1 on its own waits, is above R1's 95th percentile in about 5% of 200
+    seeds (binomial: 10 expected; 2..22 holds with probability above 0.99)."""
+    rng = random.Random(21)
+    prices, p = [], 100.0
+    for _ in range(1500):
+        p *= math.exp(rng.gauss(0, 0.012))
+        prices.append(p)
+    hours = hours_of(prices, longs=[0] * len(prices))
+    decided = hours.decided()
+    cache = {}
+
+    def trade(i):
+        if i not in cache:
+            cache[i] = mg.replay(i, hours, RULES, FEES)
+        return cache[i]
+
+    pick = random.Random(9)
+    waits = [pick.randrange(0, 60) for _ in range(12)]
+    assert len(set(waits)) > 6  # with one wait, every run would be the same
+    settings = eg.GateSettings(min_entries=1, runs=200)
+    above, ranks = 0, set()
+    for s in range(200):
+        entered = []
+
+        def enter(i, entered=entered):
+            entered.append(i)
+            return trade(i)
+
+        run = mg.same_waits(decided, waits, enter, random.Random(50_000 + s))
+        entries = list(zip(entered, run))
+        own = mg.waits_of(entries)
+        d = eg.decide(
+            run,
+            {},
+            {},
+            settings,
+            FEES,
+            seed=1000 * s,
+            measure=PER_DAY,
+            draw_run=lambda r, own=own: mg.same_waits(decided, own, trade, r),
+        )
+        above += d.candidate.per_day > d.baseline["at_percentile"]
+        ranks.add(d.baseline["rank"])
+        if s == 0:
+            # the same candidate as a model's signals: evaluate gives the same decision
+            signals = hours_of(prices, entries=[i for i, _t in entries])
+            again = mg.evaluate(signals, RULES, FEES, settings, "SYN", seed=0)
+            assert again.decision.to_dict() == d.to_dict()
+    assert len(ranks) > 50  # the candidates' percentiles spread out
+    assert 2 <= above <= 22, above  # 11 at the time of writing
+
+
+def test_the_smallest_detectable_edge_and_too_few_trades_to_tell():
+    # (z at 95% + z at 80%) x the spread: 1.6449 + 0.8416
+    assert eg.smallest_edge(1.0, 95.0) == pytest.approx(2.4865, abs=1e-4)
+    assert eg.smallest_edge(0.0, 95.0) == 0.0
+
+    def spread_runs(centre, width):
+        """Runs of one trade held a day, returning centre +/- width at random."""
+
+        def run(rng):
+            ret = centre + width * (2 * rng.random() - 1)
+            return [eg.Trade(ret, 1.0, -0.01, ret > 0, -1, 1.0)]
+
+        return run
+
+    wide = per_day(held(ret=0.2), runs=spread_runs(0.01, 0.02))
+    b = wide.baseline
+    assert (
+        b["spread"] > 0 and b["entries"] == 1 == b["entries_low"] == b["entries_high"]
+    )
+    assert b["smallest_edge"] == pytest.approx(eg.smallest_edge(b["spread"], 95.0))
+    assert b["too_few"] and b["smallest_edge"] > 0.5 * abs(b["median"])
+    assert wide.edge_text().endswith("a day: too few trades to tell")
+    assert "there are too few trades to tell" in "\n".join(wide.lines())
+    assert wide.passed  # shown only: it decides nothing
+    narrow = per_day(held(ret=0.2), runs=spread_runs(0.01, 0.0001))
+    assert not narrow.baseline["too_few"]
+    assert narrow.edge_text() == f"{narrow.baseline['smallest_edge']:.3%} a day"
+    assert "too few" not in "\n".join(narrow.lines())
+
+
+def test_both_entry_counts_are_recorded():
+    prices = oscillating()
+    entries = random.Random(1).sample(range(len(prices) - 200), 60)
+    d = mg.evaluate(hours_of(prices, entries), RULES, FEES, SETTINGS, "SYN").decision
+    b = d.baseline
+    assert b["entries_low"] <= b["entries"] <= b["entries_high"]
+    assert b["entries_low"] < b["entries_high"]  # R1's count varies
+    assert d.entries_text() == f"{d.candidate.entries} (random {b['entries']:g})"
+    assert f"runs of {b['entries_low']} to {b['entries_high']} entries" in (
+        "\n".join(d.lines())
+    )
+
+
+def test_a_record_from_the_earlier_gate_still_reads():
+    """model_gate.json and manifests written before the per-day score: judged by the
+    mean return per trade, shown as they were."""
+    old = {
+        "passed": False,
+        "failed": ["mean return after fees +1.00% is not above ..."],
+        "candidate": {"entries": 25, "mean_return": 0.01, "capital_return": 0.01},
+        "fees": FEES.to_dict(),
+        "settings": {"holdout_min_signals": 20, "gate_min_return_after_fees": 0.001},
+        "baseline": {
+            "runs": 1000,
+            "seed": 0,
+            "entries": 25,
+            "median": 0.02,
+            "percentile": 95.0,
+            "at_percentile": 0.03,
+            "rank": 10.0,
+            "median_drawdown": -0.1,
+            "short": [],
+        },
+    }
+    d = eg.Decision.from_dict(old)
+    assert d.measure == eg.MEAN_RETURN and d.figure_name() == "return after fees"
+    assert d.short() == "+1.00% vs +2.00% (10th percentile)"
+    # its per-trade minimum reads as the LLM signals' (no per-day minimum then)
+    assert d.settings == eg.GateSettings(min_mean_return=0.001)
+    assert d.edge_text() == "" and "random entries (1000 runs of 25 entries" in (
+        "\n".join(d.lines())
+    )
+    new = mg.evaluate(hours_of(*sawtooth()), RULES, FEES, SETTINGS, "SYN").decision
+    again = eg.Decision.from_dict(json.loads(json.dumps(new.to_dict())))
+    assert again.measure == PER_DAY and again.lines() == new.lines()
+    assert again.figure_name() == "return per day held after fees"
 
 
 # --- the replay follows the trader's rules ----------------------------------------------
@@ -375,6 +651,7 @@ def test_llm_scoring_uses_the_traders_fee():
 def test_the_gate_settings_and_their_bounds():
     assert training_settings.normalise({}) == {
         "holdout_min_signals": 20,
+        "gate_min_return_per_day": 0.0,
         "gate_min_return_after_fees": 0.0,
         "gate_baseline_runs": 1000,
         "gate_baseline_percentile": 95.0,
@@ -387,8 +664,51 @@ def test_the_gate_settings_and_their_bounds():
     assert problem("gate_baseline_runs", 50) == "outside 100 .. 100000"
     assert problem("gate_baseline_runs", 250.5) == "not a whole number"
     assert problem("gate_baseline_percentile", 100) == "outside 50 .. 99.9"
-    assert problem("gate_min_return_after_fees", "x") == "not a number"
-    assert problem("gate_min_return_after_fees", -0.01) == ""
+    assert problem("gate_min_return_per_day", "x") == "not a number"
+    assert problem("gate_min_return_per_day", -0.001) == ""
+    assert problem("gate_min_return_per_day", 0.02) == "outside -0.01 .. 0.01"
+    assert problem("gate_min_return_after_fees", -0.5) == ""
+    assert problem("gate_min_return_after_fees", 1.5) == "outside -1 .. 1"
+
+
+def test_the_per_trade_minimum_is_kept_for_llm_signals_only():
+    """``gate_min_return_after_fees`` measures the mean return per trade: an LLM
+    signal's score. It is kept as saved, read and saved again, and judges LLM signals
+    as before; a trained model, judged per day held, has its own minimum, and the
+    per-trade value is never turned into it."""
+    saved = {"gate_min_return_after_fees": 0.001, "holdout_min_signals": 30}
+    read = training_settings.normalise(saved)
+    assert read["gate_min_return_after_fees"] == 0.001
+    assert read["gate_min_return_per_day"] == 0.0 and read["holdout_min_signals"] == 30
+    settings = eg.GateSettings.from_training(read)
+    assert (settings.min_mean_return, settings.min_return_per_day) == (0.001, 0.0)
+    assert settings.minimum(eg.MEAN_RETURN) == 0.001
+    assert settings.minimum(PER_DAY) == 0.0
+    assert eg.GateSettings.from_dict(settings.to_dict()) == settings
+
+    class Manager:
+        def __init__(self):
+            self.sections = {"training": dict(saved, other="kept")}
+
+        def get(self, name):
+            return self.sections.get(name)
+
+        def set_section(self, name, values):
+            self.sections[name] = values
+            return True
+
+    manager = Manager()
+    assert training_settings.save_training_settings(
+        {"gate_min_return_per_day": 0.0005}, manager
+    )
+    assert manager.sections["training"] == {
+        "holdout_min_signals": 30,
+        "gate_min_return_per_day": 0.0005,
+        "gate_min_return_after_fees": 0.001,
+        "gate_baseline_runs": 1000,
+        "gate_baseline_percentile": 95.0,
+        "other": "kept",
+    }
 
 
 def test_no_gate_reads_a_hit_rate_minimum():
@@ -503,7 +823,33 @@ def test_check_gate_judges_the_model_in_use_and_changes_nothing(
     assert record["model_id"] == first["model_id"]
     assert record["refit_matches_record"] is True  # the same validation fit
     assert record["gate"]["fees"]["rate"] == 0.012
+    assert record["gate"]["measure"] == PER_DAY
     assert "a check of the model in use" in record["gate"]["note"]
+
+
+def test_a_model_in_use_with_no_per_day_score_is_not_compared_once(trainer):
+    """Rule f needs the model in use's own return per day held: one judged by the
+    earlier gate (mean return per trade) has none, so the next model is not compared
+    with it, and the check of the model in use says so."""
+    earlier = {"model_id": "BTC-1", "gate": {"candidate": {"mean_return": 0.02}}}
+    d = trainer.check_gate("BTC", None, True, current=earlier).decision
+    assert d.current is None
+    assert (
+        "the model in use BTC-1 has no recorded return per day held (an earlier "
+        "version of the entry gate recorded its mean return per trade), so it is not "
+        "compared with it"
+    ) in d.note
+    checked = trainer.check_gate("BTC", None, True, current=earlier, checking=True)
+    assert checked.decision.current is None
+    assert "the next BTC model trained is not compared with it" in (
+        checked.decision.note
+    )
+    before = {"model_id": "BTC-0"}  # published before the gate
+    d = trainer.check_gate("BTC", None, True, current=before).decision
+    assert "(it was published before the entry gate)" in d.note
+    scored = {"model_id": "BTC-2", "gate": {"candidate": {"per_day": 0.0004}}}
+    d = trainer.check_gate("BTC", None, True, current=scored).decision
+    assert d.current == 0.0004 and "not compared" not in d.note
 
 
 def test_the_check_window_lists_each_coins_result(monkeypatch):
@@ -541,14 +887,20 @@ def test_the_check_window_lists_each_coins_result(monkeypatch):
             time.sleep(0.02)
         assert asked == ["BTC", "ETH"]  # one at a time, in order
         tree = win.table.tree
-        assert tree.item("BTC", "values")[:2] == ("BTC", "BTC-1")
-        assert tree.item("BTC", "values")[2].endswith("(100th percentile)")
-        assert tree.item("BTC", "values")[3] == "passed"
-        assert tree.item("ETH", "values")[3] == "ERROR: ETH has no published model"
+        btc = tree.item("BTC", "values")
+        assert btc[:2] == ("BTC", "BTC-1")
+        assert btc[2].endswith("a day (100th percentile)")
+        d = passed.decision
+        assert btc[3] == f"30 (random {d.baseline['entries']:g})"
+        assert btc[4] == d.edge_text() != "" and " a day" in btc[4]
+        assert btc[5] == "passed"
+        assert tree.item("ETH", "values")[5] == "ERROR: ETH has no published model"
         assert win.status_var.get() == "Done: 2 of 2 checked."
         tree.selection_set("BTC")
         win._show_detail()
-        assert "random entries (1000 runs" in win.detail.get("1.0", "end")
+        detail = win.detail.get("1.0", "end")
+        assert "random entries made with the same waits" in detail
+        assert "smallest detectable edge" in detail
     finally:
         root.destroy()
 
@@ -585,7 +937,7 @@ def llm_signals_at(store, bars, moments, model):
         store.set_outcome(s.id, "scored", 0.0, True, price)
 
 
-def judge(store, bars, model):
+def judge(store, bars, model, saved=None):
     now = bars[-1][0] / 1000.0 + HOUR
     return llm_gate.evaluate(
         store,
@@ -594,7 +946,7 @@ def judge(store, bars, model):
         1,
         bars_for=lambda coin, a, b: [r for r in bars if a <= r[0] <= b],
         costs_for=lambda coin: llm_signals.Costs(0.012, 0.0005, "test", FEES),
-        training=training_settings.normalise({}),
+        training=training_settings.normalise(saved or {}),
         now=now,
     )
 
@@ -615,8 +967,43 @@ def test_llm_signals_are_judged_against_random_signals(tmp_path):
     llm_signals_at(store, bars, noise, "noise")
     luck = judge(store, bars, "noise")
     assert not luck.passed
+    # judged as before FDS-MH-001: these are the figures main's gate gave (500a355)
+    assert edge.measure == luck.measure == eg.MEAN_RETURN
+    assert edge.candidate.mean_return == pytest.approx(0.023926761019490383, abs=1e-15)
+    assert (luck.baseline["median"], luck.baseline["at_percentile"]) == pytest.approx(
+        (-0.04175561421305088, -0.029466433502826184), abs=1e-15
+    )
+    assert luck.baseline["rank"] == 21.6 and luck.baseline["entries"] == 30
+    assert luck.failed == [
+        "mean return after fees -4.67% is not above +0.00%",
+        "capital-weighted return after fees -4.67% is not above 0%",
+        "mean return after fees -4.67% is not above the random entries' 95th "
+        "percentile -2.95%",
+        "worst drawdown -5.00% is worse than the random entries' median -5.00%",
+    ]
+    assert luck.headline() == (
+        "-4.67% after fees vs random -4.18% (median; 95th percentile -2.95%): 22nd "
+        "percentile"
+    )
     assert not llm_gate.gate_status(
         store, "ollama", "noise", 1, training_settings.normalise({})
     ).passed
     # the same seeds, the same decision
     assert judge(store, bars, "noise").to_dict() == luck.to_dict()
+    # a saved per-trade minimum other than 0% judges as main's did, too
+    strict = judge(store, bars, "edge", {"gate_min_return_after_fees": 0.03})
+    assert strict.failed == ["mean return after fees +2.39% is not above +3.00%"]
+    assert strict.settings.min_mean_return == 0.03
+    lenient = judge(store, bars, "noise", {"gate_min_return_after_fees": -0.05})
+    assert lenient.failed == luck.failed[1:]  # rule b passes at -4.67% against -5%
+    tight = judge(
+        store,
+        bars,
+        "noise",
+        {"gate_min_return_after_fees": 0.01, "gate_baseline_percentile": 90.0},
+    )
+    assert tight.failed[0] == "mean return after fees -4.67% is not above +1.00%"
+    assert tight.failed[2] == (
+        "mean return after fees -4.67% is not above the random entries' 90th "
+        "percentile -3.19%"
+    )

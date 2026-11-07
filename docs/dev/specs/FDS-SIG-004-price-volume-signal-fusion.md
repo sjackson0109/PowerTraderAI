@@ -7,7 +7,8 @@
 **Run log:** `docs/dev/RUN-LOG-sig4-1.md`, from phase A.
 **Status:** draft for the owner's review.
 - Revision 1 (2026-11-07, `64b0ea5`): the first proposal.
-- Revision 2 (2026-11-07): revised after an independent review of revision 1. §0 answers the review finding by finding.
+- Revision 2 (2026-11-07, `ca151be`): revised after an independent review of revision 1. §0.1 answers the review finding by finding.
+- Revision 3 (2026-11-07): three final corrections from the same review: the placebo's timing, separating relative value from economic viability, and the liquidity approximation's error bound. §0.2 lists them.
 - Nothing is implemented. This document changes no code, trainer, strategy, runner, trader or other spec, and it registers nothing.
 - The changes it needs in FDS-MH-001 are proposed as exact text in Appendix A, to be applied by their own PR before FDS-MH-001's phase C (§8.2).
 - §10 lists the decisions, each with its status and a recommended answer.
@@ -34,11 +35,15 @@
 >
 > A design that reports these results is working. Nothing in this spec lets volume, confidence or volatility open a trade or make one larger.
 >
+> **Losing less is not making money.** A filter that loses less than its controls is reported as reducing losses. Only a result that clears §6.1's absolute requirements is called profitable.
+>
 > **Two existing limits are not fixed here** (§3.7): an entry raised to the exchange minimum can exceed the coin's budget, and STRAT-001 has no stop. No result of this spec makes a small account safer than it is today.
 
 ---
 
-## 0. Revision 2: response to the independent review
+## 0. Responses to the independent review
+
+### 0.1 Revision 2
 
 The review supported the architectural direction, including D14's split of price-only from price-plus-volume models. It asked for eight refinements before any implementation is approved.
 
@@ -62,13 +67,27 @@ The review supported the architectural direction, including D14's split of price
 - **The research's chosen rule** (same-hour relative volume above 1.5×) is now in the confirmation family. Before, it was tested outside any family.
 - **§7:** the FDS-MH-001 amendments are cut to what Q1 needs inside the harness. The rest is this spec's own code.
 
+### 0.2 Revision 3
+
+The review accepted revision 2's direction and supported D14, subject to three corrections. Revision 3 makes only those.
+
+| # | Correction | What revision 3 does | Where |
+|---|---|---|---|
+| 1 | **The placebo's timing.** Revision 2 moved V forward and wrapped it round the development period, so a row could carry volume from a later time | **The placebo is now a lag.**<br>• At hour t it uses the same coin's V from hour t − δ_j, with δ_j between 160 and 170 days and never a whole number of days.<br>• There is no wrap. A row whose lagged hour has no V has no placebo, and is dropped from every model in the comparison, so the rows stay paired.<br>• Tests check that no row reads anything after its own time, at the series' start, across gaps and at fold boundaries | §6.1, Appendix A (AM1-2, AM1-7, AM1-8) |
+| 2 | **Relative value is not economic viability** | **Three findings are kept apart:**<br>• F1, volume improves forecasts;<br>• F2, volume improves results or reduces losses against matched controls;<br>• F3, the approach as it would trade is profitable after fees.<br>F3 has its own requirements: at least 100 trades, a profit above 0 that is significant per capital-day, a profit in both halves of the window and without the best coin, and a drawdown below the halt level, with capital use and drawdown reported. The predictive veto can be turned On only with F3. A filter that loses less is described as reducing losses | §6.1, §6.5, §6.7, §5.8.3, §8.3, D18 |
+| 3 | **The liquidity approximation's error bound** | **Relative error is defined against the true traded value.** Its bound is the least one the bar's own OHLC supports: max((TP − L)/L, (H − TP)/H). Revision 2's (H − L)/TP holds only when the estimate is the denominator, and can fail for the true one. The claim that finer bars give a smaller error is removed. Hand-worked cases cover a VWAP near the low and near the high, a flat bar, zero volume and invalid prices | §5.2, §5.7, §12 |
+
 ## 1. Objective
 
 Answer three questions with evidence, and define one design that combines the answers without weakening any existing control.
 
 1. **Q1: does volume add predictive value beyond price?**
    - Compare a price-only model with the same model plus volume, with everything else held the same.
-   - Judge it first by forecast quality, then by trading results after fees.
+   - Report three findings separately (§6.1):
+     - **F1:** whether volume improves forecasts;
+     - **F2:** whether it improves trading results, or reduces losses, against matched controls;
+     - **F3:** whether the resulting approach makes money after fees.
+   - F2 never implies F3.
 2. **Q2: how should confidence be calibrated?**
    - Define a confidence as a calibrated probability of a stated event.
    - Measure it with proper scoring rules.
@@ -167,12 +186,12 @@ File references are relative to `app/`.
 - **The test:** a pre-registered test, per coin and per timeframe, of whether a rule calls the next bar's direction better than the best constant.
   - Holm over the family, F = 76 for round one.
   - Fresh windows only, and a confirmation round.
-  - Each round is run from its own frozen worktree (§12.1).
+  - Each round is run from its own frozen worktree (FDS-SIG-001 §12.1).
 - **Round one:**
   - SIG-A, the sign of Chaikin Money Flow over 20 bars. It is a volume rule.
   - SIG-B, BTC's one-bar lead.
   - It is not registered, and decisions 1 to 6 are open.
-- **The order is fixed (§14):**
+- **The order is fixed (FDS-SIG-001 §14):**
   1. directional skill is CONFIRMED;
   2. then a trading-result test under a separate spec.
 - **What it answers:** "does this one rule predict the next bar's direction?" It does not answer:
@@ -296,10 +315,19 @@ Every feature comes from complete bars only (§5.2.1), from the candles the runn
 - **The rule:** the chosen candidate must beat the naive one, or the naive one is used.
 
 **L, liquidity.**
-- **Approximate dollar volume of a bar:** typical price (H + L + C) / 3 × base volume.
+- **Approximate dollar volume of a bar:** DV̂ = TP × V, where TP = (H + L + C) / 3 is the typical price and V the base volume.
   - It is labelled approximate everywhere and never called quote volume (FDS-SIG-001 §4).
-  - **Its error:** the bar's true VWAP and its typical price both lie between its low and high. So the relative error is at most (H − L) / typical price for a bar, and smaller when summed from finer bars.
-  - **On venues that state quote volume** (Binance, KuCoin, and Kraken through VWAP × volume), the stated figure is used only to measure this error, in a test. It is never used as an input, so the definition is the same on every connector (rule 4).
+  - **What it approximates:** the bar's true traded value, DV = VWAP × V, where VWAP is the volume-weighted price of the bar's trades. Coinbase does not state it.
+  - **Relative error is defined against the true value:** ε = |DV̂ − DV| / DV = |TP − VWAP| / VWAP. The denominator is the true value, because the participation cap asks how large an entry is against what really traded.
+  - **Its bound.** All of the bar's trades, so its VWAP, lie between L and H, and so does TP. When L > 0 and V > 0:
+    ε ≤ ε̄ = max((TP − L) / L, (H − TP) / H).
+    - This is the least bound the bar's OHLC supports. Given only OHLCV, VWAP can lie arbitrarily close to L (nearly all volume at the low) or to H. |TP − VWAP| / VWAP is largest at those ends: (TP − L) / L at the low end, (H − TP) / H at the high end.
+    - A simpler bound that also holds is (H − L) / L, and it is never smaller than ε̄.
+  - **The bound with the estimate as denominator** is different: |DV̂ − DV| / DV̂ ≤ max(TP − L, H − TP) / TP, which is at most (H − L) / TP. Revision 2 gave (H − L) / TP without saying which denominator it meant. Against the true value it can fail (§12, item 5, case C). This spec uses only ε and ε̄.
+  - **No tighter bound is claimed.** Revision 2 also said the error is smaller when summed from finer bars. The data does not establish that, so the claim is removed.
+  - **Zero volume:** when V = 0, DV̂ = DV = 0. The hour counts as 0 in sums and medians, and has no ε.
+  - **Invalid prices:** a bar with L ≤ 0, H < L, O or C outside [L, H], V < 0, or any value that is not a finite number is invalid. Its DV̂ is missing, never 0. It is left out of medians and counted, and more than 24 invalid hours in a row are a gap that restarts the series (§5.2.1).
+  - **On venues that state quote volume** (Binance, KuCoin, and Kraken through VWAP × volume), the stated figure is used only to test the bound. It is never used as an input, so the definition is the same on every connector (rule 4).
 - **Hourly liquidity:** the median hourly approximate dollar volume over the 20 previous complete UTC days.
 - **The live spread** at the decision: (ask − bid) / mid, from the quote the trader already reads.
 - **Fees:** maker and taker rates through the exchange layer, the account's rate first, with the source recorded ("account" or "published default").
@@ -342,6 +370,7 @@ The candle layer never returns or caches the still-forming bar (`market_data/can
 - **Per connector:** whether each connector returns an hour with no trades as a zero-volume bar, or leaves it out, is recorded in phase B, from fixtures.
 - **The definitions are the same either way:** inside a kept gap (24 hours or less), an absent hour counts as zero volume in a sum and is never a decision row.
 - **A zero denominator** (in v1, v2 or the participation cap's median) makes that value missing, as CMF abstains in FDS-SIG-002.
+- **An invalid bar** (§5.2, under L) is a missing hour for every block: never a decision row, and never counted as zero.
 
 **Revisions after close.**
 - A venue may revise a bar after first serving it.
@@ -483,7 +512,8 @@ These recalibration fits are diagnostics only. They never change a forecast.
 - **A protective shrink.**
   - **The scale:** s_vol = min(1, σ_ref / σ̂). Here σ_ref is the pooled median of σ̂ over the evaluation's training rows, fixed and recorded with the evidence.
   - **It only ever shrinks:** a volatile coin gets a smaller entry, and no entry is ever larger than today's.
-  - **Its own setting** (§5.8.3). It can be turned On only after Q3 passes. Once On, it applies in both modes, and an entry whose σ̂ is missing is skipped.
+  - **Its own setting** (§5.8.3). It can be turned On only after its activation requirements pass (§6.7). Once On, it applies in both modes, and an entry whose σ̂ is missing is skipped.
+  - **What it can claim:** less drawdown than the same scales given out at random. It never shows the strategy is profitable (§6.1, F3).
   - **In a small account it acts as a veto** (§3.7, item 5).
 - **Reporting:** every result is reported by volatility tercile (cut points from the training rows) and by BTC's 90-day trend (FDS-MH-001's), descriptively.
 - **Exits and stops are unchanged.** A volatility-scaled stop exists as OVL-ATR, but changing exits changes the strategy, so it belongs to the strategy project (§11).
@@ -503,6 +533,11 @@ These recalibration fits are diagnostics only. They never change a forecast.
 
 The limits:
 - **Participation:** the entry's dollars must be at most π × the median hourly approximate dollar volume over the 20 previous complete UTC days on that venue. Proposed π = 1%.
+  - **The median** is taken over the window's valid hours (§5.2), zero-volume hours included as 0.
+  - **π applies to the estimate.** Let ε_max be the largest ε̄ among the median's hours with volume.
+    - Each such hour's true value is at least DV̂ / (1 + ε̄) ≥ DV̂ / (1 + ε_max), and a median keeps that order.
+    - So against the true median over the same hours, the entry's share is at most (1 + ε_max) × π.
+  - **The record** gives ε_max and that figure. No tighter statement is made.
 - **Spread:** the live spread must be at most s_max. Proposed s_max = 0.50%.
 - **A missing input while On** skips the entry (§5.8.3). So a coin in its first 20 days on a venue cannot be entered while the participation cap is On.
 - **Not covered:** DCA buys and sells (rule 1; §3.7, item 4).
@@ -549,7 +584,7 @@ One record per entry the existing path wants:
 | expected value | μ̂_g, W_g, Λ_g, τ, m and EV |
 | costs | the taker fee and its source, the live spread, e |
 | volatility | σ̂, σ_ref, s_vol |
-| liquidity | the median approximate dollar volume, the participation rate, the spread |
+| liquidity | the median approximate dollar volume, ε_max and the participation rate's bound against the true median (§5.7), and the spread |
 | each part's state | for the veto, the shrink and each cap: Off, Log only or On; available or not, with the reason |
 | effect | none, skip or scale, with the part that caused it and the reason |
 | live features | every feature value, for the revision check (§5.2.1) |
@@ -560,8 +595,8 @@ One record per entry the existing path wants:
 
 | Setting | Values | Can be On only when |
 |---|---|---|
-| Entry assessment (the predictive veto) | Off, Log only, Veto | the active strategy configuration has a passing evidence record (§6) |
-| Volatility shrink | Off, Log only, On | Q3 has passed (§6.3) |
+| Entry assessment (the predictive veto) | Off, Log only, Veto | the veto's activation requirements (§6.7) have passed for the active strategy configuration, F3's absolute profitability included, and the owner has decided (phase F) |
+| Volatility shrink | Off, Log only, On | the shrink's activation requirements (§6.7) have passed, and the owner has decided |
 | Participation cap | Off, Log only, On | always: it needs correctness tests only |
 | Spread cap | Off, Log only, On | always |
 
@@ -651,6 +686,7 @@ This closes R2 for this spec's own code.
 - **Blocks:** circular blocks of L = 28 days (Politis and Romano 1992).
   - Each draw takes ⌈N / L⌉ blocks, where N is the number of days in the scored period.
   - Each block's start day is drawn uniformly from those N days, and blocks wrap round the period's end.
+  - The wrap applies only to resampling days of rows that are already scored, for inference. It never moves a feature or a label in time, unlike revision 2's placebo (§6.1).
   - The blocks are joined and cut to N days.
 - **Why 28 days:** T1's labels span up to 14 days (336 hours). A block of at least twice the longest label span keeps overlapping labels together (Künsch 1989).
 - **A fixed rule for long trades:** if more than 1% of a family's scored trades last longer than 14 days, L = 56 days for every test in that family. The rule is applied mechanically, before any result is read. It replaces revision 1's "blocks of whole weeks" for the decision level.
@@ -671,7 +707,7 @@ This closes R2 for this spec's own code.
 - Where a claim needs several tests to pass, only its primary test is in the Holm family. Each condition is tested at 5%.
 - Requiring every one of them cannot raise the claim's error rate above the primary test's: the intersection-union principle (Berger 1982).
 
-**The portfolio replay.** The decision-level and sizing tests (§6.1, §6.3) score STRAT-001's trades in a replay of one shared account that follows the trader's rules.
+**The portfolio replay.** The decision-level, economic and sizing tests (§6.1's F2 and F3, and §6.3) score STRAT-001's trades in a replay of one shared account that follows the trader's rules.
 - **Opportunities:** STRAT-001's ENTER_LONG signals, from the backtester's logic per coin, with its fills and exits (§5.3).
   - STRAT-001 fires once per fresh cross. A coin is flat at every fresh cross, because its last trade exited when the fast average fell below the slow. So every path faces the same opportunities.
   - The one exception is an exact tie between the two averages. Any such case is counted.
@@ -692,42 +728,74 @@ This closes R2 for this spec's own code.
   - A variant in which the path ends at that point is shown beside it.
 - **A check against the backtester:** with one coin and a 100% size, the replay reproduces `run_backtest`'s per-trade `pnl_pct` exactly (a test, §12).
 
-### 6.1 Q1: does volume add predictive value?
+### 6.1 Q1: does volume add value beyond price?
+
+Q1 has three findings, judged separately. Each one is a different claim:
+
+| Finding | The claim | Compared with | Section |
+|---|---|---|---|
+| **F1, forecast value** | Volume improves forecasts over price alone | M_P, and a placebo | below |
+| **F2, relative trading value** | Volume improves trading results, or reduces losses, against matched controls | F_P's path, and R3 | below |
+| **F3, economic viability** | The approach, as it would trade, makes money after the applicable fees and execution allowances | zero: an absolute requirement | below |
+
+F2 never implies F3. A filter can beat price alone and random vetoes while the strategy still loses money.
 
 **The pair.** This is FDS-MH-001 batch PV-1 (Appendix A, its §7a).
 - M_P uses block P; M_PV uses P + V.
 - Everything else is the same: model class, penalty, target (T1), folds, rows and seeds.
 
-**The placebo.**
-- **Five variants,** M_PṼj for j = 1 to 5. Each replaces V with Ṽ_j: the same coin's V block moved forward by δ = D + u_j × (S − 2D) hours, where:
-  - S is the coin's stream length inside the development period;
-  - D = 160 days (FDS-MH-001 §5.6);
-  - u_j is a declared seeded number, the same for every coin.
-- **The move wraps round the coin's stream inside the development period,** so no placebo ever reads a bar from 2025-05-06 on, or from the lockbox or the forward window.
-- **Short streams:** a coin whose development stream is shorter than 2D has no placebo rows. It takes no part in the placebo condition, and the report lists it.
+**The placebo: the same coin's volume, from an earlier time.**
+- **The transformation.** For variant j (j = 1 to 5), at decision hour t of coin c:
+  Ṽ_j(c, t) = V(c, t − δ_j), the same coin's V block as computed at hour t − δ_j.
+  - δ_j = 3,840 + 24 a_j + b_j hours, where a_j is an integer from 0 to 9 and b_j an integer from 1 to 23, both seeded and declared (Appendix A, AM1-7). So δ_j is between 3,841 and 4,079 hours: 160 to 170 days.
+  - The declared seeds give δ_1 to δ_5 = 3,930, 4,076, 3,850, 4,062 and 3,857 hours.
+  - δ_j is never a whole number of days, so the lagged value never comes from t's hour of day.
+- **Timestamps.**
+  - V(c, t − δ_j) uses only bars that closed by hour t − δ_j (§5.2.1). So every value in a placebo row was available more than 160 days before t, and no row reads anything after its own hour.
+  - Why 160 days: it is FDS-MH-001's D (§5.6), far longer than V's 31-day look-back and T1's 14-day horizon. So the lagged block shares no bar with the row's own V block, or with its label.
+- **No forward move, and no wrap.** Revision 2 moved V forward and wrapped it round the development period, so a row could carry volume from a later time. That is gone. It would also have failed FDS-MH-001's own look-ahead test.
+- **The start of a series, and missing history.**
+  - Ṽ_j(c, t) exists only when two things hold: hour t − δ_j belongs to the same series as t (the stretch after the last gap longer than 24 hours, FDS-MH-001 §5.2), and V(c, t − δ_j) exists.
+  - Otherwise it is missing. That is the case:
+    - at the start of each series, for its first 4,820 hours (about 201 days: the longest declared lag, 4,076 hours, plus V's 744);
+    - after a long gap, for the same span again;
+    - wherever the lagged hour is a missing or invalid hour.
+  - A missing placebo value is never filled in, carried forward, or taken from another coin or time.
+- **Paired rows.**
+  - M_P, M_PV and the five placebo variants are fitted and scored on one row set: the hours at which P, V and every Ṽ_j exist (the common rows). A row missing any of them is out for every model.
+  - The report gives how many rows that removes, per coin.
+  - PV-1's trading-level contestants decide only at common hours, and are undecided elsewhere.
+- **Folds.**
+  - The transformation is the same at every hour and does not depend on where a fold starts.
+  - Each fold's fit uses only common rows before the fold, purged as FDS-MH-001 §5.4 sets out, with features standardised on those rows. That fit decides the fold's own common rows.
+  - A training row's placebo value comes from before that row, so from before the fold. A test row's comes from before the test row. Neither reads a label from the fold, or any later bar.
 - **Fitting:** each variant is fitted exactly as M_PV.
-- **What it guards against:** it keeps V's distribution and breaks its timing, so it guards against a gain from extra columns as such, or from a leak.
+- **What it guards against.**
+  - The placebo keeps V's columns, their kind and, roughly, their distribution, but breaks their timing against the row.
+  - So it tests whether volume carries information at the row's own time, rather than gaining from extra columns as such, or from a leak.
+- **A check, shown:** each V feature's correlation with its lagged copy, pooled. If any is above 0.10 in absolute value, the report says that the placebo still carries some of V's own information. That makes the placebo condition harder to pass, not easier.
 
-**Forecast level: the primary test.**
-- **Rows:** every hour of PV-1's walk-forward stream, for every coin, whose T1 label resolves inside the stream.
+**F1, forecast value: the primary test.**
+- **Rows:** every common row of PV-1's walk-forward stream whose T1 label resolves inside the stream.
   - Each model's own out-of-fold probability is used: the logistic fit, with no recalibration, from fold 1 on.
-  - Probabilities are clipped to [10⁻⁶, 1 − 10⁻⁶], for both models alike.
+  - Probabilities are clipped to [10⁻⁶, 1 − 10⁻⁶], for every model alike.
 - **Per row:** d = ℓ(y, p̂_P) − ℓ(y, p̂_PV), where ℓ(y, p) = −[y ln p + (1 − y) ln(1 − p)].
 - **Statistic:** D̄, the mean of d over all rows, each row weighted equally. A positive D̄ favours volume.
 - **Test:** H₀: E[d] ≤ 0, by §6.0's block bootstrap, in the Holm family.
 - **Conditions**, each one-sided at 5% (§6.0):
-  - **the placebo:** per row, e = ℓ̄_placebo − ℓ(y, p̂_PV), where ℓ̄_placebo is the mean of the five placebo variants' losses. Then Ē > 0, by the same bootstrap;
+  - **the placebo:** per row, e = ℓ̄_placebo − ℓ(y, p̂_PV), where ℓ̄_placebo is the mean of the five placebo variants' losses on that row. Then Ē > 0, by the same bootstrap, with the same days;
   - **stability:** D̄ > 0, as a point estimate, in each half of the scored days, split at the middle day.
 - **Shown:**
   - D̄ for each placebo variant against M_P, expected to be at most 0;
   - D̄ by coin, by year and by volatility tercile;
   - D̄ before, and from, 2023-11-06, the start of the volume research's look (§6.4.1).
 
-**Trading level: secondary, and expected to be underpowered.**
+**Trading level, under FDS-MH-001's fixed strategy: secondary, and expected to be underpowered.**
 - PV-1's three contestants are scored by FDS-MH-001 against R1 and R2, with PV-1's own Holm over K = 3.
 - **Shown, outside the family:** the paired difference in return per capital-day between M_PV and M_P on the hours both cover, by §6.0's block bootstrap, with its smallest detectable difference.
+- This is a relative finding, of F2's kind, under the legacy exits. FDS-MH-001's own floor of total profit above 0 for a finalist does not make it F3.
 
-**Decision level.**
+**F2, relative trading value: the decision level.**
 - **Opportunities:** STRAT-001 1h at its defaults, on the batch's coins, over the development period (§6.4.2).
 - **Two filters**, both on target M: F_PV, with V, and F_P, without.
   - They share the opportunities, the veto rule (§5.8.1), the folds and the calibration procedure.
@@ -748,14 +816,46 @@ This closes R2 for this spec's own code.
 
 **The research's chosen rule:** same-hour relative volume above 1.5×, chosen from 296 tests.
 - **Declared now** as a fixed filter on STRAT-001's opportunities: veto an entry whose v2 is at most ln 1.5.
-- **Forward:** in the confirmation family (§6.5), against R3.
+- **Forward:** in the confirmation family (§6.5), against R3. A pass is an F2 finding, not F3.
 - **Development:** scored only before 2023-11-06, the part the research never saw. It is shown and decides nothing.
 
-**Verdicts.** Each verdict line states the score, the base rate and n beside the verdict:
-- "No added value detected (smallest detectable Δ log loss = …)";
-- "Adds forecast skill; not shown in trading results (smallest detectable edge = …)";
-- "Adds forecast skill and trading value". This needs both levels and the forward confirmation;
-- "Not assessable", when a floor is not met.
+**F3, economic viability: the approach as it would trade.**
+- **What is judged:** the path that would be activated, in the portfolio replay (§6.0), at the deciding account size of $10,000. That path is STRAT-001 1h at its defaults with the registered model's veto (F_PV or F_P, §6.2), plus the volatility shrink if the registration includes it.
+- **Applicable fees and allowances:**
+  - **The fee:** the taker rate the target account's fills will pay, read through the exchange layer with its source recorded. For paper, that is the rate the paper account's fills record (`trading_mode.py:579-584`); where the source is the published default, the published default applies.
+  - **The allowance:** e = 0.05% a fill.
+  - The registration fixes both (§6.4.3). The 0.50% and 1.20% rows are shown beside them.
+- **Requirements** (all five must hold):
+  1. **Enough trades:** at least 100 closed trades in the window, and at least 30 in each half. Otherwise the verdict is "Not assessable", with n.
+  2. **A profit:** return per capital-day above 0, one-sided by §6.0's block bootstrap, in the Holm family (§6.5). Its sign is the sign of total net profit after fees and allowances.
+  3. **Stable:** net profit above 0 in each half of the window, each trade counted in the half of its entry day (as in §6.0).
+  4. **Not one coin:** the summed net profit of the path's trades on every coin except the most profitable one is above 0. The trades are summed as they occurred in the path; the path is not replayed without that coin.
+  5. **Within the trader's own limit:** the equity curve's maximum drawdown stays below the emergency drawdown level (8% by default). The replay reports the halt rather than modelling it (§6.0), and a path that would have halted the trader is not viable as configured.
+
+  Requirements 1 and 3 split the window into halves at its middle day. Requirements 1, 3 and 4 count every closed trade, including those closed at the window's last close (§6.4.3).
+- **Reported; these decide nothing:**
+  - **profit:** net profit in dollars, and as a return on starting equity, for the window and annualised;
+  - **efficiency:** return per capital-day;
+  - **capital use:** time in the market (the share of hours with an open position), mean and peak capital committed as a share of equity, and capital-days;
+  - **trades:** the number of trades, the win rate, and the mean and median net return a trade;
+  - **drawdown:** the maximum drawdown in dollars and as a share of the peak; its start, trough and recovery (or "not recovered"); the time under water; and the largest loss on one trade;
+  - **comparisons:** the same figures for STRAT-001 unfiltered, for F_P's path and for R3's median, and at $100.
+- **Development reports F3's figures** for F_PV's path, labelled development. Only the forward window can establish F3.
+
+**Verdicts.** Each line states the score, the comparison's value and n beside the verdict.
+
+| Finding | Passes when | Wording if it passes | Wording otherwise |
+|---|---|---|---|
+| F1 | the primary test, in the Holm family, and both conditions | "Volume improves forecasts over price alone (Δ log loss = …, n = …)" | "No forecast improvement detected (smallest detectable Δ log loss = …)" |
+| F2, with the path's net profit at most 0 | Δ, in the Holm family, and the R3 condition | "Volume reduces losses compared with price alone and with random vetoes. The strategy still loses money after fees (net … over n trades)" | "No improvement over price alone detected (smallest detectable difference = …)" |
+| F2, with the path's net profit above 0 | the same | "Volume improves results compared with price alone and with random vetoes. Profitability is shown separately (F3)" | the same |
+| F3 | all five requirements | "Profitable after fees in the confirmation window: net …, return per capital-day …, n trades, maximum drawdown …" | "Not shown to be profitable after fees", naming the requirement that failed |
+| any | a floor not met | — | "Not assessable", with the floor |
+
+**Wording rules:**
+- Only an F3 pass may use the words "profitable" or "makes money". A result that loses less money than its controls is described as reducing losses.
+- Development results say "development", and are never described as confirmed (§6.4.2).
+- The volatility shrink's result reads "reduces drawdown compared with random sizing" (§6.3). It is never a profitability claim.
 
 ### 6.2 Q2: calibration
 
@@ -789,12 +889,13 @@ This closes R2 for this spec's own code.
   - the maximum drawdown;
   - the spread of per-trade returns;
   - the number of skips.
+- **What a pass says:** "reduces drawdown compared with random sizing". It is not a profitability claim, and the absolute figures of §6.1's F3 list are reported beside it (§6.7).
 
 **σ̂'s quality:** QLIKE against the naive forecast, as §5.2 sets out.
 
 **The liquidity limits:**
 - **Correctness tests:**
-  - the approximation's error against stated quote volume, within its bound;
+  - the approximation's error against stated quote volume, within ε̄ with the true value as the denominator (§5.2), and the hand-worked cases of §12;
   - the limits on hand-built quotes;
   - every missing-input case of §5.8.3.
 - **The would-skip counts** from Log only (§5.7).
@@ -832,11 +933,11 @@ This lists every earlier look at the data this spec uses, recorded before any of
 
 **The registration** (phase D) is committed before the window starts, and fixes:
 - **the registered artifact** (§5.9): the models fitted on every bar before the registration, the calibrator (§5.5), the payoff tables, σ_ref, the tercile cut points and the code hash;
-- **the features,** the veto rule and the strategy configuration;
+- **the features,** the placebo's lags δ_j, the veto rule and the strategy configuration;
 - **the procedures:** the block rule, B, the seeds, and the families with their conditions (§6.5);
-- **the numbers:** the calibration tolerances (D16), the margin m (D12) and the account sizes;
+- **the numbers:** the calibration tolerances (D16), the margin m (D12), F3's five requirements (§6.1) and the account sizes;
 - **the scope:** the window's start and end, the coins and the venue;
-- **the fees:** 0.50% and 1.20%;
+- **the fees:** F3's applicable fee and its source, as read at registration (§6.1), and the 0.50% and 1.20% rows;
 - **the wording** of every verdict, and what each verdict leads to;
 - **the analysis code,** in its own frozen worktree (FDS-SIG-001 §12.1).
 
@@ -870,8 +971,8 @@ Otherwise the two may share calendar time. They test different targets, and neit
 |---|---|---|---|---|
 | FDS-MH-001 batch 1 | its 14 contestants | as declared: a BH screen, then Holm at 5% | its walk-forward and lockbox | unchanged by this spec |
 | FDS-MH-001 batch PV-1 | M_P, M_PV, M_PṼ1 (K = 3) | a BH screen, then Holm at 5%, over these 3 | 2021-01-01 to 2025-05-06 | Q1's trading level, secondary. No lockbox |
-| FDS-SIG-004 development | 1. Q1 forecast<br>2. Q1 decision<br>3. Q2 skill of F_PV<br>4. Q3 shrink drawdown<br>(K = 4) | Holm at 5%, plus each claim's conditions | the development period (§6.4.2) | decides only whether to register |
-| FDS-SIG-004 confirmation | The same four, with Q2 on the registered model, plus 5: the research's 1.5× rule against R3 (K = 5) | Holm at 5%, plus each claim's conditions | the registered forward window | the only evidence that can enable an effect |
+| FDS-SIG-004 development | 1. F1, forecast value<br>2. F2, the paired decision test<br>3. Q2 skill of F_PV<br>4. Q3 shrink drawdown<br>5. F3 for F_PV's path<br>(K = 5) | Holm at 5%, plus each claim's conditions | the development period (§6.4.2) | decides only whether to register |
+| FDS-SIG-004 confirmation | The same five, with Q2 and F3 on the registered model, plus 6: the research's 1.5× rule against R3 (K = 6) | Holm at 5%, plus each claim's conditions | the registered forward window | the only evidence that can enable an effect |
 | Exploratory | trees; per coin; other timeframes; regimes; M's paired log loss; the trading-level paired difference | none, labelled exploratory | any | shown, never deciding |
 
 **Trial accounting.**
@@ -916,6 +1017,30 @@ Phase E's log-only hook may run while phase D's window is open. These rules keep
    - Changes that leave the hashed files untouched are allowed.
    - A change to a hashed file makes the predictive part unavailable until the window ends.
 
+### 6.7 What activation requires
+
+Nothing here activates by itself: phase F is the owner's decision.
+- A setting can be turned On only when its requirements have passed on the registered forward window.
+- The decision record must show the absolute figures.
+
+| Setting | Requires, on the forward window |
+|---|---|
+| Entry assessment: Veto | **All of these, each passing as the confirmation family requires:** its primary test under Holm, and its conditions at 5% (§6.5):<br>• **Q2** for the registered model: skill, calibration within tolerance, and the sample floor (§5.5).<br>• **F2** for that model's path: it beats R3. If the model is F_PV, it must also beat F_P in the paired test.<br>• **F3** for that path, at the applicable fee: all five requirements (§6.1) |
+| Volatility shrink: On | **Q3:** a drawdown below R3s, and non-inferiority (§6.3).<br>The decision record shows the strategy's absolute net result, with and without the shrink. The shrink is protective, so F3 is not required. But the record must say plainly whether the strategy makes money |
+| Participation cap, Spread cap: On | Correctness tests and the log-only counts (§5.7). These limits make no predictive or economic claim |
+
+**The decision record** for any activation states the following, beside the relative results, for the path that would be activated and at the applicable fee:
+- net profit;
+- return per capital-day;
+- return on starting equity;
+- the number of trades;
+- the maximum drawdown;
+- time in the market.
+
+Relative improvement alone never turns the veto On.
+
+**If F2 passes and F3 fails,** the report says that the filter reduces losses on a strategy that still loses money, and the veto stays unavailable. Whether to keep running STRAT-001 at all is a strategy decision, outside this spec (§11).
+
 ## 7. Changes proposed to other specs
 
 These are proposals. Each spec stays as approved until the owner accepts the change.
@@ -923,7 +1048,7 @@ These are proposals. Each spec stays as approved until the owner accepts the cha
 **FDS-MH-001, amendment 1, with exact text in Appendix A.** Best applied before its phase C is built:
 - **Named feature blocks:** P, v1, v2 and V. Batch 1 keeps its 26 features, which are P + v1.
 - **Probabilities:** `Fitted.probabilities`, saved with the results. The entry decision does not use them.
-- **Batch PV-1:** the pair and the placebo, K = 3, with no lockbox.
+- **Batch PV-1:** the pair and the placebo, K = 3, with no lockbox. The placebo is a lag of the same coin's volume, by 160 to 170 days, on common rows.
 - **A recorded look** for PV-1's volume contestants, because v2 was seen in X1. Batch 1 gets none.
 - **Records:** trial kinds, a spec version per batch, and explicit batch lists, so the catalogue's growth never changes batch 1.
 - **10-run reports,** as splits of the existing 10,000 draws. They change no draw and no p-value.
@@ -968,7 +1093,7 @@ They concern STRAT-001's exits or this spec's own tests, while FDS-MH-001 holds 
 | S8 | FDS-SIG-004 phase D: the power simulation, the registration commit and the frozen worktree. The window starts | S7 and the owner's go-ahead | — |
 | S9 | FDS-SIG-004 phase E: the log-only hook, Settings and the table | S4, with no other `pt_trader.py` change open. Before or during the window, under §6.6 | the trader's orders (invariant 3) |
 | S10 | After the window: the one analysis, and its results tag | the end of S8's window | — |
-| S11 | Phase F: Veto, and the shrink On, for paper | a pass at S10 and the owner's decision | — |
+| S11 | Phase F: Veto, and the shrink On, for paper | §6.7's requirements met at S10, F3 included for the veto, and the owner's decision on a record that shows the absolute figures | — |
 
 FDS-SIG-001's research window runs independently throughout (§6.4.4).
 
@@ -981,12 +1106,15 @@ FDS-SIG-001's research window runs independently throughout (§6.4.4).
   - the paired forecast, placebo, decision and sizing tests;
   - R3 and R3s;
   - the portfolio replay and its equity curve;
+  - F3's five requirements, and its capital-use and drawdown report (§6.1);
+  - the verdict lines and their wording rules (§6.1);
   - the 10-run reports.
 - **Tests:**
   - the scoring rules match hand-worked values, and scikit-learn's `log_loss` and `brier_score_loss`;
   - the bootstrap is reproducible from its seed, and keeps pairs on the same days;
   - R3 keeps the per-coin veto counts, on assessable, eligible opportunities only;
   - the portfolio replay matches `run_backtest` (§6.0);
+  - F3 and the wording rules on constructed paths (§12, item 10);
   - the 10-run report has a row per run;
   - the block-length rule is applied as declared.
 
@@ -1001,7 +1129,7 @@ FDS-SIG-001's research window runs independently throughout (§6.4.4).
   - no look-ahead: poisoning bars after t changes nothing at t;
   - the complete-bar and minimum-history rules;
   - absent and zero-volume hours, per connector;
-  - the dollar-volume approximation within its bound against stated quote volume;
+  - the dollar-volume approximation: §12's hand-worked cases, and the bound against stated quote volume, with the true value as the denominator (§12, item 5);
   - identical definitions on all four connectors;
   - m(f, e) equals the backtester's net return on every trade;
   - costs enter EV once: changing a fee changes EV only through m.
@@ -1009,7 +1137,7 @@ FDS-SIG-001's research window runs independently throughout (§6.4.4).
 #### Phase C — the development run and its report
 
 - **How:** in a sandbox, on public candles, at 0.50% and at 1.20%, at both account sizes.
-- **Output:** `docs/dev/SIG4-REPORT-dev.md`, with Q1, Q2 and Q3 on the development period, the seen part shown apart. Nothing is enabled.
+- **Output:** `docs/dev/SIG4-REPORT-dev.md`, with Q1's F1, F2 and F3, Q2 and Q3 on the development period, and the seen part shown apart. Nothing is enabled.
 
 #### Phase D — registration and freeze of the forward confirmation
 
@@ -1025,12 +1153,14 @@ FDS-SIG-001's research window runs independently throughout (§6.4.4).
 
 #### Phase F — Veto, and the shrink On, for paper
 
-- **Only after:** phase D's confirmation passes, and the owner decides.
+- **Only after:** §6.7's requirements pass for that setting on the forward window. For the veto, that includes F3's absolute profitability at the paper account's applicable fee.
+- **The owner decides** on a decision record that shows the absolute figures (§6.7). A relative improvement alone is not enough.
 - **Live:** only later, under the live-trading spec's own decision.
 
 ## 9. Limits and risks
 
 - **Power.** The trading-level tests will likely read "too few to tell" (§4). A forecast-level gain does not make a trading gain.
+- **Relative and absolute.** Beating price alone and random vetoes (F2) can coexist with losing money. Only F3 is a profitability finding, and even F3 covers one window of one market history.
 - **One market history.** Development covers 2021 to 2025, a single sequence of regimes. The forward window adds one more.
 - **Survivorship.** The coins in the data are those still listed today.
 - **Venue.** The research data is Coinbase-centred. Other venues' volume can differ in kind: the 2019 wash-trading estimates are in research §4.5.
@@ -1041,7 +1171,7 @@ FDS-SIG-001's research window runs independently throughout (§6.4.4).
 - **The halt.** It is reported, not modelled, in the replays (§6.0).
 - **The payoff model** assumes fixed means within a class and a tercile (§5.8.1). It is checked, not assumed away.
 - **Calibration drift.** The calibrator is frozen during the window, so it can go stale. The drift is reported month by month.
-- **The dollar-volume approximation** is bounded per bar, but its size has not been measured here. Phase B measures it.
+- **The dollar-volume approximation** is bounded per bar, with the bound computed from the bar's own OHLC (§5.2), but its typical size has not been measured here. Phase B measures it on the venues that state quote volume.
 - **Coins move together.** The block bootstrap moves all coins together, and R2 keeps cross-coin dependence.
 - **The forward window takes months,** probably a year or more. Until it closes, nothing predictive is enabled.
 - **Looking during the window:** §6.6.
@@ -1050,7 +1180,7 @@ FDS-SIG-001's research window runs independently throughout (§6.4.4).
 
 **Status key:**
 - **Ready:** can be approved as written.
-- **Revised:** revision 2 changed it, so it needs approval of the revised text.
+- **Revised:** revision 2 or 3 changed it, so it needs approval of the revised text.
 - **Number later:** approve the mechanism now; the number needs log-only or simulation evidence before anything is activated.
 - **Principle approved:** D14.
 
@@ -1061,24 +1191,25 @@ FDS-SIG-001's research window runs independently throughout (§6.4.4).
 | D3 | The V block | Ready; exposure recorded | v1 and v2. v2 is the research's own measure, so its development rows from 2023-11-06 are shown as seen, and it is confirmed only forward. CMF-20 only after round one's results |
 | D4 | The P block | Ready | FDS-MH-001 §5.5 minus its volume feature: 25 features, volatility included. Minimum history: 1,224 closed hourly bars |
 | D5 | Fees and costs | Revised | Costs enter once: EV = (1 + μ̂_g) × m − 1, with m from the backtester's fill accounting. The fee comes from the exchange layer, with its source. The allowance per fill is max(½ live spread, 0.05%). Every report at 0.50% and 1.20% |
-| D6 | Settings | Revised | Four separate settings: Entry assessment (Off, Log only, Veto); Volatility shrink, Participation cap and Spread cap (each Off, Log only, On). All Off by default. Veto and the shrink's On are greyed out until their evidence passes. Scale-up is out of scope |
+| D6 | Settings | Revised | Four separate settings: Entry assessment (Off, Log only, Veto); Volatility shrink, Participation cap and Spread cap (each Off, Log only, On). All Off by default. Veto and the shrink's On are greyed out until their activation requirements pass (§6.7). Scale-up is out of scope |
 | D7 | A shrunk entry below the exchange minimum | Ready; consequence added | Skipped, never raised. The consequence, now recorded: where 1% of the account is below the minimum, any shrink skips the entry (§3.7) |
 | D8 | Unavailable or failing parts | Revised | Off and Log only: no effect. Predictive inputs missing: fails open, recorded. An enabled protective part with a missing input: fails closed, skipped and shown. No blanket exception rule (§5.8.3) |
 | D9 | The confirmation data | Revised; number later | A registered forward window. The registered artifact is fitted on every bar before the registration and frozen for the whole window, with no refits. Its length comes from the power simulation |
 | D10 | Where the hook sits | Revised | The predictive veto directly after the LLM hook. The protective part directly after sizing, before the risk check. Both modes |
 | D11 | The protective limits' numbers | Number later | Proposed: π = 1%, s_max = 0.50%, a quote no older than 60 seconds, and an unavailability notice at 20% over 7 days. None is turned On until the log-only counts per coin and month have been seen |
-| D12 | The volatility shrink | Number later | s_vol = min(1, σ_ref / σ̂), with σ̂ chosen by QLIKE and σ_ref fixed per evaluation. On only after Q3 passes. Proposed non-inferiority margin: m = 0.01 percentage points per capital-day, to be confirmed by the power simulation |
+| D12 | The volatility shrink | Revised; number later | s_vol = min(1, σ_ref / σ̂), with σ̂ chosen by QLIKE and σ_ref fixed per evaluation. On only after §6.7's requirements pass: Q3, with the absolute net result shown in the decision record. Proposed non-inferiority margin: m = 0.01 percentage points per capital-day, to be confirmed by the power simulation |
 | D13 | The veto rule | Revised | EV ≤ 0, with p̂ = P(M = 1) passing §5.5 and the payoff model built from the same strategy's trades. Catalogue strategies with their own exits only. The legacy chain gets no expected-value veto |
-| D14 | The FDS-MH-001 changes | Principle approved; amendment text to approve | Approve amendment 1 (Appendix A) through its own docs PR before phase C. It names the blocks, adds probabilities, declares PV-1, records the looks, adds trial kinds, makes batch lists explicit and adds the 10-run report. Batch 1 unchanged |
+| D14 | The FDS-MH-001 changes | Principle approved; amendment text to approve | Approve amendment 1 (Appendix A) through its own docs PR before phase C. It names the blocks, adds probabilities, declares PV-1, records the looks, adds trial kinds, makes batch lists explicit and adds the 10-run report. Batch 1 unchanged. Revision 3 changes the placebo to a lag of 160 to 170 days on common rows (AM1-7), with timing tests (AM1-8) |
 | D15 | Independence | Revised | §6.4.4 for FDS-SIG-001, plus §6.6 for phase E during phase D's window |
 | D16 (new) | Calibration acceptance | Number later | 90% intervals inside: intercept ±0.10 logit, slope 0.80 to 1.20. At least 200 events and 200 non-events. Three outcomes. The power simulation must show that the window can reach this precision |
 | D17 (new) | Venue compatibility | Number later | Over 28 days: Spearman ≥ 0.90 for each feature; median absolute p̂ difference ≤ 0.02, and its 95th percentile ≤ 0.05; EV sign agreement ≥ 95%. Repeated every 3 months |
+| D18 (new in revision 3) | Findings and activation | Revised; number later | Q1 reports F1, F2 and F3 separately, and only an F3 pass may say "profitable". The veto can be turned On only with Q2, F2 and F3 on the forward window (§6.7). F3's proposed numbers: at least 100 trades and 30 in each half; profit above 0 overall, in each half and without the best coin; a drawdown below the 8% emergency level. The power simulation must show that the window can reach 100 trades |
 
 **By status:**
 - **Ready for approval as written:** D2, D3, D4, D7.
-- **Need revision 2's text approved:** D1, D5, D6, D8, D10, D13, D15.
-- **Mechanism now, number later, after log-only or simulation evidence:** D9 (the window's length; its no-refit rule is new too), D11, D12, D16, D17.
-- **D14:** approved in principle. Amendment 1 goes through its own docs PR before FDS-MH-001's phase C.
+- **Need the revised text approved:** D1, D5, D6, D8, D10, D13 and D15 (revision 2), and D12 and D18 (revision 3).
+- **Mechanism now, number later, after log-only or simulation evidence:** D9 (the window's length; its no-refit rule is new too), D11, D12, D16, D17, and D18's trade floor.
+- **D14:** approved in principle, and supported by the review. Amendment 1 goes through its own docs PR before FDS-MH-001's phase C. Revision 3 corrects its placebo text.
 
 ## 11. Out of scope
 
@@ -1107,7 +1238,23 @@ FDS-SIG-001's research window runs independently throughout (§6.4.4).
    - every row of §5.8.3's table, including a missing quote, a stale quote, and an exception in each part.
 3. **Exchange-neutral.** The same features from all four connectors' fixtures, and the venue compatibility test on fixtures.
 4. **Complete bars and history.** The forming bar is never an input. Each block's minimum history is enforced, and a gap longer than 24 hours restarts the count.
-5. **The approximation.** Approximate dollar volume is within its bound of the stated quote volume, on the venues that state it.
+5. **The approximation** (§5.2). Relative error is ε = |DV̂ − DV| / DV, with the true value as denominator, and its bound is ε̄ = max((TP − L) / L, (H − TP) / H).
+   - **Hand-worked cases.** Each is a unit test with these exact values, to four significant figures. The last two columns are the estimate-denominator form, shown for contrast.
+
+   | Case | H | L | C | TP | V | VWAP | DV | DV̂ | ε | ε̄ | error / DV̂ | its bound |
+   |---|---|---|---|---|---|---|---|---|---|---|---|---|
+   | A: VWAP near TP | 102 | 98 | 100 | 100 | 10 | 100.5 | 1,005 | 1,000 | 0.4975% | 2.041% | 0.5000% | 2.000% |
+   | B: VWAP near the low | 120 | 80 | 118 | 106 | 50 | 82 | 4,100 | 5,300 | 29.27% | 32.50% | 22.64% | 24.53% |
+   | C: VWAP near the low, TP near the high | 200 | 100 | 200 | 166.67 | 3 | 101 | 303 | 500 | 65.02% | 66.67% | 39.40% | 40.00% |
+   | D: VWAP near the high | 50 | 40 | 41 | 43.667 | 6 | 49.5 | 297 | 262 | 11.78% | 12.67% | 13.36% | 14.50% |
+   | E: a flat bar | 10 | 10 | 10 | 10 | 7 | 10 | 70 | 70 | 0 | 0 | 0 | 0 |
+
+   - **Case C** shows why the denominator matters. Revision 2's (H − L) / TP is 60.00% there, below the true ε of 65.02%. So that bound fails against the true value, and must not be used.
+   - **Case D** shows the high-side term binding: (H − TP) / H = 12.67% is above (TP − L) / L = 9.167%.
+   - **F: zero volume** (H = 10.5, L = 9.5, C = 10, V = 0): DV̂ = 0. The hour counts as 0 in sums and medians, no ε or ε̄ is computed, and nothing divides by zero.
+   - **G: invalid bars.** Each of these gives a missing DV̂, never 0 and never an exception: L = 0; L < 0; H = 9 with L = 10; C = 11 with H = 10.5; O outside [L, H]; V = −1; a NaN or infinite price or volume. The hour is left out of the participation median and counted. 25 invalid hours in a row restart the series.
+   - **H: the participation bound.** Three hours, with (DV̂, ε̄) of (100, 10%), (200, 20%) and (300, 5%). The median DV̂ is 200 and ε_max is 20%, so the true median is at least 200 / 1.2 = 166.67. An entry of $2 at π = 1% passes on the estimate (2 / 200 = 1.0%), and the record states its share of the true median is at most 1.2 × 1% = 1.2% (2 / 166.67).
+   - **On venues that state quote volume:** for every valid bar, |DV̂ − Q| ≤ ε̄ × Q + r, where Q is the stated quote volume and r is half a unit in the last digit the venue states. No test uses DV̂ as the denominator, or claims a bound tighter than ε̄.
 6. **Costs once.** m(f, e) equals the backtester's net return on every trade, and T1 never reaches EV.
 7. **Scoring and calibration.**
    - The scoring rules match reference values.
@@ -1118,14 +1265,27 @@ FDS-SIG-001's research window runs independently throughout (§6.4.4).
    - Pairs share the same days in every draw.
    - The portfolio replay reproduces `run_backtest`.
    - Every simulation reports 10 seeded runs, pooled and per run.
-9. **Amendment 1.** The tests listed in Appendix A, AM1-8.
-10. **During a window,** the app shows no outcome-linked figure (§6.6).
-11. **Settings.** Every new key defaults to Off. Saved settings keep their meaning: decisions with the new keys absent equal `main`'s.
-12. **The suite.** The full suite passes with 0 failures, Black is clean, and CI's flake8 is clean.
+9. **The placebo's timing** (§6.1; Appendix A, AM1-8).
+   - **Encoded time:** on fixture candles, set each V value to its own source hour. Then every placebo value Ṽ_j(c, t) equals t − δ_j exactly, so it is at least D earlier than t. A forward move or a wrap would show as a value at or after t.
+   - **Poisoning at the boundaries:** at every hour t in the fixtures, corrupt every bar after t, prices and volumes alike. Every placebo value at t and before is unchanged, and so is every fit whose training rows end by t. The hours checked include each series' first common hour, the hours just after a gap longer than 24 hours, and the first and last hour of every fold and of the walk-forward.
+   - **Start and gaps:** at a series' start, and after a gap longer than 24 hours, Ṽ_j is missing for exactly the declared span. It is never taken from before the gap, from the series' end, or from another coin.
+   - **Paired rows:** M_P, M_PV and every placebo variant are fitted and scored on identical row sets in every fold, compared by a hash of the row index.
+   - **Offsets:** every δ_j lies from 3,841 to 4,079 hours and is not a multiple of 24, and the seeds reproduce the declared δ_1 to δ_5 (3,930, 4,076, 3,850, 4,062 and 3,857 hours).
+10. **Findings and wording** (§6.1, §6.7), on constructed paths:
+    - **Loses less, still loses:** a path that beats F_P and R3 but loses money gets F2's "reduces losses" line, and fails F3.
+    - **One coin:** a path profitable only through one coin fails F3's requirement 4.
+    - **The halt level:** a path that reaches the 8% level fails requirement 5.
+    - **Too few trades:** a path with 99 trades, or with 29 in one half, reads "Not assessable".
+    - **Activation:** the Veto setting stays greyed out unless F3 has passed.
+    - **Wording:** no verdict line except an F3 pass contains "profitable" or "makes money".
+11. **Amendment 1.** The tests listed in Appendix A, AM1-8.
+12. **During a window,** the app shows no outcome-linked figure (§6.6).
+13. **Settings.** Every new key defaults to Off. Saved settings keep their meaning: decisions with the new keys absent equal `main`'s.
+14. **The suite.** The full suite passes with 0 failures, Black is clean, and CI's flake8 is clean.
 
 ## 13. Remaining ambiguities
 
-What revision 2 leaves open, and when each will be settled:
+What revisions 2 and 3 leave open, and when each will be settled:
 
 1. **Absent hours per connector.** Whether each connector returns an hour with no trades as a zero-volume bar, or leaves it out, is not yet established. Phase B records it from fixtures. Until then the rule is that an absent hour inside a kept gap counts as zero volume.
 2. **Revisions after close.** Whether a venue revises a bar's volume after it closes is not measured. Phase E's log compares live values with refetched ones. A large difference would mean the confirmation, which uses refetched bars, does not match what the live hook saw. The report would say so.
@@ -1141,6 +1301,10 @@ What revision 2 leaves open, and when each will be settled:
 12. **Coins with no assessable rows.** In the forward window, a coin served only from Kraken, or newly listed, may have no assessable rows. The confirmation reports each coin's counts.
 13. **Informal observation (X9).** It is recorded, but cannot be prevented.
 14. **The references** below were not re-read for this draft.
+15. **What the placebo still carries.** If V is autocorrelated at 160 to 170 days, the lagged placebo carries some of V's own information. §6.1's check shows it, and it can only make the placebo condition harder to pass. Longer lags, if the check fires, would be a later batch's choice, not this one's.
+16. **Rows the placebo costs.** Common rows start about 201 days into each series, against 51 days for P alone, so the pair is scored on fewer rows than P and V alone would allow. The report gives the count per coin.
+17. **F3 at the paper account's fee.** Which rate paper fills record depends on the fee source at registration: the account's rate or the published default. F3 is judged at that rate. A pass at 0.50% does not carry over to 1.20%, and the report shows both.
+18. **F3's numbers** are proposals (D18): 100 trades, 30 in each half, and the 8% level. The power simulation shows whether the window can reach the trade floor.
 
 ## References
 
@@ -1191,7 +1355,7 @@ After the paragraph that begins "That makes 26 features", insert:
 - **v2:** log of the hour's volume over the mean volume of the same UTC hour on the 20 previous days. A zero mean makes it missing.
 - **V:** v1 and v2.
 
-Batch 1's pooled contestants use P and v1, which are the 26 features above, exactly as §7 declares them. Volume is base-asset volume, defined the same way on every connector. A placebo replaces V with the same coin's V moved by a fixed offset (§7a). No block contains Chaikin Money Flow or BTC's one-hour return, the candidates of FDS-SIG-002's round one.
+Batch 1's pooled contestants use P and v1, which are the 26 features above, exactly as §7 declares them. Volume is base-asset volume, defined the same way on every connector. A placebo replaces V with the same coin's V from a fixed number of hours earlier (§7a). No block contains Chaikin Money Flow or BTC's one-hour return, the candidates of FDS-SIG-002's round one.
 ```
 
 ### AM1-3 — §5.5, probability outputs
@@ -1242,8 +1406,17 @@ The price-only and price-plus-volume pair for FDS-SIG-004's Q1, with a placebo. 
 - **No lockbox is opened.** No bar from 2025-05-06 on is scored by this batch. Its final check is FDS-SIG-004's registered forward window, so its best verdict here is "Passed; final check not run".
 - **Trade rules and fees:** as batch 1's (§7): the trader's defaults with neural DCA off, and 0.50% plus 0.05% slippage.
 - **Target and model:** T1 (§5.5). Logistic regression with an L2 penalty, C = 1, features standardised on training rows; entries at the top 50%. Each fit saves its probabilities (§5.5).
-- **Seeds:** R1 from 500000, R2 from 600000, fits from 0. The placebo's offsets: u_j = `random.Random(700000 + j).random()` for j = 1 to 5.
-- **The placebo.** For a coin, Ṽ_j is its V block moved forward by δ = D + u_j × (S − 2D) hours, wrapping round the coin's stream inside this batch's walk-forward. S is that stream's length and D = 160 days (§5.6). The same u_j moves every coin. A coin whose stream is shorter than 2D has no placebo rows. The placebo never reads a bar from 2025-05-06 on.
+- **Seeds:** R1 from 500000, R2 from 600000, fits from 0. The placebo's lags: for j = 1 to 5, with r = `random.Random(700000 + j)`, first a_j = `int(10 * r.random())`, then b_j = `1 + int(23 * r.random())`.
+- **The placebo, a lag.**
+  - At decision hour t of coin c, Ṽ_j(c, t) = V(c, t − δ_j): the same coin's V block as computed at hour t − δ_j.
+  - δ_j = 3,840 + 24 a_j + b_j hours. That is 160 to 170 days, at least D (§5.6), and never a whole number of days.
+  - The seeds give δ_1 to δ_5 = 3,930, 4,076, 3,850, 4,062 and 3,857 hours.
+  - It uses only bars that closed by hour t − δ_j. Nothing is moved forward, and nothing wraps. So it never reads a bar after its own hour, and none from 2025-05-06 on.
+- **Missing history.** Ṽ_j(c, t) exists only when hour t − δ_j is in the same series as t (§5.2: after the last gap longer than 24 hours) and V exists at that hour. Otherwise it is missing. A missing value is never filled in, carried forward, or taken from another coin or time.
+- **Common rows.**
+  - The three contestants and placebo variants 2 to 5 are fitted and scored only at the hours where P, V and every Ṽ_j exist. Elsewhere they are undecided (−1), so every comparison in this batch uses the same hours.
+  - Each fold's fit uses only common rows before the fold, purged as §5.4 sets out.
+  - A coin joins once it has common rows, about 201 days after its series starts.
 
 | # | Key | Blocks | Tested here |
 |---|---|---|---|
@@ -1263,7 +1436,7 @@ After phase C's **Tests:** list, insert:
 
 ```markdown
 **Amendment 1 adds:**
-- `features.py`: the named blocks (§5.5) and the placebo's move (§7a).
+- `features.py`: the named blocks (§5.5) and the placebo's lag (§7a).
 - `contestants.py`: `Fitted.probabilities`, and PV-1's three contestants.
 - `catalogue.py`: `BATCH_1` as the explicit list of §7's keys, and `BATCH_PV_1`; the look of §5.7.
 - `batch.py`: `kind` and `spec_version`; saved probabilities; the report of 10 runs.
@@ -1272,7 +1445,13 @@ After phase C's **Tests:** list, insert:
 - `BATCH_1` equals §7's 14 keys and the reference, in order, and adding a contestant to the catalogue leaves it unchanged;
 - on the phase B fixtures, the seven rules and the pattern model give byte-identical `results.json` before and after amendment 1's code;
 - a trial line without `kind` reads as "trading";
-- the placebo never reads a bar from 2025-05-06 on, and every offset is at least D;
+- the placebo's timing:
+  - with each V value set to its own source hour, every Ṽ_j(c, t) equals t − δ_j;
+  - corrupting every bar after any hour t changes no placebo value at or before t, and no fit whose training rows end by t. The hours checked include each series' first common hour, the hours after a gap longer than 24 hours, and the first and last hours of every fold;
+  - Ṽ_j is missing for exactly the declared span at a series' start and after a long gap, and is never taken from the series' end or from another coin;
+- every δ_j lies from 3,841 to 4,079 hours and is not a multiple of 24, and the seeds reproduce δ_1 to δ_5 = 3,930, 4,076, 3,850, 4,062 and 3,857 hours;
+- the three contestants and the placebo variants use identical row sets in every fold;
+- phase B's look-ahead test (a decision from bars cut at an hour equals the decision from all bars) passes for `pv.linear.t1.PVp.q50`;
 - P has 25 features, P with v1 is batch 1's 26, and no block contains Chaikin Money Flow or BTC's one-hour return;
 - the 10-run report's runs pool to the batch's p-value exactly.
 ```

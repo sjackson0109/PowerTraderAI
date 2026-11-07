@@ -106,6 +106,12 @@ class ListedMarket:
     status: str  # the exchange's own word
     trading: Optional[bool]
     leveraged: Optional[bool] = None  # the exchange marks it as a leveraged token
+    # When the market's trading began and ended (epoch ms), only as the exchange itself
+    # states them in its listing, with the field(s) they come from; None where it
+    # states none. Nothing infers them from candles or from the market's status.
+    trading_start_ms: Optional[int] = None
+    trading_end_ms: Optional[int] = None
+    history_stated_by: str = ""
 
 
 @dataclass(frozen=True)
@@ -669,7 +675,8 @@ class AbstractExchange(abc.ABC):
     def spot_markets(self) -> Optional[MarketListing]:
         """Every spot market the exchange lists against the quote currency the app's
         dollar markets use on it, in any status, from its public listing; None when
-        this connector cannot list them."""
+        this connector cannot list them. A market's ``trading_start_ms`` and
+        ``trading_end_ms`` are set only where the listing itself states them."""
         return None
 
     def daily_quote_volume(

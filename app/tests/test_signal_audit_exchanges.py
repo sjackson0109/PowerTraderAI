@@ -59,6 +59,15 @@ def get(monkeypatch):
     return install
 
 
+def assert_no_inferred_dates(listing):
+    """A market's trading start and end are only what its exchange's listing states
+    (the follow-up review of PR #228): none of these fixtures states one, so none is
+    set, whatever the market's status."""
+    for m in listing.markets:
+        assert (m.trading_start_ms, m.trading_end_ms) == (None, None), m
+        assert m.history_stated_by == "", m
+
+
 def test_binance_lists_its_usdt_markets_and_states_field_7(get):
     info = {
         "symbols": [
@@ -109,6 +118,7 @@ def test_binance_lists_its_usdt_markets_and_states_field_7(get):
     )
     conn = pt_exchanges.BinanceExchange("", "")
     listing = conn.spot_markets()
+    assert_no_inferred_dates(listing)
     assert listing.exchange == "binance" and listing.quote == "USDT"
     assert [
         (m.pair, m.coin, m.status, m.trading, m.leveraged) for m in listing.markets
@@ -159,6 +169,7 @@ def test_kucoin_states_turnover_and_sets_no_leveraged_mark(get):
     get(**{"api__v2__symbols": symbols, "api__v1__market__candles": candles})
     conn = pt_exchanges.KuCoinExchange("", "")
     listing = conn.spot_markets()
+    assert_no_inferred_dates(listing)
     # KuCoin marks no leveraged tokens: none is claimed (the ranking's ticker rule
     # applies to every exchange alike)
     assert [(m.pair, m.leveraged) for m in listing.markets] == [
@@ -167,6 +178,44 @@ def test_kucoin_states_turnover_and_sets_no_leveraged_mark(get):
     ]
     dq = conn.daily_quote_volume("BTC-USDT", D0, D0 + DAY)
     assert dq.days == ((D0, 12.25), (D0 + DAY, 15.5)) and "turnover" in dq.measure
+
+
+def test_kucoin_states_a_trading_start_and_nothing_is_inferred(get):
+    """KuCoin's symbol list gives ``tradingStartTime`` (ms) for most symbols: the
+    symbol's stated trading start (live check of 2026-11-06: for all 18 symbols
+    starting within 40 days, the first daily candle fell on the stated day, and no
+    symbol had a candle before it). Null or 0 states nothing. KuCoin states no end."""
+
+    def sym(name, **extra):
+        return {
+            "symbol": f"{name}-USDT",
+            "baseCurrency": name,
+            "quoteCurrency": "USDT",
+            "enableTrading": True,
+            **extra,
+        }
+
+    symbols = {
+        "code": "200000",
+        "data": [
+            sym("NEW", tradingStartTime=1793613600000),
+            sym("OLD", tradingStartTime=None),
+            sym("ZERO", tradingStartTime=0),
+            sym("BARE"),
+        ],
+    }
+    get(**{"api__v2__symbols": symbols})
+    listing = pt_exchanges.KuCoinExchange("", "").spot_markets()
+    got = {
+        m.pair: (m.trading_start_ms, m.trading_end_ms, m.history_stated_by)
+        for m in listing.markets
+    }
+    assert got == {
+        "NEW-USDT": (1793613600000, None, "tradingStartTime"),
+        "OLD-USDT": (None, None, ""),
+        "ZERO-USDT": (None, None, ""),
+        "BARE-USDT": (None, None, ""),
+    }
 
 
 def test_kraken_states_vwap_times_volume(get):
@@ -194,6 +243,7 @@ def test_kraken_states_vwap_times_volume(get):
     get(**{"AssetPairs": pairs, "OHLC": ohlc})
     conn = pt_exchanges.KrakenExchange("", "")
     listing = conn.spot_markets()
+    assert_no_inferred_dates(listing)
     assert [(m.pair, m.coin, m.trading) for m in listing.markets] == [
         ("XBTUSD", "BTC", True),
         ("XDGUSD", "DOGE", False),
@@ -228,6 +278,7 @@ def test_coinbase_lists_its_usd_products_but_states_no_quote_volume(get):
     get(**{"products": products})
     conn = pt_exchanges.CoinbaseExchange("", "")
     listing = conn.spot_markets()
+    assert_no_inferred_dates(listing)
     assert [(m.pair, m.trading) for m in listing.markets] == [
         ("BTC-USD", True),
         ("OLD-USD", False),

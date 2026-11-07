@@ -14,15 +14,18 @@ exchange whose connector lists its spot markets and states daily quote volume (o
   days ending on the ranking date (the last opening at 00:00 on it), as the exchange
   states them (``DailyQuoteVolume.measure`` says which fields).
 * **Every day accounted for** (``volume_evidence``). A market's 30 days are established
-  only when each day is one of: a daily bar (its stated volume, zero included: a genuine
-  zero); a day before the market's first bar, when its bars then run unbroken to the
-  ranking date (listed within the span); or a day after its last bar, when its bars run
-  unbroken from the span's start or its first bar and the exchange lists it as not
-  trading (stopped). A request that failed, an answer with no bar for a day the market
-  traded, or a volume that is not a finite number at least 0 is not evidence: **the
+  only when every day has a daily bar (its stated volume, zero included: a genuine zero),
+  or when the exchange itself states in its listing when the market's trading began or
+  ended (``ListedMarket.trading_start_ms``, ``trading_end_ms``), every day inside that
+  stated period has a bar, and no bar lies outside it: a market listed within the span
+  or after it, or stopped within it or before it. The first or last bar of an answer and
+  the market's current status never stand in for a stated date, because an incomplete
+  answer looks the same. A request that failed, no answer, a missing day the exchange's
+  statements do not account for, a bar outside the stated period (the evidence
+  conflicts), or a volume that is not a finite number at least 0 is not evidence: **the
   ranking is refused** (``RankingRefused``) when any included market's volume is not
-  established, with every such market's error or missing days recorded. Nothing is
-  estimated or filled.
+  established, with every such market's error, missing days and stated times recorded.
+  Nothing is estimated, filled or inferred.
 * **Exclusions** (registered lists, each excluded symbol recorded with its reason):
   stablecoins and fiat- or commodity-pegged tokens; wrapped or staking-derivative
   tokens; leveraged tokens: a base asset that is a listed base plus one of the
@@ -257,11 +260,21 @@ class VolumeFailure:
 
 COMPLETE = "complete"
 LISTED_IN_SPAN = "listed within the span"
-NOT_TRADING = "not trading in the span"
+LISTED_AFTER_SPAN = "listed after the span"
 STOPPED_IN_SPAN = "stopped trading within the span"
+STOPPED_BEFORE_SPAN = "stopped trading before the span"
+LISTED_AND_STOPPED = "listed and stopped within the span"
 INCOMPLETE = "incomplete"
+CONFLICTING = "conflicting"
 FAILED = "failed"
-ESTABLISHED = (COMPLETE, LISTED_IN_SPAN, NOT_TRADING, STOPPED_IN_SPAN)
+ESTABLISHED = (
+    COMPLETE,
+    LISTED_IN_SPAN,
+    LISTED_AFTER_SPAN,
+    STOPPED_IN_SPAN,
+    STOPPED_BEFORE_SPAN,
+    LISTED_AND_STOPPED,
+)
 
 
 @dataclass(frozen=True)
@@ -276,6 +289,9 @@ class VolumeEvidence:
     detail: str
     measure: Optional[str]
     answers: List[str]  # each answer's SHA-256
+    stated_start: Optional[str] = None  # the exchange's stated trading start, if any
+    stated_end: Optional[str] = None  # its stated trading end, if any
+    stated_by: str = ""  # the listing field(s) they come from
 
     @property
     def established(self) -> bool:
@@ -289,25 +305,47 @@ def _day(ms: int) -> str:
     return datetime.fromtimestamp(ms // 1000, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
+def _time(ms: Optional[int]) -> Optional[str]:
+    if ms is None:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+
 def volume_evidence(market, answer: Any, days: Sequence[int]) -> VolumeEvidence:
     """How far ``answer`` (a DailyQuoteVolume, a VolumeFailure, or None for no
     answer) establishes ``market``'s quote volume on each of ``days`` (the module
-    docstring)."""
-    if answer is None or isinstance(answer, VolumeFailure):
-        error = answer.error if answer is not None else "no answer"
+    docstring). Only the exchange's own stated trading start or end can account for a
+    day without a bar."""
+    start_ms = getattr(market, "trading_start_ms", None)
+    end_ms = getattr(market, "trading_end_ms", None)
+    by = getattr(market, "history_stated_by", "") or ""
+
+    def evidence(status, total, n, first, last, missing, detail, measure, shas):
         return VolumeEvidence(
             market.pair,
-            FAILED,
-            None,
-            0,
-            None,
-            None,
-            [_day(d) for d in days],
-            error,
-            None,
-            [],
+            status,
+            total,
+            n,
+            first,
+            last,
+            missing,
+            detail,
+            measure,
+            shas,
+            _time(start_ms),
+            _time(end_ms),
+            by,
+        )
+
+    if answer is None or isinstance(answer, VolumeFailure):
+        error = answer.error if answer is not None else "no answer"
+        return evidence(
+            FAILED, None, 0, None, None, [_day(d) for d in days], error, None, []
         )
     shas = [a.sha256 for a in answer.answers]
+    measure = answer.measure
     wanted = set(days)
     present: Dict[int, float] = {}
     for t, v in answer.days:
@@ -315,8 +353,7 @@ def volume_evidence(market, answer: Any, days: Sequence[int]) -> VolumeEvidence:
             continue
         v = float(v)
         if not (v == v and v not in (float("inf"), float("-inf")) and v >= 0.0):
-            return VolumeEvidence(
-                market.pair,
+            return evidence(
                 FAILED,
                 None,
                 len(present),
@@ -324,105 +361,115 @@ def volume_evidence(market, answer: Any, days: Sequence[int]) -> VolumeEvidence:
                 None,
                 [],
                 f"{_day(t)}: a stated volume of {v!r}",
-                answer.measure,
+                measure,
                 shas,
             )
         present[t] = v
     order = list(days)
-    have = [t in present for t in order]
-    missing = [_day(t) for t, h in zip(order, have) if not h]
-    if all(have):
-        return VolumeEvidence(
-            market.pair,
+    missing = [_day(t) for t in order if t not in present]
+    on = sorted(present)
+    first_s = _day(on[0]) if on else None
+    last_s = _day(on[-1]) if on else None
+    n = len(present)
+
+    def refuse(status, detail):
+        return evidence(
+            status, None, n, first_s, last_s, missing, detail, measure, shas
+        )
+
+    # the days the exchange's own statements put the market's trading on
+    start_day = start_ms // DAY_MS * DAY_MS if start_ms is not None else None
+    end_day = end_ms // DAY_MS * DAY_MS if end_ms is not None else None
+    stated = f" ({by})" if by else ""
+    if start_day is not None and end_day is not None and end_day < start_day:
+        return refuse(CONFLICTING, f"the stated end precedes the stated start{stated}")
+    if end_ms is not None and market.trading is True:
+        return refuse(
+            CONFLICTING,
+            f"the exchange states trading ended {_time(end_ms)}{stated} but lists the "
+            "market as trading",
+        )
+    early = [t for t in on if start_day is not None and t < start_day]
+    late = [t for t in on if end_day is not None and t > end_day]
+    if early or late:
+        parts = []
+        if early:
+            parts.append(
+                f"{len(early)} bar(s) before the stated trading start {_time(start_ms)}"
+            )
+        if late:
+            parts.append(
+                f"{len(late)} bar(s) after the stated trading end {_time(end_ms)}"
+            )
+        return refuse(CONFLICTING, "; ".join(parts) + stated)
+    if n == len(order):
+        return evidence(
             COMPLETE,
             float(sum(present.values())),
-            len(present),
-            _day(order[0]),
-            _day(order[-1]),
+            n,
+            first_s,
+            last_s,
             [],
             "",
-            answer.measure,
+            measure,
             shas,
         )
-    if not any(have):
-        if market.trading is False:
-            return VolumeEvidence(
-                market.pair,
-                NOT_TRADING,
-                0.0,
-                0,
-                None,
-                None,
-                missing,
-                f"no bar in the span; the exchange lists it as " f"{market.status}",
-                answer.measure,
-                shas,
-            )
-        return VolumeEvidence(
-            market.pair,
-            INCOMPLETE,
-            None,
+    lo = order[0] if start_day is None else max(order[0], start_day)
+    hi = order[-1] if end_day is None else min(order[-1], end_day)
+    inside = [t for t in order if lo <= t <= hi]
+    if not inside:  # the exchange states it traded on none of the 30 days
+        if start_day is not None and start_day > order[-1]:
+            status, why = LISTED_AFTER_SPAN, f"trading began {_time(start_ms)}"
+        else:
+            status, why = STOPPED_BEFORE_SPAN, f"trading ended {_time(end_ms)}"
+        return evidence(
+            status,
+            0.0,
             0,
             None,
             None,
             missing,
-            "no bar in the span, while the exchange lists it as "
-            f"{market.status or 'trading'}",
-            answer.measure,
+            f"the exchange states {why}{stated}",
+            measure,
             shas,
         )
-    first = have.index(True)
-    last = len(have) - 1 - have[::-1].index(True)
-    unbroken = all(have[first : last + 1])
-    total = float(sum(present.values()))
-    first_s, last_s = _day(order[first]), _day(order[last])
-    if unbroken and last == len(have) - 1 and first > 0:
-        return VolumeEvidence(
-            market.pair,
-            LISTED_IN_SPAN,
-            total,
-            len(present),
-            first_s,
-            last_s,
-            missing,
-            f"no bar before {first_s}",
-            answer.measure,
-            shas,
-        )
-    if unbroken and last < len(have) - 1 and market.trading is False:
-        return VolumeEvidence(
-            market.pair,
-            STOPPED_IN_SPAN,
-            total,
-            len(present),
-            first_s,
-            last_s,
-            missing,
-            f"no bar after {last_s}; the exchange " f"lists it as {market.status}",
-            answer.measure,
-            shas,
-        )
-    inner = [
-        _day(t)
-        for t, h in zip(order[first : last + 1], have[first : last + 1])
-        if not h
+    gaps = [_day(t) for t in inside if t not in present]
+    if gaps:
+        if start_day is None and end_day is None:
+            why = (
+                f"no bar on {len(missing)} of the 30 days, and the exchange states no "
+                "trading start or end that accounts for them"
+            )
+        else:
+            why = (
+                f"no bar on {len(gaps)} day(s) inside the trading period the exchange "
+                f"states{stated}"
+            )
+        return refuse(INCOMPLETE, why)
+    cut_start = start_day is not None and start_day > order[0]
+    cut_end = end_day is not None and end_day < order[-1]
+    if cut_start and cut_end:
+        status = LISTED_AND_STOPPED
+    elif cut_start:
+        status = LISTED_IN_SPAN
+    else:
+        status = STOPPED_IN_SPAN
+    said = [
+        f"trading began {_time(start_ms)}" if cut_start else "",
+        f"trading ended {_time(end_ms)}" if cut_end else "",
     ]
-    why = (
-        f"no bar on {len(inner)} day(s) between its first and last bars"
-        if inner
-        else f"no bar after {last_s}, while the exchange lists it as "
-        f"{market.status or 'trading'}"
-    )
-    return VolumeEvidence(
-        market.pair,
-        INCOMPLETE,
-        None,
-        len(present),
+    return evidence(
+        status,
+        float(sum(present.values())),
+        n,
         first_s,
         last_s,
         missing,
-        why,
-        answer.measure,
+        "the exchange states "
+        + " and ".join(x for x in said if x)
+        + stated
+        + "; a bar on every day the stated period covers",
+        measure,
         shas,
     )
 
@@ -477,6 +524,9 @@ class Ranked:
     reason: str
     volume_status: str = COMPLETE
     volume_detail: str = ""
+    stated_start: Optional[str] = None
+    stated_end: Optional[str] = None
+    stated_by: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
@@ -527,6 +577,9 @@ def rank_markets(
             reason or "",
             ev.status,
             ev.detail,
+            ev.stated_start,
+            ev.stated_end,
+            ev.stated_by,
         )
         for i, (m, ev, reason) in enumerate(rows)
     ]

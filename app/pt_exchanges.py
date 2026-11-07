@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import coinbase_auth
 import requests
@@ -81,6 +81,16 @@ def _raw_answer(
     return RawAnswer(
         url, items, int(getattr(response, "status_code", 200)), response.content
     )
+
+
+def _stated_ms(value: Any) -> Optional[int]:
+    """A time (epoch ms) as an exchange's listing states it, or None when it states
+    none (absent, null, 0 or not a number)."""
+    try:
+        ms = int(value)
+    except (TypeError, ValueError):
+        return None
+    return ms if ms > 0 else None
 
 
 def _answer_json(answer: RawAnswer, who: str):
@@ -2852,7 +2862,9 @@ class KuCoinExchange(AbstractExchange):
     def spot_markets(self) -> Optional[MarketListing]:
         """Every symbol in KuCoin's public symbol list quoted in USDT, any status.
         KuCoin's answer has no leveraged-token mark, so none is set here (the ranking's
-        ticker rule still applies)."""
+        ticker rule still applies). Its ``tradingStartTime`` (ms), where given, is the
+        symbol's stated trading start; KuCoin states no end (a delisted symbol leaves
+        the list)."""
         answer = _raw_answer(self, f"{self.base_url}/api/v2/symbols")
         data = _answer_json(answer, "KuCoin symbols")
         if str(data.get("code")) != "200000":
@@ -2863,6 +2875,7 @@ class KuCoinExchange(AbstractExchange):
                 continue
             base = str(info.get("baseCurrency") or "")
             trading = info.get("enableTrading")
+            start = _stated_ms(info.get("tradingStartTime"))
             markets.append(
                 ListedMarket(
                     pair=str(info.get("symbol") or ""),
@@ -2871,6 +2884,8 @@ class KuCoinExchange(AbstractExchange):
                     quote="USDT",
                     status="enabled" if trading else "disabled",
                     trading=bool(trading) if trading is not None else None,
+                    trading_start_ms=start,
+                    history_stated_by="tradingStartTime" if start is not None else "",
                 )
             )
         return MarketListing("kucoin", "USDT", tuple(markets), (answer,))

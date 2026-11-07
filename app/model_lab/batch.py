@@ -46,9 +46,18 @@ half of R1's median; otherwise "No better than random entries".
 earlier looks and those that cover any of its lockbox (``lockbox_seen``). A contestant
 with any is never given "Beats random entries".
 
+**Amendment 1.** A batch file records ``spec_version`` (the version its batch was
+declared under: "1" for batch 1, "1.1" otherwise), ``declared`` (``catalogue.DECLARED``)
+and ``libraries``; a batch with a trained contestant is refused when scikit-learn's
+version has changed. A trial line carries ``kind`` ("trading" here; a line without one is
+"trading"). The draws are also reported as 10 runs of consecutive draws (``runs.json``),
+which changes no p-value. Trained contestants' probabilities are saved apart
+(``probabilities/<key>.npz``); the placebo's variants 2 to 5 are fitted for them only.
+None of this changes ``results.json`` for a contestant that existed before.
+
 **Files.** Under ``<data dir>/model_lab`` (``pt_paths.data_dir``): ``trials.jsonl``, one
 line per trial scored, and ``batches/<id>/`` with ``batch.json``, ``status.json``,
-``results.json`` and ``report.md``.
+``results.json``, ``runs.json``, ``report.md`` and ``probabilities/``.
 """
 
 from __future__ import annotations
@@ -112,7 +121,10 @@ VERDICTS = {
     "worse": "Worse than random entries",
     "no_entries": "Made no entries",
     "reference": "Reference only, not tested",
+    "forecast_only": "Forecast scores only, not tested here",
 }
+TRIAL_KINDS = ("trading", "forecast", "decision", "calibration", "sizing")
+RUNS = 10  # amendment 1: the draws are also reported as 10 runs
 
 
 class BatchError(RuntimeError):
@@ -231,17 +243,49 @@ def batch_ids() -> List[str]:
 
 def trial_count() -> int:
     """The number of distinct trials logged."""
-    seen = set()
+    return sum(trial_counts().values())
+
+
+def trial_counts() -> Dict[str, int]:
+    """The number of distinct trials logged, by kind (amendment 1): a line without a
+    ``kind`` is a "trading" trial."""
+    seen: Dict[str, set] = {}
     try:
         with open(trials_path(), "r", encoding="utf-8") as f:
             for line in f:
                 try:
-                    seen.add(json.loads(line)["trial"])
-                except (ValueError, KeyError, TypeError):
+                    entry = json.loads(line)
+                    kind = entry.get("kind") or "trading"
+                    seen.setdefault(kind, set()).add(entry["trial"])
+                except (ValueError, KeyError, TypeError, AttributeError):
                     continue
     except OSError:
-        return 0
-    return len(seen)
+        return {}
+    return {kind: len(trials) for kind, trials in seen.items()}
+
+
+def log_trial(line: Mapping[str, Any]) -> None:
+    """Log one scored analysis as a trial (amendment 1): FDS-SIG-004's forecast,
+    decision, calibration and sizing analyses use this too."""
+    kind = line.get("kind") or "trading"
+    if kind not in TRIAL_KINDS:
+        raise ValueError(f"unknown kind of trial {kind!r}")
+    _log_trial({**line, "kind": kind})
+
+
+def libraries() -> Dict[str, Optional[str]]:
+    """The versions of the libraries a batch fits with."""
+    out: Dict[str, Optional[str]] = {}
+    for name, module in (
+        ("numpy", "numpy"),
+        ("pandas", "pandas"),
+        ("scikit-learn", "sklearn"),
+    ):
+        try:
+            out[name] = __import__(module).__version__
+        except ImportError:
+            out[name] = None
+    return out
 
 
 def _log_trial(line: Dict[str, Any]) -> None:
@@ -300,10 +344,23 @@ def freeze(
     why: Optional[Mapping[str, str]] = None,
     status_of: Optional[Callable[[str], Optional[str]]] = None,
     now=None,
+    declared: Optional[str] = None,
 ) -> str:
     """Freeze a batch and save it; its id. ``fees`` is a mapping or a function from a
     coin to its ``entry_gate.Fees`` (default ``entry_gate.trading_fees``); ``why`` says
-    why each coin is in it; ``end`` defaults to the last closed hour."""
+    why each coin is in it; ``end`` defaults to the last closed hour. ``declared`` names
+    a declared batch (``catalogue.DECLARED``): its contestants must be exactly that
+    batch's, and its spec version is recorded (amendment 1)."""
+    if declared is not None:
+        if declared not in catalogue.DECLARED:
+            raise BatchError(f"no declared batch {declared!r}")
+        version, members = catalogue.DECLARED[declared]
+        if list(contestants) != list(members):
+            raise BatchError(
+                f"batch {declared}'s contestants are declared: " + ", ".join(members)
+            )
+    else:
+        version = catalogue.SPEC_VERSION
     coins = [str(c).upper() for c in coins]
     if not coins:
         raise BatchError("a batch needs at least one coin")
@@ -394,6 +451,9 @@ def freeze(
             "cache_dir": cache_dir,
             "offline": bool(offline),
             "code": code_hashes(),
+            "declared": declared,
+            "spec_version": version,
+            "libraries": libraries(),
         }
     )
     _write_json(os.path.join(batch_dir(batch_id), "batch.json"), record)
@@ -523,11 +583,22 @@ def run(
             f"batch {batch_id}: the code it runs has changed since it was frozen; "
             "freeze a new batch"
         )
+    frozen_libraries = record.get("libraries")
+    trained = any(c.get("family") in ("linear", "trees") for c in record["contestants"])
+    if (
+        frozen_libraries
+        and trained
+        and frozen_libraries.get("scikit-learn") != libraries().get("scikit-learn")
+    ):
+        raise BatchError(
+            f"batch {batch_id}: scikit-learn has changed since it was frozen; freeze a "
+            "new batch"
+        )
     started = time.time()
     seconds: Dict[str, float] = {}
     write_status(batch_id, "running", started_at=iso(int(started)))
     try:
-        results = _run(record, progress, stop, manager, seconds)
+        results, runs = _run(record, progress, stop, manager, seconds)
     except Stopped:
         write_status(
             batch_id,
@@ -545,7 +616,9 @@ def run(
         raise
     folder = batch_dir(batch_id)
     _write_json(os.path.join(folder, "results.json"), results)
-    _write_text(os.path.join(folder, "report.md"), report(record, results))
+    if runs:
+        _write_json(os.path.join(folder, "runs.json"), runs)
+    _write_text(os.path.join(folder, "report.md"), report(record, results, runs))
     write_status(
         batch_id,
         "done",
@@ -605,6 +678,7 @@ def _run(record, progress, stop, manager, seconds) -> Dict[str, Any]:
         c: make_stream(data.series[c], cal, full[c].first_open_s) for c in coins
     }
     fees = {c: entry_gate.Fees.from_dict(record["fees"][c]) for c in coins}
+    data.fees = dict(fees)  # the trained contestants' targets and pooled coins
 
     t0 = time.time()
     tables: Dict[str, TradeTable] = {}
@@ -624,12 +698,28 @@ def _run(record, progress, stop, manager, seconds) -> Dict[str, Any]:
     k = len(tested)
     decisions: Dict[str, Dict[str, Decisions]] = {}
     out: Dict[str, Dict[str, Any]] = {}
+    runs: Dict[str, Any] = {}
     for n, contestant in enumerate(contestants):
         t0 = time.time()
         decisions[contestant.key] = decide(
             contestant, data, cal, streams, progress, stop
         )
         _timed(seconds, "fits" if contestant.trained else "rules", t0)
+        frozen = next(c for c in record["contestants"] if c["key"] == contestant.key)
+        if getattr(contestant, "forecast_only", False):
+            # the placebo's variants 2 to 5: fitted for their probabilities only
+            d = decisions[contestant.key]
+            out[contestant.key] = {
+                **contestant.to_dict(),
+                "verdict": "forecast_only",
+                "verdict_text": verdict_text("forecast_only"),
+                "fits": {c: d[c].fits for c in sorted(d) if d[c].fits},
+                "looks": frozen["looks"],
+                "lockbox_seen": frozen["lockbox_seen"],
+            }
+            if progress is not None:
+                progress("contestants", n + 1, len(contestants))
+            continue
         t0 = time.time()
         out[contestant.key] = _score(
             contestant,
@@ -647,14 +737,17 @@ def _run(record, progress, stop, manager, seconds) -> Dict[str, Any]:
             stop,
         )
         _timed(seconds, "draws", t0)
-        frozen = next(c for c in record["contestants"] if c["key"] == contestant.key)
+        split = out[contestant.key].pop("_runs", None)
+        if split:
+            runs[contestant.key] = split
         out[contestant.key]["looks"] = frozen["looks"]
         out[contestant.key]["lockbox_seen"] = frozen["lockbox_seen"]
         if contestant.tested:
             r = out[contestant.key]
-            _log_trial(
+            log_trial(
                 {
                     "trial": f"{batch_id}/{contestant.key}",
+                    "kind": "trading",
                     "batch": batch_id,
                     "batch_sha256": record["sha256"],
                     "contestant": contestant.key,
@@ -674,7 +767,7 @@ def _run(record, progress, stop, manager, seconds) -> Dict[str, Any]:
     t0 = time.time()
     batch = _judge(contestants, decisions, out, tables, streams, rule, cal)
     _timed(seconds, "judge", t0)
-    return {
+    results = {
         "batch": batch_id,
         "batch_sha256": record["sha256"],
         "k": k,
@@ -689,6 +782,74 @@ def _run(record, progress, stop, manager, seconds) -> Dict[str, Any]:
             }
             for c in coins
         },
+    }
+    saved = save_probabilities(batch_id, decisions, streams)
+    if saved:
+        results["probabilities"] = saved
+    return results, runs
+
+
+def save_probabilities(batch_id: str, decisions, streams) -> List[str]:
+    """Each trained contestant's probabilities per stream hour (amendment 1), for
+    FDS-SIG-004's forecast scores: ``probabilities/<key>.npz`` in the batch's folder,
+    with ``<coin>__close_s`` and ``<coin>__p`` for every coin. The contestants saved."""
+    import numpy as np
+
+    saved = []
+    folder = os.path.join(batch_dir(batch_id), "probabilities")
+    for key, by_coin in decisions.items():
+        if not any(d.probs is not None for d in by_coin.values()):
+            continue
+        arrays = {}
+        for coin, d in sorted(by_coin.items()):
+            probs = d.probs if d.probs is not None else np.full(len(d.values), np.nan)
+            arrays[f"{coin}__close_s"] = np.asarray(
+                streams[coin].close_s, dtype=np.int64
+            )
+            arrays[f"{coin}__p"] = np.asarray(probs, dtype=float)
+        os.makedirs(folder, exist_ok=True)
+        np.savez_compressed(os.path.join(folder, f"{key}.npz"), **arrays)
+        saved.append(key)
+    return saved
+
+
+def read_probabilities(batch_id: str, key: str) -> Dict[str, Tuple[Any, Any]]:
+    """A contestant's saved probabilities: coin -> (close times, probabilities)."""
+    import numpy as np
+
+    path = os.path.join(batch_dir(batch_id), "probabilities", f"{key}.npz")
+    with np.load(path) as z:
+        coins = sorted({name.split("__")[0] for name in z.files})
+        return {c: (z[f"{c}__close_s"], z[f"{c}__p"]) for c in coins}
+
+
+def ten_runs(b: Optional[entry_gate.Baseline], value: Optional[float]):
+    """The baseline's draws as 10 runs of consecutive draws (amendment 1): each run's
+    p, and the pooled p, which is the p-value from all of them. A draw with no score is
+    left out, as in every baseline."""
+    import numpy as np
+
+    if b is None or value is None:
+        return None
+    values = list(b.values)
+    parts = np.array_split(np.asarray(values, dtype=float), RUNS)
+    rows = []
+    exceed = 0
+    for part in parts:
+        count = int(np.sum(part >= value))
+        exceed += count
+        rows.append(
+            {
+                "draws": int(len(part)),
+                "exceed": count,
+                "p": (1 + count) / (len(part) + 1),
+            }
+        )
+    ps = [r["p"] for r in rows]
+    return {
+        "runs": rows,
+        "pooled_p": (1 + exceed) / (len(values) + 1),
+        "spread": max(ps) - min(ps),
     }
 
 
@@ -780,6 +941,7 @@ def _score(
         else None
     )
     too_few = edge is None or s1 is None or edge > rule["too_few"] * abs(s1["median"])
+    result["_runs"] = {"r1": ten_runs(r1, value), "r2": ten_runs(r2, value2)}
     result.update(
         {
             "r1": s1,
@@ -923,13 +1085,22 @@ def _num(value: Optional[float], digits: int = 3) -> str:
     return "n/a" if value is None else f"{value:.{digits}f}"
 
 
-def report(record: Mapping[str, Any], results: Mapping[str, Any]) -> str:
+def report(
+    record: Mapping[str, Any],
+    results: Mapping[str, Any],
+    runs: Optional[Mapping[str, Any]] = None,
+) -> str:
     """The batch's report, in Markdown: facts only."""
     cal = record["calendar"]
+    runs = runs or {}
+    declared = record.get("declared")
     lines = [
         f"# Model lab batch {record['id']}",
         "",
         f"- Frozen {record['frozen_at']}; batch file SHA-256 `{record['sha256']}`.",
+        f"- Spec version {record.get('spec_version', '1')}"
+        + (f"; declared as {declared}" if declared else "")
+        + ".",
         f"- Window {cal['start']} to {cal['end']}; {len(cal['folds'])} folds of "
         f"{cal['fold_months']} months from {cal['folds'][0][0]} to {cal['lockbox'][0]}; "
         f"the last {cal['lockbox_months']} months ({cal['lockbox'][0]} to "
@@ -968,6 +1139,12 @@ def report(record: Mapping[str, Any], results: Mapping[str, Any]) -> str:
     ]
     for key in results["order"]:
         r = results["contestants"][key]
+        if r.get("verdict") == "forecast_only":
+            lines.append(
+                f"| {r['description']} (`{key}`) | - | - | - | - | - | - | - | "
+                f"{r['verdict_text']} | - | - | - |"
+            )
+            continue
         r1, r2 = r.get("r1"), r.get("r2")
         lines.append(
             f"| {r['description']} (`{key}`) | {r['score']['trades']} | "
@@ -983,6 +1160,22 @@ def report(record: Mapping[str, Any], results: Mapping[str, Any]) -> str:
         lines += ["", f"### {r['description']} (`{key}`)", ""]
         lines.append("Parameters: " + json.dumps(r["params"], sort_keys=True) + ".")
         lines.append("")
+        if r.get("verdict") == "forecast_only":
+            lines.append(
+                "- Fitted for its probabilities only, which are saved with the batch; "
+                "its trades are not scored and it is not one of the K."
+            )
+            continue
+        split = runs.get(key) or {}
+        for name in ("r1", "r2"):
+            s = split.get(name)
+            if s:
+                ps = [x["p"] for x in s["runs"]]
+                lines.append(
+                    f"- {name.upper()} as {len(ps)} runs of "
+                    f"{s['runs'][0]['draws']} draws: p from {min(ps):.4f} to "
+                    f"{max(ps):.4f}; pooled {s['pooled_p']:.4f}."
+                )
         lines.append("| Coin | Joined | Trades | Return per day held | Total profit |")
         lines.append("|---|---|---|---|---|")
         for coin, c in sorted(r["coins"].items()):

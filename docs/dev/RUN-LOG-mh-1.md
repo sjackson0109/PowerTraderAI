@@ -129,3 +129,97 @@ The phase B timing run (2021-01-01 to 2025-05-06, walk-forward only) is recorded
 No substantive Copilot review was received on #225 or #226: GitHub reported insufficient review quota.
 
 **Full suites after the review:** #226 on its own, 2635 passed, 13 skipped, 0 failed; #227 with everything, 2663 passed, 13 skipped, 0 failed.
+
+## 2026-11-07: phase C, the trained contestants, as amended by amendment 1
+
+**Authority.** The owner approved FDS-SIG-004 revision 3 (`146ec05`), D1 to D18 and its Appendix A, and authorised phase C on 2026-11-07. Amendment 1 is PR #230 (docs only).
+
+**Branch** `feat/mh-c-trained-contestants`, stacked on `docs/fds-mh-001-amendment-1` (#230).
+
+**New:**
+- `model_lab/features.py`: the 26 features, the blocks P, v1, v2 and V, the placebo's lag and PV-1's common rows.
+- `model_lab/targets.py`: T1, T2, the purge and uniqueness weights.
+- `contestants.py`: batch 1's six trained contestants, PV-1's three and the placebo's variants 2 to 5.
+- `catalogue.py`: explicit `BATCH_1`, `BATCH_PV_1` and `DECLARED`, and the look at v2.
+- `batch.py`: `declared`, `spec_version` and `libraries` in the batch file; trial kinds; probabilities; the 10-run report.
+- `app/requirements.txt`: `scikit-learn>=1.5`.
+
+**Not run:** batch 1 (phase E) and PV-1 (FDS-SIG-004 §8.2, S6). Phase C builds and tests the contestants only.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| The 50-day average (§5.5) | The mean of the last 1,200 hourly closes. The 24-hour, 7-, 30- and 50-day averages all use hourly closes | §5.5 lists them together; FDS-SIG-004 §13 item 3 left the choice to phase C. It needs 1,200 bars, within FDS-SIG-004's 1,224 |
+| Realised volatility | The root mean square of the hourly log returns in the window | Scale-free and has no mean to estimate. Its ratio and BTC's use the same definition |
+| Rolling windows | At least 90% of the window's hours present | A gap of a few hours keeps the feature. A long run of missing hours does not |
+| v1's 30 days | The 30 completed UTC days ending with the last completed day (as the daily rules read days). A missing hour counts as zero volume (FDS-SIG-004 §5.2.1) | So v1 never reads the day still in progress. Its warm-up is 719 to 743 hours, depending on the hour the series starts |
+| A log of 0 | Missing | v2 for an hour with zero volume is missing, not minus infinity |
+| A flat bar (H = L) | Body and both wicks 0 | A share of a zero range is otherwise undefined |
+| An invalid bar | A missing hour for every feature (FDS-SIG-004 §5.2) | The same rule as the liquidity block's |
+| T1's barriers | `model_gate.replay`'s own arithmetic: average cost C (1 + slippage) / (1 − fee); the profit line `pm_start_pct_no_dca` above it, the DCA level `dca_levels[0]` below it | "As the trader computes it" (§5.5) |
+| T1 unresolved | When the label's 336 hours are not all on the grid and no barrier was hit | Neither a win nor a loss is known yet |
+| T2 | `model_gate.replay` on the next 720 hours' closes. A trade still open is sold at that close, its exit fee included. Unresolved when the window runs past the grid before the trade closes | §5.5's "marked at that close", with the replay's own exit accounting |
+| Uniqueness | Per coin, among the fit's own training rows, each label spanning from its hour to its barrier hit or exit (or t + H) | López de Prado's average uniqueness, on the rows that are weighted together |
+| Standardisation | The unweighted mean and standard deviation of the training rows. A constant feature is left unscaled | "Standardised on training rows" (§7) |
+| Threshold | The unweighted (1 − q) quantile of the scores the fit gave its own training rows. An entry at or above it | "The top q of the scores it gave its own training rows" (§5.5) |
+| Trees' seed | `random_state` = the batch's fits seed, 0 | §7's "random_state 0" and the batch's "fits from 0" |
+| A fold with no rows, or with T1 rows of one class | No fit: every hour of that fold undecided | Nothing can be learned, and nothing is guessed |
+| PV-1's join | The first decided hour, its first common row (§7a) | Batch 1's contestants keep §5.4's fold-based join, so batch 1 is unchanged |
+| The 10 runs | Consecutive scored draws, split into 10. A draw with no score is left out, as in every baseline, so the runs follow the scored draws | The pooled p is exactly the batch's p-value either way (a test) |
+| Probabilities | `probabilities/<key>.npz` in the batch's folder, outside `results.json` | So `results.json` is unchanged for every contestant that existed before |
+| scikit-learn's version | Recorded with numpy's and pandas'. A batch with a trained contestant is refused when it has changed | The same batch on the same candles gives the same results only with the same library |
+
+### Batch 1 is unchanged: the byte-identity check
+
+The two phase B fixture batches were run with `main`'s code (the amendment branch, `e633db9`, whose code is `e0d837a`'s) and again with phase C's code:
+- the rules-only batch (BTC and ETH, 420 days, 200 draws);
+- the pattern batch (BTC, 150 days, `rule.sma20` and `pattern`, 50 draws).
+
+Each run's `results.json` was taken without the batch's own id and SHA-256. Those two fields identify the batch file, which records the code's hashes, so they differ whenever the code does.
+
+| Code | SHA-256 of the two batches' results |
+|---|---|
+| `main` (before amendment 1) | `fc94ee050fe6da6b0558eb67a1e9c87aa4ffcf77bd2c7aefbffe832d2a5478d0` |
+| phase C | `fc94ee050fe6da6b0558eb67a1e9c87aa4ffcf77bd2c7aefbffe832d2a5478d0` |
+
+**Identical, byte for byte.**
+- The `main` results are committed as `tests/fixtures/model_lab_phase_b_golden.json`.
+- `test_the_rules_and_the_pattern_model_give_the_results_they_gave_before` compares against that file on every run. Integers, strings and structure must match exactly; floats must match to a relative 1e-9.
+- The tolerance is there because CI runs on another platform, where the last bits of a float can differ.
+
+### Tests
+
+`tests/test_model_lab_phase_c.py`, 23 tests (no network, fixture candles), with `tests/test_model_lab.py`'s 28 unchanged.
+
+**Phase C's own tests:**
+- feature look-ahead around gaps;
+- T1 on four hand-built paths, plus an unresolved one;
+- T2 against the replay;
+- the purge;
+- uniqueness on a hand-checked case;
+- thresholds and fits unchanged when every bar after the fold is corrupted;
+- a frozen fit's entries with its data cut at the hour.
+
+**Amendment 1's tests:**
+- `BATCH_1` against §7's list, also with an extra contestant in the catalogue;
+- byte identity (above);
+- trial kinds;
+- the placebo:
+  - encoded source hours: every value is its hour minus its lag, never later;
+  - the missing span at the start and after a gap longer than 24 hours;
+  - poisoning at the first common row and later;
+  - the declared lags;
+- identical row sets and probability hours across PV-1's seven;
+- the blocks' sizes, with no round-one candidate;
+- the 10-run report pooling exactly.
+
+**Also:**
+- a PV-1 batch end to end (K = 3; variants 2 to 5 forecast-only);
+- a batch with batch 1's trained contestants;
+- the scikit-learn refusal.
+
+### Backlog (non-critical, recorded for later)
+
+- **T2's labels replay every hour in Python.** Batch 1's real run (13 coins, about 5 years) needs about 600,000 replays. They are made once per run and cached; phase E should measure the time.
+- **`ModelFit` scores each fold's hours twice,** once for entries and once for probabilities.

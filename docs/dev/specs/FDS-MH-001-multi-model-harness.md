@@ -6,6 +6,7 @@
 **Recommended model:** Claude Opus 5.5, effort high, for phases A, B and C (statistics, look-ahead, the replay). Sonnet 5.5, effort high, for phase D (the window).
 **Run log:** `docs/dev/RUN-LOG-mh-1.md`.
 **Status:** draft for the owner's approval, 2026-11-06. On 2026-11-05 the owner agreed the scope: models only, with the strategy held fixed. On 2026-11-06 the owner asked for the harness to be written first and then built, as recommended (gate fix included, batch 1 as in §7). §10 lists the decisions with the recommended answers. On 2026-11-06 the owner set the lockbox to 18 months (D11), after phase B found that R2 cannot be drawn on 6 months.
+**Amendments:** amendment 1 (proposed in FDS-SIG-004 Appendix A; accepted by the owner on 2026-11-07). It names feature blocks (§5.5), adds probability outputs (§5.5), a report of repeated runs (§5.6), a look at a feature (§5.7), trial kinds, spec versions and explicit batch lists (§5.8), and batch PV-1 (§7a). Batch 1 (§7) and every trial logged before amendment 1 are unchanged.
 **Related:**
 - FDS-MDL: the pattern model and its single-split test.
 - PR #224: the entry gate.
@@ -153,6 +154,8 @@ class Fitted:
     # one value per hour: 1 = enter if flat, 0 = don't, -1 = undecided
 ```
 
+`Fitted` may also give `probabilities(coin, close_s)`: one probability of its target per hour, or `None` (amendment 1). A trained contestant saves them with its results, for FDS-SIG-004's forecast scores. Its entries are still decided only by `entries`, and no pass rule in this spec reads the probabilities.
+
 **Thresholds.** A trained contestant's threshold is part of its fit. It enters when its score is in the top q of the scores it gave its own training rows, where q is a fixed parameter. Nothing is chosen on held-out bars.
 
 **Targets.** Each trained contestant names one.
@@ -179,6 +182,14 @@ class Fitted:
 
 That makes 26 features, with a longest look-back of 50 days (A-classic §2.2). The evidence for BTC-lead features is weak.
 
+**Feature blocks** (amendment 1). `features.py` names the features in blocks, and a contestant names the blocks it uses:
+- **P:** the 25 features above other than the volume feature.
+- **v1:** the volume feature above, log of 24-hour volume over the 30-day daily mean.
+- **v2:** log of the hour's volume over the mean volume of the same UTC hour on the 20 previous days. A zero mean makes it missing.
+- **V:** v1 and v2.
+
+Batch 1's pooled contestants use P and v1, which are the 26 features above, exactly as §7 declares them. Volume is base-asset volume, defined the same way on every connector. A placebo replaces V with the same coin's V from a fixed number of hours earlier (§7a). No block contains Chaikin Money Flow or BTC's one-hour return, the candidates of FDS-SIG-002's round one.
+
 ### 5.6 Random baselines, scores and tests
 
 **Scores.** These are computed over a contestant's trades on all coins and all folds.
@@ -203,6 +214,8 @@ That makes 26 features, with a longest look-back of 50 days (A-classic §2.2). T
   - A coin whose stream is shorter than 2D takes no part in R2. The report lists it. R2 is compared with the contestant's trades on the coins that do take part.
 - **Draws.** There are B = 10,000 draws of each baseline, seeded `seed + b`. In draw b, R2 uses the same offset for every contestant.
   - Draws use only `random()`, as the gate's do, so a seed repeats exactly across Python versions.
+
+**Runs** (amendment 1). Every batch's B = 10,000 draws, seeded `seed + b`, are also reported as 10 runs of 1,000 consecutive draws: run r is draws 1,000 r to 1,000 r + 999. Each run's p is shown beside the p-value, which is still computed from all 10,000. This changes no draw and no p-value, batch 1's included.
 
 **p-values.** p₁ = (1 + the number of R1 draws scoring at least the contestant's score) / (B + 1) (Phipson & Smyth 2010). p₂ is computed the same way for R2. A contestant's p is the larger of the two, because it must beat both.
 - When no coin's stream is long enough for R2, p₂ = 1.
@@ -254,6 +267,7 @@ That makes 26 features, with a longest look-back of 50 days (A-classic §2.2). T
 
     With batch 1's lockbox (from 2025-05-06), its final check cannot be unseen evidence for it.
   - **The seven rules and the pattern model:** the phase B timing run (2021-01-01 to 2025-05-06), which read the walk-forward only. Its 8 trials count in phase E's report.
+  - **A look at a feature** (amendment 1). When a study looked at how a feature relates to trade outcomes, the look is recorded for every contestant that uses the feature, with the months and coins it covered. The volume research (2026-11-05) looked at v2, as `rv_hod20`, against STRAT-001's trades on 10 coins from 2023-11-06 to 2026-11-05. It is recorded for batch PV-1's `pv.linear.t1.PV.q50` and `pv.linear.t1.PVp.q50`. None of the research's measures is v1, and it looked at no batch 1 contestant's results, so batch 1 gets no new look; its report lists the volume research as related work.
 
 ### 5.8 Batches, the trial log and results
 
@@ -269,6 +283,9 @@ That makes 26 features, with a longest look-back of 50 days (A-classic §2.2). T
   - the file's own SHA-256.
 - **Refusals.** A batch whose file, code or candles have changed since it was frozen is refused.
 - **Trial log:** `<data dir>/model_lab/trials.jsonl` (`pt_paths.data_dir()`), one line per trial. A trial is logged as soon as it is scored, so a stopped batch's scored trials stay counted. The window shows the count of distinct trials.
+- **Kinds of trial** (amendment 1). A trial line may carry `kind`: "trading" for a contestant's trades scored against R1 and R2, or "forecast", "decision", "calibration" or "sizing" for FDS-SIG-004's analyses. A line without `kind` is "trading". The window counts distinct trials of each kind.
+- **Spec version** (amendment 1). A batch file records `spec_version`, the version its batch was declared under: "1" for batch 1 (declared in §7 on 2026-11-06), "1.1" for a batch declared by amendment 1 or later. A batch is run by the rules of its own version, whenever it is frozen.
+- **Batch membership** (amendment 1). Each batch's contestants are an explicit list in `catalogue.py` (`BATCH_1`, `BATCH_PV_1`). Adding a contestant to the catalogue never adds it to a declared batch.
 - **Results:** `<data dir>/model_lab/batches/<id>/`, holding `batch.json`, `results.json` and `report.md`.
 - **Deterministic.** The same batch on the same cached candles gives the same results.
 - **Running.** The harness runs off the Tk thread, as "Check the models in use…" does, and can be stopped. A stopped batch keeps its frozen record and is marked as stopped.
@@ -341,6 +358,8 @@ The trainer's per-coin gate keeps its place and its Settings fields, and changes
 
 K = 14.
 
+Amendment 1 leaves this batch as declared: its contestants, K, seeds, draws, fold dates, lockbox and pass rule.
+
 **Trees settings.** scikit-learn's `HistGradientBoostingClassifier` (T1) or `HistGradientBoostingRegressor` (T2), with:
 - learning rate 0.05 and 300 iterations;
 - 15 leaves and at least 200 rows a leaf;
@@ -361,6 +380,38 @@ Under D6, these histogram trees are used instead of LightGBM: it is the same met
 - Chronos-2 forecasts as features (B-deep).
 
 They need PyTorch, which is a large install.
+
+## 7a. Batch PV-1 (amendment 1; declared here, before any result)
+
+The price-only and price-plus-volume pair for FDS-SIG-004's Q1, with a placebo. It changes nothing in batch 1.
+
+- **Coins:** batch 1's 13.
+- **Window:** from 2020-01-01 00:00 UTC, or each series' first bar if later. Fold 1 starts on 2021-01-01, folds are 3 months on batch 1's dates, and the walk-forward ends at 2025-05-06 00:00 UTC.
+- **No lockbox is opened.** No bar from 2025-05-06 on is scored by this batch. Its final check is FDS-SIG-004's registered forward window, so its best verdict here is "Passed; final check not run".
+- **Trade rules and fees:** as batch 1's (§7): the trader's defaults with neural DCA off, and 0.50% plus 0.05% slippage.
+- **Target and model:** T1 (§5.5). Logistic regression with an L2 penalty, C = 1, features standardised on training rows; entries at the top 50%. Each fit saves its probabilities (§5.5).
+- **Seeds:** R1 from 500000, R2 from 600000, fits from 0. The placebo's lags: for j = 1 to 5, with r = `random.Random(700000 + j)`, first a_j = `int(10 * r.random())`, then b_j = `1 + int(23 * r.random())`.
+- **The placebo, a lag.**
+  - At decision hour t of coin c, Ṽ_j(c, t) = V(c, t − δ_j): the same coin's V block as computed at hour t − δ_j.
+  - δ_j = 3,840 + 24 a_j + b_j hours. That is 160 to 170 days, at least D (§5.6), and never a whole number of days.
+  - The seeds give δ_1 to δ_5 = 3,930, 4,076, 3,850, 4,062 and 3,857 hours.
+  - It uses only bars that closed by hour t − δ_j. Nothing is moved forward, and nothing wraps. So it never reads a bar after its own hour, and none from 2025-05-06 on.
+- **Missing history.** Ṽ_j(c, t) exists only when hour t − δ_j is in the same series as t (§5.2: after the last gap longer than 24 hours) and V exists at that hour. Otherwise it is missing. A missing value is never filled in, carried forward, or taken from another coin or time.
+- **Common rows.**
+  - The three contestants and placebo variants 2 to 5 are fitted and scored only at the hours where P, V and every Ṽ_j exist. Elsewhere they are undecided (−1), so every comparison in this batch uses the same hours.
+  - Each fold's fit uses only common rows before the fold, purged as §5.4 sets out.
+  - A coin joins once it has common rows, about 201 days after its series starts.
+
+| # | Key | Blocks | Tested here |
+|---|---|---|---|
+| 1 | `pv.linear.t1.P.q50` | P | yes |
+| 2 | `pv.linear.t1.PV.q50` | P + V | yes |
+| 3 | `pv.linear.t1.PVp.q50` | P + Ṽ_1 | yes |
+| — | placebo variants 2 to 5 | P + Ṽ_2 to Ṽ_5 | forecast scores only, logged as "forecast" trials |
+
+K = 3. The Benjamini-Hochberg screen and Holm run over these 3, separately from batch 1. FDS-SIG-004 §6.5 lists every family.
+
+**Order.** PV-1 is frozen only after amendment 1's code is merged. It and batch 1 may run in either order: both are fully declared, and PV-1 opens no lockbox.
 
 ## 8. Phases (one PR each)
 
@@ -420,6 +471,26 @@ There is no command line for users (§2); tests drive the package.
 - the purge removes exactly the rows whose label crosses the fold;
 - thresholds come from training rows only: changing a held-out bar changes neither the fit nor the threshold.
 
+**Amendment 1 adds:**
+- `features.py`: the named blocks (§5.5) and the placebo's lag (§7a).
+- `contestants.py`: `Fitted.probabilities`, and PV-1's three contestants.
+- `catalogue.py`: `BATCH_1` as the explicit list of §7's keys, and `BATCH_PV_1`; the look of §5.7.
+- `batch.py`: `kind` and `spec_version`; saved probabilities; the report of 10 runs.
+
+**Amendment 1's tests:**
+- `BATCH_1` equals §7's 14 keys and the reference, in order, and adding a contestant to the catalogue leaves it unchanged;
+- on the phase B fixtures, the seven rules and the pattern model give byte-identical `results.json` before and after amendment 1's code;
+- a trial line without `kind` reads as "trading";
+- the placebo's timing:
+  - with each V value set to its own source hour, every Ṽ_j(c, t) equals t − δ_j;
+  - corrupting every bar after any hour t changes no placebo value at or before t, and no fit whose training rows end by t. The hours checked include each series' first common hour, the hours after a gap longer than 24 hours, and the first and last hours of every fold;
+  - Ṽ_j is missing for exactly the declared span at a series' start and after a long gap, and is never taken from the series' end or from another coin;
+- every δ_j lies from 3,841 to 4,079 hours and is not a multiple of 24, and the seeds reproduce δ_1 to δ_5 = 3,930, 4,076, 3,850, 4,062 and 3,857 hours;
+- the three contestants and the placebo variants use identical row sets in every fold;
+- phase B's look-ahead test (a decision from bars cut at an hour equals the decision from all bars) passes for `pv.linear.t1.PVp.q50`;
+- P has 25 features, P with v1 is batch 1's 26, and no block contains Chaikin Money Flow or BTC's one-hour return;
+- the 10-run report's runs pool to the batch's p-value exactly.
+
 ### Phase D — Settings > Training, "Compare models…" (§5.9)
 
 **Changes:** `model_lab_ui.py`, and the button in `pt_hub.py`. The work runs off the Tk thread.
@@ -468,6 +539,7 @@ There is no command line for users (§2); tests drive the package.
 | D9 | The report run | In a sandbox, on public candles, at 0.50%, with the default trade rules. The owner can repeat it in the app, with the account's rate and their own trade rules; if either differs, that is a different trial |
 | D10 | A winner | Not wired into trading by this spec. A passing contestant gets its own spec |
 | D11 | R2 on the lockbox (found in phase B) | **Decided by the owner, 2026-11-06: an 18-month lockbox**, so R1 and R2 are both drawn on it. (R2 needs a stream of at least 2D, 320 days; 6 months was too short. The alternative offered was R1 only.) |
+| D12 | Amendment 1 (FDS-SIG-004 Appendix A) | **Accepted by the owner, 2026-11-07.** Batch 1 is unchanged; batch PV-1 is added (§7a) |
 
 ## 11. Out of scope
 
@@ -484,6 +556,7 @@ There is no command line for users (§2); tests drive the package.
   - the §8 tests pass;
   - a batch run twice gives identical `results.json`;
   - no harness file names an exchange (`test_exchange_hosts_only_in_connectors.py` passes);
+  - amendment 1's tests (§8, phase C) pass, batch 1's byte-identity test included;
   - the full suite has 0 failures.
 - **Phase D:**
   - a screenshot of the window;

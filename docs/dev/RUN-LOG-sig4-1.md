@@ -113,6 +113,8 @@ The owner approved FDS-SIG-004 revision 3 (`146ec05`, PR #229), its decisions D1
 
 - §12 item 10's wording, as above.
 - `findings.calibration` refits a and b by Newton's method on every draw: about 10,000 fits a run of the analysis. It is fast enough at the development run's size; a closed-form weighted update would make it faster.
+- `model_lab.targets.t2` replays one trade for every hour on its next 720 hours, one `model_gate.replay` call each. That is the slowest part of building T2 labels. One pass over the hours would be faster, with the same labels.
+- `model_lab.contestants.ModelFit` scores a fold's hours twice for a T1 contestant: once for its entries, once for its probabilities. Scoring once would halve that time. The scores are identical.
 
 ## Phase C: the development run (2026-11-07)
 

@@ -148,7 +148,7 @@ Nothing below is decided in this PR; each item waits for the owner.
    - The two-sided MDE: 10 runs × 1,000 simulated rows, with the bootstrap taken at its B → ∞ limit inside that simulation only. The audit's own p-values always use the full bootstrap.
 7. **Settled by the evidence, recorded:** the block length's maximum lag stays at one month (§7.4). The false-pass study does not fail at the stated drift sizes, even for an exact one-month cycle.
 
-Decisions 8 to 12 come from the PR #228 review (below). The owner decided them on 2026-11-07 (FDS-SIG-001 §15.5), and the follow-up review's questions A1 to A7 are at the end.
+Decisions 8 to 12 come from the PR #228 review (below). The owner decided them on 2026-11-07 (FDS-SIG-001 §15.5), and the follow-up review's questions A1 to A7 are at the end. The owner decided A1 to A7 on 2026-11-07 (FDS-SIG-001 §15.6): see the final section.
 
 ## 2026-11-06: the PR #228 review (four findings)
 
@@ -495,6 +495,8 @@ FDS-SIG-001 §12.1 gives the PowerShell steps.
 
 ### Ambiguities for the owner
 
+*Decided by the owner on 2026-11-07 (FDS-SIG-001 §15.6): A1 deferred, A2 to A5 and A7 approved, A6 revised. See the final section below.*
+
 - **A1. Binance under the strict rule.**
   - **The problem.** A Binance ranking is refused for as long as Binance lists markets whose 30 days it cannot account for. Binance states no trading start or end. On the probe's day that meant 254 BREAK markets with no bar in the span, 3 with part of it, and 15 new listings.
   - **Unaffected:** the round ranks on KuCoin with the shipped Settings order (decision 1).
@@ -519,3 +521,88 @@ FDS-SIG-001 §12.1 gives the PowerShell steps.
 - **`tradingStartTime`** is validated only for recent listings. For 5 of 25 older symbols, the candle history begins after the stated day. That does not matter within a 30-day span.
 - **Re-deriving results** needs the code that produced them (the freeze tag or the fix commit). Package versions are recorded but not enforced: `verify` on another numpy or scipy could differ in the last digits, and would say so.
 - **A historical correction** found at the fetch, or later by `verify --refetch`, is reported and never resolved by the code. Accepting a corrected series is the owner's call.
+
+## 2026-11-07: the owner's final decisions A1 to A7, and merge preparation
+
+The owner accepted the implementation and the remediation in principle, and decided A1 to A7 (FDS-SIG-001 §15.6). The aim was to close the governance questions, not to expand the implementation, so A6 is the only code change. Round one is still not registered: no exchange is selected, no window is chosen, and no signal is added. PR #228 stays open for the owner's merge approval.
+
+### The decisions recorded
+
+| # | Owner's decision | Recorded in FDS-SIG-001 | Code |
+|---|---|---|---|
+| A1 | **Deferred.** No market is excluded solely for being inactive at the ranking fetch, and the strict rule stands. Binance cannot currently complete a ranking. A future specification may add a provider-neutral way to exclude markets demonstrably ineligible under the history rule, accounting for selection bias and keeping their evidence | §10.1, §15.6 | none: the strict rule is unchanged |
+| A2 | **Approved.** KuCoin's `tradingStartTime` is exchange-stated listing evidence, with its source and limitations recorded | §10.1, §15.6 | none: the time and its field are already kept (`56a8275`) |
+| A3 | **Approved.** A replacement may overlap an unexamined cancelled window, but evaluates only observations after its own registration | §11; §12, step 6; §15.6 | none: refusal 2 already applies to a replacement |
+| A4 | **Approved.** A replacement ranks afresh | §12, step 6; §15.6 | none: `draft` reads only the new round's own ranking |
+| A5 | **Approved.** A replacement takes the next available round number | §12, step 6; §12.1; §15.6 | none: a review check |
+| A6 | **Revised.** A confirmation round must not reuse previously evaluated observations. An unexamined cancelled window does not by itself bar an overlapping confirmation window | §8.3, §11, §15.6, §16 item 9 | `5ac6d03`, below |
+| A7 | **Approved.** Research outputs reach `main` without merging frozen code. The research commit, the freeze commit, the data hashes and the verification metadata are preserved | §12.1, step 5; §15.6 | none: documentation |
+
+**In §12.1, step 5 (A7):**
+- the results commit gets its own tag, `sig-round-N-results`, and the round's folder and report are checked out from that tag;
+- the round's folder carries the registration and freeze records, `data.json` with every hash, the snapshots, and `results.json` with its state (commits, registration SHA-256, Python and package versions);
+- the transfer commit's message records the research branch, the results and freeze commits, both tags, and the output of `verify` and `verify --refetch`;
+- the branch and tags are never deleted, rebased or moved, and branch clean-ups leave them alone.
+
+### A6: the one code change
+
+**Before** (`4f5017e`): `check_confirmation` refused a window that overlapped any window its caller passed. The spec said "any registered earlier window", cancelled ones included. Nothing told an unexamined cancelled window from an evaluated one.
+
+**Now** (`5ac6d03`):
+- **`round_windows(repo)`** lists every committed registration's window with its status:
+  - `results`, when the round has results;
+  - `registered`, when it is still to be evaluated;
+  - `cancelled before results`, only when its cancellation record is committed, unchanged, and has no results beside it. Anything else leaves the window barred, so it fails safe.
+- **`check_confirmation`** refuses a window that overlaps any listed window except a cancelled-before-results one. Aligned with A3, it also refuses a window that does not start after the confirmation's own registration commit, at the earliest start: §11's rule for every round. So the elapsed part of a cancelled window is never evaluated.
+
+**Tests** (`test_signal_audit_run.py`):
+- `test_a_confirmation_round_is_refused_when_anything_differs` takes the new arguments and is otherwise unchanged.
+- `test_a_confirmation_does_not_reuse_evaluated_observations` (new) sets up three rounds: round 1 with results, round 2 cancelled after its window started, and round 3 registered.
+  - **Allowed:** a confirmation inside round 2's remaining window.
+  - **Refused:** one starting in round 2's elapsed part or before its own registration, and one overlapping round 1 or round 3.
+- `test_only_a_committed_cancellation_before_results_frees_a_window` (new): a cancellation that changed since its commit, sits beside results or is not committed leaves the window barred. An uncommitted draft registration is not a round.
+- **Mutation check:** bar cancelled windows again (the old rule), or remove the registration-time rule, and the new test fails. With the code restored, all pass.
+
+### Item 4: what the PR contains
+
+Checked against `origin/main` (`0dfbc03`) with `git diff --name-status`:
+- **No registration.** There is no `docs/dev/sig-audit/round-*/` folder, so no ranking, registration, freeze, cancellation, data or results file.
+- **No trading change.** No file of the trader, the runner (`pt_thinker.py`), the trainer, the strategies or strategy engine, the hub, paper or live trading, orders or risk is changed.
+- **Outside `app/signal_audit/`,** the application changes are additive, in `pt_exchange_abstraction.py` and `pt_exchanges.py`:
+  - new data classes (`ListedMarket`, `MarketListing`, `RawAnswer`);
+  - read-only public-data methods (`spot_markets`, `daily_quote_volume`) on each connector.
+
+  The one line removed widens a `typing` import. Nothing outside the audit calls the new methods, and `test_the_audit_touches_no_trading_code` checks that no audit module imports a trading module.
+- **Everything else** is the specs, this run log, the audit script, and the study and probe scripts with their evidence.
+
+### Tests, before and after
+
+| Run | Before (`4f5017e`) | After (`5ac6d03`) |
+|---|---|---|
+| The signal-audit tests (`tests/test_signal_audit_*.py`, from `app/`) | 142 passed | **144 passed**: 2 new |
+| The full suite (`python -m pytest -q`, from `app/`, isolation guard on) | 2,805 passed, 13 skipped, 0 failed | **2,807 passed, 13 skipped, 0 failed**, in 18.9 min: the 2,805 before plus exactly the 2 new tests. The isolation guard reported no real folder touched |
+| Black, flake8 | clean | `black --check app/` clean; CI's `flake8 --select=E9,F63,F7,F82` over `app/` and over the repository clean; a full flake8 of the changed files clean |
+| CI on the pushed head | all passed | all passed on `8c366e9`: Code Quality, Security & Code Quality, Integration Tests, Notify Completion, Build & Integration Test, Security Scan, Unit Tests (3.11, 3.12) and Test Suite (3.10, 3.11). Deployment Readiness skipped, as on every PR |
+
+### Merge blockers
+
+None from the implementation. What remains before the owner merges:
+- **The owner's merge approval.** The PR is not merged automatically.
+- **The ruleset at merge time:**
+  - the branch is up to date with `main` (it contains `0dfbc03`; update it if `main` moves);
+  - the five required checks pass on the final head;
+  - every review thread is resolved. There are none.
+- **Copilot has reviewed no commit of this PR.** All four attempts (`6bd8ac5`, `c3297be`, `4f5017e`, `8c366e9`) stopped on insufficient quota. The ruleset does not require a Copilot review; the PR's reviews were the owner's independent reviews.
+
+### Before registration (not merge blockers)
+
+1. **Decisions 1 to 6** (above, under "Round one: not registered"):
+   - **1, the exchange.** With A1 deferred, a Binance ranking is refused for now, and Kraken serves only 720 bars. So the shipped Settings order ranks on KuCoin, unless the owner approves a stated Coinbase approximation (option a), which needs a §4 change;
+   - **2,** the window end;
+   - **3,** §15.3's nine defaults;
+   - **4,** the exclusion lists, including KuCoin's tokenized stocks;
+   - **5,** the ranking date;
+   - **6,** the seed and the MDE simulation.
+2. **Review checks the script does not enforce** (§15.6): A4's fresh ranking, A5's round number, A7's transfer, and a new round's or replacement's overlap with another round's window. Each could become a refusal in a later PR.
+3. **`verify` writes nothing.** Its outputs go into the transfer commit's message (A7). A committed verification record would be a small later change, needed only once a round has results.
+4. **A1's future method** waits for a later specification.

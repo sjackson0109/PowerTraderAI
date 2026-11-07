@@ -28,8 +28,19 @@ import time
 from typing import Any, Dict, List
 
 COINS = [
-    "BTC", "ETH", "XRP", "BNB", "DOGE", "SOL", "ZEC", "DASH", "HYPE",
-    "ADA", "AVAX", "LINK", "LTC",
+    "BTC",
+    "ETH",
+    "XRP",
+    "BNB",
+    "DOGE",
+    "SOL",
+    "ZEC",
+    "DASH",
+    "HYPE",
+    "ADA",
+    "AVAX",
+    "LINK",
+    "LTC",
 ]
 START = "2020-01-01T00:00:00Z"
 END = "2026-11-06T00:00:00Z"  # so that the lockbox, never read, starts on 2025-05-06
@@ -39,8 +50,16 @@ FEE = 0.005
 FEE_HIGH = 0.012
 ALLOWANCE = 0.0005
 SEEDS = {"r1": 500000, "r2": 600000, "fits": 0}
-TEST_SEEDS = {"f1": 810000, "f2": 820000, "q2": 830000, "q3": 840000, "f3": 850000,
-              "r3": 860000, "r3s": 870000, "rule": 880000}
+TEST_SEEDS = {
+    "f1": 810000,
+    "f2": 820000,
+    "q2": 830000,
+    "q3": 840000,
+    "f3": 850000,
+    "r3": 860000,
+    "r3s": 870000,
+    "rule": 880000,
+}
 ACCOUNTS = (10_000.0, 100.0)
 EXCHANGE = "coinbase"
 
@@ -56,7 +75,9 @@ def _setup(app: str) -> None:
 def _fees():
     import entry_gate
 
-    return {c: entry_gate.Fees(FEE, "taker", EXCHANGE, "account", ALLOWANCE) for c in COINS}
+    return {
+        c: entry_gate.Fees(FEE, "taker", EXCHANGE, "account", ALLOWANCE) for c in COINS
+    }
 
 
 def freeze() -> str:

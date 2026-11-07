@@ -188,7 +188,13 @@ def filters(rows, folds, fee: float, sigma_name: str):
     signal = np.array([t.signal_s for t in trades], dtype=np.int64)
     exit_s = np.array([t.exit_s for t in trades], dtype=np.int64)
     sigma = vol.sigma(np.array([r["var"][sigma_name] for r in rows]))
-    out = {"gross": gross, "label": label, "signal": signal, "exit": exit_s, "sigma": sigma}
+    out = {
+        "gross": gross,
+        "label": label,
+        "signal": signal,
+        "exit": exit_s,
+        "sigma": sigma,
+    }
     fold = np.full(len(rows), -1)
     for k, (a, b) in enumerate(folds):
         fold[(signal >= a) & (signal < b)] = k
@@ -214,7 +220,15 @@ def filters(rows, folds, fee: float, sigma_name: str):
         tercile[here] = tc
         for i, tt in zip(np.nonzero(here)[0], tc):
             win[i], loss[i] = pay.at(int(tt))
-    out.update({"sigma_ref": sref, "tercile": tercile, "win": win, "loss": loss, "tables": tables})
+    out.update(
+        {
+            "sigma_ref": sref,
+            "tercile": tercile,
+            "win": win,
+            "loss": loss,
+            "tables": tables,
+        }
+    )
     for name, key in (("F_P", "xp"), ("F_PV", "xv")):
         x = np.vstack([r[key] for r in rows])
         wf = meta.walk_forward(x, label, signal, exit_s, folds)
@@ -269,7 +283,16 @@ def r3_rpcd(opps, prices, costs, account, candidates, counts, seed, stratified=T
     coins = [o.coin for o in opps]
     values = []
     for run in range(bs.RUNS):
-        v = bl.r3(coins, candidates, counts, len(opps), seed, run, bs.DRAWS_PER_RUN, stratified)
+        v = bl.r3(
+            coins,
+            candidates,
+            counts,
+            len(opps),
+            seed,
+            run,
+            bs.DRAWS_PER_RUN,
+            stratified,
+        )
         values.append(replay(opps, prices, costs, account, veto=v).rpcd)
         log(f"R3 run {run + 1}/{bs.RUNS}")
     return np.vstack(values)
@@ -285,7 +308,9 @@ def r3s_drawdowns(opps, prices, costs, account, candidates, scales, missing, see
     for run in range(bs.RUNS):
         s = bl.r3s(coins, candidates, scales, len(opps), seed, run, bs.DRAWS_PER_RUN)
         veto = np.broadcast_to(missing, s.shape)
-        out.append(replay(opps, prices, costs, account, veto=veto, scale=s).max_drawdown)
+        out.append(
+            replay(opps, prices, costs, account, veto=veto, scale=s).max_drawdown
+        )
         log(f"R3s run {run + 1}/{bs.RUNS}")
     return np.vstack(out)
 
@@ -313,12 +338,18 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
         "batch": batch_id,
         "development": [first_s, last_s],
         "folds": len(folds),
-        "fees": {"deciding": cfg.FEE, "shown": cfg.FEE_HIGH, "allowance": cfg.ALLOWANCE},
+        "fees": {
+            "deciding": cfg.FEE,
+            "shown": cfg.FEE_HIGH,
+            "allowance": cfg.ALLOWANCE,
+        },
     }
 
     log("series")
     series = load_series()
-    result["coins"] = {c: {"bars": len(s), "first": int(s.first_open_s)} for c, s in series.items()}
+    result["coins"] = {
+        c: {"bars": len(s), "first": int(s.first_open_s)} for c, s in series.items()
+    }
 
     # F1 ---------------------------------------------------------------------------------
     log("F1")
@@ -330,7 +361,15 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
     split = {}
     for name, m in (("before_look", ts < seen), ("seen", ts >= seen)):
         if m.any():
-            split[name] = fd.f1(y[m], p_price[m], p_volume[m], [p[m] for p in placebos], ts[m], cfg.TEST_SEEDS["f1"], k=5)["test"]
+            split[name] = fd.f1(
+                y[m],
+                p_price[m],
+                p_volume[m],
+                [p[m] for p in placebos],
+                ts[m],
+                cfg.TEST_SEEDS["f1"],
+                k=5,
+            )["test"]
     f1["by_exposure"] = split
     f1["by_coin"] = {
         c: float(
@@ -342,7 +381,15 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
         for c in sorted(set(cs.tolist()))
     }
     result["F1"] = f1
-    batch.log_trial({"trial": f"{batch_id}/F1", "kind": "forecast", "p": f1["test"]["p"], "theta": f1["test"]["theta"], "rows": f1["rows"]})
+    batch.log_trial(
+        {
+            "trial": f"{batch_id}/F1",
+            "kind": "forecast",
+            "p": f1["test"]["p"],
+            "theta": f1["test"]["theta"],
+            "rows": f1["rows"],
+        }
+    )
 
     # STRAT-001 ---------------------------------------------------------------------------
     log("STRAT-001 opportunities")
@@ -356,7 +403,7 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
     for fee in (cfg.FEE, cfg.FEE_HIGH):
         log(f"filters at {fee:.2%}")
         f = filters(rows, folds, fee, sigma_name)
-        dev = (f["fold"] >= 0)
+        dev = f["fold"] >= 0
         idx = np.nonzero(dev)[0]
         dev_rows = [rows[i] for i in idx]
         costs = Costs(fee, cfg.ALLOWANCE, {c: m for c, m in mins.items() if m})
@@ -374,7 +421,10 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
                 ("F_P", opps_p, f["F_P"]["veto"][idx]),
                 ("F_PV", opps_pv, f["F_PV"]["veto"][idx]),
             ):
-                paths[name] = (opps, replay(opps, prices, costs, acct, veto=veto[None, :], detail=True))
+                paths[name] = (
+                    opps,
+                    replay(opps, prices, costs, acct, veto=veto[None, :], detail=True),
+                )
             summary = {
                 name: {
                     "trades": int(pth.trades[0]),
@@ -396,7 +446,9 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
                 vetoed = [i for i, s in enumerate(pv.status) if s == "vetoed"]
                 counts = bl.veto_counts([o.coin for o in opps_v], cand, vetoed)
                 log(f"R3 at {fee:.2%}")
-                r3 = r3_rpcd(opps_v, prices, costs, acct, cand, counts, cfg.TEST_SEEDS["r3"])
+                r3 = r3_rpcd(
+                    opps_v, prices, costs, acct, cand, counts, cfg.TEST_SEEDS["r3"]
+                )
                 f2 = fd.f2(
                     path_trades(pv, opps_v),
                     path_trades(pp, _opps_p),
@@ -440,10 +492,27 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
                 sv = np.where(missing, 1.0, sv)
                 opps_all = as_opportunities(dev_rows, ~missing)
                 unscaled = replay(opps_all, prices, costs, acct, detail=True)
-                shrunk = replay(opps_all, prices, costs, acct, veto=missing[None, :], scale=sv[None, :], detail=True)
+                shrunk = replay(
+                    opps_all,
+                    prices,
+                    costs,
+                    acct,
+                    veto=missing[None, :],
+                    scale=sv[None, :],
+                    detail=True,
+                )
                 cand_s = [i for i in range(len(opps_all)) if not missing[i]]
                 log(f"R3s at {fee:.2%}")
-                mdds = r3s_drawdowns(opps_all, prices, costs, acct, cand_s, sv, missing, cfg.TEST_SEEDS["r3s"])
+                mdds = r3s_drawdowns(
+                    opps_all,
+                    prices,
+                    costs,
+                    acct,
+                    cand_s,
+                    sv,
+                    missing,
+                    cfg.TEST_SEEDS["r3s"],
+                )
                 entry["Q3"] = fd.shrink(
                     shrunk,
                     path_trades(unscaled, opps_all),
@@ -461,11 +530,25 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
                 rule_veto = before & np.isfinite(v2) & (v2 <= math.log(1.5))
                 opps_rule = [o for o, b in zip(opps_all, before) if b]
                 rv = rule_veto[before]
-                rp = replay(opps_rule, prices, costs, acct, veto=rv[None, :], detail=True)
+                rp = replay(
+                    opps_rule, prices, costs, acct, veto=rv[None, :], detail=True
+                )
                 cand_r = [i for i in rp.eligible()]
-                counts_r = bl.veto_counts([o.coin for o in opps_rule], cand_r, [i for i, s in enumerate(rp.status) if s == "vetoed"])
+                counts_r = bl.veto_counts(
+                    [o.coin for o in opps_rule],
+                    cand_r,
+                    [i for i, s in enumerate(rp.status) if s == "vetoed"],
+                )
                 log("R3 for the 1.5x rule")
-                r3_rule = r3_rpcd(opps_rule, prices, costs, acct, cand_r, counts_r, cfg.TEST_SEEDS["rule"])
+                r3_rule = r3_rpcd(
+                    opps_rule,
+                    prices,
+                    costs,
+                    acct,
+                    cand_r,
+                    counts_r,
+                    cfg.TEST_SEEDS["rule"],
+                )
                 entry["rule_1_5x"] = {
                     "opportunities": len(opps_rule),
                     "vetoed": int(rp.vetoed[0]),
@@ -499,7 +582,9 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
     pv = d["paths"]["F_PV"]
     verdicts = {
         "F1": fd.f1_line(f1, passes["F1"]),
-        "F2": fd.f2_line(d["F2"], passes["F2"], pv["net"], pv["trades"], d["F2"]["edge"]),
+        "F2": fd.f2_line(
+            d["F2"], passes["F2"], pv["net"], pv["trades"], d["F2"]["edge"]
+        ),
         "F3": fd.f3_line(d["F3"], passes["F3"], fd.f3_failed(d["F3"], holm["F3"])),
         "Q3": fd.shrink_line(d["Q3"], passes["Q3"]),
         "Q2": {
@@ -507,12 +592,23 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
             "miscalibrated": "Miscalibrated",
             "not_assessable": "Calibration not assessable",
         }[d["Q2"]["outcome"]]
-        + (" with skill above the base rate" if passes["Q2"] else "; no skill above the base rate shown"),
+        + (
+            " with skill above the base rate"
+            if passes["Q2"]
+            else "; no skill above the base rate shown"
+        ),
     }
     result["family"] = {"p": family, "holm": holm, "passes": passes}
     result["verdicts"] = verdicts
-    for name, kind in (("F2", "decision"), ("Q2", "calibration"), ("Q3", "sizing"), ("F3", "decision")):
-        batch.log_trial({"trial": f"{batch_id}/{name}", "kind": kind, "p": family[name]})
+    for name, kind in (
+        ("F2", "decision"),
+        ("Q2", "calibration"),
+        ("Q3", "sizing"),
+        ("F3", "decision"),
+    ):
+        batch.log_trial(
+            {"trial": f"{batch_id}/{name}", "kind": kind, "p": family[name]}
+        )
     with open(os.path.join(out_dir, "analysis.json"), "w", encoding="utf-8") as fh:
         json.dump(_plain(result), fh, indent=1, sort_keys=True)
     return result

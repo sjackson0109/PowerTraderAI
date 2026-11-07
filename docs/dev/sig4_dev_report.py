@@ -79,7 +79,10 @@ def main(argv):
     conds = {
         "F1": a["F1"]["conditions"],
         "F2": d["F2"]["conditions"],
-        "Q2": {"calibrated": d["Q2"]["outcome"] == "calibrated", "enough": d["Q2"]["enough"]},
+        "Q2": {
+            "calibrated": d["Q2"]["outcome"] == "calibrated",
+            "enough": d["Q2"]["enough"],
+        },
         "Q3": {"non_inferiority": d["Q3"]["non_inferiority"]["passes"]},
         "F3": {k: v for k, v in d["F3"]["requirements"].items() if k != "profit"},
     }
@@ -110,7 +113,9 @@ def main(argv):
         f"[{t['interval'][0]:+.6f}, {t['interval'][1]:+.6f}]; blocks of {t['block_days']} days "
         f"over {t['days']} days."
     )
-    w(f"- **Smallest detectable D̄** (at the Holm level, 80% power): {num(f1['smallest_detectable'], 6)}.")
+    w(
+        f"- **Smallest detectable D̄** (at the Holm level, 80% power): {num(f1['smallest_detectable'], 6)}."
+    )
     pl = f1["placebo"]
     w(
         f"- **Placebo condition** (mean of 5 lagged placebos minus PV): Ē = {pl['theta']:+.6f}, "
@@ -125,7 +130,10 @@ def main(argv):
         + ", ".join(f"{x:+.6f}" for x in f1["per_placebo"])
         + "."
     )
-    for name, label in (("before_look", "before 2023-11-06 (no recorded look)"), ("seen", "from 2023-11-06 (seen by the volume research)")):
+    for name, label in (
+        ("before_look", "before 2023-11-06 (no recorded look)"),
+        ("seen", "from 2023-11-06 (seen by the volume research)"),
+    ):
         if name in f1["by_exposure"]:
             e = f1["by_exposure"][name]
             w(f"- **D̄ {label}:** {e['theta']:+.6f}, p = {num(e['p'])}.")
@@ -172,14 +180,21 @@ def main(argv):
         + ", ".join(f"{c} {m}" for c, m in sorted(a["minimums"].items()))
         + "."
     )
-    for fee_key, fee_label in (("0.0050", "0.50% (deciding)"), ("0.0120", "1.20% (shown)")):
+    for fee_key, fee_label in (
+        ("0.0050", "0.50% (deciding)"),
+        ("0.0120", "1.20% (shown)"),
+    ):
         per = a["STRAT-001"][fee_key]
         w("")
         w(f"### At {fee_label}")
         w("")
-        w(f"{per['opportunities']} opportunities in the development period; blocks of {per['block_days']} days.")
+        w(
+            f"{per['opportunities']} opportunities in the development period; blocks of {per['block_days']} days."
+        )
         w("")
-        w("| Account | Path | Trades | Vetoed | Net | Return per capital-day | Max drawdown | Halt level reached |")
+        w(
+            "| Account | Path | Trades | Vetoed | Net | Return per capital-day | Max drawdown | Halt level reached |"
+        )
         w("|---|---|---|---|---|---|---|---|")
         for acct in ("account_10000", "account_100"):
             for name, p in per[acct]["paths"].items():
@@ -242,10 +257,16 @@ def main(argv):
     w("")
     w("## Limits")
     w("")
-    w("- One market history (2021 to 2025) on one venue; survivorship: the coins are those listed today.")
-    w("- Past exchange minimums and spreads are not recorded anywhere: the replays use today's minimums and 0.05% a fill.")
+    w(
+        "- One market history (2021 to 2025) on one venue; survivorship: the coins are those listed today."
+    )
+    w(
+        "- Past exchange minimums and spreads are not recorded anywhere: the replays use today's minimums and 0.05% a fill."
+    )
     w("- The drawdown halt is reported, not modelled (spec §6.0).")
-    w("- Volume's rows from 2023-11-06 were seen by the volume research; only a forward window can confirm volume.")
+    w(
+        "- Volume's rows from 2023-11-06 were seen by the volume research; only a forward window can confirm volume."
+    )
     w("")
     open(argv[4], "w", encoding="utf-8", newline="\n").write("\n".join(out) + "\n")
 

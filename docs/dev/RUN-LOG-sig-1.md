@@ -148,7 +148,7 @@ Nothing below is decided in this PR; each item waits for the owner.
    - The two-sided MDE: 10 runs × 1,000 simulated rows, with the bootstrap taken at its B → ∞ limit inside that simulation only. The audit's own p-values always use the full bootstrap.
 7. **Settled by the evidence, recorded:** the block length's maximum lag stays at one month (§7.4). The false-pass study does not fail at the stated drift sizes, even for an exact one-month cycle.
 
-Decisions 8 to 12 come from the PR #228 review (below).
+Decisions 8 to 12 come from the PR #228 review (below). The owner decided them on 2026-11-07 (FDS-SIG-001 §15.5), and the follow-up review's questions A1 to A7 are at the end.
 
 ## 2026-11-06: the PR #228 review (four findings)
 
@@ -341,6 +341,9 @@ The sixth, a reverted change, must not be refused, so it passes on both.
 
 ### Decisions from the review, for the owner
 
+*Decided by the owner on 2026-11-07 (FDS-SIG-001 §15.5): D8 approved, D9 revised, D10 and D11 approved, D12 no change. See the follow-up section below.*
+
+
 8. **Step 4's list (finding 2).** Add two refusals to FDS-SIG-001 §12 step 4: a frozen path changed in any commit after the freeze commit, except a defect fix after results through `--supersede`; and a freeze record changed after its freeze commit. The code already refuses both.
 9. **A defect found before results (finding 2).** The spec gives no route for one. This implementation reads steps 2 and 6 together:
    - run the frozen code first, from the freeze commit;
@@ -374,3 +377,145 @@ The sixth, a reverted change, must not be refused, so it passes on both.
 - **The ranking refusal is all or nothing.** One persistently failing market blocks the ranking until the owner decides (decision 10). `ranking/refused.json` names it.
 - **A historical correction stops the fetch.** The bars that differ are named. Accepting a corrected series is the owner's decision, by fetching again into an empty cache and recording why.
 - **Snapshots in the sandbox** (decision 11). They are verifiable only on this machine, or by fetching again from the exchange.
+
+## 2026-11-07: the follow-up review and the owner's decisions D8 to D12
+
+The owner accepted the remediation in principle. An independent follow-up review raised two matters to resolve before merge, and the owner decided D8 to D12 (FDS-SIG-001 §15.5). Round one is still not registered, ranked, fetched or run. PR #228 stays open. No statistical procedure, threshold or signal candidate changes.
+
+| # | Matter | Requirement | Code path at `c3297be` | Classification | Correction | Commit |
+|---|---|---|---|---|---|---|
+| 1 | Listing and cessation inferred, not established | §10.1; D10 "strict … subject to verified listing and cessation evidence" | `ranking.volume_evidence`: "listed within the span" from the answer's first bar; "stopped within the span" and "not trading in the span" from missing later bars and the current status | **CONFIRMED DEFECT**, established from the code: an incomplete answer gives the same bars | Only the exchange's own stated trading start or end can account for a missing day; otherwise the ranking is refused | `56a8275` |
+| 2 | Defects discovered before results | D9 (revised); §12 step 6 | `check_can_run` refused changed code before results, but the remediation's proposed route ran the frozen code, then superseded it | **SPECIFICATION CHANGE** by the owner (D9) | Cancellation record, a refused cancelled round, a replacement registration; `--supersede` keeps the earlier results and their provenance | `549c9fa`, `d6edbd3`, `2ebaeb8` |
+| 3 | D8, D10, D11, D12 | §15.5 | — | owner decisions | D8 in step 4; D10 as matter 1; D11 compressed, hashed, committed snapshots with `verify`; D12 recorded | `09f7114`, `d6edbd3`, `2ebaeb8` |
+| 4 | A 12-month round without blocking `main` | the owner's item 4 | — | documentation, plus a guarantee test | FDS-SIG-001 §12.1: a research branch and its own worktree; the run state records package versions | `549c9fa`, `2ebaeb8` |
+
+### Matter 1: what each exchange states about listing and cessation
+
+**Investigated** with `docs/dev/sig_listing_evidence_probe.py`, using public data and the standard library only, on 2026-11-07, over the 30 days ending 2026-11-06. The evidence is in `docs/dev/sig-audit/verification/listing-evidence-probe.json`, which records each answer's SHA-256.
+
+| Exchange | Market list (dollar quote) | Fields naming or holding a time | Trading start stated | Cessation stated | Not trading now |
+|---|---|---|---|---|---|
+| Binance | `exchangeInfo`, 775 USDT | none | no | no. The delisting schedule (`/sapi/v1/spot/delist-schedule`) refuses without an API key (`-2014`), and the audit reads no key | 257 BREAK |
+| KuCoin | `/api/v2/symbols`, 800 USDT | `tradingStartTime` (708), three `callauction…StartTime` (357) | **yes:** `tradingStartTime`, on 708 of 800 | no. A delisted symbol leaves the list | none (all 800 enabled) |
+| Kraken | `AssetPairs`, 681 USD | none (two position-limit numbers look like times; they are not) | no | no | 55 cancel_only, 2 post_only |
+| Coinbase | `/products`, 496 USD | none | no | no | 91 delisted |
+
+**KuCoin's `tradingStartTime` checked against its own daily candles:**
+- **Recent listings:** for every symbol stated to start within 40 days of the span (18), the first daily candle fell on the stated day.
+- **Older symbols:** in a sample of 25, 20 matched. In the other 5, the candles begin later than the stated day, because KuCoin's candle history starts on 2022-09-29.
+- **Contradictions:** no symbol had a candle before its stated day.
+- **Symbols without the field:** all 92 had 30 days of candles in the span.
+
+**Binance:**
+- **Listings:** 15 TRADING markets began within the span, by their first-ever daily kline. Most are tokenized equities and ETFs (BBBUSDT, MDBBUSDT, UVXYBUSDT, BRKBBUSDT, …).
+- **Not trading:** of the 257 BREAK markets, 254 have no bar in the span and 3 have part of it (QUICKUSDT, VELODROMEUSDT, EPICUSDT).
+
+**Classification: CONFIRMED DEFECT.**
+- At `c3297be`, a market whose answer began on day 21 ranked as "listed within the span". An answer that had lost its first 20 days ranks the same way.
+- Missing later bars plus a status of BREAK ranked as "stopped".
+- No bars at all plus BREAK ranked as zero volume.
+- None of these observations dates a listing or a cessation. The new test `test_the_same_bars_without_a_stated_start_are_an_incomplete_answer` ranked as listed at `c3297be`.
+
+**Corrected** (`56a8275`), within the exchange-neutral design:
+- **The data model:** `ListedMarket` gains `trading_start_ms`, `trading_end_ms` and `history_stated_by`. They are set only where the exchange's listing states them; nothing infers them.
+- **The connectors:** KuCoin's connector keeps `tradingStartTime`, while null or 0 states nothing. No other connector states a time.
+- **The rule** (`volume_evidence`). A day without a bar is accounted for only by those statements. The market was listed within or after the span, stopped within or before it, or both, and every day of the stated period inside the span has a bar. Otherwise the ranking is refused:
+  - **incomplete:** missing days with no stated time, or a gap inside the stated period;
+  - **conflicting:** a bar outside the stated period, a stated end while the market is listed as trading, or an end before the start.
+- **The evidence:** the stated times and their field are kept in the volume evidence, the ranked list and `ranking/refused.json`.
+
+**Tests:**
+- **Ranking** (7 new): a genuine recent listing with its stated start, and a listing after the span; the same bars without a stated start (refused); days missing after a stated start; a ceased market with a stated end, and the same bars without one (refused); conflicting evidence; complete bars.
+- **The connector:** null and 0 state nothing, and no other connector states a time.
+
+**What this means in practice** (ambiguity A1 below):
+- **KuCoin:** on the probe's day, every incomplete span was accounted for by a stated start.
+- **Binance:** a strict ranking would be refused. It states no time for its 15 new listings or its 257 BREAK markets.
+
+### Matter 2: a defect found before results (D9)
+
+**Owner direction:** "Do not knowingly execute defective frozen code to manufacture an original result for subsequent supersession."
+
+**Corrected:**
+- **Cancellation** (`registration.cancellation_record`; `run_signal_audit.py cancel --round N --defect "…"`): `cancellation.json` is committed on its own. It records:
+  - the defect;
+  - the registration's commit and SHA-256;
+  - the freeze commit;
+  - the code at cancellation (the frozen files changed or uncommitted);
+  - whether the window had started or ended.
+
+  It is refused without a committed registration, twice, or when results exist.
+- **The cancelled round is never run** (a new refusal), with or without `--supersede`.
+- **The replacement** (`draft --replaces N`) is a new registration in a later round, through steps 0 to 2 in full.
+  - It records the cancelled round: its cancellation's commit and SHA-256, the cancelled window, and whether that window had started.
+  - The run refuses a replacement whose cancellation is uncommitted, changed since, or not committed before it.
+  - Its window starts after its own registration commit, as every registration's does.
+  - The spec covers both cases: a cancelled window that had not started (the same dates may be kept), and one that had (a new window).
+- **`--supersede`** (`registration.supersede_results`) is kept for defects found after results. The earlier results, evidence series and report move to `superseded/<k>-<commit>/`, with the note, the time, the results' commit and each file's SHA-256.
+
+**Tests:**
+- `test_signal_audit_run.py`, 7 new tests:
+  - a cancellation before and after the window started;
+  - its refusals;
+  - a replacement and its refusals;
+  - supersession;
+  - the package versions;
+  - the worktree run.
+- `test_signal_audit_script.py`, 3 new tests: the script end to end on a throwaway repository.
+
+### The decisions recorded (FDS-SIG-001 §15.5)
+
+- **D8:** the two freeze refusals are in §12 step 4.
+- **D9:** §12 step 6, with both window cases, and §11's later windows (a cancelled window is never examined).
+- **D10:** §10.1 "Every day accounted for", with what the exchanges state.
+- **D11:** §12 step 3.
+  - **The snapshots:** gzip (no file name, time 0, level 9: the same bars give the same bytes) in `candles/<coin>_<tf>.csv.gz`, written once. The bars' SHA-256 and the file's are recorded, and they are committed with the results.
+  - **`verify`:** checks every snapshot without the exchange, and re-derives the results from the snapshots, only with the code that produced them. With `--refetch`, it compares each snapshot with the exchange's bars now.
+- **D12:** no statistical change. The round-scale study stands.
+
+### Item 4: a 12-month round without blocking development
+
+FDS-SIG-001 §12.1 gives the PowerShell steps.
+- **The research branch.** The round's registration and freeze are committed on `research/sig-round-N`, cut from `main` after this PR. The branch is pushed, and the freeze commit is tagged.
+- **The worktree.** The run executes from its own worktree, outside the repo and outside `%TEMP%` (which Windows cleans), with its own virtual environment and sandbox, untouched for the round.
+- **During the window.** Development continues on `main`. Merging `main` into the research branch makes the run refuse, so it fails safe.
+- **After the window.** The fetch, the run, the results commit (with the snapshots) and `verify` all happen in the worktree. The round's folder and report reach `main` by checking out those paths, not by merging, so no frozen or fixed code enters `main`.
+- **What it preserves:** the registration, the freeze, the candle evidence and every refusal, because they all read the worktree's own HEAD and history.
+- **Tested:** `test_a_round_runs_from_its_research_worktree_while_main_moves_on`. The run is refused in a moved-on main checkout, allowed in the research worktree with the fetch committed, and refused there once `main` is merged in.
+- **The environment:** the outputs now record the numpy, scipy and pandas versions.
+
+### Tests, before and after
+
+| Run | Before (`c3297be`) | After |
+|---|---|---|
+| The signal-audit tests (`tests/test_signal_audit_*.py`, from `app/`) | 123 passed | **142 passed**: 6 more ranking, 1 connector, 7 registration, 2 snapshot and 3 end-to-end script tests |
+| The full suite (`python -m pytest -q`, from `app/`, isolation guard on) | 2,786 passed, 13 skipped, 0 failed | **2,805 passed, 13 skipped, 0 failed**, in 18.9 min: the 2,786 before plus exactly the 19 new tests |
+| The listing evidence probe | none | run 2026-11-07, as above |
+| Black, flake8 | clean | `black --check app/` clean; CI's `flake8 --select=E9,F63,F7,F82` clean; a full flake8 of the audit's files clean. At first my change missed an import (`Any` in `pt_exchanges.py`), and CI's F821 would have failed; it was fixed before the commit |
+
+### Ambiguities for the owner
+
+- **A1. Binance under the strict rule.**
+  - **The problem.** A Binance ranking is refused for as long as Binance lists markets whose 30 days it cannot account for. Binance states no trading start or end. On the probe's day that meant 254 BREAK markets with no bar in the span, 3 with part of it, and 15 new listings.
+  - **Unaffected:** the round ranks on KuCoin with the shipped Settings order (decision 1).
+  - **Options:**
+    - **(a)** accept: Binance cannot rank a round;
+    - **(b)** add a registered exclusion for markets the exchange lists as not trading at the ranking fetch. Such a market cannot pass the history check, which needs bars to the window start with no gap over 24 hours, so its volume cannot change which coins are selected. For the new listings this leaves decision 4: they are mostly tokenized equities;
+    - **(c)** accept the exchange's first-ever and last-ever kline as listing evidence. D10 rules this out.
+  - **Recommendation:** (b), with decision 4's tokenized-stock exclusion. Both are §10.1 changes.
+- **A2. KuCoin's `tradingStartTime` as a stated listing time.** It is exchange-stated, matched the first candle in every recent case and was never contradicted. It is treated as verified listing evidence. Confirm.
+- **A3. A replacement's window.**
+  - §11 now reads "after the previous *examined* window". A cancelled window is never examined, so a replacement's window may overlap the unelapsed part of a cancelled one.
+  - Where the cancelled window had not started, it may keep the same dates, if its registration commit precedes their start.
+  - Confirm, or require the replacement to start after the cancelled window ends.
+- **A4. The replacement's ranking.** It ranks afresh (steps 0 to 2 in full) in both cases, rather than carrying the cancelled round's ranking evidence forward. Confirm.
+- **A5. Round numbers.** A replacement takes the next free round number. For example, round 2 would register FDS-SIG-002's round-one candidates. This is naming only.
+- **A6. Confirmation windows.** A confirmation round is refused when it overlaps "any registered earlier window" (§8.3, §16 item 9), and that includes cancelled windows as written. This is conservative. Confirm, or exclude cancelled windows.
+- **A7. Results to `main`.** They are carried by checking out the round's paths from the research branch, not by a merge (§12.1, step 5). Confirm.
+
+### Residual limitations
+
+- **KuCoin's delisted symbols** leave its list, so they cannot be ranked. §10.1 already says so for removed pairs, but the registration can name only what the listing still shows.
+- **`tradingStartTime`** is validated only for recent listings. For 5 of 25 older symbols, the candle history begins after the stated day. That does not matter within a 30-day span.
+- **Re-deriving results** needs the code that produced them (the freeze tag or the fix commit). Package versions are recorded but not enforced: `verify` on another numpy or scipy could differ in the last digits, and would say so.
+- **A historical correction** found at the fetch, or later by `verify --refetch`, is reported and never resolved by the code. Accepting a corrected series is the owner's call.

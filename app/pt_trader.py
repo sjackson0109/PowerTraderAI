@@ -1336,6 +1336,57 @@ class CryptoAPITrading:
         except Exception:
             return True
 
+    def _entry_assessment_capture(
+        self,
+        coin: str,
+        symbol: str,
+        amount_usd: float,
+        minimum_entry_usd: Optional[float],
+        ask: Any,
+        bid: Any,
+        source: str,
+    ) -> Optional[Dict[str, Any]]:
+        """What the entry assessment needs, captured right after sizing; None when every
+        part of it is Off (then nothing is computed). It reads the settings only, and
+        never changes or delays the entry (signal_fusion.settings, signal_fusion.live).
+        """
+        try:
+            from signal_fusion import live
+            from signal_fusion import settings as fusion_settings
+
+            settings = fusion_settings.read(self._settings_source)
+            if settings.all_off():
+                return None
+            return live.capture(
+                settings,
+                coin,
+                symbol,
+                source,
+                amount_usd,
+                minimum_entry_usd,
+                ask,
+                bid,
+                getattr(self, "_quotes_at", None),
+            )
+        except Exception:
+            return None  # Log only at most: a failure here changes nothing
+
+    def _entry_assessment_log(self, captured: Optional[Dict[str, Any]]) -> None:
+        """Record what the entry assessment would have done, after the order was placed.
+        In this version every part is Off or Log only, so it changes no order, and an
+        error in it is recorded, never raised into the trader."""
+        if captured is None:
+            return
+        try:
+            from signal_fusion import live
+
+            fees = self._trading_fees(captured["symbol"])
+            captured["fee"] = getattr(fees, "taker", None)
+            captured["fee_source"] = getattr(fees, "source", None)
+            live.log(captured)
+        except Exception:
+            pass
+
     def _llm_entry_placed(self, client_order_id: str, response: Any) -> None:
         """Link the LLM decision that let an entry through to its filled order."""
         try:
@@ -2242,6 +2293,9 @@ class CryptoAPITrading:
                 symbols.append(full)
 
         current_buy_prices, current_sell_prices, valid_symbols = self.get_price(symbols)
+        # when this pass's quotes were read: the entry assessment's record gives their
+        # age (signal_fusion.live); nothing decides on it
+        self._quotes_at = time.time()
 
         # Calculate total account value (robust: never drop a held coin to $0 on transient API misses)
         snapshot_ok = True
@@ -2920,6 +2974,18 @@ class CryptoAPITrading:
                 current_buy_prices.get(full_symbol),
                 current_sell_prices.get(full_symbol),
             )
+            # The entry assessment (Settings > Strategy and Risk): Off by default, and
+            # Log only at most in this version, so it never changes this order; what it
+            # would have done is recorded after the order is placed
+            assessing = self._entry_assessment_capture(
+                base_symbol,
+                full_symbol,
+                allocation_in_usd,
+                minimum_entry,
+                current_buy_prices.get(full_symbol),
+                current_sell_prices.get(full_symbol),
+                "strategy" if catalogue_mode else "thinker",
+            )
             response = self.place_buy_order(
                 client_order_id,
                 "buy",
@@ -2929,6 +2995,7 @@ class CryptoAPITrading:
                 tag="ENTRY" if catalogue_mode else None,
                 minimum_entry_usd=minimum_entry,
             )
+            self._entry_assessment_log(assessing)
 
             if response and "errors" not in response:
                 trades_made = True

@@ -3695,6 +3695,24 @@ class PowerTraderHub(tk.Tk):
         self.hist_filter_var = self.trade_history_view.search_var
 
         # ----------------------------
+        # Entry Assessments: what the entry assessment recorded for each entry
+        # (Settings > Strategy and Risk; Off by default, Log only at most)
+        # ----------------------------
+        assessments_tab = ttk.Frame(self.bottom_notebook)
+        self.bottom_notebook.add(assessments_tab, text="Entry\nAssessments")
+        try:
+            import entry_assessment_view
+
+            self.entry_assessment_view = entry_assessment_view.EntryAssessmentView(
+                assessments_tab
+            )
+            self.entry_assessment_view.pack(fill="both", expand=True)
+        except Exception as e:
+            ttk.Label(
+                assessments_tab, text=f"The entry assessments cannot be shown: {e}"
+            ).pack(padx=10, pady=10, anchor="w")
+
+        # ----------------------------
         # TAB 4: Order Management
         # ----------------------------
         if ORDER_MANAGEMENT_AVAILABLE:

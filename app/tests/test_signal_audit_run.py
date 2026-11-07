@@ -320,6 +320,258 @@ def test_refused_when_the_freeze_record_changes_after_its_freeze_commit(repo, ca
     _refused(repo, "freeze record .* has uncommitted changes", caplog)
 
 
+# --- a defect before results: cancellation (owner D9) ---------------------------------
+
+CANCEL = "docs/dev/sig-audit/round-1/cancellation.json"
+
+
+def _cancel(repo, defect="SIG-A's CMF sign is inverted", when=None):
+    when = when or datetime(2026, 11, 7, 9, tzinfo=UTC)
+    rec = reg.cancellation_record(str(repo), 1, defect, now=when)
+    _commit(repo, CANCEL, json.dumps(rec, indent=1) + "\n", when=when, msg="cancel")
+    return rec
+
+
+def test_a_defect_before_results_cancels_the_registration(repo, caplog):
+    """D9: never run frozen code known to be defective to make a result to supersede:
+    the registration is cancelled, with an auditable record, and never run."""
+    registered(repo)
+    reg_commit = _git(repo, "log", "-1", "--format=%H", "--", REG).strip()
+    freeze_commit = _git(repo, "log", "-1", "--format=%H", "--", FREEZE).strip()
+    # before the window starts
+    before = reg.cancellation_record(
+        str(repo), 1, "a defect", now=datetime(2026, 11, 7, tzinfo=UTC)
+    )
+    assert before["window_started"] is False and before["window_ended"] is False
+    assert before["registration"]["commit"] == reg_commit
+    assert before["registration"]["sha256"] == reg.file_sha256(os.path.join(repo, REG))
+    assert before["freeze_commit"] == freeze_commit and before["results"] is None
+    # after it started (the record says so; the cancellation is the same)
+    during = reg.cancellation_record(
+        str(repo), 1, "a defect", now=datetime(2026, 12, 1, tzinfo=UTC)
+    )
+    assert during["window_started"] is True and during["window_ended"] is False
+    # the code changed to fix it is recorded too
+    _commit(repo, "app/code.py", "x = 2  # the fix\n")
+    rec = reg.cancellation_record(
+        str(repo), 1, "a defect", now=datetime(2026, 11, 7, 12, tzinfo=UTC)
+    )
+    assert rec["frozen_files_changed_since_freeze"] == ["app/code.py"]
+    # written, even before it is committed, the round is never run
+    _write(repo, CANCEL, json.dumps(rec) + "\n")
+    _refused(repo, "registration was cancelled \\(a defect\\)", caplog)
+    _git(repo, "add", CANCEL)
+    _git(
+        repo, "commit", "-q", "-m", "cancel", when=datetime(2026, 11, 7, 13, tzinfo=UTC)
+    )
+    _refused(repo, "never run", caplog)
+    with pytest.raises(reg.Refused, match="never run"):
+        reg.check_can_run(
+            str(repo), 1, now=AFTER, supersede="the fix", results_exist=True
+        )
+
+
+def test_a_cancellation_needs_a_defect_and_no_results(repo):
+    with pytest.raises(reg.Refused, match="no committed registration"):
+        reg.cancellation_record(str(repo), 1, "a defect")
+    registered(repo)
+    with pytest.raises(reg.Refused, match="states the defect"):
+        reg.cancellation_record(str(repo), 1, "  ")
+    _write(repo, "docs/dev/sig-audit/round-1/results.json", "{}\n")
+    with pytest.raises(reg.Refused, match="corrected through --supersede"):
+        reg.cancellation_record(str(repo), 1, "a defect")
+    os.remove(os.path.join(repo, "docs/dev/sig-audit/round-1/results.json"))
+    _cancel(repo)
+    with pytest.raises(reg.Refused, match="already cancelled"):
+        reg.cancellation_record(str(repo), 1, "another")
+
+
+def _register(repo, n, record, when, freeze_when=None):
+    rel = f"docs/dev/sig-audit/round-{n}"
+    _commit(
+        repo, f"{rel}/registration.json", json.dumps(record, indent=1) + "\n", when=when
+    )
+    _commit(
+        repo,
+        f"{rel}/freeze.json",
+        json.dumps({"round": n}) + "\n",
+        when=freeze_when or when + timedelta(hours=1),
+        msg="freeze",
+    )
+
+
+def test_a_replacement_registration_names_its_committed_cancellation(repo, caplog):
+    registered(repo)
+    _cancel(repo)
+    replaces = reg.replacement_record(str(repo), 1)
+    assert replaces["round"] == 1 and replaces["window_started_when_cancelled"] is False
+    assert replaces["cancelled_window"]["start"] == "2026-11-08T00:00:00Z"
+    record = {
+        "window": {"start": "2026-11-10T00:00:00Z", "end": "2027-03-01T00:00:00Z"},
+        "candidates": [{"key": "SIG-A"}],
+        "replaces": replaces,
+    }
+    _register(repo, 2, record, when=datetime(2026, 11, 8, 12, tzinfo=UTC))
+    after = datetime(2027, 4, 1, tzinfo=UTC)
+    state = reg.check_can_run(str(repo), 2, now=after)
+    assert state.registration_commit
+    # the cancelled round still never runs
+    with pytest.raises(reg.Refused, match="cancelled"):
+        reg.check_can_run(str(repo), 1, now=after)
+    # a changed cancellation record no longer matches what round 2 recorded
+    _commit(
+        repo,
+        CANCEL,
+        '{"defect": "rewritten", "registration": {"window": {}}}\n',
+        when=datetime(2026, 11, 9, tzinfo=UTC),
+    )
+    with caplog.at_level(logging.ERROR, logger="signal_audit"):
+        with pytest.raises(reg.Refused, match="differs from the SHA-256"):
+            reg.check_can_run(str(repo), 2, now=after)
+
+
+def test_a_replacement_comes_after_its_cancellation_with_a_future_window(repo):
+    registered(repo)
+    rec = reg.cancellation_record(
+        str(repo), 1, "a defect", now=datetime(2026, 12, 1, tzinfo=UTC)
+    )
+    _write(repo, CANCEL, json.dumps(rec) + "\n")
+    _git(repo, "add", CANCEL)
+    # the cancellation and the replacement in one commit: not committed before it
+    when = datetime(2026, 12, 1, 12, tzinfo=UTC)
+    _git(repo, "commit", "-q", "-m", "cancel", when=when)
+    replaces = reg.replacement_record(str(repo), 1)
+    assert replaces["window_started_when_cancelled"] is True
+    _git(repo, "reset", "-q", "--soft", "HEAD~1")
+    record = {
+        "window": {"start": "2026-12-03T00:00:00Z", "end": "2027-06-01T00:00:00Z"},
+        "candidates": [{"key": "SIG-A"}],
+        "replaces": replaces,
+    }
+    _write(
+        repo, "docs/dev/sig-audit/round-2/registration.json", json.dumps(record) + "\n"
+    )
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "cancel and replace", when=when)
+    _commit(
+        repo,
+        "docs/dev/sig-audit/round-2/freeze.json",
+        "{}\n",
+        when=when + timedelta(hours=1),
+        msg="freeze",
+    )
+    after = datetime(2027, 7, 1, tzinfo=UTC)
+    with pytest.raises(reg.Refused, match="not committed before"):
+        reg.check_can_run(str(repo), 2, now=after)
+    # a replacement whose window had already started when registered: refused as any
+    # registration is (section 11); the window starts after its own registration
+    _git(repo, "reset", "-q", "--hard", "HEAD~2")
+    _commit(repo, CANCEL, json.dumps(rec) + "\n", when=when, msg="cancel")
+    late = dict(record, replaces=reg.replacement_record(str(repo), 1))
+    late["window"] = {"start": "2026-12-01T00:00:00Z", "end": "2027-06-01T00:00:00Z"}
+    _register(repo, 2, late, when=when + timedelta(hours=2))
+    with pytest.raises(reg.Refused, match="not dated before the window start"):
+        reg.check_can_run(str(repo), 2, now=after)
+    # and a round cannot replace itself
+    selfish = dict(record, replaces=dict(record["replaces"], round=3))
+    _register(repo, 3, selfish, when=when + timedelta(hours=3))
+    with pytest.raises(reg.Refused, match="cannot replace itself"):
+        reg.check_can_run(str(repo), 3, now=after)
+
+
+# --- a defect after results: supersession keeps the earlier results ---------------------
+
+
+def test_supersede_keeps_the_earlier_results_with_their_provenance(tmp_path):
+    folder = tmp_path / "round-1"
+    report = tmp_path / "SIG-AUDIT-REPORT-round-1.md"
+    assert reg.supersede_results(str(folder), None) == []  # no results yet
+    folder.mkdir()
+    (folder / "results.json").write_text(json.dumps({"state": {"head": "abc1234def"}}))
+    (folder / "series").mkdir()
+    (folder / "series" / "SIG-A_x_BTC_1h.csv").write_text("open_time_utc\n")
+    report.write_text("# report one\n")
+    shas = {
+        "results.json": reg.file_sha256(str(folder / "results.json")),
+        "series/SIG-A_x_BTC_1h.csv": reg.file_sha256(
+            str(folder / "series" / "SIG-A_x_BTC_1h.csv")
+        ),
+        "report.md": reg.file_sha256(str(report)),
+    }
+    with pytest.raises(reg.Refused, match="needs --supersede"):
+        reg.supersede_results(str(folder), " ", str(report))
+    earlier = reg.supersede_results(str(folder), " the CMF sign ", str(report))
+    kept = folder / "superseded" / "1-abc1234"
+    assert [e["note"] for e in earlier] == ["the CMF sign"]
+    assert earlier[0]["commit"] == "abc1234def"
+    assert not (folder / "results.json").exists() and not (folder / "series").exists()
+    assert (kept / "results.json").exists() and (kept / "report.md").exists()
+    assert (kept / "series" / "SIG-A_x_BTC_1h.csv").exists()
+    note = json.loads((kept / "note.json").read_text())
+    assert note["files_sha256"] == shas and note["results_commit"] == "abc1234def"
+    assert reg.has_results(str(folder))  # the earlier results still count
+    # a second fix keeps both, oldest first
+    (folder / "results.json").write_text(json.dumps({"state": {"head": "fff0000aaa"}}))
+    both = reg.supersede_results(str(folder), "a second fix", str(report))
+    assert [e["note"] for e in both] == ["the CMF sign", "a second fix"]
+    assert (folder / "superseded" / "2-fff0000").is_dir()
+
+
+def test_the_run_records_the_numerical_packages(repo):
+    registered(repo)
+    state = reg.check_can_run(str(repo), 1, now=AFTER)
+    import numpy
+    import scipy
+
+    assert state.packages["numpy"] == numpy.__version__
+    assert state.packages["scipy"] == scipy.__version__
+    assert set(state.to_dict()["packages"]) == {"numpy", "scipy", "pandas"}
+
+
+# --- a long round runs from its own worktree (follow-up review, item 4) -----------------
+
+
+def test_a_round_runs_from_its_research_worktree_while_main_moves_on(repo, tmp_path):
+    """The registration and freeze are committed on a research branch, and the run
+    happens in a worktree of it: development goes on in the main checkout, and every
+    guarantee holds where the run happens."""
+    registered(repo)
+    freeze_commit = _git(repo, "log", "-1", "--format=%H", "--", FREEZE).strip()
+    main = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    _git(repo, "branch", "research/sig-round-1")
+    # a year of development in the main checkout
+    _commit(
+        repo,
+        "app/code.py",
+        "x = 2  # new work\n",
+        when=datetime(2026, 12, 1, tzinfo=UTC),
+    )
+    _commit(repo, "app/more.py", "y = 3\n", when=datetime(2027, 1, 5, tzinfo=UTC))
+    worktree = tmp_path / "research"
+    _git(repo, "worktree", "add", "-q", str(worktree), "research/sig-round-1")
+    with pytest.raises(reg.Refused, match="frozen paths changed"):
+        reg.check_can_run(str(repo), 1, now=AFTER)  # main is not the frozen code
+    state = reg.check_can_run(str(worktree), 1, now=AFTER)
+    assert state.head == freeze_commit and state.frozen_files_changed_since_freeze == []
+    # the fetch and the results are committed on the research branch: still the frozen
+    # code (the round's folder is not frozen)
+    _commit(
+        worktree,
+        "docs/dev/sig-audit/round-1/data.json",
+        "{}\n",
+        when=datetime(2027, 2, 2, tzinfo=UTC),
+        msg="fetch",
+    )
+    assert (
+        reg.check_can_run(str(worktree), 1, now=AFTER).frozen_files_changed_since_freeze
+        == []
+    )
+    # bringing main's code into the research branch is refused: it fails safe
+    _git(worktree, "merge", "-q", "--no-edit", main)
+    with pytest.raises(reg.Refused, match="frozen paths changed"):
+        reg.check_can_run(str(worktree), 1, now=AFTER)
+
+
 # --- rows, floors, Holm and verdicts ------------------------------------------------------
 
 

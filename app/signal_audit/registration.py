@@ -9,10 +9,17 @@ A round's registration and the run's refusals (FDS-SIG-001 sections 11 and 12).
   ``app/`` and the audit script). The commit that first added it is the freeze commit,
   and it never changes afterwards;
 * the ranking and history evidence (step 0) and, after the window, the candle records,
-  results and evidence series (steps 3 to 5).
+  results and evidence series (steps 3 to 5);
+* ``cancellation.json`` (step 6), when a material defect found before results cancels
+  the registration (``cancellation_record``); a cancelled round is never run;
+* ``superseded/<k>-<commit>/`` (step 6), the earlier results of a defect fix after
+  results (``supersede_results``), with their series, report and SHA-256.
 
 **The run refuses** (step 4), logging an ERROR, when:
 
+0. the round's registration was cancelled (a ``cancellation.json`` exists), or the
+   registration replaces a cancelled round whose cancellation record is not committed,
+   differs from the SHA-256 it records, or was not committed before it;
 1. the registration file is missing, uncommitted, or changed since its registration
    commit (the last commit that changed it);
 2. the registration commit is not dated before the window start, or the window starts
@@ -29,11 +36,11 @@ A round's registration and the run's refusals (FDS-SIG-001 sections 11 and 12).
 7. the window's end has not yet passed;
 8. a registered trained model's ``train_end`` is after the window start.
 
-Steps 2 and 6 together allow changed code only as a superseding defect fix after
-results; step 4 lists dirty frozen paths, and committed changes after the freeze are
-refused on the same footing (the PR #228 review, finding 2). Step 4's own list names
-neither refusal 6 nor a changed freeze record (refusal 5): that wording awaits the owner
-(``docs/dev/RUN-LOG-sig-1.md``).
+Refusal 6 and the changed freeze record (refusal 5) are in step 4's list since the
+owner's decision D8 (2026-11-07). **A defect found before results** is never fixed in
+place and never run as frozen to be superseded later (owner, D9): the registration is
+cancelled (refusal 0), and a new registration in a later round, with a window that
+starts after its own registration commit, replaces it.
 
 Git is local only: no network, no credentials.
 """
@@ -51,6 +58,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 LOG = logging.getLogger("signal_audit")
+
+CANCELLATION = "cancellation.json"
+SUPERSEDED = "superseded"
+PACKAGES = ("numpy", "scipy", "pandas")
 
 SPEC = "FDS-SIG-001"
 CANDIDATES_SPEC = "FDS-SIG-002"
@@ -179,6 +190,7 @@ class RunState:
     python: str
     powertrader_home: Optional[str]
     supersede: Optional[str] = None  # the defect fix's note, when one is run
+    packages: Optional[Dict[str, str]] = None  # the numerical packages' versions
 
     def to_dict(self) -> Dict[str, Any]:
         return dict(self.__dict__)
@@ -204,6 +216,18 @@ def check_can_run(
     rel_reg = f"{rel_round_dir(n)}/registration.json"
     rel_freeze = f"{rel_round_dir(n)}/freeze.json"
     path = os.path.join(repo, rel_reg)
+    # 0. not cancelled (step 6: a defect found before results)
+    cancelled = os.path.join(repo, rel_round_dir(n), CANCELLATION)
+    if os.path.exists(cancelled):
+        try:
+            with open(cancelled, "r", encoding="utf-8") as f:
+                defect = json.load(f).get("defect", "")
+        except (OSError, ValueError):
+            defect = "the record cannot be read"
+        refuse(
+            f"round {n}'s registration was cancelled ({defect}): a cancelled round is "
+            "never run; a new registration in a later round replaces it"
+        )
     # 1. present, committed, unchanged since its registration commit
     if not os.path.isfile(path):
         refuse(f"no registration file {rel_reg}")
@@ -223,6 +247,9 @@ def check_can_run(
     record = json.loads(on_disk)
     start = parse_time(record["window"]["start"])
     end = parse_time(record["window"]["end"])
+    # 0. a replacement names a cancelled round whose committed record came first
+    if record.get("replaces"):
+        _check_replacement(repo, n, record["replaces"], reg_commit)
     # 2. dated before the window start, which is no earlier than the earliest start
     reg_time = _commit_time(repo, reg_commit)
     if not reg_time < start:
@@ -309,7 +336,237 @@ def check_can_run(
         sys.version,
         os.environ.get("POWERTRADER_HOME"),
         note if changed else None,
+        package_versions(),
     )
+
+
+def package_versions() -> Dict[str, str]:
+    """The versions of the packages the statistics depend on (the run records them)."""
+    from importlib import metadata
+
+    out = {}
+    for name in PACKAGES:
+        try:
+            out[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            out[name] = "not installed"
+    return out
+
+
+# --- a defect found before results: cancellation (section 12, step 6; owner D9) ---------
+
+
+def has_results(folder: str) -> bool:
+    """Whether the round has results: ``results.json``, or earlier results kept by a
+    defect fix (``superseded/*/results.json``)."""
+    if os.path.exists(os.path.join(folder, "results.json")):
+        return True
+    old = os.path.join(folder, SUPERSEDED)
+    return os.path.isdir(old) and any(
+        os.path.exists(os.path.join(old, name, "results.json"))
+        for name in os.listdir(old)
+    )
+
+
+def cancellation_record(
+    repo: str,
+    n: int,
+    defect: str,
+    now: Optional[datetime] = None,
+    frozen: Sequence[str] = FROZEN_PATHS,
+) -> Dict[str, Any]:
+    """The record that cancels round ``n``'s registration for a material defect found
+    before results (section 12, step 6). It is committed on its own as
+    ``cancellation.json`` in the round's folder; the round is then never run
+    (refusal 0), and a new registration in a later round, with a window that starts
+    after its own registration commit, replaces it. It records the defect, the
+    registration's commit and SHA-256, the freeze commit, the code at cancellation,
+    and whether the window had started or ended.
+
+    Refused when there is no committed registration, when the round is already
+    cancelled, or when results exist (a defect found after results is corrected
+    through ``--supersede``)."""
+    now = now or datetime.now(timezone.utc)
+    folder = round_dir(repo, n)
+    rel = rel_round_dir(n)
+    rel_reg = f"{rel}/registration.json"
+    note = (defect or "").strip()
+    if not note:
+        refuse('a cancellation states the defect: --defect "<what is wrong and why>"')
+    if os.path.exists(os.path.join(folder, CANCELLATION)):
+        refuse(f"round {n} is already cancelled")
+    if has_results(folder):
+        refuse(
+            f"round {n} has results: a defect found after results is corrected through "
+            "--supersede, which keeps the earlier results; it is not cancelled"
+        )
+    reg_commit = _last_commit(repo, rel_reg)
+    if not reg_commit:
+        refuse(f"round {n} has no committed registration to cancel")
+    if git(repo, "status", "--porcelain", "--", rel_reg).strip():
+        refuse(f"the registration file {rel_reg} has uncommitted changes")
+    path = os.path.join(repo, rel_reg)
+    with open(path, "r", encoding="utf-8") as f:
+        record = json.load(f)
+    start = parse_time(record["window"]["start"])
+    end = parse_time(record["window"]["end"])
+    freezes = _commits_touching(repo, f"{rel}/freeze.json")
+    freeze_commit = freezes[-1] if freezes else None
+    changed = []
+    if freeze_commit:
+        changed = [
+            p
+            for p in git(
+                repo, "diff", "--name-only", freeze_commit, "HEAD", "--", *frozen
+            ).splitlines()
+            if p.strip()
+        ]
+    dirty = git(repo, "status", "--porcelain", "--", *frozen).splitlines()
+    return {
+        "round": int(n),
+        "spec": SPEC,
+        "kind": "cancellation",
+        "cancelled_at": iso(now),
+        "defect": note,
+        "registration": {
+            "file": rel_reg,
+            "commit": reg_commit,
+            "sha256": file_sha256(path),
+            "window": dict(record["window"]),
+        },
+        "freeze_commit": freeze_commit,
+        "head": git(repo, "rev-parse", "HEAD").strip(),
+        "frozen_files_changed_since_freeze": changed,
+        "frozen_files_dirty": dirty,
+        "window_started": now >= start,
+        "window_ended": now >= end,
+        "results": None,
+        "replacement": "a new registration in a later round, with a window that starts "
+        "after its own registration commit (section 12, step 6)",
+    }
+
+
+def replacement_record(repo: str, cancelled: int) -> Dict[str, Any]:
+    """What a new registration records of the cancelled round it replaces (its
+    ``replaces``): refused unless that round's cancellation record is committed and
+    unchanged since."""
+    rel = f"{rel_round_dir(cancelled)}/{CANCELLATION}"
+    path = os.path.join(repo, rel)
+    commit = _last_commit(repo, rel)
+    if not os.path.isfile(path) or not commit:
+        refuse(f"round {cancelled} has no committed cancellation record ({rel})")
+    if git(repo, "status", "--porcelain", "--", rel).strip():
+        refuse(f"the cancellation record {rel} has uncommitted changes")
+    with open(path, "r", encoding="utf-8") as f:
+        record = json.load(f)
+    return {
+        "round": int(cancelled),
+        "cancellation": rel,
+        "cancellation_commit": commit,
+        "cancellation_sha256": file_sha256(path),
+        "cancelled_window": record["registration"]["window"],
+        "window_started_when_cancelled": bool(record.get("window_started")),
+        "defect": record.get("defect", ""),
+    }
+
+
+def _check_replacement(
+    repo: str, n: int, replaces: Mapping[str, Any], reg_commit: str
+) -> None:
+    cancelled = int(replaces.get("round", -1))
+    if cancelled == int(n):
+        refuse(f"round {n} cannot replace itself")
+    rec = replacement_record(repo, cancelled)
+    if rec["cancellation_sha256"] != replaces.get("cancellation_sha256"):
+        refuse(
+            f"round {cancelled}'s cancellation record differs from the SHA-256 round "
+            f"{n}'s registration records"
+        )
+    ancestor = subprocess.run(
+        [
+            "git",
+            "-C",
+            repo,
+            "merge-base",
+            "--is-ancestor",
+            rec["cancellation_commit"],
+            reg_commit,
+        ],
+        capture_output=True,
+    )
+    if ancestor.returncode != 0 or rec["cancellation_commit"] == reg_commit:
+        refuse(
+            f"round {cancelled}'s cancellation was not committed before round {n}'s "
+            "registration"
+        )
+
+
+# --- a defect found after results: supersession (section 12, step 6) --------------------
+
+
+def supersede_results(
+    folder: str, note: Optional[str], report_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Before a defect fix's run after results: the earlier results, their evidence
+    series and their report move to ``superseded/<k>-<commit>/``, with the note, the
+    time and each file's SHA-256, and stay beside the new verdicts. Returns every
+    earlier result, oldest first, with its note and commit, for the report. Without
+    results there is nothing to supersede; with results, a re-run needs the note."""
+    import shutil
+
+    path = os.path.join(folder, "results.json")
+    old_dir = os.path.join(folder, SUPERSEDED)
+    earlier = []
+    if os.path.isdir(old_dir):
+        for name in sorted(os.listdir(old_dir), key=lambda x: int(x.split("-")[0])):
+            p = os.path.join(old_dir, name, "results.json")
+            if os.path.exists(p):
+                with open(p, "r", encoding="utf-8") as f:
+                    old = json.load(f)
+                with open(
+                    os.path.join(old_dir, name, "note.json"), encoding="utf-8"
+                ) as f:
+                    old["note"] = json.load(f)["note"]
+                old["commit"] = (old.get("state") or {}).get("head")
+                earlier.append(old)
+    if not os.path.exists(path):
+        return earlier
+    text = (note or "").strip()
+    if not text:
+        refuse('results exist: a re-run needs --supersede "<what changed and why>"')
+    with open(path, "r", encoding="utf-8") as f:
+        old = json.load(f)
+    head = (old.get("state") or {}).get("head") or "unknown"
+    target = os.path.join(old_dir, f"{len(earlier) + 1}-{head[:7]}")
+    os.makedirs(target)
+    files = {"results.json": file_sha256(path)}
+    shutil.move(path, os.path.join(target, "results.json"))
+    series = os.path.join(folder, "series")
+    if os.path.isdir(series):
+        for name in sorted(os.listdir(series)):
+            files[f"series/{name}"] = file_sha256(os.path.join(series, name))
+        shutil.move(series, os.path.join(target, "series"))
+    if report_path and os.path.exists(report_path):
+        files["report.md"] = file_sha256(report_path)
+        shutil.copyfile(report_path, os.path.join(target, "report.md"))
+    with open(
+        os.path.join(target, "note.json"), "w", encoding="utf-8", newline="\n"
+    ) as f:
+        json.dump(
+            {
+                "note": text,
+                "superseded_at": iso(datetime.now(timezone.utc)),
+                "results_commit": head,
+                "files_sha256": files,
+            },
+            f,
+            indent=1,
+            sort_keys=True,
+        )
+        f.write("\n")
+    old["note"] = text
+    old["commit"] = head
+    return earlier + [old]
 
 
 # --- confirmation (section 8.3) ---------------------------------------------------------

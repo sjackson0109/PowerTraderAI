@@ -1,0 +1,663 @@
+{
+ "binance": {
+  "delist_schedule_without_a_key": {
+   "answer": "{'code': -2014, 'msg': 'API-key format invalid.'}",
+   "http_status": 400
+  },
+  "errors": 0,
+  "not_trading": 257,
+  "not_trading_with_part_of_span": [
+   "QUICKUSDT",
+   "VELODROMEUSDT",
+   "EPICUSDT"
+  ],
+  "not_trading_without_a_bar_in_span": 254,
+  "trading": 518,
+  "trading_first_ever_bar_within_span": [
+   {
+    "first_ever_day": "2026-10-13",
+    "symbol": "RWUSDUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-14",
+    "symbol": "BBBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-14",
+    "symbol": "MDBBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-14",
+    "symbol": "PENGBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-14",
+    "symbol": "UVXYBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-21",
+    "symbol": "BOTBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-21",
+    "symbol": "KSTRBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-21",
+    "symbol": "TMFBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-21",
+    "symbol": "VSTBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-21",
+    "symbol": "BRKBBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-28",
+    "symbol": "APPBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-28",
+    "symbol": "BSPBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-28",
+    "symbol": "GEVBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-28",
+    "symbol": "SKDDBUSDT"
+   },
+   {
+    "first_ever_day": "2026-10-28",
+    "symbol": "SKUUBUSDT"
+   }
+  ],
+  "trading_without_any_bar": []
+ },
+ "exchanges": {
+  "binance": {
+   "bytes": 17816884,
+   "endpoint": "https://api.binance.com/api/v3/exchangeInfo",
+   "fields": [
+    "allowTrailingStop",
+    "allowedSelfTradePreventionModes",
+    "amendAllowed",
+    "baseAsset",
+    "baseAssetPrecision",
+    "baseCommissionPrecision",
+    "cancelReplaceAllowed",
+    "defaultSelfTradePreventionMode",
+    "filters",
+    "icebergAllowed",
+    "isMarginTradingAllowed",
+    "isSpotTradingAllowed",
+    "ocoAllowed",
+    "opoAllowed",
+    "orderTypes",
+    "otoAllowed",
+    "pegInstructionsAllowed",
+    "permissionSets",
+    "permissions",
+    "quoteAsset",
+    "quoteAssetPrecision",
+    "quoteCommissionPrecision",
+    "quoteOrderQtyMarketAllowed",
+    "quotePrecision",
+    "status",
+    "symbol"
+   ],
+   "fields_holding_times": {},
+   "fields_named_for_a_time": [],
+   "http_status": 200,
+   "markets": 775,
+   "quote": "USDT",
+   "sha256": "44cf65a599da534931eb2f5c12f6ecfa82c5845810ee72129975b75888a73563",
+   "statuses": {
+    "BREAK": 257,
+    "TRADING": 518
+   }
+  },
+  "coinbase": {
+   "bytes": 356744,
+   "endpoint": "https://api.exchange.coinbase.com/products",
+   "fields": [
+    "auction_mode",
+    "base_currency",
+    "base_increment",
+    "cancel_only",
+    "display_name",
+    "fx_stablecoin",
+    "high_bid_limit_percentage",
+    "id",
+    "limit_only",
+    "margin_enabled",
+    "max_slippage_percentage",
+    "min_market_funds",
+    "post_only",
+    "quote_currency",
+    "quote_increment",
+    "status",
+    "status_message",
+    "trading_disabled"
+   ],
+   "fields_holding_times": {},
+   "fields_named_for_a_time": [],
+   "http_status": 200,
+   "markets": 496,
+   "quote": "USD",
+   "sha256": "d7df9ea58a03049587fa84798c0070cf5c93d7644a4733dea6f89a315f8dd723",
+   "statuses": {
+    "delisted": 91,
+    "online": 405
+   }
+  },
+  "kraken": {
+   "bytes": 682809,
+   "endpoint": "https://api.kraken.com/0/public/AssetPairs",
+   "fields": [
+    "aclass_base",
+    "aclass_quote",
+    "altname",
+    "base",
+    "cost_decimals",
+    "costmin",
+    "execution_venue",
+    "fee_volume_currency",
+    "fees",
+    "fees_maker",
+    "leverage_buy",
+    "leverage_sell",
+    "long_position_limit",
+    "lot",
+    "lot_decimals",
+    "lot_multiplier",
+    "margin_call",
+    "margin_stop",
+    "ordermin",
+    "pair_decimals",
+    "quote",
+    "short_position_limit",
+    "status",
+    "tick_size",
+    "wsname"
+   ],
+   "fields_holding_times": {
+    "long_position_limit": 5,
+    "short_position_limit": 5
+   },
+   "fields_named_for_a_time": [],
+   "http_status": 200,
+   "markets": 681,
+   "quote": "USD",
+   "sha256": "015bc537f266793a8c8110b778cd87922af730fdf9c5ca78eeb6d8a8787e060c",
+   "statuses": {
+    "cancel_only": 55,
+    "online": 624,
+    "post_only": 2
+   }
+  },
+  "kucoin": {
+   "bytes": 682754,
+   "endpoint": "https://api.kucoin.com/api/v2/symbols",
+   "fields": [
+    "baseCurrency",
+    "baseIncrement",
+    "baseMaxSize",
+    "baseMinSize",
+    "callauctionFirstStageStartTime",
+    "callauctionIsEnabled",
+    "callauctionPriceCeiling",
+    "callauctionPriceFloor",
+    "callauctionSecondStageStartTime",
+    "callauctionThirdStageStartTime",
+    "enableTrading",
+    "feeCategory",
+    "feeCurrency",
+    "isMarginEnabled",
+    "makerFeeCoefficient",
+    "market",
+    "minFunds",
+    "name",
+    "priceIncrement",
+    "priceLimitRate",
+    "quoteCurrency",
+    "quoteIncrement",
+    "quoteMaxSize",
+    "quoteMinSize",
+    "st",
+    "symbol",
+    "takerFeeCoefficient",
+    "tradingStartTime"
+   ],
+   "fields_holding_times": {
+    "callauctionFirstStageStartTime": 357,
+    "callauctionSecondStageStartTime": 357,
+    "callauctionThirdStageStartTime": 355,
+    "tradingStartTime": 708
+   },
+   "fields_named_for_a_time": [
+    "callauctionFirstStageStartTime",
+    "callauctionSecondStageStartTime",
+    "callauctionThirdStageStartTime",
+    "tradingStartTime"
+   ],
+   "http_status": 200,
+   "markets": 800,
+   "quote": "USDT",
+   "sha256": "cbd601e2deabd2e5c0676d9d8a4fa37a7cc0f61bb7bbd086e544ad95e93acfc2",
+   "statuses": {
+    "True": 800
+   }
+  }
+ },
+ "fetched_at": "2026-11-07T00:07:59Z",
+ "kucoin": {
+  "any_candle_before_a_stated_day": 0,
+  "checks": [
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 9,
+    "error": "",
+    "first_candle_day": "2026-10-29",
+    "recent": true,
+    "stated_day": "2026-10-29",
+    "symbol": "SONIC-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 5,
+    "error": "",
+    "first_candle_day": "2026-11-02",
+    "recent": true,
+    "stated_day": "2026-11-02",
+    "symbol": "NVDAX-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2026-09-28",
+    "recent": true,
+    "stated_day": "2026-09-28",
+    "symbol": "XDP-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2026-09-30",
+    "recent": true,
+    "stated_day": "2026-09-30",
+    "symbol": "CT-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2026-10-05",
+    "recent": true,
+    "stated_day": "2026-10-05",
+    "symbol": "PNT-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2026-10-05",
+    "recent": true,
+    "stated_day": "2026-10-05",
+    "symbol": "EVAA-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 26,
+    "error": "",
+    "first_candle_day": "2026-10-12",
+    "recent": true,
+    "stated_day": "2026-10-12",
+    "symbol": "CENT-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 22,
+    "error": "",
+    "first_candle_day": "2026-10-16",
+    "recent": true,
+    "stated_day": "2026-10-16",
+    "symbol": "DNA-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 16,
+    "error": "",
+    "first_candle_day": "2026-10-22",
+    "recent": true,
+    "stated_day": "2026-10-22",
+    "symbol": "AXIS-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 11,
+    "error": "",
+    "first_candle_day": "2026-10-27",
+    "recent": true,
+    "stated_day": "2026-10-27",
+    "symbol": "NAORIS-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 10,
+    "error": "",
+    "first_candle_day": "2026-10-28",
+    "recent": true,
+    "stated_day": "2026-10-28",
+    "symbol": "RITUAL-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 9,
+    "error": "",
+    "first_candle_day": "2026-10-29",
+    "recent": true,
+    "stated_day": "2026-10-29",
+    "symbol": "SKYAI-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 5,
+    "error": "",
+    "first_candle_day": "2026-11-02",
+    "recent": true,
+    "stated_day": "2026-11-02",
+    "symbol": "AMZNX-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 5,
+    "error": "",
+    "first_candle_day": "2026-11-02",
+    "recent": true,
+    "stated_day": "2026-11-02",
+    "symbol": "COINX-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 5,
+    "error": "",
+    "first_candle_day": "2026-11-02",
+    "recent": true,
+    "stated_day": "2026-11-02",
+    "symbol": "METAX-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 5,
+    "error": "",
+    "first_candle_day": "2026-11-02",
+    "recent": true,
+    "stated_day": "2026-11-02",
+    "symbol": "INTCX-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 4,
+    "error": "",
+    "first_candle_day": "2026-11-03",
+    "recent": true,
+    "stated_day": "2026-11-03",
+    "symbol": "IDOL-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 3,
+    "error": "",
+    "first_candle_day": "2026-11-04",
+    "recent": true,
+    "stated_day": "2026-11-04",
+    "symbol": "KOR-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2022-09-30",
+    "recent": false,
+    "stated_day": "2021-04-22",
+    "symbol": "HAI-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2022-09-30",
+    "recent": false,
+    "stated_day": "2021-08-12",
+    "symbol": "MTL-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2022-09-30",
+    "recent": false,
+    "stated_day": "2021-09-27",
+    "symbol": "DEXE-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2022-09-30",
+    "recent": false,
+    "stated_day": "2021-12-13",
+    "symbol": "XEC-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2022-09-29",
+    "recent": false,
+    "stated_day": "2022-04-25",
+    "symbol": "AURORA-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2022-11-29",
+    "recent": false,
+    "stated_day": "2022-11-29",
+    "symbol": "NAVI-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2023-05-05",
+    "recent": false,
+    "stated_day": "2023-05-05",
+    "symbol": "PEPE-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2023-11-22",
+    "recent": false,
+    "stated_day": "2023-11-22",
+    "symbol": "ZRX-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2024-02-07",
+    "recent": false,
+    "stated_day": "2024-02-07",
+    "symbol": "NAVX-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2024-04-24",
+    "recent": false,
+    "stated_day": "2024-04-24",
+    "symbol": "LL-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2024-08-01",
+    "recent": false,
+    "stated_day": "2024-08-01",
+    "symbol": "CXT-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2024-11-06",
+    "recent": false,
+    "stated_day": "2024-11-06",
+    "symbol": "COW-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2024-12-09",
+    "recent": false,
+    "stated_day": "2024-12-09",
+    "symbol": "ZEREBRO-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2025-01-16",
+    "recent": false,
+    "stated_day": "2025-01-16",
+    "symbol": "GPS-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2025-03-18",
+    "recent": false,
+    "stated_day": "2025-03-18",
+    "symbol": "BMT-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2025-05-15",
+    "recent": false,
+    "stated_day": "2025-05-15",
+    "symbol": "NXPC-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2025-07-05",
+    "recent": false,
+    "stated_day": "2025-07-05",
+    "symbol": "AIN-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2025-08-20",
+    "recent": false,
+    "stated_day": "2025-08-20",
+    "symbol": "SAPIEN-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2025-09-25",
+    "recent": false,
+    "stated_day": "2025-09-25",
+    "symbol": "BARD-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2025-10-21",
+    "recent": false,
+    "stated_day": "2025-10-21",
+    "symbol": "BLUAI-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2025-12-09",
+    "recent": false,
+    "stated_day": "2025-12-09",
+    "symbol": "NIGHT-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2026-01-21",
+    "recent": false,
+    "stated_day": "2026-01-21",
+    "symbol": "GWEI-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2026-03-31",
+    "recent": false,
+    "stated_day": "2026-03-31",
+    "symbol": "EDGE-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2026-05-22",
+    "recent": false,
+    "stated_day": "2026-05-22",
+    "symbol": "ESPORTS-USDT"
+   },
+   {
+    "candles_before_stated_day": 0,
+    "candles_in_span": 30,
+    "error": "",
+    "first_candle_day": "2026-07-23",
+    "recent": false,
+    "stated_day": "2026-07-23",
+    "symbol": "TAG-USDT"
+   }
+  ],
+  "errors": 0,
+  "no_stated_start": 92,
+  "no_stated_start_with_fewer_than_30_days": 0,
+  "older_checked": 25,
+  "older_first_candle_on_stated_day": 20,
+  "recent_first_candle_on_stated_day": 18,
+  "recent_listings_checked": 18,
+  "stated_start": 708
+ },
+ "ranking_date": "2026-11-06",
+ "span": [
+  "2026-10-08",
+  "2026-11-06"
+ ],
+ "what": "FDS-SIG-001 section 10.1, D10: the listing and cessation times each exchange states (verification; public market data; nothing ranked)"
+}

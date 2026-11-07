@@ -1,0 +1,1813 @@
+{
+ "eligible_pairs": 4380,
+ "family_size": 4,
+ "runs": 10,
+ "scenarios": [
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.001,
+   "family_size": 4,
+   "params": {},
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.00025,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    }
+   ],
+   "scenario": "random",
+   "seconds": 239.8,
+   "seeds": [
+    7000000,
+    7000001,
+    7000002,
+    7000003,
+    7000004,
+    7000005,
+    7000006,
+    7000007,
+    7000008,
+    7000009
+   ],
+   "statistic": "hit_rate"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.043,
+   "family_size": 4,
+   "params": {},
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.01075,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 9,
+     "family_rate": 0.09,
+     "per_test_passes": 9,
+     "per_test_rate": 0.0225,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 6,
+     "family_rate": 0.06,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 6,
+     "family_rate": 0.06,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 7,
+     "family_rate": 0.07,
+     "per_test_passes": 7,
+     "per_test_rate": 0.0175,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    }
+   ],
+   "scenario": "random",
+   "seconds": 109.9,
+   "seeds": [
+    7001000,
+    7001001,
+    7001002,
+    7001003,
+    7001004,
+    7001005,
+    7001006,
+    7001007,
+    7001008,
+    7001009
+   ],
+   "statistic": "magnitude"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.0,
+   "family_size": 4,
+   "params": {
+    "up_share": 0.53
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.0,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    }
+   ],
+   "scenario": "near_constant",
+   "seconds": 215.2,
+   "seeds": [
+    7002000,
+    7002001,
+    7002002,
+    7002003,
+    7002004,
+    7002005,
+    7002006,
+    7002007,
+    7002008,
+    7002009
+   ],
+   "statistic": "hit_rate"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.0,
+   "family_size": 4,
+   "params": {
+    "up_share": 0.47
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.0,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    }
+   ],
+   "scenario": "near_constant",
+   "seconds": 198.0,
+   "seeds": [
+    7003000,
+    7003001,
+    7003002,
+    7003003,
+    7003004,
+    7003005,
+    7003006,
+    7003007,
+    7003008,
+    7003009
+   ],
+   "statistic": "hit_rate"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.0,
+   "family_size": 4,
+   "params": {
+    "up_share": 0.53
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.0,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    }
+   ],
+   "scenario": "near_constant",
+   "seconds": 98.9,
+   "seeds": [
+    7004000,
+    7004001,
+    7004002,
+    7004003,
+    7004004,
+    7004005,
+    7004006,
+    7004007,
+    7004008,
+    7004009
+   ],
+   "statistic": "magnitude"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.0,
+   "family_size": 4,
+   "params": {},
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.0,
+   "runs": [
+    {
+     "assessable": 73,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 72,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 67,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 61,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 66,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 56,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 69,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 79,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 76,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 66,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    }
+   ],
+   "scenario": "persistent",
+   "seconds": 33.6,
+   "seeds": [
+    7005000,
+    7005001,
+    7005002,
+    7005003,
+    7005004,
+    7005005,
+    7005006,
+    7005007,
+    7005008,
+    7005009
+   ],
+   "statistic": "hit_rate"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.004,
+   "family_size": 4,
+   "params": {},
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.001,
+   "runs": [
+    {
+     "assessable": 66,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 66,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 79,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    },
+    {
+     "assessable": 64,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 64,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 68,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 61,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    },
+    {
+     "assessable": 68,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 71,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 67,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    }
+   ],
+   "scenario": "persistent",
+   "seconds": 19.2,
+   "seeds": [
+    7006000,
+    7006001,
+    7006002,
+    7006003,
+    7006004,
+    7006005,
+    7006006,
+    7006007,
+    7006008,
+    7006009
+   ],
+   "statistic": "magnitude"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.035,
+   "family_size": 4,
+   "params": {
+    "amplitude": 0.15,
+    "kind": "up-only"
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.00875,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    }
+   ],
+   "scenario": "drift",
+   "seconds": 107.5,
+   "seeds": [
+    7007000,
+    7007001,
+    7007002,
+    7007003,
+    7007004,
+    7007005,
+    7007006,
+    7007007,
+    7007008,
+    7007009
+   ],
+   "statistic": "hit_rate"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.025,
+   "family_size": 4,
+   "params": {
+    "amplitude": 0.3,
+    "kind": "up-only"
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.00625,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    }
+   ],
+   "scenario": "drift",
+   "seconds": 106.4,
+   "seeds": [
+    7008000,
+    7008001,
+    7008002,
+    7008003,
+    7008004,
+    7008005,
+    7008006,
+    7008007,
+    7008008,
+    7008009
+   ],
+   "statistic": "hit_rate"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.042,
+   "family_size": 4,
+   "params": {
+    "amplitude": 0.15,
+    "kind": "two-sided"
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.0105,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 6,
+     "family_rate": 0.06,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 6,
+     "family_rate": 0.06,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    }
+   ],
+   "scenario": "drift",
+   "seconds": 125.4,
+   "seeds": [
+    7009000,
+    7009001,
+    7009002,
+    7009003,
+    7009004,
+    7009005,
+    7009006,
+    7009007,
+    7009008,
+    7009009
+   ],
+   "statistic": "magnitude"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.043,
+   "family_size": 4,
+   "params": {
+    "amplitude": 0.3,
+    "kind": "two-sided"
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.01075,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 7,
+     "family_rate": 0.07,
+     "per_test_passes": 7,
+     "per_test_rate": 0.0175,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 8,
+     "family_rate": 0.08,
+     "per_test_passes": 8,
+     "per_test_rate": 0.02,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    }
+   ],
+   "scenario": "drift",
+   "seconds": 112.5,
+   "seeds": [
+    7010000,
+    7010001,
+    7010002,
+    7010003,
+    7010004,
+    7010005,
+    7010006,
+    7010007,
+    7010008,
+    7010009
+   ],
+   "statistic": "magnitude"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.03,
+   "family_size": 4,
+   "params": {
+    "amplitude": 0.3,
+    "kind": "up-only",
+    "period_days": 30
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.008,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    }
+   ],
+   "scenario": "drift",
+   "seconds": 101.3,
+   "seeds": [
+    7011000,
+    7011001,
+    7011002,
+    7011003,
+    7011004,
+    7011005,
+    7011006,
+    7011007,
+    7011008,
+    7011009
+   ],
+   "statistic": "hit_rate"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.041,
+   "family_size": 4,
+   "params": {
+    "amplitude": 0.3,
+    "kind": "two-sided",
+    "period_days": 30
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.01075,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 6,
+     "family_rate": 0.06,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 6,
+     "family_rate": 0.06,
+     "per_test_passes": 7,
+     "per_test_rate": 0.0175,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 6,
+     "family_rate": 0.06,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    }
+   ],
+   "scenario": "drift",
+   "seconds": 101.2,
+   "seeds": [
+    7012000,
+    7012001,
+    7012002,
+    7012003,
+    7012004,
+    7012005,
+    7012006,
+    7012007,
+    7012008,
+    7012009
+   ],
+   "statistic": "magnitude"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.024,
+   "family_size": 4,
+   "params": {
+    "amplitude": 0.15,
+    "kind": "up-only",
+    "period_days": 30
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.00625,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 4,
+     "family_rate": 0.04,
+     "per_test_passes": 4,
+     "per_test_rate": 0.01,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 0,
+     "family_rate": 0.0,
+     "per_test_passes": 0,
+     "per_test_rate": 0.0,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    }
+   ],
+   "scenario": "drift",
+   "seconds": 99.8,
+   "seeds": [
+    7013000,
+    7013001,
+    7013002,
+    7013003,
+    7013004,
+    7013005,
+    7013006,
+    7013007,
+    7013008,
+    7013009
+   ],
+   "statistic": "hit_rate"
+  },
+  {
+   "E": 4380,
+   "alpha_1": 0.0125,
+   "bootstrap_draws": 8000,
+   "family_mc_se": 0.006892024376045111,
+   "family_rate": 0.03,
+   "family_size": 4,
+   "params": {
+    "amplitude": 0.15,
+    "kind": "two-sided",
+    "period_days": 30
+   },
+   "per_test_mc_se": 0.0017566836653193996,
+   "per_test_rate": 0.00775,
+   "runs": [
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 5,
+     "family_rate": 0.05,
+     "per_test_passes": 5,
+     "per_test_rate": 0.0125,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 6,
+     "family_rate": 0.06,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 1,
+     "per_test_rate": 0.0025,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 3,
+     "family_rate": 0.03,
+     "per_test_passes": 3,
+     "per_test_rate": 0.0075,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 1,
+     "family_rate": 0.01,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 2,
+     "family_rate": 0.02,
+     "per_test_passes": 2,
+     "per_test_rate": 0.005,
+     "trials": 400
+    },
+    {
+     "assessable": 400,
+     "families": 100,
+     "family_passes": 6,
+     "family_rate": 0.06,
+     "per_test_passes": 6,
+     "per_test_rate": 0.015,
+     "trials": 400
+    }
+   ],
+   "scenario": "drift",
+   "seconds": 98.4,
+   "seeds": [
+    7014000,
+    7014001,
+    7014002,
+    7014003,
+    7014004,
+    7014005,
+    7014006,
+    7014007,
+    7014008,
+    7014009
+   ],
+   "statistic": "magnitude"
+  }
+ ],
+ "trials_per_run": 400,
+ "what": "FDS-SIG-001 section 16 item 2: false-pass rates of no-skill rules on simulated data (verification, no market data, no verdict); the last four scenarios are the exactly-monthly drift cycle (period_days 30), run separately on the same settings"
+}

@@ -78,6 +78,65 @@ class MarketStatus:
     reason: str = ""
 
 
+@dataclass(frozen=True)
+class RawAnswer:
+    """One public market-data answer exactly as the exchange sent it, kept as evidence
+    (FDS-SIG-001 section 12, step 0)."""
+
+    url: str
+    params: Tuple[Tuple[str, str], ...]
+    status: int
+    body: bytes
+
+    @property
+    def sha256(self) -> str:
+        import hashlib
+
+        return hashlib.sha256(self.body).hexdigest()
+
+
+@dataclass(frozen=True)
+class ListedMarket:
+    """One spot market an exchange lists, in any status."""
+
+    pair: str  # the exchange's own market name (BTCUSDT, BTC-USD, XXBTZUSD, ...)
+    coin: str  # the coin as the app names it (BTC for Kraken's XBT)
+    base: str  # the base asset as the exchange names it
+    quote: str
+    status: str  # the exchange's own word
+    trading: Optional[bool]
+    leveraged: Optional[bool] = None  # the exchange marks it as a leveraged token
+    # When the market's trading began and ended (epoch ms), only as the exchange itself
+    # states them in its listing, with the field(s) they come from; None where it
+    # states none. Nothing infers them from candles or from the market's status.
+    trading_start_ms: Optional[int] = None
+    trading_end_ms: Optional[int] = None
+    history_stated_by: str = ""
+
+
+@dataclass(frozen=True)
+class MarketListing:
+    """Every spot market an exchange lists against the quote currency the app's dollar
+    markets use there (``spot_markets``), with the answers it came from."""
+
+    exchange: str
+    quote: str
+    markets: Tuple[ListedMarket, ...]
+    answers: Tuple[RawAnswer, ...]
+
+
+@dataclass(frozen=True)
+class DailyQuoteVolume:
+    """One market's quote volume per UTC day, as the exchange states it
+    (``daily_quote_volume``), with the answers it came from."""
+
+    exchange: str
+    pair: str
+    days: Tuple[Tuple[int, float], ...]  # (the day's open, ms; quote volume)
+    measure: str  # which fields of the exchange's answer give it
+    answers: Tuple[RawAnswer, ...]
+
+
 @dataclass
 class PriceQuote:
     """Best bid and ask, with the exchange's own time for them where it gives one."""
@@ -611,6 +670,22 @@ class AbstractExchange(abc.ABC):
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         """Whether the exchange's market for ``symbol`` is trading; None when this
         connector cannot say, or the exchange could not be asked."""
+        return None
+
+    def spot_markets(self) -> Optional[MarketListing]:
+        """Every spot market the exchange lists against the quote currency the app's
+        dollar markets use on it, in any status, from its public listing; None when
+        this connector cannot list them. A market's ``trading_start_ms`` and
+        ``trading_end_ms`` are set only where the listing itself states them."""
+        return None
+
+    def daily_quote_volume(
+        self, pair: str, start_ms: int, end_ms: int
+    ) -> Optional[DailyQuoteVolume]:
+        """The quote volume of ``pair`` (the exchange's market name) on each UTC day
+        opening from ``start_ms`` to ``end_ms`` (inclusive), as the exchange's public
+        daily candles state it; None when this connector's exchange does not state
+        quote volume (base volume times a price is not quote volume)."""
         return None
 
     def quote(self, symbol: str) -> Optional[PriceQuote]:

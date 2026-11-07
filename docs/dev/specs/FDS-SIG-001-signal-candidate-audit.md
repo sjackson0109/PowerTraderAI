@@ -5,7 +5,7 @@
 **Branch:** this spec is on `docs/fds-sig-001-signal-audit`, cut from `main` at `00d9c99`. The implementation and round one's registration go on `feat/signal-audit-1`, cut from `main` after this spec is merged.
 **Recommended model:** Claude Opus 5.5, effort high, for the statistics module and the report generator. Sonnet 5.5, effort high, for fetching and plumbing.
 **Run log:** `docs/dev/RUN-LOG-sig-<N>.md` for round N, in the same format as batch 1.
-**Status:** draft for owner review. This version adopts the owner's decisions of 2026-10-12 (§15.1) and lists the defaults it sets that still need confirming (§15.3). Nothing is implemented yet, and this document changes no code, trainer or strategy.
+**Status:** draft for owner review. This version adopts the owner's decisions of 2026-10-12 (§15.1), of 2026-11-06 (§15.4) and of 2026-11-07 (§15.5, and §15.6 for A1 to A7), and lists the defaults it sets that still need confirming (§15.3). Implemented on `feat/signal-audit-1` (2026-11-06); round one is not registered. This document changes no trainer or strategy.
 **Related:** FDS-SIG-002, `docs/dev/specs/FDS-SIG-002-round-one-candidates.md`, names round one's candidates and depends on this spec.
 
 ---
@@ -115,7 +115,7 @@ It narrows the timeframes compared with 11.8: round one uses 1h and 4h only.
 The audit may use only data the repo can fetch and cache with integrity checks today:
 
 - **The candle cache** (`app/market_data/candles.py`) stores `open_time, open, high, low, close, volume` for Binance spot
-  klines, where `volume` is the base-asset volume.
+  klines, where `volume` is the base-asset volume. *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
   - The fetch keeps kline fields 0–5 only. Binance's quote-asset volume (field 7), trade count (field 8) and taker-buy
     volumes (fields 9–10) are **dropped**.
   - `app/market_data/runner_history.py` parses quote volume, but only in memory, for recent bars.
@@ -421,7 +421,12 @@ the bar is corrected for the family. The rows are never averaged or counted into
 ### 8.3 Confirmation round
 
 A provisional pass counts only after it **replicates on the next fresh window**:
-- **The window** does not overlap any earlier one, and its registration is committed before it starts (§11).
+- **The window** reuses no evaluated observation *(owner, A6: §15.6)*:
+  - it does not overlap the window of any registered round, whether that round has results or is still to be
+    evaluated;
+  - an unexamined cancelled window (§12, step 6) does not by itself bar it, as it does not bar a replacement (A3);
+  - its registration is committed before it starts (§11), so it evaluates only observations after its own
+    registration, never the elapsed part of a cancelled window.
 - **What is re-tested:** the same candidate, parameters, direction and statistic, with the same frozen model for a
   trained candidate (no retraining).
 - **The family:** one member per provisional (row, statistic), with Holm at a 5% family error rate, one-sided.
@@ -479,9 +484,44 @@ block-bootstrap and batch-means standard errors**, matching §7.4.
 ### 10.1 Coin selection
 
 - **Universe:** Binance spot pairs quoted in USDT. This includes every symbol Binance's exchange information returns, of
-  any status, at the ranking fetch (§12, step 0).
+  any status, at the ranking fetch (§12, step 0). *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
 - **Ranking:** by 30-day quote volume, the sum of kline field 7 over the 30 UTC days of 1d klines ending on the
-  **ranking date**.
+  **ranking date**. *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
+- **Every day accounted for** *(owner, D10: §15.5)*. A market's 30-day volume is established only when:
+  - every one of the 30 days has a daily bar. Its stated volume counts, and zero is a volume; or
+  - the exchange itself states, in its listing, when the market's trading began or ended, every day inside that stated
+    period has a bar, and no bar lies outside it. The market was listed within or after the 30 days, or stopped within
+    or before them.
+
+  The first or last bar of an answer, and the market's current status, never stand in for a stated date: an
+  incomplete answer looks the same. A failed request, no answer, a missing day the exchange's statements do not account
+  for, a bar outside the stated period, or a volume that is not a finite number at least 0 is not evidence. The
+  ranking is then refused, with each such market's error, missing days and stated times recorded. Nothing is
+  estimated, filled or inferred. An excluded market cannot be selected, so its evidence is recorded and does not
+  refuse the ranking.
+  - **What the exchanges state** (checked 2026-11-07, `docs/dev/sig-audit/verification/listing-evidence-probe.json`):
+    - KuCoin's symbol list gives `tradingStartTime` for most symbols. Its first daily candle fell on the stated day for
+      every recent listing, and no symbol had a candle before it.
+    - Binance, Kraken and Coinbase state no trading start.
+    - No exchange states when trading ended. Binance's delisting schedule needs an API key, which the audit never
+      reads.
+  - **Binance cannot currently complete a ranking** *(owner, A1: deferred, §15.6)*. It states no trading start or end,
+    and at the probe its list held 254 markets that had stopped trading (BREAK) with no bar in the 30 days, 3 with
+    only some of them, and 15 listed within them. Under these eligibility and evidence requirements, a Binance
+    ranking is refused while its list holds such markets.
+    - A market is not excluded merely because it is not trading at the ranking fetch.
+    - A later specification may add a provider-neutral way to exclude markets that demonstrably cannot meet the
+      history rule below. It must account for selection bias and keep each excluded market's evidence.
+  - **KuCoin's `tradingStartTime`** *(owner, A2: approved)* is exchange-stated listing evidence.
+    - **Its source:** the field of KuCoin's public symbol list (`/api/v2/symbols`). The list is kept in the raw
+      ranking answers with its SHA-256, and each market's evidence records the stated time and the field it
+      comes from.
+    - **Its limitations:**
+      - it was checked against KuCoin's daily candles for recent listings only. For some older symbols KuCoin's
+        candles begin after the stated day, as its history starts on 2022-09-29. That matters only where a stated
+        start falls inside the 30 days, which the check covered;
+      - some symbols do not give it (92 of 800 at the probe, every one of them with all 30 days);
+      - it states no cessation, and a delisted symbol leaves the list, so it cannot be ranked.
 - **Ranking date:** fixed in the registration, and before the window starts. That avoids ranking coins on volume or
   performance from inside the window, and the survivorship bias that would follow.
 - **The ranking fetch** happens within 7 days after the ranking date. A pair removed from exchange information before
@@ -507,8 +547,12 @@ block-bootstrap and batch-means standard errors**, matching §7.4.
 - **After registration:** coins are never replaced. A coin delisted or gapped during the window keeps its rows, which are
   NOT ASSESSABLE where they fall below a floor.
 - **Evidence:** committed with the registration:
-  - the full ranked list (rank, symbol, status, 30-day quote volume, included or excluded, reason);
+  - the full ranked list (rank, symbol, status, 30-day quote volume, included or excluded, reason), with each market's
+    volume evidence: its status, its days, and any stated trading start or end with the field it comes from;
   - the raw ranking responses and their SHA-256.
+
+  A refused ranking writes the same evidence for every market it could not establish (`ranking/refused.json`), and
+  nothing is registered.
 
 ### 10.2 Timeframes
 
@@ -541,7 +585,10 @@ and the window starts after its registration was committed.
   - Any re-run on an examined window is a reproduction check and carries no verdict.
 - **Disclosure:** the registration lists every earlier period whose results for the audited coins have been published.
 - **Later windows:** each later round and each confirmation round uses its own new window, which starts after the
-  previous window ends (§8.3).
+  previous examined window ends (§8.3), and evaluates only observations after its own registration commit.
+  - A cancelled round's window is never examined (§12, step 6).
+  - A replacement *(owner, A3)* and a confirmation round *(owner, A6)* may overlap an unexamined cancelled window,
+    but never the window of a round with results or still to be evaluated (§15.6).
 
 **How long a window must run.** At full coverage, with no ties or gaps, from the window start to the close of the last
 outcome bar:
@@ -561,7 +608,7 @@ of bars needs about 3.3 times the span. The end is a single date that trades tim
 The process inherits FDS-MDL's registration discipline, including the integrity checks that made PR #154's verdict
 checkable. The audit script is `docs/dev/run_signal_audit.py`.
 
-0. **Ranking and history fetch, through public endpoints, before registration.**
+0. **Ranking and history fetch, through public endpoints, before registration.** *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
    - Fetch 1d klines with quote volume, and exchange information. The raw responses and their SHA-256 are committed with
      the registration.
    - Fetch the 1h klines that the §10.1 history check needs, for each ranked coin down to the last one considered. The
@@ -582,14 +629,36 @@ checkable. The audit script is `docs/dev/run_signal_audit.py`.
      - the sandbox home.
 2. **Code freeze, in its own commit:** the frozen paths. A commit that changes the registration may not touch a frozen
    path, as `docs/dev/run_backtest_model1.py` checks its header commits.
-3. **Fetch, after the window ends,** through public Binance endpoints: candles for every audited and input coin, for the
-   round's timeframes and for every timeframe a registered trained candidate's trainer reads. Each candle file's SHA-256 is recorded, and the run stops if a file differs from an earlier record of it.
+3. **Fetch, after the window ends,** through public Binance endpoints *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*: candles for every audited and input coin, for the
+   round's timeframes and for every timeframe a registered trained candidate's trainer reads.
+   - **Twice.** Each series is fetched from the registered exchange only, once through the candle cache and once
+     without it. The two must agree bar for bar: a difference is a historical correction or a cache fault, and the
+     fetch stops, naming the bars. A series fetched before must equal its earlier record.
+   - **Snapshots** *(owner, D11: §15.5)*.
+     - The round's span on each timeframe is written once as a compressed snapshot in the round's folder,
+       `candles/<coin>_<tf>.csv.gz`. The span runs from the warm-up before the window start to the window end.
+     - Snapshots are gzip with no file name and time 0, so the same bars give the same bytes.
+     - Each is recorded in `data.json` with its exchange, pair, span, first and last bar, bar count, the bars'
+       SHA-256 (the candle cache's CSV form, as FDS-MH-001's series) and the file's SHA-256.
+     - A snapshot is never rewritten.
+     - The snapshots are committed with the results.
+   - **The run reads only the snapshots,** never the cache. It stops if a snapshot differs from its record, or the
+     record from the registration: exchange, coins, input coins, timeframes and span.
+   - **Independent verification.** `verify` lets anyone with the repo do three checks:
+     - check every snapshot without the exchange;
+     - re-derive the results from the snapshots with the code that produced them;
+     - with `--refetch`, compare each snapshot with the exchange's bars now.
 4. **Run.** The script refuses to run, and logs an ERROR, if any of these holds:
    - the registration file is missing, uncommitted, or changed since its registration commit;
    - the registration commit is not dated before the window start;
    - a commit that changes the registration also touches a frozen path;
    - any frozen path is dirty (`git status --porcelain` over the frozen paths, as `run_backtest_model1.py` does);
    - the registration commit is not an ancestor of the freeze commit;
+   - the freeze record changed after its freeze commit *(owner, D8: §15.5)*;
+   - a frozen path changed in any commit after the freeze commit, except a defect fix after results through
+     `--supersede` (step 6) *(owner, D8)*;
+   - the round's registration was cancelled (step 6), or it replaces a cancelled round whose cancellation record is
+     not committed, has changed since, or was not committed before it *(owner, D9: §15.5)*;
    - the window's end has not yet passed;
    - a trained model's `train_end` is after the window start.
 
@@ -599,18 +668,130 @@ checkable. The audit script is `docs/dev/run_signal_audit.py`.
    - It asserts each verdict against the numbers, and **re-derives it independently**, as `app/backtest/model_eval.py`
      does with `recheck_verdict`.
    - Each output records the commit, whether any frozen file changed, the registration file's SHA-256, the Python
-     version, and `POWERTRADER_HOME`.
-6. **Amendments.**
-   - Before results: a change to the registration goes in its own owner-reviewed commit, before the window starts.
-   - After results: only defect fixes, through `--supersede`, with the earlier verdict reported beside the new one.
-   - A new target (§3) needs an amendment to this spec.
+     version, the numerical packages' versions (numpy, scipy, pandas), and `POWERTRADER_HOME`.
+6. **Amendments and defects.**
+   - **Before results, a change to the registration** goes in its own owner-reviewed commit, before the window starts.
+   - **Before results, a material defect** in the frozen code, the registration or its evidence cancels the
+     registration *(owner, D9: §15.5)*.
+     - It is never fixed in place, and frozen code known to be defective is never run to make a result for later
+       supersession.
+     - `cancel --round N --defect "<what is wrong and why>"` writes `cancellation.json`, which is committed on its own.
+       It records the defect, the registration's commit and SHA-256, the freeze commit, the code at cancellation (the
+       frozen files changed or uncommitted), and whether the window had started or ended.
+     - The cancelled round is never run, and its window is never fetched or scored for it.
+     - A **new registration** replaces it *(owner, A3 to A5: §15.6)*:
+       - **its round number** is the next available one: the lowest not used by any round's folder;
+       - **a fresh ranking:** it goes through steps 0 to 2 in full, with its own ranking (never the cancelled
+         round's), registration and freeze;
+       - **its record** names the cancelled round (`draft --replaces N`), whose cancellation is committed before it,
+         with that record's commit and SHA-256;
+       - **its window** starts after its own registration commit (§11), so it evaluates only observations after its
+         registration. It may overlap the unexamined cancelled window:
+         - **the cancelled window had not started:** the replacement may keep the same dates, if its registration
+           commit still precedes their start; otherwise it takes a later window;
+         - **the cancelled window had started:** the replacement takes a new window, starting after its own
+           registration commit. The elapsed part of the cancelled window was never examined: it is recorded in the
+           replacement as cancelled, and neither round fetches or scores it.
+   - **After results: only defect fixes,** through `--supersede "<what changed and why>"`, and only when results exist.
+     - The earlier results, their evidence series and their report are kept in `superseded/<k>-<commit>/`, with the
+       note, the time, the results' commit and each file's SHA-256.
+     - The earlier verdict is reported beside the new one.
+     - The changed frozen files and the note are recorded in the new outputs.
+     - A defect after results is never handled by cancelling.
+   - **A new target** (§3) needs an amendment to this spec.
 7. **No silent gaps.** Skipped pairs, ties and missing bars are counted and reported. A row or statistic below a floor is
    NOT ASSESSABLE, and its verdict line says so.
 
+### 12.1 Running a registered round from its own worktree
+
+A round runs for months, typically 12, while development goes on. The run must execute from its frozen code commit, and
+`main` keeps moving. So the registration, the freeze and the run live on a **research branch**, executed from its own
+**git worktree**.
+
+**Steps** (PowerShell; N is the round, and `..\PowerTraderAI-sig-round-N` is any folder outside the repo and
+outside `%TEMP%`, which Windows cleans):
+
+1. **After this audit's code is on `main` and the owner approves the registration:**
+
+   ```powershell
+   git switch -c research/sig-round-N main
+   ```
+
+   Then run steps 0 to 2 on this branch: rank, draft, then the registration commit and the freeze commit. Push the
+   branch, and tag the freeze commit:
+
+   ```powershell
+   git tag sig-round-N-freeze; git push origin research/sig-round-N sig-round-N-freeze
+   ```
+
+2. **The execution environment:**
+
+   ```powershell
+   git worktree add ..\PowerTraderAI-sig-round-N research/sig-round-N
+   ```
+
+   In it, create a virtual environment from `app\requirements.txt`, and a `POWERTRADER_HOME` sandbox, also outside the
+   repo and `%TEMP%`. Leave both untouched for the round. Development continues in the main checkout on `main` and its
+   branches.
+3. **During the window:**
+   - Nothing changes on the research branch.
+   - **Never merge `main` into it.** The run would then refuse (a frozen path changed after the freeze), which fails
+     safe.
+4. **After the window ends, in the worktree:**
+   - run `fetch`, then `run`, then commit `data.json`, `candles/`, `results.json`, `series/` and the report as the
+     results commit;
+   - run `verify` and `verify --refetch`;
+   - push.
+5. **Carry the results to `main`** *(owner, A7: §15.6)*. Tag the results commit in the worktree and push the tag. Then,
+   in a PR from a branch off `main`, check out only the round's folder and its report from that tag:
+
+   ```powershell
+   git tag sig-round-N-results; git push origin sig-round-N-results
+   git checkout sig-round-N-results -- docs/dev/sig-audit/round-N docs/dev/SIG-AUDIT-REPORT-round-N.md
+   ```
+
+   - **No frozen application code reaches `main`.** Never merge the research branch, which would bring its frozen or
+     fixed code.
+   - **The round's folder carries the evidence:**
+     - the registration and freeze records, and the ranking evidence;
+     - `data.json`, with each snapshot's bars' and file's SHA-256, and the snapshots;
+     - `results.json` and its state: the commit that ran, the registration and freeze commits, the registration's
+       SHA-256, and the Python and package versions;
+     - the evidence series, and any cancellation or superseded results.
+   - **The transfer commit's message records** the research branch, the results commit, the freeze commit, both
+     tags, and the output of `verify` and `verify --refetch` at the results commit.
+   - **The research branch and both tags stay** as the record of the code that produced the results. They are never
+     deleted, rebased or moved, and branch clean-ups leave them alone.
+   - **To re-derive the results later,** check out the results tag in its own worktree and run `verify` there. On
+     `main`, `verify` checks the snapshots and then stops before re-deriving, because the code has moved on.
+
+**Defects in this arrangement:**
+- **A defect found before results** is cancelled on the research branch (step 6). The cancellation is carried to `main`
+  as above, and the replacement, under the next available round number, starts a new research branch from `main`.
+- **A defect found after results** is fixed on the research branch, run with `--supersede`, and verified there. The fix
+  reaches `main` in its own PR.
+
+**What the arrangement preserves:**
+- **The registration:** the refusals on the registration file, its commit date and the commits that changed it read
+  the research branch's own history.
+- **The freeze:** the worktree's HEAD is the freeze commit, or a descendant that changes only the round's folder. So
+  the refusals on dirty frozen paths, a changed freeze record and frozen paths changed after the freeze hold, whatever
+  happens on `main`.
+- **The candle evidence:** written, committed and verified in the worktree, and re-derivable later from the tag.
+- **The refusals:** every one runs in the worktree, against its HEAD.
+- **The environment:** each output records the Python and package versions.
+- **Tested:** `test_a_round_runs_from_its_research_worktree_while_main_moves_on` checks three things:
+  - the run is refused in a main checkout that has moved on;
+  - it is allowed in the research worktree, with the fetch committed;
+  - it is refused there again once `main` is merged in.
+
 ## 13. Report
 
-The report for round N is `docs/dev/SIG-AUDIT-REPORT-round-<N>.md`. Its evidence is in `docs/dev/sig-audit/round-<N>/`,
-including the per-pair call and return series for every row.
+The report for round N is `docs/dev/SIG-AUDIT-REPORT-round-<N>.md`. Its evidence is in `docs/dev/sig-audit/round-<N>/`:
+- the per-pair call and return series for every row;
+- the compressed candle snapshots and their record (§12, step 3);
+- any superseded results, with their series and report (step 6);
+- a cancellation record, if the round was cancelled (step 6).
 
 **One row per (candidate, coin, timeframe),** none dropped. Each row has:
 - **Counts:** eligible pairs, skipped pairs, ties, calls n, coverage and q.
@@ -747,6 +928,82 @@ Nothing is wired to a strategy, the trainer or paper trading by this spec.
 9. **Registration before the window starts** (§11). This is stricter than "after the last examined bar": the bars since
    2026-10-01 have already been visible in the hub.
 
+### 15.4 Owner decisions of 2026-11-06
+
+1. **No single-exchange logic** ("Each exchange needs to do this - no single exchange logic allowed!"). This spec predates
+   the multi-exchange design (FDS-MX-001, 2026-10-26), and its §4, §10.1, §12 and §17 name Binance. They now apply to
+   every exchange alike:
+   - **The round's exchange** is the first in Settings order (the primary first) whose connector lists its spot markets,
+     states daily quote volume and serves the round's candle history. Every exchange passed over is recorded in the
+     registration with its reason. One round's coins are ranked, history-checked and fetched on that one exchange.
+   - **The universe** is every spot market that exchange lists against the quote currency the app's dollar markets use on
+     it (USDT, USD), in any status, at the ranking fetch.
+   - **The ranking measure** is the daily quote volume as that exchange states it: Binance's 1d kline field 7, KuCoin's
+     1day candle turnover, Kraken's daily OHLC vwap × volume. An exchange that states no quote volume (Coinbase's candles
+     carry base volume only) cannot rank a round: base volume times a price is not quote volume (§4).
+   - **Leveraged tokens:** a token the exchange itself marks as leveraged is excluded, as Binance's marks are.
+   - **Network (§17):** only the public market data of the exchanges in Settings.
+2. **Every simulation runs locally, ten times over** ("Do all the 'simulations' locally, run 10x of them"): each
+   simulation (the two-sided minimum detectable effect of §9, and §16 item 2's false-pass study) runs as 10 independent
+   runs with registered seeds, and reports the pooled figure with each run's own beside it.
+
+### 15.5 Owner decisions of 2026-11-07
+
+These were made on the review of PR #228 and its follow-up.
+
+- **D8: approved.** The two code-freeze refusals are added to §12, step 4:
+  - a frozen path changed in any commit after the freeze commit, except a defect fix after results through
+    `--supersede`;
+  - a freeze record changed after its freeze commit.
+- **D9: revised.** "Do not knowingly execute defective frozen code to manufacture an original result for subsequent
+  supersession."
+  - A material defect discovered before results exist invalidates the affected registration. An auditable cancellation
+    record is preserved, and a new registration is established with an eligible future window.
+  - `--supersede` is retained for legitimate defect corrections after results exist, preserving the previous results
+    and their provenance. See §12, step 6, including the cases where the original window has and has not started.
+- **D10: approved.** Strict treatment of incomplete volume, subject to verified listing and cessation evidence (§10.1).
+  - The ranking uses only listing and cessation times the exchange itself states. It never infers them from the first
+    or last bar or the current status, and otherwise refuses.
+- **D11: approved.** Commit compressed, immutable, hashed candle snapshots with the eventual research results, and
+  ensure the evidence can be independently verified (§12, step 3; `verify`).
+- **D12:** no statistical changes are required. The F = 76 round-scale false-pass study
+  (`docs/dev/sig-audit/verification/round-false-pass-study.json`) found no deficiency. The statistical procedures and
+  the signal candidates are unchanged.
+
+### 15.6 Owner decisions of 2026-11-07: A1 to A7
+
+These close the questions the follow-up review raised (`docs/dev/RUN-LOG-sig-1.md`).
+
+- **A1: deferred.** No market is excluded solely because it is inactive at the ranking fetch, and the strict
+  data-integrity rule stands (D10).
+  - Binance cannot currently complete a ranking under the present eligibility and evidence requirements (§10.1).
+  - A future specification may introduce a provider-neutral method for excluding markets demonstrably ineligible
+    under the historical continuity requirement. Such a method must account for selection bias and preserve the
+    excluded markets' evidence.
+- **A2: approved.** KuCoin's `tradingStartTime` is acceptable as exchange-stated listing evidence, with its source and
+  limitations recorded (§10.1).
+- **A3: approved.** A replacement registration may overlap an unexamined cancelled window, but evaluates only
+  observations after its own registration (§11; §12, step 6).
+- **A4: approved.** A replacement ranks afresh (§12, step 6).
+- **A5: approved.** A replacement takes the next available round number (§12, step 6).
+- **A6: revised.** A confirmation round must not reuse previously evaluated observations. An unexamined cancelled
+  window does not, by itself, prohibit an overlapping later confirmation window (§8.3, §11). In the code:
+  - **`round_windows`** lists each committed registration's window as one of three kinds:
+    - with results;
+    - registered, still to be evaluated;
+    - cancelled before results. This counts only when the cancellation is committed, unchanged and has no results
+      beside it.
+  - **`check_confirmation`** refuses two kinds of window:
+    - one that overlaps any window but a cancelled-before-results one;
+    - one that does not start after the confirmation's own registration commit, which is §11's rule for every round.
+- **A7: approved.** Research outputs reach `main` without merging frozen application code. The original research
+  commit, the freeze commit, the data hashes and the verification metadata are preserved (§12.1, step 5).
+
+**Where each is enforced:**
+- **The audit script:** A6, and the window-after-registration part of A3.
+- **Review of the registration or the transfer PR:** A4, A5, A7, and a new round's or replacement's overlap with
+  another round's window.
+
 ## 16. Acceptance criteria (for the implementation)
 
 1. **Statistics module (unit tests).** Hand-worked values, independent scalar reference implementations, and a 1e-6
@@ -790,14 +1047,23 @@ Nothing is wired to a strategy, the trainer or paper trading by this spec.
 9. **Confirmation (tests).**
    - A round's Holm survivor is reported only as PASS (provisional).
    - A confirmation run takes exactly the provisional (row, statistic) members as its family and applies Holm at 5%.
-   - It refuses if the candidate, parameters, direction, statistic or model differ, or if its window overlaps any
-     registered earlier window.
+   - It refuses when any of these holds:
+     - the candidate, parameters, direction, statistic or model differ;
+     - its window overlaps the window of a registered round with results or still to be evaluated;
+     - it does not start after its own registration commit.
+
+     An unexamined cancelled window alone does not refuse it (A6). Only a committed, unchanged cancellation with no
+     results beside it counts as one.
    - It labels a result CONFIRMED only if the member survives Holm and meets its extra condition (§7.2, §7.3). Otherwise
      it is FAIL (not confirmed).
 10. **Evidence (tests).**
     - The ranking evidence, exclusions with reasons, replacements and raw responses are present with matching SHA-256.
     - Coins failing the history rule are excluded and replaced in rank order, tested on a fixture with a gapped coin.
-    - Each candle file's SHA-256 is recorded, and the run stops on a mismatch.
+    - Each candle snapshot's bars' and file's SHA-256 are recorded, the run stops on a mismatch, a correction at the
+      exchange stops the fetch, and `verify` re-derives the results from the snapshots.
+    - A ranking with a missing, failed, conflicting or unaccounted day is refused, and a day is accounted for only by a
+      stated listing or cessation time (§10.1).
+    - A cancellation record and a superseded result keep their provenance (§12, step 6).
     - The §12, step 5 output record is complete.
     - The registered seed, B, floors and block-length rule are the ones used.
 11. **Suite and network.** No test touches the network. The full suite is no worse than `main`.
@@ -807,8 +1073,12 @@ Nothing is wired to a strategy, the trainer or paper trading by this spec.
 
 Same as `00-RUN-ORDER.md` and FDS-MDL §10:
 - **Paper only.** No API keys are read, created or requested.
-- **Network:** only public Binance market-data endpoints, and only in the ranking and history fetch (§12, step 0) and the
-  candle fetch (§12, step 3).
+- **Network:** only public Binance market-data endpoints, and only in the ranking and history fetch (§12, step 0), the
+  candle fetch (§12, step 3) and `verify --refetch`. *(Per exchange since the owner's decision of 2026-11-06: §15.4.)*
 - **Sandbox:** runs use a sandboxed `POWERTRADER_HOME`.
-- **Commits:** one commit per step (registration, freeze, results), with the full suite no worse than before.
+- **Commits:**
+  - one commit per step: registration, freeze, results (the results commit holds the candle snapshots), and a
+    cancellation if one is needed;
+  - the full suite no worse than before;
+  - a registered round runs from its research worktree (§12.1).
 - **Blocked steps:** log BLOCKED with the reason. Never weaken a test or a criterion to make it pass.

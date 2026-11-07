@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 from email.utils import parsedate_to_datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import coinbase_auth
 import requests
@@ -24,10 +24,14 @@ from pt_exchange_abstraction import (
     AbstractExchange,
     ConnectionStatus,
     ConnectionTestResult,
+    DailyQuoteVolume,
     ExchangeType,
+    ListedMarket,
     MarketData,
+    MarketListing,
     MarketNotFound,
     MarketStatus,
+    RawAnswer,
     OrderBookSnapshot,
     OrderRequest,
     OrderResult,
@@ -65,6 +69,39 @@ def _public_get(
 def _public_get_for(exchange: AbstractExchange, url: str, **kwargs):
     """``_public_get`` within ``exchange``'s request limit."""
     return _public_get(url, exchange=exchange, **kwargs)
+
+
+def _raw_answer(
+    exchange: AbstractExchange, url: str, params: Optional[dict] = None
+) -> RawAnswer:
+    """A public answer exactly as received (its bytes), within ``exchange``'s request
+    limit, for evidence (FDS-SIG-001 section 12, step 0)."""
+    response = _public_get_for(exchange, url, params=params, timeout=30.0)
+    items = tuple(sorted((str(k), str(v)) for k, v in (params or {}).items()))
+    return RawAnswer(
+        url, items, int(getattr(response, "status_code", 200)), response.content
+    )
+
+
+def _stated_ms(value: Any) -> Optional[int]:
+    """A time (epoch ms) as an exchange's listing states it, or None when it states
+    none (absent, null, 0 or not a number)."""
+    try:
+        ms = int(value)
+    except (TypeError, ValueError):
+        return None
+    return ms if ms > 0 else None
+
+
+def _answer_json(answer: RawAnswer, who: str):
+    import json as _json
+
+    if answer.status != 200:
+        raise RuntimeError(f"{who}: HTTP {answer.status}")
+    return _json.loads(answer.body.decode("utf-8"))
+
+
+_DAY_MS = 86_400_000
 
 
 def _retry_after(response) -> Optional[float]:
@@ -451,6 +488,67 @@ class KrakenExchange(AbstractExchange):
             return None
         return MarketStatus(
             True, status == "online", status, f"Kraken {pair} is {status}"
+        )
+
+    # Kraken's names for the assets the app calls BTC and DOGE (its wsname bases)
+    _KRAKEN_COINS = {"XBT": "BTC", "XDG": "DOGE"}
+
+    def spot_markets(self) -> Optional[MarketListing]:
+        """Every pair in Kraken's public AssetPairs quoted in USD, any status."""
+        answer = _raw_answer(self, f"{self.base_url}/0/public/AssetPairs")
+        data = _answer_json(answer, "Kraken AssetPairs")
+        if data.get("error"):
+            raise RuntimeError(f"Kraken AssetPairs: {data['error']}")
+        markets = []
+        for info in (data.get("result") or {}).values():
+            wsname = str(info.get("wsname") or "")
+            if "/" not in wsname:
+                continue
+            base, quote = wsname.split("/", 1)
+            if quote != "USD":
+                continue
+            status = str(info.get("status") or "")
+            markets.append(
+                ListedMarket(
+                    pair=str(info.get("altname") or ""),
+                    coin=self._KRAKEN_COINS.get(base, base),
+                    base=base,
+                    quote=quote,
+                    status=status,
+                    trading=(status == "online") if status else None,
+                )
+            )
+        return MarketListing("kraken", "USD", tuple(markets), (answer,))
+
+    def daily_quote_volume(
+        self, pair: str, start_ms: int, end_ms: int
+    ) -> Optional[DailyQuoteVolume]:
+        """Each UTC day's volume-weighted average price times its base volume, from
+        Kraken's public daily OHLC ([time, open, high, low, close, vwap, volume,
+        count]): the day's traded value. Kraken serves only its latest 720 days."""
+        answer = _raw_answer(
+            self,
+            f"{self.base_url}/0/public/OHLC",
+            {
+                "pair": pair,
+                "interval": 1440,
+                "since": max(0, int(start_ms) // 1000 - 1),
+            },
+        )
+        data = _answer_json(answer, f"Kraken OHLC {pair}")
+        result = self._kraken_result(data, pair)
+        rows = next(v for k, v in result.items() if k != "last")
+        days = tuple(
+            (int(r[0]) * 1000, float(r[5]) * float(r[6]))
+            for r in rows
+            if start_ms <= int(r[0]) * 1000 <= end_ms
+        )
+        return DailyQuoteVolume(
+            "kraken",
+            pair,
+            days,
+            "vwap x volume (daily OHLC fields 5 and 6)",
+            (answer,),
         )
 
     def quote(self, symbol: str) -> Optional[PriceQuote]:
@@ -941,6 +1039,72 @@ class BinanceExchange(AbstractExchange):
             return None
         return MarketStatus(
             True, status == "TRADING", status, f"Binance {pair} is {status}"
+        )
+
+    def spot_markets(self) -> Optional[MarketListing]:
+        """Every symbol in Binance's public exchange information quoted in USDT, any
+        status; a symbol whose permissions include LEVERAGED is marked leveraged."""
+        answer = _raw_answer(self, f"{self.base_url}/api/v3/exchangeInfo")
+        data = _answer_json(answer, "Binance exchangeInfo")
+        markets = []
+        for info in data.get("symbols") or []:
+            if str(info.get("quoteAsset")) != "USDT":
+                continue
+            permissions = set(info.get("permissions") or [])
+            for group in info.get("permissionSets") or []:
+                permissions.update(group or [])
+            status = str(info.get("status") or "")
+            base = str(info.get("baseAsset") or "")
+            markets.append(
+                ListedMarket(
+                    pair=str(info.get("symbol") or ""),
+                    coin=base,
+                    base=base,
+                    quote="USDT",
+                    status=status,
+                    trading=(status == "TRADING") if status else None,
+                    leveraged=("LEVERAGED" in permissions) or None,
+                )
+            )
+        return MarketListing("binance", "USDT", tuple(markets), (answer,))
+
+    def daily_quote_volume(
+        self, pair: str, start_ms: int, end_ms: int
+    ) -> Optional[DailyQuoteVolume]:
+        """Each UTC day's quote asset volume: field 7 of Binance's public 1d klines."""
+        answers = []
+        days = []
+        cursor = int(start_ms)
+        while cursor <= end_ms:
+            answer = _raw_answer(
+                self,
+                f"{self.base_url}/api/v3/klines",
+                {
+                    "symbol": pair,
+                    "interval": "1d",
+                    "startTime": cursor,
+                    "endTime": int(end_ms),
+                    "limit": _BINANCE_KLINES_PAGE,
+                },
+            )
+            answers.append(answer)
+            data = _answer_json(answer, f"Binance klines {pair}")
+            if isinstance(data, dict):
+                if data.get("code") == _BINANCE_UNKNOWN_SYMBOL:
+                    raise MarketNotFound(f"Binance has no market {pair}")
+                raise RuntimeError(
+                    f"Binance klines for {pair}: {data.get('msg', data)}"
+                )
+            days.extend((int(r[0]), float(r[7])) for r in data)
+            if len(data) < _BINANCE_KLINES_PAGE:
+                break
+            cursor = int(data[-1][0]) + _DAY_MS
+        return DailyQuoteVolume(
+            "binance",
+            pair,
+            tuple(d for d in days if start_ms <= d[0] <= end_ms),
+            "quote asset volume (1d kline field 7)",
+            tuple(answers),
         )
 
     def quote(self, symbol: str) -> Optional[PriceQuote]:
@@ -1919,6 +2083,33 @@ class CoinbaseExchange(AbstractExchange):
             maker=maker, taker=taker, exchange="coinbase", source="exchange"
         )
 
+    def spot_markets(self) -> Optional[MarketListing]:
+        """Every product in Coinbase's public product list quoted in USD, any status.
+
+        Coinbase states no quote volume (its candles carry base volume only), so
+        ``daily_quote_volume`` stays unsupported here: base volume times a price is
+        not quote volume (FDS-SIG-001 section 4)."""
+        answer = _raw_answer(self, f"{self.base_url}/products")
+        data = _answer_json(answer, "Coinbase products")
+        markets = []
+        for info in data if isinstance(data, list) else []:
+            if str(info.get("quote_currency")) != "USD":
+                continue
+            status = str(info.get("status") or "")
+            base = str(info.get("base_currency") or "")
+            disabled = bool(info.get("trading_disabled"))
+            markets.append(
+                ListedMarket(
+                    pair=str(info.get("id") or ""),
+                    coin=base,
+                    base=base,
+                    quote="USD",
+                    status=status,
+                    trading=(status == "online" and not disabled) if status else None,
+                )
+            )
+        return MarketListing("coinbase", "USD", tuple(markets), (answer,))
+
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         product = self._convert_symbol(symbol)
         try:
@@ -2667,6 +2858,71 @@ class KuCoinExchange(AbstractExchange):
                     int(t) * 1000, open_, high, low, close, volume
                 )
         return [bars[t] for t in sorted(bars) if start_ms <= t <= end_ms]
+
+    def spot_markets(self) -> Optional[MarketListing]:
+        """Every symbol in KuCoin's public symbol list quoted in USDT, any status.
+        KuCoin's answer has no leveraged-token mark, so none is set here (the ranking's
+        ticker rule still applies). Its ``tradingStartTime`` (ms), where given, is the
+        symbol's stated trading start; KuCoin states no end (a delisted symbol leaves
+        the list)."""
+        answer = _raw_answer(self, f"{self.base_url}/api/v2/symbols")
+        data = _answer_json(answer, "KuCoin symbols")
+        if str(data.get("code")) != "200000":
+            raise RuntimeError(f"KuCoin symbols: {data.get('msg', data.get('code'))}")
+        markets = []
+        for info in data.get("data") or []:
+            if str(info.get("quoteCurrency")) != "USDT":
+                continue
+            base = str(info.get("baseCurrency") or "")
+            trading = info.get("enableTrading")
+            start = _stated_ms(info.get("tradingStartTime"))
+            markets.append(
+                ListedMarket(
+                    pair=str(info.get("symbol") or ""),
+                    coin=base,
+                    base=base,
+                    quote="USDT",
+                    status="enabled" if trading else "disabled",
+                    trading=bool(trading) if trading is not None else None,
+                    trading_start_ms=start,
+                    history_stated_by="tradingStartTime" if start is not None else "",
+                )
+            )
+        return MarketListing("kucoin", "USDT", tuple(markets), (answer,))
+
+    def daily_quote_volume(
+        self, pair: str, start_ms: int, end_ms: int
+    ) -> Optional[DailyQuoteVolume]:
+        """Each UTC day's turnover (quote volume): field 6 of KuCoin's public 1day
+        candles ([time, open, close, high, low, volume, turnover])."""
+        answers = []
+        days: Dict[int, float] = {}
+        for first, last in _paged_windows(
+            start_ms, end_ms, 86400, _KUCOIN_CANDLES_PAGE
+        ):
+            answer = _raw_answer(
+                self,
+                f"{self.base_url}/api/v1/market/candles",
+                {"type": "1day", "symbol": pair, "startAt": first, "endAt": last},
+            )
+            answers.append(answer)
+            data = _answer_json(answer, f"KuCoin candles {pair}")
+            code = str(data.get("code"))
+            if code in _KUCOIN_UNKNOWN_PAIR:
+                raise MarketNotFound(f"KuCoin has no market {pair} ({data.get('msg')})")
+            if code != "200000":
+                raise RuntimeError(
+                    f"KuCoin candles for {pair}: {data.get('msg', code)}"
+                )
+            for row in data.get("data") or []:
+                days[int(row[0]) * 1000] = float(row[6])
+        return DailyQuoteVolume(
+            "kucoin",
+            pair,
+            tuple((t, v) for t, v in sorted(days.items()) if start_ms <= t <= end_ms),
+            "turnover (1day candle field 6)",
+            tuple(answers),
+        )
 
     def market_status(self, symbol: str) -> Optional[MarketStatus]:
         pair = self._convert_symbol(symbol)

@@ -113,3 +113,76 @@ The owner approved FDS-SIG-004 revision 3 (`146ec05`, PR #229), its decisions D1
 
 - §12 item 10's wording, as above.
 - `findings.calibration` refits a and b by Newton's method on every draw: about 10,000 fits a run of the analysis. It is fast enough at the development run's size; a closed-form weighted update would make it faster.
+- `model_lab.targets.t2` replays one trade for every hour on its next 720 hours, one `model_gate.replay` call each. That is the slowest part of building T2 labels. One pass over the hours would be faster, with the same labels.
+- `model_lab.contestants.ModelFit` scores a fold's hours twice for a T1 contestant: once for its entries, once for its probabilities. Scoring once would halve that time. The scores are identical.
+
+## Phase C: the development run (2026-11-07)
+
+**Branch** `feat/sig4-c-dev-run`, from phase B's branch.
+
+**Scripts:** `docs/dev/run_sig4_dev.py` (freeze, run, analyse), `docs/dev/sig4_dev_analysis.py` and `docs/dev/sig4_dev_report.py`.
+
+**The report:** `docs/dev/SIG4-REPORT-dev.md`.
+
+**Evidence:** `docs/dev/sig4-dev/`:
+- the analysis;
+- PV-1's batch file, results (gzipped), runs and report;
+- the trial log;
+- the sandbox launcher, with its paths replaced by placeholders.
+
+**The sandbox:**
+- `POWERTRADER_HOME`, `APPDATA` and `LOCALAPPDATA` are scratch folders, and the keyring fails, so there are no keys.
+- Settings come from the shipped template (Coinbase primary).
+- Candles are FDS-MH-001 phase B's sandbox cache of Coinbase 1-hour bars, read offline.
+- The only network reads were the public product endpoint, for today's minimum order (every coin: $1), and the exchange layer's unauthenticated connect.
+
+**Batch PV-1:** `20261107-175558`, declared pv-1, spec version 1.1.
+- 18 folds from 2021-01-01 to 2025-05-06. The lockbox, never read, runs from 2025-05-06.
+- 13 coins, of which BNB and HYPE have no bars before 2025-05-06.
+- 0.50% plus 0.05%.
+- Seeds 500000, 600000 and 0; B = 10,000.
+- It ran in 1,030 s.
+- The probabilities it saved (24 MB, not committed) have these SHA-256s:
+
+| File | SHA-256 |
+|---|---|
+| `pv.linear.t1.P.q50.npz` | `fab539dda03b3f5c7020d3ca8986bfe6268a5a6418e4ed8a5cf3201ce7aad62e` |
+| `pv.linear.t1.PV.q50.npz` | `ce72439610a93fb2e6ad4fa28915417c82bf2ff8f1b9957a98291ecf4dc25d03` |
+| `pv.linear.t1.PVp.q50.npz` | `8532132bdfeeb17c09e243f62dc6d5fa8ebeaa7967d5152f3402ea118a989346` |
+| `pv.linear.t1.PVp2.q50.npz` | `f6a30805bc2f868b265b8477cb5a61d13bd88b26bc8898a801b1f29c4ca50e61` |
+| `pv.linear.t1.PVp3.q50.npz` | `3252e735ad718d5344cd790641313ce3b2bd4ac2a8648fa66ba99a25e479cc51` |
+| `pv.linear.t1.PVp4.q50.npz` | `186d66ab8270436960b172b90a2e791b0ba49ec911702dc3b30508a5820d3567` |
+| `pv.linear.t1.PVp5.q50.npz` | `588f0ce889a6bc34c92ba82962e5fe9044e3e8c72e0e332786f663462ef3f690` |
+
+**The analysis** took 15 minutes. Its seeds are fixed in the driver (`TEST_SEEDS`). It scored the development family at 0.50% and $10,000, with 1.20% and $100 shown. Eight trials were logged, all in the sandbox:
+- PV-1's 3 "trading" trials;
+- 1 "forecast" trial (F1);
+- 2 "decision" trials (F2, F3);
+- 1 "calibration" trial (Q2);
+- 1 "sizing" trial (Q3).
+
+### What development found
+
+Each line carries its caveat. This is development only, never evidence for enabling anything, and volume's rows from 2023-11-06 on were already seen by the volume research.
+
+| Finding | Result | p (Holm over K = 5) |
+|---|---|---|
+| F1 | No forecast improvement detected: Δ log loss +0.00033 (smallest detectable 0.00112), n = 351,099 rows, base rate 0.253. The placebo and stability conditions also fail | 0.170 |
+| F2 | No improvement over price alone detected. Both filters veto about 94% of STRAT-001's 6,825 opportunities. Against R3, p = 0.070 | 0.139 |
+| F3 | Not shown to be profitable after fees. F_PV's path: 385 trades, net −$131 on $10,000, return per capital-day −0.47% | 0.831 |
+| Q2 | Calibration not assessable: the 90% intervals of a and b are too wide for their bands. BSS +0.008 is not shown at the family's level | 0.022 |
+| Q3 | No reduction in drawdown compared with random sizing detected | 0.694 |
+
+**Facts worth the owner's attention, beyond the family:**
+- **Unfiltered STRAT-001 loses heavily at the account's fee.**
+  - At 1h and its defaults, 0.50%: 6,825 trades, net −$5,191 on $10,000, and an equity-curve maximum drawdown of 53%.
+  - The 8% halt level would first have been reached on 2021-07-17.
+  - At 1.20%: −$8,135, an 82% drawdown.
+  - This agrees with the volume research's −1.1% a trade, and is unchanged by this spec (§3.7).
+- **F1's only positive volume signal is in the months the volume research already saw.**
+  - From 2023-11-06: D̄ = +0.00095 (p 0.048).
+  - Before it, on unseen data: −0.00009 (p 0.59).
+  - The exposure split (§6.4.1) shows that the seen months are where the effect is.
+- **The trading level under the legacy exits (PV-1):** all three contestants read "Too few trades to tell" (an edge above +0.012% a day was needed).
+
+**What this decides** (§6.4.2): only whether a forward confirmation is worth registering. Development gives no reason to expect one to confirm volume for STRAT-001 at the account's fee. Registering one is the owner's decision and is not authorised here.

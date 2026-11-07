@@ -268,6 +268,12 @@ class RiskSettingsWindow(tk.Toplevel):
                 )
                 self.hints[key] = tk.StringVar(master=self)
         self._peak = 0.0
+        # the entry checks (entry_checks_ui): Off or Log only in this version
+        import entry_checks_ui
+
+        self.entry_check_vars = entry_checks_ui.make_vars(
+            self, self._factory().get("signal_fusion") or {}, entry_checks_ui.RISK_KEYS
+        )
         try:
             self._build()
         except Exception:
@@ -467,6 +473,13 @@ class RiskSettingsWindow(tk.Toplevel):
                 self.status_var.set(message)
                 self._box.showerror(TITLE, message, parent=self)
                 return False
+        import entry_checks_ui
+
+        if not entry_checks_ui.save_if_changed(self.entry_check_vars, self._factory):
+            message = "The entry checks could not be saved."
+            self.status_var.set(message)
+            self._box.showerror(TITLE, message, parent=self)
+            return False
         if self._on_saved is not None:
             self._on_saved()
         self.destroy()
@@ -524,6 +537,11 @@ class RiskSettingsWindow(tk.Toplevel):
         r = self._build_drawdown(body, r)
         if self._limit_keys:
             r = self._build_limits(body, r)
+        import entry_checks_ui
+
+        r = entry_checks_ui.build(
+            body, r, "Entry checks", self.entry_check_vars, HELP_WRAP
+        )
         ttk.Label(body, text="When changes apply", style="Header.TLabel").grid(
             row=r, column=0, columnspan=3, sticky="w", pady=(14, 0)
         )

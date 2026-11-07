@@ -1,0 +1,1788 @@
+{
+ "pattern": {
+  "contestants": {
+   "pattern": {
+    "best_rule": {
+     "key": "rule.sma20",
+     "own": {
+      "capital_return": -0.043275076604546915,
+      "drawdown": -0.3979492963018946,
+      "hit_rate": 0.9,
+      "mean_return": -0.003676507763128713,
+      "per_day": -0.006061467881047948,
+      "profit": -1.974417200472224,
+      "trades": 10
+     },
+     "rule": {
+      "capital_return": -0.05378467266479001,
+      "drawdown": -0.4644467745313707,
+      "hit_rate": 0.9090909090909091,
+      "mean_return": -0.0013461227076617293,
+      "per_day": -0.007570701405819598,
+      "profit": -2.413051768230563,
+      "trades": 11
+     }
+    },
+    "coins": {
+     "BTC": {
+      "capital_return": -0.043275076604546915,
+      "decided_hours": 1440,
+      "drawdown": -0.3979492963018946,
+      "hit_rate": 0.9,
+      "joined": "2024-03-01T01:00:00Z",
+      "mean_return": -0.003676507763128713,
+      "per_day": -0.006061467881047948,
+      "profit": -1.974417200472224,
+      "signal_hours": 144,
+      "trades": 10
+     }
+    },
+    "conditions": {
+     "above_best_rule": true,
+     "drawdown": true,
+     "pbo": false,
+     "profit_above_0": false,
+     "trades": false
+    },
+    "description": "The pattern model, as the trader uses it",
+    "family": "pattern",
+    "fees": {
+     "double": {
+      "capital_return": -0.05464468997013897,
+      "drawdown": -0.4101473000873267,
+      "factor": 2.0,
+      "hit_rate": 0.9,
+      "mean_return": -0.014259694148322816,
+      "per_day": -0.007384873349014652,
+      "profit": -2.490622617527529,
+      "trades": 10
+     },
+     "half": {
+      "capital_return": -0.041536679986942084,
+      "drawdown": -0.394844518754004,
+      "factor": 0.5,
+      "hit_rate": 0.8888888888888888,
+      "mean_return": 0.00029864538311067453,
+      "per_day": -0.005466194716544062,
+      "profit": -1.7760351731009674,
+      "trades": 9
+     }
+    },
+    "finalist": false,
+    "fits": {
+     "BTC": [
+      {
+       "files_sha256": {
+        "memories_12hour.txt": "494906525f535103c68b861940b6b5e7ed9ca086cf8900bab351204a51121a07",
+        "memories_1day.txt": "e36a58ab208b4a5cf300d5b59ea20997b6e057fadbacb0f5b9d2b9204a98c975",
+        "memories_1hour.txt": "8de0f585ac4965c8ffa525c7499ea13e9aaddf9ce7cc0193d50601458c89071b",
+        "memories_1week.txt": "8de0f585ac4965c8ffa525c7499ea13e9aaddf9ce7cc0193d50601458c89071b",
+        "memories_2hour.txt": "81bca9b3069f8710715207257943072d1506ea56437671603b21e515ffac24d4",
+        "memories_4hour.txt": "ec3f260af67aa625b2e5fa940313053ed1914a4cc782730185b22a83955e116c",
+        "memories_8hour.txt": "2560ea113e2ca808569f0141fbfc355900a80a466a49a9eb6b39c46d22a1ff7e",
+        "memory_weights_12hour.txt": "5da7827688b27044d9d94e89e6ab1388e5978252052b4c93861d537d8ae004de",
+        "memory_weights_1day.txt": "3f38a9806d48d1420ede07b96da0ffa6178dcf0147826265abe430d73d43d7b3",
+        "memory_weights_1hour.txt": "2c211d892f996277196cf55cf9a72cea434174c9a415e7316baa12e66eab777d",
+        "memory_weights_1week.txt": "2c211d892f996277196cf55cf9a72cea434174c9a415e7316baa12e66eab777d",
+        "memory_weights_2hour.txt": "c90f79fb8add01c8c12117ae124bb51b9978636afde25960f66837a4e1922866",
+        "memory_weights_4hour.txt": "0936cd731a673480f951b74e3b72e590eec0264c8c0603656e47d1cddb1ee1d5",
+        "memory_weights_8hour.txt": "af59072a4a741e3d68fdd991b2f1828b90b59c2c29b90128e45e738400528613",
+        "memory_weights_high_12hour.txt": "5da7827688b27044d9d94e89e6ab1388e5978252052b4c93861d537d8ae004de",
+        "memory_weights_high_1day.txt": "3f38a9806d48d1420ede07b96da0ffa6178dcf0147826265abe430d73d43d7b3",
+        "memory_weights_high_1hour.txt": "2c211d892f996277196cf55cf9a72cea434174c9a415e7316baa12e66eab777d",
+        "memory_weights_high_1week.txt": "2c211d892f996277196cf55cf9a72cea434174c9a415e7316baa12e66eab777d",
+        "memory_weights_high_2hour.txt": "c90f79fb8add01c8c12117ae124bb51b9978636afde25960f66837a4e1922866",
+        "memory_weights_high_4hour.txt": "0936cd731a673480f951b74e3b72e590eec0264c8c0603656e47d1cddb1ee1d5",
+        "memory_weights_high_8hour.txt": "af59072a4a741e3d68fdd991b2f1828b90b59c2c29b90128e45e738400528613",
+        "memory_weights_low_12hour.txt": "5da7827688b27044d9d94e89e6ab1388e5978252052b4c93861d537d8ae004de",
+        "memory_weights_low_1day.txt": "3f38a9806d48d1420ede07b96da0ffa6178dcf0147826265abe430d73d43d7b3",
+        "memory_weights_low_1hour.txt": "2c211d892f996277196cf55cf9a72cea434174c9a415e7316baa12e66eab777d",
+        "memory_weights_low_1week.txt": "2c211d892f996277196cf55cf9a72cea434174c9a415e7316baa12e66eab777d",
+        "memory_weights_low_2hour.txt": "c90f79fb8add01c8c12117ae124bb51b9978636afde25960f66837a4e1922866",
+        "memory_weights_low_4hour.txt": "0936cd731a673480f951b74e3b72e590eec0264c8c0603656e47d1cddb1ee1d5",
+        "memory_weights_low_8hour.txt": "af59072a4a741e3d68fdd991b2f1828b90b59c2c29b90128e45e738400528613",
+        "neural_perfect_threshold_12hour.txt": "8a0ca5f64f0995abf03b5ab74c99375879b5eadb5bef9d1a3f41970964ebd4ca",
+        "neural_perfect_threshold_1day.txt": "a8c759a1602bb2fcbc278602595fa8e4cdc232adfc72fb23519dc1ca13a4cde6",
+        "neural_perfect_threshold_1hour.txt": "301202c7b805e948790672affd4aba41be3111f78b69ad61a508113a09558daf",
+        "neural_perfect_threshold_1week.txt": "301202c7b805e948790672affd4aba41be3111f78b69ad61a508113a09558daf",
+        "neural_perfect_threshold_2hour.txt": "4f2181e54a2a0a0560ef3ef1cdc8476ff8a18cba94d65efb93616f4185d89e82",
+        "neural_perfect_threshold_4hour.txt": "a343bf2499bd4ae58d23214714df6a49c36247e9a42d7e7ba3e2fceb208d0a5e",
+        "neural_perfect_threshold_8hour.txt": "528db974b6cc1575bea86d2225b9fb8414386089b0b7896f2c445554f00ca851"
+       },
+       "fit_end": "2024-03-01T00:00:00Z",
+       "fit_start": "2024-01-01T00:00:00Z",
+       "fold": 1
+      },
+      {
+       "files_sha256": {
+        "memories_12hour.txt": "1d6e99e6e4aa8efc407110ec629cbf725b7280d4044dcd7fbd21014082155c87",
+        "memories_1day.txt": "5ec575ce789788c3a95245e54fbd2910199daf16c6881713069f33f78fde34f4",
+        "memories_1hour.txt": "8de0f585ac4965c8ffa525c7499ea13e9aaddf9ce7cc0193d50601458c89071b",
+        "memories_1week.txt": "8ec7c44c473f250f8abb4fdb2165e23e033371f78f485a1726c6228d8c2a566e",
+        "memories_2hour.txt": "7361e5d05f88e99ff9ba26aecb639b11180c2d1f35e8db4a8d7d7b4ddbdeedda",
+        "memories_4hour.txt": "ec3f260af67aa625b2e5fa940313053ed1914a4cc782730185b22a83955e116c",
+        "memories_8hour.txt": "e204cae50464bfb7cc1b633940a42f7abb2140e7f61999ff8c104ac5b7e0fafc",
+        "memory_weights_12hour.txt": "525e32ceb3c099d33643c3e2509beaddf89638e1d3b4a5776428918a452977f0",
+        "memory_weights_1day.txt": "b07d1d6cbd581ce1a95f219ac3863ce4bc04db59f6bfb0770b0aa315c5a76c18",
+        "memory_weights_1hour.txt": "2c211d892f996277196cf55cf9a72cea434174c9a415e7316baa12e66eab777d",
+        "memory_weights_1week.txt": "301924aa29f40a9c0245d29f84275da4290a034966d91a1987a8a9a4c77a2e1b",
+        "memory_weights_2hour.txt": "c0400ee2f659e799e8b4b13baeb4a61315d89ea46e17f862c52fc5fc0f23b398",
+        "memory_weights_4hour.txt": "0936cd731a673480f951b74e3b72e590eec0264c8c0603656e47d1cddb1ee1d5",
+        "memory_weights_8hour.txt": "c7f1cf7b54bbcc848a86bc4a309cacca79e1e461a89e56c26285087e5b4b7a3d",
+        "memory_weights_high_12hour.txt": "525e32ceb3c099d33643c3e2509beaddf89638e1d3b4a5776428918a452977f0",
+        "memory_weights_high_1day.txt": "b07d1d6cbd581ce1a95f219ac3863ce4bc04db59f6bfb0770b0aa315c5a76c18",
+        "memory_weights_high_1hour.txt": "2c211d892f996277196cf55cf9a72cea434174c9a415e7316baa12e66eab777d",
+        "memory_weights_high_1week.txt": "301924aa29f40a9c0245d29f84275da4290a034966d91a1987a8a9a4c77a2e1b",
+        "memory_weights_high_2hour.txt": "c0400ee2f659e799e8b4b13baeb4a61315d89ea46e17f862c52fc5fc0f23b398",
+        "memory_weights_high_4hour.txt": "0936cd731a673480f951b74e3b72e590eec0264c8c0603656e47d1cddb1ee1d5",
+        "memory_weights_high_8hour.txt": "c7f1cf7b54bbcc848a86bc4a309cacca79e1e461a89e56c26285087e5b4b7a3d",
+        "memory_weights_low_12hour.txt": "525e32ceb3c099d33643c3e2509beaddf89638e1d3b4a5776428918a452977f0",
+        "memory_weights_low_1day.txt": "b07d1d6cbd581ce1a95f219ac3863ce4bc04db59f6bfb0770b0aa315c5a76c18",
+        "memory_weights_low_1hour.txt": "2c211d892f996277196cf55cf9a72cea434174c9a415e7316baa12e66eab777d",
+        "memory_weights_low_1week.txt": "301924aa29f40a9c0245d29f84275da4290a034966d91a1987a8a9a4c77a2e1b",
+        "memory_weights_low_2hour.txt": "c0400ee2f659e799e8b4b13baeb4a61315d89ea46e17f862c52fc5fc0f23b398",
+        "memory_weights_low_4hour.txt": "0936cd731a673480f951b74e3b72e590eec0264c8c0603656e47d1cddb1ee1d5",
+        "memory_weights_low_8hour.txt": "c7f1cf7b54bbcc848a86bc4a309cacca79e1e461a89e56c26285087e5b4b7a3d",
+        "neural_perfect_threshold_12hour.txt": "36a5d16f071bc10ec5cee9d2d202871da71287158d536dd17612b0db536b94b2",
+        "neural_perfect_threshold_1day.txt": "b1c4a5d9b147557316d945ca2b6a7367152513fc7b3238d6d9d5483d0775a734",
+        "neural_perfect_threshold_1hour.txt": "6d33a53aa28b98d7a3d3313360c713187d67ced0f2982b23458645c02e876c74",
+        "neural_perfect_threshold_1week.txt": "dd024733e8e4a8a7c7837a72855fd7a61db0a20ef0f706d3b6588a958f2fa735",
+        "neural_perfect_threshold_2hour.txt": "0b2b13afb390bd4ac4bc4f3aca771b882711d5d9f45e9011bfc76b88257768cb",
+        "neural_perfect_threshold_4hour.txt": "844d980bcd181e2f7c11e05865dfeabffdbcc763eee7f2fd10edb74699a86549",
+        "neural_perfect_threshold_8hour.txt": "fde6696b4903faf193a81443277998a5ef59dfceefea57a8737bbda336f93ce5"
+       },
+       "fit_end": "2024-04-01T00:00:00Z",
+       "fit_start": "2024-01-01T00:00:00Z",
+       "fold": 2
+      }
+     ]
+    },
+    "holm": false,
+    "key": "pattern",
+    "lockbox_seen": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "pattern",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "looks": [
+     {
+      "coins": "BTC, ETH",
+      "end": "2026-10-01",
+      "key": "pattern",
+      "start": "2024-07-01",
+      "what": "FDS-MDL Tests A and B, the pattern model as STRAT-003 with that strategy's exits (docs/dev/BACKTEST-REPORT-model-1.md)",
+      "when": "2026-10-07"
+     },
+     {
+      "coins": "10 coins",
+      "end": "2026-11-05",
+      "key": "pattern",
+      "start": "2026-03-31",
+      "what": "the volume research's held-out replay and model experiment (docs/research/volume-module.md, sections 6.4 and 6.5)",
+      "when": "2026-11-05"
+     },
+     {
+      "coins": "the coins with a model in use",
+      "end": "2026-11-06",
+      "key": "pattern",
+      "start": "2026-04-01",
+      "what": "the entry gate's held-out slices of the models in use (the last 20% of each one's window), in Check the models in use... and the trainer's gate",
+      "when": "2026-11-05"
+     },
+     {
+      "coins": "13 coins",
+      "end": "2026-11-05",
+      "key": "pattern",
+      "start": "2026-04-05",
+      "what": "the entry gate diagnostic (docs/dev/GATE-DIAGNOSTIC-2026-11-05.md)",
+      "when": "2026-11-05"
+     },
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "pattern",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "markets": {
+     "falling": {
+      "capital_return": -0.19648220996552807,
+      "drawdown": -0.3979492963018946,
+      "hit_rate": 0.6666666666666666,
+      "mean_return": -0.10509876641882342,
+      "per_day": -0.01280394474761395,
+      "profit": -2.814714374920357,
+      "trades": 3
+     },
+     "rising": {
+      "capital_return": null,
+      "drawdown": null,
+      "hit_rate": null,
+      "mean_return": null,
+      "per_day": null,
+      "profit": 0.0,
+      "trades": 0
+     }
+    },
+    "neural_dca": {
+     "r1": {
+      "at_95": -0.005625560080655806,
+      "entries_high": 16,
+      "entries_low": 3,
+      "entries_median": 7.0,
+      "kind": "same waits",
+      "median": -0.007167113338818086,
+      "median_drawdown": -0.4588425314489814,
+      "p": 0.1008991008991009,
+      "p_lower": 0.9000999000999002,
+      "rank": 90.0,
+      "runs": 1000,
+      "seed": 300000,
+      "spread": 0.0012650268627375642
+     },
+     "score": {
+      "capital_return": -0.06399503536847972,
+      "drawdown": -0.3979492963018946,
+      "hit_rate": 0.75,
+      "mean_return": -0.012445807235104779,
+      "per_day": -0.006032772010597008,
+      "profit": -2.212372767294542,
+      "trades": 8
+     }
+    },
+    "p": 0.21568627450980393,
+    "p_lower": 0.8235294117647058,
+    "p_r1": 0.21568627450980393,
+    "p_r2": 0.19607843137254902,
+    "params": {
+     "entry": "long count at least the trade start level, short count 0",
+     "fit": "the trainer's, per coin, on every bar before the fold"
+    },
+    "pooled": false,
+    "r1": {
+     "at_95": -0.005462853571544371,
+     "entries_high": 11,
+     "entries_low": 5,
+     "entries_median": 7.0,
+     "kind": "same waits",
+     "median": -0.007063497180796264,
+     "median_drawdown": -0.40940036574304356,
+     "p": 0.21568627450980393,
+     "p_lower": 0.803921568627451,
+     "rank": 80.0,
+     "runs": 50,
+     "seed": 300000,
+     "spread": 0.0014090965643411462
+    },
+    "r2": {
+     "at_95": -0.0056161757685628,
+     "coins": [
+      "BTC"
+     ],
+     "entries_high": 12,
+     "entries_low": 5,
+     "entries_median": 9.0,
+     "kind": "other dates",
+     "median": -0.006889275477757054,
+     "median_drawdown": -0.4644467745313707,
+     "own_per_day": -0.006061467881047948,
+     "p": 0.19607843137254902,
+     "p_lower": 0.8235294117647058,
+     "rank": 82.0,
+     "runs": 50,
+     "seed": 400000,
+     "spread": 0.0008988672247009843
+    },
+    "r2_left_out": [],
+    "score": {
+     "capital_return": -0.043275076604546915,
+     "drawdown": -0.3979492963018946,
+     "hit_rate": 0.9,
+     "mean_return": -0.003676507763128713,
+     "per_day": -0.006061467881047948,
+     "profit": -1.974417200472224,
+     "trades": 10
+    },
+    "screen": false,
+    "smallest_edge": 0.003947704105551924,
+    "tested": true,
+    "time_in_trade": {
+     "share": 0.7956914523974983,
+     "stream_days": 59.958333333333336
+    },
+    "too_few": true,
+    "verdict": "too_few",
+    "verdict_text": "Too few trades to tell: this test could only see an edge above +0.395% a day"
+   },
+   "rule.sma20": {
+    "coins": {
+     "BTC": {
+      "capital_return": -0.05378467266479001,
+      "decided_hours": 1440,
+      "drawdown": -0.4644467745313707,
+      "hit_rate": 0.9090909090909091,
+      "joined": "2024-03-01T01:00:00Z",
+      "mean_return": -0.0013461227076617293,
+      "per_day": -0.007570701405819598,
+      "profit": -2.413051768230563,
+      "signal_hours": 408,
+      "trades": 11
+     }
+    },
+    "conditions": {
+     "drawdown": true,
+     "pbo": false,
+     "profit_above_0": false,
+     "trades": false
+    },
+    "description": "Daily close above its 20-day average",
+    "family": "rule",
+    "fees": {
+     "double": {
+      "capital_return": -0.07262015978531187,
+      "drawdown": -0.46717107526753826,
+      "factor": 2.0,
+      "hit_rate": 0.9,
+      "mean_return": -0.012107014322052401,
+      "per_day": -0.009671021058807744,
+      "profit": -3.0273215173579673,
+      "trades": 10
+     },
+     "half": {
+      "capital_return": -0.049949824437864526,
+      "drawdown": -0.45809853964274827,
+      "factor": 0.5,
+      "hit_rate": 0.9230769230769231,
+      "mean_return": 0.0023591941559245834,
+      "per_day": -0.007477532721358345,
+      "profit": -2.3427921778742036,
+      "trades": 13
+     }
+    },
+    "finalist": false,
+    "holm": false,
+    "key": "rule.sma20",
+    "lockbox_seen": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.sma20",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "looks": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.sma20",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "markets": {
+     "falling": {
+      "capital_return": null,
+      "drawdown": null,
+      "hit_rate": null,
+      "mean_return": null,
+      "per_day": null,
+      "profit": 0.0,
+      "trades": 0
+     },
+     "rising": {
+      "capital_return": null,
+      "drawdown": null,
+      "hit_rate": null,
+      "mean_return": null,
+      "per_day": null,
+      "profit": 0.0,
+      "trades": 0
+     }
+    },
+    "p": 0.7843137254901961,
+    "p_lower": 0.3137254901960784,
+    "p_r1": 0.7843137254901961,
+    "p_r2": 0.7058823529411765,
+    "params": {
+     "bars": "complete UTC days",
+     "days": 20
+    },
+    "pooled": true,
+    "r1": {
+     "at_95": 0.0038473872005282427,
+     "entries_high": 18,
+     "entries_low": 3,
+     "entries_median": 9.0,
+     "kind": "same waits",
+     "median": -0.006697543943137925,
+     "median_drawdown": -0.4644467745313707,
+     "p": 0.7843137254901961,
+     "p_lower": 0.23529411764705882,
+     "rank": 22.0,
+     "runs": 50,
+     "seed": 300000,
+     "spread": 0.005391582655966058
+    },
+    "r2": {
+     "at_95": 0.008418424125183864,
+     "coins": [
+      "BTC"
+     ],
+     "entries_high": 10,
+     "entries_low": 1,
+     "entries_median": 6.0,
+     "kind": "other dates",
+     "median": 0.0024057767255367436,
+     "median_drawdown": -0.2024949062299946,
+     "own_per_day": -0.007570701405819598,
+     "p": 0.7058823529411765,
+     "p_lower": 0.3137254901960784,
+     "rank": 30.0,
+     "runs": 50,
+     "seed": 400000,
+     "spread": 0.008128654997996509
+    },
+    "r2_left_out": [],
+    "score": {
+     "capital_return": -0.05378467266479001,
+     "drawdown": -0.4644467745313707,
+     "hit_rate": 0.9090909090909091,
+     "mean_return": -0.0013461227076617293,
+     "per_day": -0.007570701405819598,
+     "profit": -2.413051768230563,
+     "trades": 11
+    },
+    "screen": false,
+    "smallest_edge": 0.022773119685527116,
+    "tested": true,
+    "time_in_trade": {
+     "share": 0.7671994440583739,
+     "stream_days": 59.958333333333336
+    },
+    "too_few": true,
+    "verdict": "too_few",
+    "verdict_text": "Too few trades to tell: this test could only see an edge above +2.277% a day"
+   }
+  },
+  "k": 2,
+  "order": [
+   "rule.sma20",
+   "pattern"
+  ],
+  "pbo": 0.760994560994561,
+  "pbo_blocks": 16,
+  "streams": {
+   "BTC": {
+    "first": "2024-03-01T01:00:00Z",
+    "hours": 1440,
+    "last": "2024-04-30T00:00:00Z"
+   }
+  },
+  "tested": [
+   "rule.sma20",
+   "pattern"
+  ]
+ },
+ "rules_only": {
+  "contestants": {
+   "ref.always": {
+    "coins": {
+     "BTC": {
+      "capital_return": 0.016002433146316268,
+      "decided_hours": 5688,
+      "drawdown": -0.13873368870453942,
+      "hit_rate": 0.8947368421052632,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.01933639209306387,
+      "per_day": 0.0012044578090020085,
+      "profit": 1.5159059817417324,
+      "signal_hours": 5688,
+      "trades": 19
+     },
+     "ETH": {
+      "capital_return": 0.020304496976487594,
+      "decided_hours": 5688,
+      "drawdown": -0.08919677627771279,
+      "hit_rate": 0.9285714285714286,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.026958516563605466,
+      "per_day": 0.0022580105678850835,
+      "profit": 2.1870681720987397,
+      "signal_hours": 5688,
+      "trades": 28
+     }
+    },
+    "description": "Enter whenever flat",
+    "family": "reference",
+    "fees": {
+     "double": {
+      "capital_return": 0.012530655659245566,
+      "drawdown": -0.12365141740045875,
+      "factor": 2.0,
+      "hit_rate": 0.8974358974358975,
+      "mean_return": 0.016761963580572404,
+      "per_day": 0.0010146764155556653,
+      "profit": 2.479371826374944,
+      "trades": 39
+     },
+     "half": {
+      "capital_return": 0.020100106372482825,
+      "drawdown": -0.13953113611696827,
+      "factor": 0.5,
+      "hit_rate": 0.9090909090909091,
+      "mean_return": 0.028589896110984978,
+      "per_day": 0.0016962252471001346,
+      "profit": 3.438509483893748,
+      "trades": 44
+     }
+    },
+    "key": "ref.always",
+    "lockbox_seen": [],
+    "looks": [],
+    "markets": {
+     "falling": {
+      "capital_return": 0.020770688083730733,
+      "drawdown": -0.09611868589478688,
+      "hit_rate": 0.9629629629629629,
+      "mean_return": 0.02762704126034044,
+      "per_day": 0.002282008898634815,
+      "profit": 2.526896116417548,
+      "trades": 27
+     },
+     "rising": {
+      "capital_return": 0.014557876468286317,
+      "drawdown": -0.13873368870453942,
+      "hit_rate": 0.85,
+      "mean_return": 0.018814989975998737,
+      "per_day": 0.0010502109460419613,
+      "profit": 1.176078037422924,
+      "trades": 20
+     }
+    },
+    "p": null,
+    "p_r1": null,
+    "p_r2": null,
+    "params": {},
+    "pooled": true,
+    "score": {
+     "capital_return": 0.01829142227878511,
+     "drawdown": -0.13873368870453942,
+     "hit_rate": 0.9148936170212766,
+     "mean_return": 0.02387723220317376,
+     "per_day": 0.0016626428808688134,
+     "profit": 3.702974153840472,
+     "trades": 47
+    },
+    "tested": false,
+    "time_in_trade": {
+     "share": 1.0,
+     "stream_days": 473.9166666666667
+    },
+    "verdict": "reference",
+    "verdict_text": "Reference only, not tested"
+   },
+   "rule.btc50": {
+    "coins": {
+     "BTC": {
+      "capital_return": 0.011078121580640535,
+      "decided_hours": 5688,
+      "drawdown": -0.14703934351181308,
+      "hit_rate": 0.8461538461538461,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.016575768535583575,
+      "per_day": 0.0005512221681254771,
+      "profit": 0.7094975753682263,
+      "signal_hours": 2233,
+      "trades": 13
+     },
+     "ETH": {
+      "capital_return": 0.022512063594403775,
+      "decided_hours": 5688,
+      "drawdown": -0.06122921205096134,
+      "hit_rate": 0.8947368421052632,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.027824463908540927,
+      "per_day": 0.002520517651738382,
+      "profit": 1.1608249626803668,
+      "signal_hours": 2233,
+      "trades": 19
+     }
+    },
+    "conditions": {
+     "drawdown": false,
+     "pbo": true,
+     "profit_above_0": true,
+     "trades": false
+    },
+    "description": "BTC's daily close above its 50-day average",
+    "family": "rule",
+    "fees": {
+     "double": {
+      "capital_return": 0.016315647374778017,
+      "drawdown": -0.1323155948496814,
+      "factor": 2.0,
+      "hit_rate": 0.8461538461538461,
+      "mean_return": 0.019211120790714516,
+      "per_day": 0.0010447983449704803,
+      "profit": 1.937362298899684,
+      "trades": 26
+     },
+     "half": {
+      "capital_return": 0.02056058493868938,
+      "drawdown": -0.13953113611696827,
+      "factor": 0.5,
+      "hit_rate": 0.8787878787878788,
+      "mean_return": 0.02772099913364224,
+      "per_day": 0.0015477765882595852,
+      "profit": 2.4385828132247833,
+      "trades": 33
+     }
+    },
+    "finalist": false,
+    "holm": false,
+    "key": "rule.btc50",
+    "lockbox_seen": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.btc50",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "looks": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.btc50",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "markets": {
+     "falling": {
+      "capital_return": 0.022111197458556196,
+      "drawdown": -0.13429468859690513,
+      "hit_rate": 0.9230769230769231,
+      "mean_return": 0.02705629229029654,
+      "per_day": 0.0014825069657017327,
+      "profit": 0.964540366493629,
+      "trades": 13
+     },
+     "rising": {
+      "capital_return": 0.012582536039058368,
+      "drawdown": -0.14703934351181308,
+      "hit_rate": 0.8421052631578947,
+      "mean_return": 0.02065357923426364,
+      "per_day": 0.0008256365968650696,
+      "profit": 0.9057821715549643,
+      "trades": 19
+     }
+    },
+    "p": 0.9402985074626866,
+    "p_lower": 0.17412935323383086,
+    "p_r1": 0.9402985074626866,
+    "p_r2": 0.8308457711442786,
+    "params": {
+     "bars": "complete UTC days",
+     "coin": "BTC, for every coin",
+     "days": 50
+    },
+    "pooled": true,
+    "r1": {
+     "at_95": 0.0024854959152511087,
+     "entries_high": 43,
+     "entries_low": 24,
+     "entries_median": 32.0,
+     "kind": "same waits",
+     "median": 0.001491471651520105,
+     "median_drawdown": -0.13574635209644845,
+     "p": 0.9402985074626866,
+     "p_lower": 0.06467661691542288,
+     "rank": 6.0,
+     "runs": 200,
+     "seed": 300000,
+     "spread": 0.0004392178277115718
+    },
+    "r2": {
+     "at_95": 0.0026350155702648728,
+     "coins": [
+      "BTC",
+      "ETH"
+     ],
+     "entries_high": 40,
+     "entries_low": 22,
+     "entries_median": 29.0,
+     "kind": "other dates",
+     "median": 0.0017806061778589486,
+     "median_drawdown": -0.11671390869231822,
+     "own_per_day": 0.0010701710288339562,
+     "p": 0.8308457711442786,
+     "p_lower": 0.17412935323383086,
+     "rank": 17.0,
+     "runs": 200,
+     "seed": 400000,
+     "spread": 0.0005730636687538652
+    },
+    "r2_left_out": [],
+    "score": {
+     "capital_return": 0.016177930003997164,
+     "drawdown": -0.14703934351181308,
+     "hit_rate": 0.875,
+     "mean_return": 0.023254681413277006,
+     "per_day": 0.0010701710288339562,
+     "profit": 1.8703225380485933,
+     "trades": 32
+    },
+    "screen": false,
+    "smallest_edge": 0.001886307199635835,
+    "tested": true,
+    "time_in_trade": {
+     "share": 0.6903464040794796,
+     "stream_days": 473.9166666666667
+    },
+    "too_few": true,
+    "verdict": "too_few",
+    "verdict_text": "Too few trades to tell: this test could only see an edge above +0.189% a day"
+   },
+   "rule.dip24": {
+    "coins": {
+     "BTC": {
+      "capital_return": 0.015450774589525202,
+      "decided_hours": 5688,
+      "drawdown": -0.12506772330900973,
+      "hit_rate": 0.9166666666666666,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.020179500860549763,
+      "per_day": 0.0008110544993991879,
+      "profit": 0.9173615633988221,
+      "signal_hours": 549,
+      "trades": 12
+     },
+     "ETH": {
+      "capital_return": 0.016765563513286376,
+      "decided_hours": 5688,
+      "drawdown": -0.07754151313143468,
+      "hit_rate": 0.9545454545454546,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.026084685351563556,
+      "per_day": 0.0025298011550509312,
+      "profit": 1.359238755124855,
+      "signal_hours": 622,
+      "trades": 22
+     }
+    },
+    "conditions": {
+     "drawdown": false,
+     "pbo": true,
+     "profit_above_0": true,
+     "trades": false
+    },
+    "description": "24-hour return below the coin's own 10th percentile of the last 90 days",
+    "family": "rule",
+    "fees": {
+     "double": {
+      "capital_return": 0.008365018351301835,
+      "drawdown": -0.13617604058959012,
+      "factor": 2.0,
+      "hit_rate": 0.9428571428571428,
+      "mean_return": 0.01613279234082306,
+      "per_day": 0.0007245538807798868,
+      "profit": 1.3718091563797667,
+      "trades": 35
+     },
+     "half": {
+      "capital_return": 0.01921278075031535,
+      "drawdown": -0.1228408439421387,
+      "factor": 0.5,
+      "hit_rate": 0.9411764705882353,
+      "mean_return": 0.027666826949450697,
+      "per_day": 0.0015485134707756596,
+      "profit": 2.446882876537884,
+      "trades": 34
+     }
+    },
+    "finalist": false,
+    "holm": false,
+    "key": "rule.dip24",
+    "lockbox_seen": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.dip24",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "looks": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.dip24",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "markets": {
+     "falling": {
+      "capital_return": 0.014900282591281235,
+      "drawdown": -0.10639682669768115,
+      "hit_rate": 0.95,
+      "mean_return": 0.026098663773300456,
+      "per_day": 0.0014233543774930257,
+      "profit": 1.1742844703156299,
+      "trades": 20
+     },
+     "rising": {
+      "capital_return": 0.01788402924937053,
+      "drawdown": -0.12506772330900973,
+      "hit_rate": 0.9285714285714286,
+      "mean_return": 0.02100312947107045,
+      "per_day": 0.0013070659213050998,
+      "profit": 1.1023158482080473,
+      "trades": 14
+     }
+    },
+    "p": 0.681592039800995,
+    "p_lower": 0.3681592039800995,
+    "p_r1": 0.6368159203980099,
+    "p_r2": 0.681592039800995,
+    "params": {
+     "bars": "hourly",
+     "days": 90,
+     "hours": 24,
+     "percentile": 10.0
+    },
+    "pooled": true,
+    "r1": {
+     "at_95": 0.0024645786972183146,
+     "entries_high": 45,
+     "entries_low": 25,
+     "entries_median": 34.0,
+     "kind": "same waits",
+     "median": 0.0014343479877122387,
+     "median_drawdown": -0.12012839805658591,
+     "p": 0.6368159203980099,
+     "p_lower": 0.3681592039800995,
+     "rank": 36.5,
+     "runs": 200,
+     "seed": 300000,
+     "spread": 0.0004350121039605953
+    },
+    "r2": {
+     "at_95": 0.0023525434272269733,
+     "coins": [
+      "BTC",
+      "ETH"
+     ],
+     "entries_high": 46,
+     "entries_low": 29,
+     "entries_median": 35.0,
+     "kind": "other dates",
+     "median": 0.001480567570928456,
+     "median_drawdown": -0.124907277138371,
+     "own_per_day": 0.0013645710033281112,
+     "p": 0.681592039800995,
+     "p_lower": 0.32338308457711445,
+     "rank": 32.0,
+     "runs": 200,
+     "seed": 400000,
+     "spread": 0.00037540270255193606
+    },
+    "r2_left_out": [],
+    "score": {
+     "capital_return": 0.016209741656397804,
+     "drawdown": -0.12506772330900973,
+     "hit_rate": 0.9411764705882353,
+     "mean_return": 0.024000502590029275,
+     "per_day": 0.0013645710033281112,
+     "profit": 2.276600318523677,
+     "trades": 34
+    },
+    "screen": false,
+    "smallest_edge": 0.0014318940605917948,
+    "tested": true,
+    "time_in_trade": {
+     "share": 0.7611218568665378,
+     "stream_days": 473.9166666666667
+    },
+    "too_few": true,
+    "verdict": "too_few",
+    "verdict_text": "Too few trades to tell: this test could only see an edge above +0.143% a day"
+   },
+   "rule.high20": {
+    "coins": {
+     "BTC": {
+      "capital_return": 0.018250102644059376,
+      "decided_hours": 5688,
+      "drawdown": -0.10533641024015827,
+      "hit_rate": 0.8,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.019953882015914866,
+      "per_day": 0.0008994332445981082,
+      "profit": 0.873269914133168,
+      "signal_hours": 649,
+      "trades": 10
+     },
+     "ETH": {
+      "capital_return": 0.017848145838488722,
+      "decided_hours": 5688,
+      "drawdown": -0.08919677627771279,
+      "hit_rate": 0.9583333333333334,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.027726183806255352,
+      "per_day": 0.001727133538147133,
+      "profit": 1.7508079350917571,
+      "signal_hours": 1080,
+      "trades": 24
+     }
+    },
+    "conditions": {
+     "drawdown": true,
+     "pbo": true,
+     "profit_above_0": true,
+     "trades": false
+    },
+    "description": "Daily close at or above the highest of the previous 20 daily closes",
+    "family": "rule",
+    "fees": {
+     "double": {
+      "capital_return": 0.00953127623560811,
+      "drawdown": -0.15141140096564487,
+      "factor": 2.0,
+      "hit_rate": 0.9032258064516129,
+      "mean_return": 0.01550057816728012,
+      "per_day": 0.0006216231774668215,
+      "profit": 1.5577190130911798,
+      "trades": 31
+     },
+     "half": {
+      "capital_return": 0.01626872412645818,
+      "drawdown": -0.14355005939862045,
+      "factor": 0.5,
+      "hit_rate": 0.9166666666666666,
+      "mean_return": 0.02601578409091091,
+      "per_day": 0.0013141562620507274,
+      "profit": 2.1619284078046515,
+      "trades": 36
+     }
+    },
+    "finalist": false,
+    "holm": false,
+    "key": "rule.high20",
+    "lockbox_seen": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.high20",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "looks": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.high20",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "markets": {
+     "falling": {
+      "capital_return": 0.016960142764715528,
+      "drawdown": -0.09732099156876259,
+      "hit_rate": 0.9523809523809523,
+      "mean_return": 0.02791410794159816,
+      "per_day": 0.001760990643168246,
+      "profit": 1.4520135967051795,
+      "trades": 21
+     },
+     "rising": {
+      "capital_return": 0.019427064413377094,
+      "drawdown": -0.10533641024015827,
+      "hit_rate": 0.8461538461538461,
+      "mean_return": 0.021443920364285815,
+      "per_day": 0.0010103348673626135,
+      "profit": 1.1720642525197458,
+      "trades": 13
+     }
+    },
+    "p": 0.7910447761194029,
+    "p_lower": 0.24378109452736318,
+    "p_r1": 0.7910447761194029,
+    "p_r2": 0.7611940298507462,
+    "params": {
+     "bars": "complete UTC days",
+     "days": 20
+    },
+    "pooled": true,
+    "r1": {
+     "at_95": 0.00244848512848386,
+     "entries_high": 49,
+     "entries_low": 31,
+     "entries_median": 37.5,
+     "kind": "same waits",
+     "median": 0.0015892808194066241,
+     "median_drawdown": -0.12132520177980631,
+     "p": 0.7910447761194029,
+     "p_lower": 0.21393034825870647,
+     "rank": 21.0,
+     "runs": 200,
+     "seed": 300000,
+     "spread": 0.0004281477073794128
+    },
+    "r2": {
+     "at_95": 0.0030823808479942152,
+     "coins": [
+      "BTC",
+      "ETH"
+     ],
+     "entries_high": 35,
+     "entries_low": 18,
+     "entries_median": 26.0,
+     "kind": "other dates",
+     "median": 0.0019763387250816737,
+     "median_drawdown": -0.1052670653639786,
+     "own_per_day": 0.0013222075940020448,
+     "p": 0.7611940298507462,
+     "p_lower": 0.24378109452736318,
+     "rank": 24.0,
+     "runs": 200,
+     "seed": 400000,
+     "spread": 0.0006542965011656019
+    },
+    "r2_left_out": [],
+    "score": {
+     "capital_return": 0.01797993325146958,
+     "drawdown": -0.10533641024015827,
+     "hit_rate": 0.9117647058823529,
+     "mean_return": 0.025440212691449325,
+     "per_day": 0.0013222075940020448,
+     "profit": 2.6240778492249253,
+     "trades": 34
+    },
+    "screen": false,
+    "smallest_edge": 0.002153694725629711,
+    "tested": true,
+    "time_in_trade": {
+     "share": 0.842271848074556,
+     "stream_days": 473.9166666666667
+    },
+    "too_few": true,
+    "verdict": "too_few",
+    "verdict_text": "Too few trades to tell: this test could only see an edge above +0.215% a day"
+   },
+   "rule.mom14": {
+    "coins": {
+     "BTC": {
+      "capital_return": 0.025189483581194445,
+      "decided_hours": 5688,
+      "drawdown": -0.12009436341392826,
+      "hit_rate": 0.8461538461538461,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.021817896898181147,
+      "per_day": 0.0014694867473557126,
+      "profit": 1.760109843727594,
+      "signal_hours": 2497,
+      "trades": 13
+     },
+     "ETH": {
+      "capital_return": 0.022000176201064627,
+      "decided_hours": 5688,
+      "drawdown": -0.08919677627771279,
+      "hit_rate": 0.9583333333333334,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.03118986263023951,
+      "per_day": 0.0023103992372633013,
+      "profit": 2.1963266132788575,
+      "signal_hours": 3959,
+      "trades": 24
+     }
+    },
+    "conditions": {
+     "drawdown": true,
+     "pbo": true,
+     "profit_above_0": true,
+     "trades": false
+    },
+    "description": "Daily close above its close 14 days earlier",
+    "family": "rule",
+    "fees": {
+     "double": {
+      "capital_return": 0.009074119456192433,
+      "drawdown": -0.1475426390177828,
+      "factor": 2.0,
+      "hit_rate": 0.9142857142857143,
+      "mean_return": 0.016429745369837788,
+      "per_day": 0.0006638592740622238,
+      "profit": 1.5538651082793722,
+      "trades": 35
+     },
+     "half": {
+      "capital_return": 0.0209164978037039,
+      "drawdown": -0.14355005939862045,
+      "factor": 0.5,
+      "hit_rate": 0.926829268292683,
+      "mean_return": 0.029183900083560057,
+      "per_day": 0.0018746613064150974,
+      "profit": 3.550053535885091,
+      "trades": 41
+     }
+    },
+    "finalist": false,
+    "holm": false,
+    "key": "rule.mom14",
+    "lockbox_seen": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.mom14",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "looks": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.mom14",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "markets": {
+     "falling": {
+      "capital_return": 0.021285669669865007,
+      "drawdown": -0.12009436341392826,
+      "hit_rate": 0.9545454545454546,
+      "mean_return": 0.02940626210747503,
+      "per_day": 0.0020049933777154423,
+      "profit": 2.1243752544468615,
+      "trades": 22
+     },
+     "rising": {
+      "capital_return": 0.026208266793871404,
+      "drawdown": -0.10533641024015827,
+      "hit_rate": 0.8666666666666667,
+      "mean_return": 0.025683439762510172,
+      "per_day": 0.001682555999778033,
+      "profit": 1.8320612025595904,
+      "trades": 15
+     }
+    },
+    "p": 0.30845771144278605,
+    "p_lower": 0.7064676616915423,
+    "p_r1": 0.30845771144278605,
+    "p_r2": 0.29850746268656714,
+    "params": {
+     "bars": "complete UTC days",
+     "days": 14
+    },
+    "pooled": true,
+    "r1": {
+     "at_95": 0.0022683304653011212,
+     "entries_high": 50,
+     "entries_low": 32,
+     "entries_median": 41.0,
+     "kind": "same waits",
+     "median": 0.0016179379172945264,
+     "median_drawdown": -0.13429468859690513,
+     "p": 0.30845771144278605,
+     "p_lower": 0.6965174129353234,
+     "rank": 69.5,
+     "runs": 200,
+     "seed": 300000,
+     "spread": 0.00032658861887831334
+    },
+    "r2": {
+     "at_95": 0.0024025139833810387,
+     "coins": [
+      "BTC",
+      "ETH"
+     ],
+     "entries_high": 47,
+     "entries_low": 31,
+     "entries_median": 38.0,
+     "kind": "other dates",
+     "median": 0.0015759474522887501,
+     "median_drawdown": -0.1322664731924581,
+     "own_per_day": 0.0018415749475583416,
+     "p": 0.29850746268656714,
+     "p_lower": 0.7064676616915423,
+     "rank": 70.5,
+     "runs": 200,
+     "seed": 400000,
+     "spread": 0.00039893432226046667
+    },
+    "r2_left_out": [],
+    "score": {
+     "capital_return": 0.023313334509389647,
+     "drawdown": -0.12009436341392826,
+     "hit_rate": 0.918918918918919,
+     "mean_return": 0.027897009805462246,
+     "per_day": 0.0018415749475583416,
+     "profit": 3.9564364570064514,
+     "trades": 37
+    },
+    "screen": false,
+    "smallest_edge": 0.0013131397526877071,
+    "tested": true,
+    "time_in_trade": {
+     "share": 0.9286091084930543,
+     "stream_days": 473.9166666666667
+    },
+    "too_few": true,
+    "verdict": "too_few",
+    "verdict_text": "Too few trades to tell: this test could only see an edge above +0.131% a day"
+   },
+   "rule.sma100": {
+    "coins": {
+     "BTC": {
+      "capital_return": 0.00998097487330767,
+      "decided_hours": 5688,
+      "drawdown": -0.13873368870453942,
+      "hit_rate": 0.8333333333333334,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.01708016405287122,
+      "per_day": 0.0006116684411618246,
+      "profit": 0.5181147369196067,
+      "signal_hours": 2209,
+      "trades": 12
+     },
+     "ETH": {
+      "capital_return": 0.020304496976487594,
+      "decided_hours": 5688,
+      "drawdown": -0.08919677627771279,
+      "hit_rate": 0.9285714285714286,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.026958516563605466,
+      "per_day": 0.0022580105678850835,
+      "profit": 2.1870681720987397,
+      "signal_hours": 5544,
+      "trades": 28
+     }
+    },
+    "conditions": {
+     "drawdown": false,
+     "pbo": true,
+     "profit_above_0": true,
+     "trades": false
+    },
+    "description": "Daily close above its 100-day average",
+    "family": "rule",
+    "fees": {
+     "double": {
+      "capital_return": 0.012296894720984662,
+      "drawdown": -0.10932393910551558,
+      "factor": 2.0,
+      "hit_rate": 0.8857142857142857,
+      "mean_return": 0.01699665944531963,
+      "per_day": 0.0010505606074284828,
+      "profit": 2.013513216262358,
+      "trades": 35
+     },
+     "half": {
+      "capital_return": 0.01990683904969558,
+      "drawdown": -0.13953113611696827,
+      "factor": 0.5,
+      "hit_rate": 0.8947368421052632,
+      "mean_return": 0.02946047344887961,
+      "per_day": 0.001751497301839995,
+      "profit": 2.7585679229520057,
+      "trades": 38
+     }
+    },
+    "finalist": false,
+    "holm": false,
+    "key": "rule.sma100",
+    "lockbox_seen": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.sma100",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "looks": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.sma100",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "markets": {
+     "falling": {
+      "capital_return": 0.019395691463947286,
+      "drawdown": -0.08919677627771279,
+      "hit_rate": 0.95,
+      "mean_return": 0.02917503164477165,
+      "per_day": 0.0021976712615659343,
+      "profit": 1.5291048715954223,
+      "trades": 20
+     },
+     "rising": {
+      "capital_return": 0.014557876468286317,
+      "drawdown": -0.13873368870453942,
+      "hit_rate": 0.85,
+      "mean_return": 0.018814989975998737,
+      "per_day": 0.0010502109460419613,
+      "profit": 1.176078037422924,
+      "trades": 20
+     }
+    },
+    "p": 0.945273631840796,
+    "p_lower": 0.20398009950248755,
+    "p_r1": 0.945273631840796,
+    "p_r2": 0.8009950248756219,
+    "params": {
+     "bars": "complete UTC days",
+     "days": 100
+    },
+    "pooled": true,
+    "r1": {
+     "at_95": 0.002572343045285439,
+     "entries_high": 47,
+     "entries_low": 31,
+     "entries_median": 41.0,
+     "kind": "same waits",
+     "median": 0.0021116650768013253,
+     "median_drawdown": -0.10804265125595147,
+     "p": 0.945273631840796,
+     "p_lower": 0.05970149253731343,
+     "rank": 5.5,
+     "runs": 200,
+     "seed": 300000,
+     "spread": 0.00035486683780926994
+    },
+    "r2": {
+     "at_95": 0.0023946638825847744,
+     "coins": [
+      "BTC",
+      "ETH"
+     ],
+     "entries_high": 43,
+     "entries_low": 32,
+     "entries_median": 38.5,
+     "kind": "other dates",
+     "median": 0.0020238373472439806,
+     "median_drawdown": -0.10769444554957008,
+     "own_per_day": 0.0014899388518973915,
+     "p": 0.8009950248756219,
+     "p_lower": 0.20398009950248755,
+     "rank": 20.0,
+     "runs": 200,
+     "seed": 400000,
+     "spread": 0.00037956519487364733
+    },
+    "r2_left_out": [],
+    "score": {
+     "capital_return": 0.01694724880836846,
+     "drawdown": -0.13873368870453942,
+     "hit_rate": 0.9,
+     "mean_return": 0.023995010810385194,
+     "per_day": 0.0014899388518973915,
+     "profit": 2.7051829090183466,
+     "trades": 40
+    },
+    "screen": false,
+    "smallest_edge": 0.0012493839670175576,
+    "tested": true,
+    "time_in_trade": {
+     "share": 0.816247582205029,
+     "stream_days": 473.9166666666667
+    },
+    "too_few": true,
+    "verdict": "too_few",
+    "verdict_text": "Too few trades to tell: this test could only see an edge above +0.125% a day"
+   },
+   "rule.sma20": {
+    "coins": {
+     "BTC": {
+      "capital_return": 0.012732820036537479,
+      "decided_hours": 5688,
+      "drawdown": -0.14703934351181308,
+      "hit_rate": 0.875,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.017279395847971408,
+      "per_day": 0.0007433404985464411,
+      "profit": 0.9983819907572912,
+      "signal_hours": 2521,
+      "trades": 16
+     },
+     "ETH": {
+      "capital_return": 0.02120078004073926,
+      "decided_hours": 5688,
+      "drawdown": -0.08919677627771279,
+      "hit_rate": 0.9615384615384616,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.0291075335196849,
+      "per_day": 0.0023127905625877666,
+      "profit": 2.1997702935704053,
+      "signal_hours": 3959,
+      "trades": 26
+     }
+    },
+    "conditions": {
+     "drawdown": false,
+     "pbo": true,
+     "profit_above_0": true,
+     "trades": false
+    },
+    "description": "Daily close above its 20-day average",
+    "family": "rule",
+    "fees": {
+     "double": {
+      "capital_return": 0.011434919390624947,
+      "drawdown": -0.1295353646330617,
+      "factor": 2.0,
+      "hit_rate": 0.918918918918919,
+      "mean_return": 0.01740586117304619,
+      "per_day": 0.0009207156039108803,
+      "profit": 2.0256675443354513,
+      "trades": 37
+     },
+     "half": {
+      "capital_return": 0.02126514955178065,
+      "drawdown": -0.13953113611696827,
+      "factor": 0.5,
+      "hit_rate": 0.9285714285714286,
+      "mean_return": 0.030536070723186932,
+      "per_day": 0.0018735819727337157,
+      "profit": 3.552289754258483,
+      "trades": 42
+     }
+    },
+    "finalist": false,
+    "holm": false,
+    "key": "rule.sma20",
+    "lockbox_seen": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.sma20",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "looks": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.sma20",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "markets": {
+     "falling": {
+      "capital_return": 0.019776454168767277,
+      "drawdown": -0.13429468859690513,
+      "hit_rate": 0.96,
+      "mean_return": 0.027184584615548627,
+      "per_day": 0.0017554303144776114,
+      "profit": 2.069805899089239,
+      "trades": 25
+     },
+     "rising": {
+      "capital_return": 0.01455762818020213,
+      "drawdown": -0.14703934351181308,
+      "hit_rate": 0.8823529411764706,
+      "mean_return": 0.020803034687684362,
+      "per_day": 0.0010118365680996028,
+      "profit": 1.1283463852384572,
+      "trades": 17
+     }
+    },
+    "p": 0.8756218905472637,
+    "p_lower": 0.26865671641791045,
+    "p_r1": 0.8756218905472637,
+    "p_r2": 0.736318407960199,
+    "params": {
+     "bars": "complete UTC days",
+     "days": 20
+    },
+    "pooled": true,
+    "r1": {
+     "at_95": 0.0022446254345157854,
+     "entries_high": 50,
+     "entries_low": 35,
+     "entries_median": 44.0,
+     "kind": "same waits",
+     "median": 0.001602660048627929,
+     "median_drawdown": -0.13873368870453942,
+     "p": 0.8756218905472637,
+     "p_lower": 0.12935323383084577,
+     "rank": 12.5,
+     "runs": 200,
+     "seed": 300000,
+     "spread": 0.0002491661659655677
+    },
+    "r2": {
+     "at_95": 0.00251520644876108,
+     "coins": [
+      "BTC",
+      "ETH"
+     ],
+     "entries_high": 51,
+     "entries_low": 29,
+     "entries_median": 37.0,
+     "kind": "other dates",
+     "median": 0.001572404435063437,
+     "median_drawdown": -0.12989072730933543,
+     "own_per_day": 0.0013939954673869222,
+     "p": 0.736318407960199,
+     "p_lower": 0.26865671641791045,
+     "rank": 26.5,
+     "runs": 200,
+     "seed": 400000,
+     "spread": 0.00039143312520495253
+    },
+    "r2_left_out": [],
+    "score": {
+     "capital_return": 0.017555957994706637,
+     "drawdown": -0.14703934351181308,
+     "hit_rate": 0.9285714285714286,
+     "mean_return": 0.024601576311413093,
+     "per_day": 0.0013939954673869222,
+     "profit": 3.1981522843276964,
+     "trades": 42
+    },
+    "screen": false,
+    "smallest_edge": 0.001288448670730842,
+    "tested": true,
+    "time_in_trade": {
+     "share": 0.9564796905222437,
+     "stream_days": 473.9166666666667
+    },
+    "too_few": true,
+    "verdict": "too_few",
+    "verdict_text": "Too few trades to tell: this test could only see an edge above +0.129% a day"
+   },
+   "rule.sma50": {
+    "coins": {
+     "BTC": {
+      "capital_return": 0.011078121580640535,
+      "decided_hours": 5688,
+      "drawdown": -0.14703934351181308,
+      "hit_rate": 0.8461538461538461,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.016575768535583575,
+      "per_day": 0.0005512221681254771,
+      "profit": 0.7094975753682263,
+      "signal_hours": 2233,
+      "trades": 13
+     },
+     "ETH": {
+      "capital_return": 0.020765788219562164,
+      "decided_hours": 5688,
+      "drawdown": -0.08919677627771279,
+      "hit_rate": 0.9285714285714286,
+      "joined": "2024-05-01T01:00:00Z",
+      "mean_return": 0.027215998498734534,
+      "per_day": 0.002319242732806007,
+      "profit": 2.236587434083971,
+      "signal_hours": 4752,
+      "trades": 28
+     }
+    },
+    "conditions": {
+     "drawdown": false,
+     "pbo": true,
+     "profit_above_0": true,
+     "trades": false
+    },
+    "description": "Daily close above its 50-day average",
+    "family": "rule",
+    "fees": {
+     "double": {
+      "capital_return": 0.013268110932985813,
+      "drawdown": -0.1323155948496814,
+      "factor": 2.0,
+      "hit_rate": 0.8823529411764706,
+      "mean_return": 0.018348153309290963,
+      "per_day": 0.0009572359354114416,
+      "profit": 2.2550913489061055,
+      "trades": 34
+     },
+     "half": {
+      "capital_return": 0.020477448266182197,
+      "drawdown": -0.13953113611696827,
+      "factor": 0.5,
+      "hit_rate": 0.9,
+      "mean_return": 0.029125236862128506,
+      "per_day": 0.0016682583666208632,
+      "profit": 3.187102075861773,
+      "trades": 40
+     }
+    },
+    "finalist": false,
+    "holm": false,
+    "key": "rule.sma50",
+    "lockbox_seen": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.sma50",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "looks": [
+     {
+      "coins": "13 coins",
+      "end": "2025-05-06",
+      "key": "rule.sma50",
+      "start": "2021-01-01",
+      "what": "the phase B timing run, batch 20261106-143033: walk-forward only, the lockbox not read (docs/dev/RUN-LOG-mh-1.md)",
+      "when": "2026-11-06"
+     }
+    ],
+    "markets": {
+     "falling": {
+      "capital_return": 0.019723384490245594,
+      "drawdown": -0.13429468859690513,
+      "hit_rate": 0.9545454545454546,
+      "mean_return": 0.028119512399261807,
+      "per_day": 0.0015856896966037332,
+      "profit": 1.7809214837001743,
+      "trades": 22
+     },
+     "rising": {
+      "capital_return": 0.014304311551940426,
+      "drawdown": -0.14703934351181308,
+      "hit_rate": 0.8421052631578947,
+      "mean_return": 0.018889667165441774,
+      "per_day": 0.0010326026940785714,
+      "profit": 1.165163525752023,
+      "trades": 19
+     }
+    },
+    "p": 0.9651741293532339,
+    "p_lower": 0.07462686567164178,
+    "p_r1": 0.9651741293532339,
+    "p_r2": 0.9303482587064676,
+    "params": {
+     "bars": "complete UTC days",
+     "days": 50
+    },
+    "pooled": true,
+    "r1": {
+     "at_95": 0.002298315809165847,
+     "entries_high": 50,
+     "entries_low": 33,
+     "entries_median": 44.0,
+     "kind": "same waits",
+     "median": 0.0015994053386532239,
+     "median_drawdown": -0.13574635209644845,
+     "p": 0.9651741293532339,
+     "p_lower": 0.03980099502487562,
+     "rank": 3.5,
+     "runs": 200,
+     "seed": 300000,
+     "spread": 0.00031871866345131
+    },
+    "r2": {
+     "at_95": 0.0024920820231356727,
+     "coins": [
+      "BTC",
+      "ETH"
+     ],
+     "entries_high": 48,
+     "entries_low": 33,
+     "entries_median": 39.0,
+     "kind": "other dates",
+     "median": 0.001845175360354944,
+     "median_drawdown": -0.11671390869231822,
+     "own_per_day": 0.0013085008165998314,
+     "p": 0.9303482587064676,
+     "p_lower": 0.07462686567164178,
+     "rank": 7.0,
+     "runs": 200,
+     "seed": 400000,
+     "spread": 0.00039360692846871485
+    },
+    "r2_left_out": [],
+    "score": {
+     "capital_return": 0.017153300385878558,
+     "drawdown": -0.14703934351181308,
+     "hit_rate": 0.9024390243902439,
+     "mean_return": 0.023842267047003745,
+     "per_day": 0.0013085008165998314,
+     "profit": 2.9460850094521973,
+     "trades": 41
+    },
+    "screen": false,
+    "smallest_edge": 0.0012956040026260627,
+    "tested": true,
+    "time_in_trade": {
+     "share": 0.9318621417267452,
+     "stream_days": 473.9166666666667
+    },
+    "too_few": true,
+    "verdict": "too_few",
+    "verdict_text": "Too few trades to tell: this test could only see an edge above +0.130% a day"
+   }
+  },
+  "k": 7,
+  "order": [
+   "ref.always",
+   "rule.sma20",
+   "rule.sma50",
+   "rule.sma100",
+   "rule.mom14",
+   "rule.high20",
+   "rule.btc50",
+   "rule.dip24"
+  ],
+  "pbo": 0.4808080808080808,
+  "pbo_blocks": 16,
+  "streams": {
+   "BTC": {
+    "first": "2024-05-01T01:00:00Z",
+    "hours": 5688,
+    "last": "2024-12-24T00:00:00Z"
+   },
+   "ETH": {
+    "first": "2024-05-01T01:00:00Z",
+    "hours": 5688,
+    "last": "2024-12-24T00:00:00Z"
+   }
+  },
+  "tested": [
+   "rule.sma20",
+   "rule.sma50",
+   "rule.sma100",
+   "rule.mom14",
+   "rule.high20",
+   "rule.btc50",
+   "rule.dip24"
+  ]
+ }
+}

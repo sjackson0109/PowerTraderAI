@@ -63,6 +63,52 @@ The owner approved FDS-SIG-004 revision 3 (`146ec05`, PR #229), its decisions D1
 - F1 on constructed forecasts, and the three calibration outcomes (§12 item 7);
 - F3 and the wording rules on constructed paths (§12 item 10).
 
+## Phase B: the signal-fusion package
+
+**Branch** `feat/sig4-b-signal-fusion`, from phase C's branch (#231), with phase A (#232) merged in. It needs both: blocks P and V come from `model_lab.features`, and the scoring comes from phase A.
+
+**Built** (`app/signal_fusion/`):
+- `liquidity.py`: block L:
+  - the approximate dollar volume, and its error bound against the true value, ē = max((TP − L)/L, (H − TP)/H);
+  - zero-volume and invalid bars;
+  - the 20-day hourly median, with ε_max and the participation share's bound against the true median;
+  - the participation and spread caps, where a missing input is never a pass;
+  - the Abdi–Ranaldo estimate, as a historical sensitivity only.
+- `volatility.py`: block S, with the EWMA (λ = 0.94, 168-bar burn-in), Parkinson and naive candidates; QLIKE selection against naive; σ_ref, the terciles and the shrink, min(1, σ_ref / σ̂).
+- `labels.py`: STRAT-001's opportunities from the backtester with no costs; r_g; m(f, e); M; the payoff tables (cells under 30 pooled); EV with costs once; the execution allowance max(½ spread, 0.05%); the payoff-calibration table.
+- `meta.py`: F_P and F_PV, as logistic regression with L2 and C = 1:
+  - training rows purged by each trade's own exit;
+  - Platt calibration fitted only on earlier folds' out-of-fold predictions;
+  - the climatology from the training rows.
+- `assessment.py`: the two stages of §5.8.4, with each part failing by its own rule (§5.8.3) and the invariants of §5.8.5.
+- `compat.py`: the venue compatibility test, with D17's tolerances.
+- `artifact.py`: the code hash (this package plus `model_lab/features.py`), and the registered-artifact check the live hook uses.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| STRAT-001's opportunities | `run_backtest` with no costs (so its fills are the raw opens) and STRAT-001 at its defaults | One definition of the trade. m(f, e) then gives the net return at any fee, and a test checks it against the backtester's at three fee rates |
+| A forced trade | A trade the bars closed only because they ended is never a training label (M = −1) | Its true exit is unknown |
+| The EWMA after a missing return | It starts again, with its burn-in | It never averages across a gap |
+| σ_ref in development | Per fold, the median σ̂ of that fold's training opportunities | "The pooled median of σ̂ over the evaluation's training rows" (§5.6), walk-forward |
+
+### Tests
+
+`tests/test_signal_fusion_phase_b.py`, 22 tests:
+- the hand-worked cases A to H of §12 item 5, including revision 2's bound failing in case C;
+- zero volume and seven kinds of invalid bar;
+- the hourly median and the participation bound;
+- the spread cap on unusable quotes;
+- the volatility candidates' look-ahead, and the shrink;
+- m(f, e) against the backtester's net return on every trade at three fees;
+- a fee entering EV only through m;
+- the payoff pooling;
+- every row of §5.8.3's table, the minimum check, and the result's invariants;
+- calibration strictly out of fold;
+- the compatibility test;
+- the registered artifact.
+
 ## Backlog (non-critical, for later)
 
 - §12 item 10's wording, as above.

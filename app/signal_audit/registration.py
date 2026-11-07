@@ -42,6 +42,13 @@ place and never run as frozen to be superseded later (owner, D9): the registrati
 cancelled (refusal 0), and a new registration in a later round, with a window that
 starts after its own registration commit, replaces it.
 
+**A confirmation round** (section 8.3, ``check_confirmation``) is refused when its
+members are not exactly the earlier round's provisional ones, unchanged, or when it
+would reuse evaluated observations (owner, A6): its window overlaps a registered
+round's window, unless that round was cancelled before results (``round_windows``), or
+it does not start after its own registration commit. An unexamined cancelled window
+alone does not bar it, as it does not bar a replacement (A3).
+
 Git is local only: no network, no credentials.
 """
 
@@ -156,6 +163,10 @@ def git(repo: str, *args: str) -> str:
 def _last_commit(repo: str, rel: str) -> Optional[str]:
     out = git(repo, "log", "-1", "--format=%H", "--", rel).strip()
     return out or None
+
+
+def _at_head(repo: str, rel: str) -> bool:
+    return bool(git(repo, "ls-tree", "--name-only", "HEAD", "--", rel).strip())
 
 
 def _commits_touching(repo: str, rel: str) -> List[str]:
@@ -579,21 +590,68 @@ def windows_overlap(a: Mapping[str, str], b: Mapping[str, str]) -> bool:
     ) < parse_time(a["end"])
 
 
+CANCELLED_UNEXAMINED = "cancelled before results"
+
+
+def round_windows(repo: str, exclude: Sequence[int] = ()) -> List[Dict[str, Any]]:
+    """Every round with a committed registration, with its committed window and its
+    status (owner, A6): ``results`` when it has results, CANCELLED_UNEXAMINED when a
+    committed, unchanged cancellation record cancelled it before results, otherwise
+    ``registered`` (its observations are still to be evaluated). A cancellation that is
+    not committed, has changed, or sits beside results does not count: the window then
+    stays as ``registered`` or ``results``."""
+    base = os.path.join(repo, "docs", "dev", "sig-audit")
+    found = []
+    names = os.listdir(base) if os.path.isdir(base) else []
+    for name in names:
+        if not name.startswith("round-") or not name[6:].isdigit():
+            continue
+        k = int(name[6:])
+        rel_reg = f"{rel_round_dir(k)}/registration.json"
+        if k in exclude or not _at_head(repo, rel_reg):
+            continue
+        record = json.loads(git(repo, "show", f"HEAD:{rel_reg}"))
+        folder = round_dir(repo, k)
+        status = "results" if has_results(folder) else "registered"
+        rel_cancel = f"{rel_round_dir(k)}/{CANCELLATION}"
+        if (
+            status == "registered"
+            and _at_head(repo, rel_cancel)
+            and not git(repo, "status", "--porcelain", "--", rel_cancel).strip()
+            and json.loads(git(repo, "show", f"HEAD:{rel_cancel}")).get("round") == k
+        ):
+            status = CANCELLED_UNEXAMINED
+        found.append({"round": k, "window": dict(record["window"]), "status": status})
+    return sorted(found, key=lambda w: w["round"])
+
+
 def check_confirmation(
     confirmation: Mapping[str, Any],
     earlier: Mapping[str, Any],
     earlier_results: Mapping[str, Any],
-    every_window: Sequence[Mapping[str, str]],
+    windows: Sequence[Mapping[str, Any]],
+    registration_time: datetime,
 ) -> None:
     """Refuse a confirmation round whose members are not exactly the earlier round's
     provisional (row, statistic) members, unchanged (candidate, parameters, rule,
-    direction, statistic, model), or whose window overlaps any registered earlier
-    window."""
-    for w in every_window:
-        if windows_overlap(confirmation["window"], w):
+    direction, statistic, model), or that would reuse evaluated observations (owner,
+    A6): its window overlaps a round's window in ``windows`` (``round_windows``) other
+    than one cancelled before results, or it does not start after its own registration
+    commit at ``registration_time``, as section 11 requires of every round."""
+    start = parse_time(confirmation["window"]["start"])
+    if not registration_time < start or start < earliest_start(registration_time):
+        refuse(
+            f"the confirmation window starts {iso(start)}, not after its registration "
+            f"commit ({iso(registration_time)}) at the earliest start "
+            f"{iso(earliest_start(registration_time))}"
+        )
+    for w in windows:
+        if w["status"] == CANCELLED_UNEXAMINED:
+            continue
+        if windows_overlap(confirmation["window"], w["window"]):
             refuse(
-                f"the confirmation window {confirmation['window']} overlaps an earlier "
-                f"registered window {w}"
+                f"the confirmation window {confirmation['window']} overlaps round "
+                f"{w['round']}'s window {w['window']} ({w['status']})"
             )
     by_key = {c["key"]: c for c in earlier["candidates"]}
     provisional = {

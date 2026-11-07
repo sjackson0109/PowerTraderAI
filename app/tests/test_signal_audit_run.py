@@ -791,7 +791,7 @@ def test_a_confirmation_round_takes_exactly_the_provisional_members():
     )
 
 
-def test_a_confirmation_round_is_refused_when_anything_differs():
+def _confirmation_fixture():
     earlier = {
         "candidates": [
             {
@@ -828,24 +828,136 @@ def test_a_confirmation_round_is_refused_when_anything_differs():
         "window": {"start": "2027-08-02T00:00:00Z", "end": "2028-02-01T00:00:00Z"},
         "members": [member],
     }
-    reg.check_confirmation(ok, earlier, results, [earlier["window"]])
+    return earlier, results, ok
+
+
+def test_a_confirmation_round_is_refused_when_anything_differs():
+    earlier, results, ok = _confirmation_fixture()
+    windows = [{"round": 1, "window": earlier["window"], "status": "results"}]
+    at = datetime(2027, 6, 30, tzinfo=UTC)
+    reg.check_confirmation(ok, earlier, results, windows, at)
     overlap = dict(
         ok, window={"start": "2027-07-01T00:00:00Z", "end": "2028-01-01T00:00:00Z"}
     )
-    with pytest.raises(reg.Refused, match="overlaps"):
-        reg.check_confirmation(overlap, earlier, results, [earlier["window"]])
+    with pytest.raises(reg.Refused, match="overlaps round 1's window"):
+        reg.check_confirmation(overlap, earlier, results, windows, at)
     changed = json.loads(json.dumps(ok))
     changed["members"][0]["registration"]["parameters"] = {"length": 21}
     with pytest.raises(reg.Refused, match="parameters differs"):
-        reg.check_confirmation(changed, earlier, results, [earlier["window"]])
+        reg.check_confirmation(changed, earlier, results, windows, at)
     other_stat = json.loads(json.dumps(ok))
     other_stat["members"][0]["statistic"] = "magnitude"
     with pytest.raises(reg.Refused, match="exactly the provisional"):
-        reg.check_confirmation(other_stat, earlier, results, [earlier["window"]])
+        reg.check_confirmation(other_stat, earlier, results, windows, at)
     model = json.loads(json.dumps(ok))
     model["members"][0]["registration"]["model"] = {"id": "other"}
     with pytest.raises(reg.Refused, match="model differs"):
-        reg.check_confirmation(model, earlier, results, [earlier["window"]])
+        reg.check_confirmation(model, earlier, results, windows, at)
+
+
+def _rounds_for_confirmation(repo):
+    """Round 1 with results; round 2 cancelled before results, its window started;
+    round 3 registered and not yet evaluated."""
+    w1 = {"start": "2026-11-08T00:00:00Z", "end": "2027-02-01T00:00:00Z"}
+    w2 = {"start": "2027-02-10T00:00:00Z", "end": "2027-08-01T00:00:00Z"}
+    w3 = {"start": "2027-09-01T00:00:00Z", "end": "2028-01-01T00:00:00Z"}
+    _register(repo, 1, {"window": w1}, when=datetime(2026, 11, 6, 12, tzinfo=UTC))
+    _register(repo, 2, {"window": w2}, when=datetime(2027, 2, 5, tzinfo=UTC))
+    rel1, rel2 = "docs/dev/sig-audit/round-1", "docs/dev/sig-audit/round-2"
+    _commit(repo, f"{rel1}/results.json", "{}\n", when=datetime(2027, 2, 6, tzinfo=UTC))
+    rec = reg.cancellation_record(
+        str(repo), 2, "a defect", now=datetime(2027, 3, 1, tzinfo=UTC)
+    )
+    assert rec["window_started"] is True and rec["results"] is None
+    _commit(
+        repo,
+        f"{rel2}/{reg.CANCELLATION}",
+        json.dumps(rec, indent=1) + "\n",
+        when=datetime(2027, 3, 1, tzinfo=UTC),
+        msg="cancel",
+    )
+    _register(repo, 3, {"window": w3}, when=datetime(2027, 3, 1, 12, tzinfo=UTC))
+    return w1, w2, w3
+
+
+def test_a_confirmation_does_not_reuse_evaluated_observations(repo):
+    """A6: a confirmation round never reuses observations another round evaluated or
+    will evaluate. An unexamined cancelled window alone does not bar it, and, as for a
+    replacement (A3), it evaluates only observations after its own registration."""
+    w1, w2, w3 = _rounds_for_confirmation(repo)
+    windows = reg.round_windows(str(repo))
+    assert [(w["round"], w["status"]) for w in windows] == [
+        (1, "results"),
+        (2, reg.CANCELLED_UNEXAMINED),
+        (3, "registered"),
+    ]
+    assert windows[1]["window"] == w2
+    assert [w["round"] for w in reg.round_windows(str(repo), exclude=[3])] == [1, 2]
+    earlier, results, ok = _confirmation_fixture()
+    at = datetime(2027, 3, 2, 12, tzinfo=UTC)
+
+    def confirm(start, end, when=at):
+        c = dict(ok, window={"start": start, "end": end})
+        reg.check_confirmation(c, earlier, results, windows, when)
+
+    # inside the cancelled window, after its own registration: allowed
+    confirm("2027-03-03T00:00:00Z", "2027-08-20T00:00:00Z")
+    # the cancelled window's elapsed part is never evaluated: refused, as section 11
+    # refuses any window that starts before its registration
+    with pytest.raises(reg.Refused, match="not after its registration commit"):
+        confirm("2027-02-20T00:00:00Z", "2027-08-20T00:00:00Z")
+    with pytest.raises(reg.Refused, match="not after its registration commit"):
+        confirm("2027-03-02T00:00:00Z", "2027-08-20T00:00:00Z")
+    # a round with results, or a registered round still to be evaluated: refused
+    with pytest.raises(reg.Refused, match=r"round 1's window .* \(results\)"):
+        confirm(
+            "2027-01-01T00:00:00Z",
+            "2027-08-20T00:00:00Z",
+            when=datetime(2026, 12, 1, tzinfo=UTC),
+        )
+    with pytest.raises(reg.Refused, match=r"round 3's window .* \(registered\)"):
+        confirm("2027-03-03T00:00:00Z", "2027-09-02T00:00:00Z")
+
+
+def test_only_a_committed_cancellation_before_results_frees_a_window(repo):
+    """A6, failing safe: a cancellation not committed, changed since, or beside
+    results leaves the round's window barred."""
+    _rounds_for_confirmation(repo)
+    earlier, results, ok = _confirmation_fixture()
+    at = datetime(2027, 3, 2, 12, tzinfo=UTC)
+    c = dict(
+        ok, window={"start": "2027-03-03T00:00:00Z", "end": "2027-08-20T00:00:00Z"}
+    )
+    rel2 = "docs/dev/sig-audit/round-2"
+    status = {w["round"]: w["status"] for w in reg.round_windows(str(repo))}
+    assert status[2] == reg.CANCELLED_UNEXAMINED
+    # changed since its commit
+    cancel = os.path.join(repo, rel2, reg.CANCELLATION)
+    with open(cancel, encoding="utf-8") as f:
+        text = f.read()
+    _write(repo, f"{rel2}/{reg.CANCELLATION}", text.replace("a defect", "rewritten"))
+    windows = reg.round_windows(str(repo))
+    assert {w["round"]: w["status"] for w in windows}[2] == "registered"
+    with pytest.raises(reg.Refused, match=r"round 2's window .* \(registered\)"):
+        reg.check_confirmation(c, earlier, results, windows, at)
+    # beside results
+    _write(repo, f"{rel2}/{reg.CANCELLATION}", text)
+    _write(repo, f"{rel2}/results.json", "{}\n")
+    windows = reg.round_windows(str(repo))
+    assert {w["round"]: w["status"] for w in windows}[2] == "results"
+    with pytest.raises(reg.Refused, match=r"round 2's window .* \(results\)"):
+        reg.check_confirmation(c, earlier, results, windows, at)
+    os.remove(os.path.join(repo, rel2, "results.json"))
+    # not committed: the cancellation removed from HEAD and only written on disk
+    _git(repo, "rm", "-q", "--cached", f"{rel2}/{reg.CANCELLATION}")
+    _git(repo, "commit", "-q", "-m", "uncommit the cancellation")
+    windows = reg.round_windows(str(repo))
+    assert {w["round"]: w["status"] for w in windows}[2] == "registered"
+    with pytest.raises(reg.Refused, match="overlaps round 2's window"):
+        reg.check_confirmation(c, earlier, results, windows, at)
+    # an uncommitted draft registration is not a round yet
+    _write(repo, "docs/dev/sig-audit/round-4/registration.json", '{"window": {}}\n')
+    assert 4 not in {w["round"] for w in reg.round_windows(str(repo))}
 
 
 # --- evidence ---------------------------------------------------------------------------

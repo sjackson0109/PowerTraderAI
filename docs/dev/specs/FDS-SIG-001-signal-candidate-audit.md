@@ -5,7 +5,7 @@
 **Branch:** this spec is on `docs/fds-sig-001-signal-audit`, cut from `main` at `00d9c99`. The implementation and round one's registration go on `feat/signal-audit-1`, cut from `main` after this spec is merged.
 **Recommended model:** Claude Opus 5.5, effort high, for the statistics module and the report generator. Sonnet 5.5, effort high, for fetching and plumbing.
 **Run log:** `docs/dev/RUN-LOG-sig-<N>.md` for round N, in the same format as batch 1.
-**Status:** draft for owner review. This version adopts the owner's decisions of 2026-10-12 (§15.1), of 2026-11-06 (§15.4) and of 2026-11-07 (§15.5), and lists the defaults it sets that still need confirming (§15.3). Implemented on `feat/signal-audit-1` (2026-11-06); round one is not registered. This document changes no trainer or strategy.
+**Status:** draft for owner review. This version adopts the owner's decisions of 2026-10-12 (§15.1), of 2026-11-06 (§15.4) and of 2026-11-07 (§15.5, and §15.6 for A1 to A7), and lists the defaults it sets that still need confirming (§15.3). Implemented on `feat/signal-audit-1` (2026-11-06); round one is not registered. This document changes no trainer or strategy.
 **Related:** FDS-SIG-002, `docs/dev/specs/FDS-SIG-002-round-one-candidates.md`, names round one's candidates and depends on this spec.
 
 ---
@@ -421,7 +421,12 @@ the bar is corrected for the family. The rows are never averaged or counted into
 ### 8.3 Confirmation round
 
 A provisional pass counts only after it **replicates on the next fresh window**:
-- **The window** does not overlap any earlier one, and its registration is committed before it starts (§11).
+- **The window** reuses no evaluated observation *(owner, A6: §15.6)*:
+  - it does not overlap the window of any registered round, whether that round has results or is still to be
+    evaluated;
+  - an unexamined cancelled window (§12, step 6) does not by itself bar it, as it does not bar a replacement (A3);
+  - its registration is committed before it starts (§11), so it evaluates only observations after its own
+    registration, never the elapsed part of a cancelled window.
 - **What is re-tested:** the same candidate, parameters, direction and statistic, with the same frozen model for a
   trained candidate (no retraining).
 - **The family:** one member per provisional (row, statistic), with Holm at a 5% family error rate, one-sided.
@@ -500,6 +505,23 @@ block-bootstrap and batch-means standard errors**, matching §7.4.
     - Binance, Kraken and Coinbase state no trading start.
     - No exchange states when trading ended. Binance's delisting schedule needs an API key, which the audit never
       reads.
+  - **Binance cannot currently complete a ranking** *(owner, A1: deferred, §15.6)*. It states no trading start or end,
+    and at the probe its list held 254 markets that had stopped trading (BREAK) with no bar in the 30 days, 3 with
+    only some of them, and 15 listed within them. Under these eligibility and evidence requirements, a Binance
+    ranking is refused while its list holds such markets.
+    - A market is not excluded merely because it is not trading at the ranking fetch.
+    - A later specification may add a provider-neutral way to exclude markets that demonstrably cannot meet the
+      history rule below. It must account for selection bias and keep each excluded market's evidence.
+  - **KuCoin's `tradingStartTime`** *(owner, A2: approved)* is exchange-stated listing evidence.
+    - **Its source:** the field of KuCoin's public symbol list (`/api/v2/symbols`). The list is kept in the raw
+      ranking answers with its SHA-256, and each market's evidence records the stated time and the field it
+      comes from.
+    - **Its limitations:**
+      - it was checked against KuCoin's daily candles for recent listings only. For some older symbols KuCoin's
+        candles begin after the stated day, as its history starts on 2022-09-29. That matters only where a stated
+        start falls inside the 30 days, which the check covered;
+      - some symbols do not give it (92 of 800 at the probe, every one of them with all 30 days);
+      - it states no cessation, and a delisted symbol leaves the list, so it cannot be ranked.
 - **Ranking date:** fixed in the registration, and before the window starts. That avoids ranking coins on volume or
   performance from inside the window, and the survivorship bias that would follow.
 - **The ranking fetch** happens within 7 days after the ranking date. A pair removed from exchange information before
@@ -563,9 +585,10 @@ and the window starts after its registration was committed.
   - Any re-run on an examined window is a reproduction check and carries no verdict.
 - **Disclosure:** the registration lists every earlier period whose results for the audited coins have been published.
 - **Later windows:** each later round and each confirmation round uses its own new window, which starts after the
-  previous examined window ends (§8.3). A cancelled round's window is never examined (§12, step 6). Its replacement
-  takes a window that starts after the replacement's own registration commit, and that window may overlap the cancelled
-  one.
+  previous examined window ends (§8.3), and evaluates only observations after its own registration commit.
+  - A cancelled round's window is never examined (§12, step 6).
+  - A replacement *(owner, A3)* and a confirmation round *(owner, A6)* may overlap an unexamined cancelled window,
+    but never the window of a round with results or still to be evaluated (§15.6).
 
 **How long a window must run.** At full coverage, with no ties or gaps, from the window start to the close of the last
 outcome bar:
@@ -656,14 +679,19 @@ checkable. The audit script is `docs/dev/run_signal_audit.py`.
        It records the defect, the registration's commit and SHA-256, the freeze commit, the code at cancellation (the
        frozen files changed or uncommitted), and whether the window had started or ended.
      - The cancelled round is never run, and its window is never fetched or scored for it.
-     - A **new registration in a later round** replaces it, through steps 0 to 2 in full: its own ranking,
-       registration and freeze. It names the cancelled round (`draft --replaces N`), whose cancellation is committed
-       before it, with that record's commit and SHA-256. Its window starts after its own registration commit (§11):
-       - **the cancelled window had not started:** the replacement may keep the same dates, if its registration commit
-         still precedes their start; otherwise it takes a later window;
-       - **the cancelled window had started:** the replacement takes a new window, starting after its own
-         registration commit. The elapsed part of the cancelled window was never examined: it is recorded in the
-         replacement as cancelled, and neither round fetches or scores it.
+     - A **new registration** replaces it *(owner, A3 to A5: §15.6)*:
+       - **its round number** is the next available one: the lowest not used by any round's folder;
+       - **a fresh ranking:** it goes through steps 0 to 2 in full, with its own ranking (never the cancelled
+         round's), registration and freeze;
+       - **its record** names the cancelled round (`draft --replaces N`), whose cancellation is committed before it,
+         with that record's commit and SHA-256;
+       - **its window** starts after its own registration commit (§11), so it evaluates only observations after its
+         registration. It may overlap the unexamined cancelled window:
+         - **the cancelled window had not started:** the replacement may keep the same dates, if its registration
+           commit still precedes their start; otherwise it takes a later window;
+         - **the cancelled window had started:** the replacement takes a new window, starting after its own
+           registration commit. The elapsed part of the cancelled window was never examined: it is recorded in the
+           replacement as cancelled, and neither round fetches or scores it.
    - **After results: only defect fixes,** through `--supersede "<what changed and why>"`, and only when results exist.
      - The earlier results, their evidence series and their report are kept in `superseded/<k>-<commit>/`, with the
        note, the time, the results' commit and each file's SHA-256.
@@ -714,19 +742,32 @@ outside `%TEMP%`, which Windows cleans):
      results commit;
    - run `verify` and `verify --refetch`;
    - push.
-5. **Carry the results to `main`.** In a PR from a branch off `main`, check out only the round's folder and its report
-   from the research branch:
+5. **Carry the results to `main`** *(owner, A7: §15.6)*. Tag the results commit in the worktree and push the tag. Then,
+   in a PR from a branch off `main`, check out only the round's folder and its report from that tag:
 
    ```powershell
-   git checkout research/sig-round-N -- docs/dev/sig-audit/round-N docs/dev/SIG-AUDIT-REPORT-round-N.md
+   git tag sig-round-N-results; git push origin sig-round-N-results
+   git checkout sig-round-N-results -- docs/dev/sig-audit/round-N docs/dev/SIG-AUDIT-REPORT-round-N.md
    ```
 
-   Do not merge the research branch, because that would bring its frozen or fixed code into `main`. The research
-   branch and its tag stay as the record of the code that produced the results.
+   - **No frozen application code reaches `main`.** Never merge the research branch, which would bring its frozen or
+     fixed code.
+   - **The round's folder carries the evidence:**
+     - the registration and freeze records, and the ranking evidence;
+     - `data.json`, with each snapshot's bars' and file's SHA-256, and the snapshots;
+     - `results.json` and its state: the commit that ran, the registration and freeze commits, the registration's
+       SHA-256, and the Python and package versions;
+     - the evidence series, and any cancellation or superseded results.
+   - **The transfer commit's message records** the research branch, the results commit, the freeze commit, both
+     tags, and the output of `verify` and `verify --refetch` at the results commit.
+   - **The research branch and both tags stay** as the record of the code that produced the results. They are never
+     deleted, rebased or moved, and branch clean-ups leave them alone.
+   - **To re-derive the results later,** check out the results tag in its own worktree and run `verify` there. On
+     `main`, `verify` checks the snapshots and then stops before re-deriving, because the code has moved on.
 
 **Defects in this arrangement:**
 - **A defect found before results** is cancelled on the research branch (step 6). The cancellation is carried to `main`
-  as above, and the replacement starts a new research branch from `main`.
+  as above, and the replacement, under the next available round number, starts a new research branch from `main`.
 - **A defect found after results** is fixed on the research branch, run with `--supersede`, and verified there. The fix
   reaches `main` in its own PR.
 
@@ -929,6 +970,40 @@ These were made on the review of PR #228 and its follow-up.
   (`docs/dev/sig-audit/verification/round-false-pass-study.json`) found no deficiency. The statistical procedures and
   the signal candidates are unchanged.
 
+### 15.6 Owner decisions of 2026-11-07: A1 to A7
+
+These close the questions the follow-up review raised (`docs/dev/RUN-LOG-sig-1.md`).
+
+- **A1: deferred.** No market is excluded solely because it is inactive at the ranking fetch, and the strict
+  data-integrity rule stands (D10).
+  - Binance cannot currently complete a ranking under the present eligibility and evidence requirements (§10.1).
+  - A future specification may introduce a provider-neutral method for excluding markets demonstrably ineligible
+    under the historical continuity requirement. Such a method must account for selection bias and preserve the
+    excluded markets' evidence.
+- **A2: approved.** KuCoin's `tradingStartTime` is acceptable as exchange-stated listing evidence, with its source and
+  limitations recorded (§10.1).
+- **A3: approved.** A replacement registration may overlap an unexamined cancelled window, but evaluates only
+  observations after its own registration (§11; §12, step 6).
+- **A4: approved.** A replacement ranks afresh (§12, step 6).
+- **A5: approved.** A replacement takes the next available round number (§12, step 6).
+- **A6: revised.** A confirmation round must not reuse previously evaluated observations. An unexamined cancelled
+  window does not, by itself, prohibit an overlapping later confirmation window (§8.3, §11). In the code:
+  - **`round_windows`** lists each committed registration's window as one of three kinds:
+    - with results;
+    - registered, still to be evaluated;
+    - cancelled before results. This counts only when the cancellation is committed, unchanged and has no results
+      beside it.
+  - **`check_confirmation`** refuses two kinds of window:
+    - one that overlaps any window but a cancelled-before-results one;
+    - one that does not start after the confirmation's own registration commit, which is §11's rule for every round.
+- **A7: approved.** Research outputs reach `main` without merging frozen application code. The original research
+  commit, the freeze commit, the data hashes and the verification metadata are preserved (§12.1, step 5).
+
+**Where each is enforced:**
+- **The audit script:** A6, and the window-after-registration part of A3.
+- **Review of the registration or the transfer PR:** A4, A5, A7, and a new round's or replacement's overlap with
+  another round's window.
+
 ## 16. Acceptance criteria (for the implementation)
 
 1. **Statistics module (unit tests).** Hand-worked values, independent scalar reference implementations, and a 1e-6
@@ -972,8 +1047,13 @@ These were made on the review of PR #228 and its follow-up.
 9. **Confirmation (tests).**
    - A round's Holm survivor is reported only as PASS (provisional).
    - A confirmation run takes exactly the provisional (row, statistic) members as its family and applies Holm at 5%.
-   - It refuses if the candidate, parameters, direction, statistic or model differ, or if its window overlaps any
-     registered earlier window.
+   - It refuses when any of these holds:
+     - the candidate, parameters, direction, statistic or model differ;
+     - its window overlaps the window of a registered round with results or still to be evaluated;
+     - it does not start after its own registration commit.
+
+     An unexamined cancelled window alone does not refuse it (A6). Only a committed, unchanged cancellation with no
+     results beside it counts as one.
    - It labels a result CONFIRMED only if the member survives Holm and meets its extra condition (§7.2, §7.3). Otherwise
      it is FAIL (not confirmed).
 10. **Evidence (tests).**

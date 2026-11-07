@@ -1,0 +1,915 @@
+{
+  "cache_dir": null,
+  "calendar": {
+    "end": "2026-11-06T00:00:00Z",
+    "fold_months": 3,
+    "folds": [
+      [
+        "2021-01-01T00:00:00Z",
+        "2021-04-01T00:00:00Z"
+      ],
+      [
+        "2021-04-01T00:00:00Z",
+        "2021-07-01T00:00:00Z"
+      ],
+      [
+        "2021-07-01T00:00:00Z",
+        "2021-10-01T00:00:00Z"
+      ],
+      [
+        "2021-10-01T00:00:00Z",
+        "2022-01-01T00:00:00Z"
+      ],
+      [
+        "2022-01-01T00:00:00Z",
+        "2022-04-01T00:00:00Z"
+      ],
+      [
+        "2022-04-01T00:00:00Z",
+        "2022-07-01T00:00:00Z"
+      ],
+      [
+        "2022-07-01T00:00:00Z",
+        "2022-10-01T00:00:00Z"
+      ],
+      [
+        "2022-10-01T00:00:00Z",
+        "2023-01-01T00:00:00Z"
+      ],
+      [
+        "2023-01-01T00:00:00Z",
+        "2023-04-01T00:00:00Z"
+      ],
+      [
+        "2023-04-01T00:00:00Z",
+        "2023-07-01T00:00:00Z"
+      ],
+      [
+        "2023-07-01T00:00:00Z",
+        "2023-10-01T00:00:00Z"
+      ],
+      [
+        "2023-10-01T00:00:00Z",
+        "2024-01-01T00:00:00Z"
+      ],
+      [
+        "2024-01-01T00:00:00Z",
+        "2024-04-01T00:00:00Z"
+      ],
+      [
+        "2024-04-01T00:00:00Z",
+        "2024-07-01T00:00:00Z"
+      ],
+      [
+        "2024-07-01T00:00:00Z",
+        "2024-10-01T00:00:00Z"
+      ],
+      [
+        "2024-10-01T00:00:00Z",
+        "2025-01-01T00:00:00Z"
+      ],
+      [
+        "2025-01-01T00:00:00Z",
+        "2025-04-01T00:00:00Z"
+      ],
+      [
+        "2025-04-01T00:00:00Z",
+        "2025-05-06T00:00:00Z"
+      ]
+    ],
+    "lockbox": [
+      "2025-05-06T00:00:00Z",
+      "2026-11-06T00:00:00Z"
+    ],
+    "lockbox_months": 18,
+    "start": "2020-01-01T00:00:00Z",
+    "warmup_months": 12
+  },
+  "code": {
+    "entry_gate.py": "1c11ec23f3ba04035df2b496418abf07050e4cef0226e2f50b5824afd00dc18b",
+    "market_data/resample.py": "0a44e95cdfdf5a842600c9b3c6d02e0a289c5822f392d0055077a63370621d2b",
+    "model_gate.py": "dcefe5e0c1f254e720a7aa9fbf6ea7905fa4b3464512619025c064f2501ad7ce",
+    "model_lab/__init__.py": "803c1587948240831df70a5f62f6f2237dcbe1ca8d9537caf88d2c5efab18e3b",
+    "model_lab/baselines.py": "5d912d0ff94b207f7aca9940b9483e08c27f7952e03704fe6f083e0fc4761f5d",
+    "model_lab/batch.py": "3a5ffbc87b83650fa3c6b1561965dba1a876fe8d8241be5623bd4e02c948b5f6",
+    "model_lab/catalogue.py": "00b5b553d55e15107f3e8b0e73868518065e2c2cae9783ec04a61c36c5dcf5f8",
+    "model_lab/contestants.py": "f03b84bc2ae5162ad0b122254910e9d11c702adce6edaeb03fcef4ce3002dab0",
+    "model_lab/features.py": "d5adc85935d2368c746e780e167b5f023155005e7922551366c7cf70ac4f0610",
+    "model_lab/replay.py": "8ecbf7a4d2c59b94442b59be15ff8efc39739254113e6f690deb3a476f16df5c",
+    "model_lab/series.py": "8a29df6861b0c8e663584dae5f74d208dfab2c1fd3852b1b9585229dfc3e0e5b",
+    "model_lab/stats.py": "e12163a27cf21f38a1e03ca52df88ca35f60eb2c0202085e6b5771adf8821ba3",
+    "model_lab/targets.py": "9111c08aa26ba1a351a353ad98d3b13eda7d336161e598decc11676c7100ac0e",
+    "model_lab/walkforward.py": "1bf0e4d913a486014050fa0fbaebd6c0d27610d00c9142912b225010fbf8d839",
+    "pattern_model.py": "2c6cec860ffbc2dbd9aa25637808e5f710dc4899e8b1c570919b4d3af12dd01b",
+    "position_sizing.py": "05c8dec225474082e96b5db760308cb537240cc7949033795d1a923d0ff8a328",
+    "pt_pattern_trainer.py": "6f53d653569f17c930f64db58673b30377c06b3632dbe1e9d8f0fb964683d603"
+  },
+  "coins": [
+    "BTC",
+    "ETH",
+    "XRP",
+    "BNB",
+    "DOGE",
+    "SOL",
+    "ZEC",
+    "DASH",
+    "HYPE",
+    "ADA",
+    "AVAX",
+    "LINK",
+    "LTC"
+  ],
+  "contestants": [
+    {
+      "blocks": [
+        "P"
+      ],
+      "description": "Logistic regression on clean wins from price only, top 50%",
+      "family": "linear",
+      "forecast_only": false,
+      "key": "pv.linear.t1.P.q50",
+      "lockbox_seen": [],
+      "looks": [],
+      "params": {
+        "features": "25: P",
+        "model": "logistic regression, L2 penalty, C = 1, standardised",
+        "rows": "every batch coin's rows before the fold, purged, weighted by uniqueness; common rows only",
+        "target": "clean win: the profit line before the first DCA level, within 336 hours",
+        "top": "50% of the scores of its own training rows"
+      },
+      "pooled": true,
+      "tested": true
+    },
+    {
+      "blocks": [
+        "P",
+        "V"
+      ],
+      "description": "Logistic regression on clean wins from price and volume, top 50%",
+      "family": "linear",
+      "forecast_only": false,
+      "key": "pv.linear.t1.PV.q50",
+      "lockbox_seen": [
+        {
+          "coins": "10 coins",
+          "end": "2026-11-05",
+          "key": "pv.linear.t1.PV.q50",
+          "start": "2023-11-06",
+          "what": "the volume research's look at v2 (as rv_hod20) against STRAT-001's trades: a look at a feature, not at this contestant's results (docs/research/volume-module.md, sections 5.4 and 6.2)",
+          "when": "2026-11-05"
+        }
+      ],
+      "looks": [
+        {
+          "coins": "10 coins",
+          "end": "2026-11-05",
+          "key": "pv.linear.t1.PV.q50",
+          "start": "2023-11-06",
+          "what": "the volume research's look at v2 (as rv_hod20) against STRAT-001's trades: a look at a feature, not at this contestant's results (docs/research/volume-module.md, sections 5.4 and 6.2)",
+          "when": "2026-11-05"
+        }
+      ],
+      "params": {
+        "features": "27: P + V",
+        "model": "logistic regression, L2 penalty, C = 1, standardised",
+        "rows": "every batch coin's rows before the fold, purged, weighted by uniqueness; common rows only",
+        "target": "clean win: the profit line before the first DCA level, within 336 hours",
+        "top": "50% of the scores of its own training rows"
+      },
+      "pooled": true,
+      "tested": true
+    },
+    {
+      "blocks": [
+        "P",
+        "Vp1"
+      ],
+      "description": "Logistic regression on clean wins from price and volume from an earlier time, top 50%",
+      "family": "linear",
+      "forecast_only": false,
+      "key": "pv.linear.t1.PVp.q50",
+      "lockbox_seen": [
+        {
+          "coins": "10 coins",
+          "end": "2026-11-05",
+          "key": "pv.linear.t1.PVp.q50",
+          "start": "2023-11-06",
+          "what": "the volume research's look at v2 (as rv_hod20) against STRAT-001's trades: a look at a feature, not at this contestant's results (docs/research/volume-module.md, sections 5.4 and 6.2)",
+          "when": "2026-11-05"
+        }
+      ],
+      "looks": [
+        {
+          "coins": "10 coins",
+          "end": "2026-11-05",
+          "key": "pv.linear.t1.PVp.q50",
+          "start": "2023-11-06",
+          "what": "the volume research's look at v2 (as rv_hod20) against STRAT-001's trades: a look at a feature, not at this contestant's results (docs/research/volume-module.md, sections 5.4 and 6.2)",
+          "when": "2026-11-05"
+        }
+      ],
+      "params": {
+        "features": "27: P + Vp1",
+        "model": "logistic regression, L2 penalty, C = 1, standardised",
+        "rows": "every batch coin's rows before the fold, purged, weighted by uniqueness; common rows only",
+        "target": "clean win: the profit line before the first DCA level, within 336 hours",
+        "top": "50% of the scores of its own training rows"
+      },
+      "pooled": true,
+      "tested": true
+    },
+    {
+      "blocks": [
+        "P",
+        "Vp2"
+      ],
+      "description": "Logistic regression on clean wins from price and volume from an earlier time (2), top 50%",
+      "family": "linear",
+      "forecast_only": true,
+      "key": "pv.linear.t1.PVp2.q50",
+      "lockbox_seen": [],
+      "looks": [],
+      "params": {
+        "features": "27: P + Vp2",
+        "model": "logistic regression, L2 penalty, C = 1, standardised",
+        "rows": "every batch coin's rows before the fold, purged, weighted by uniqueness; common rows only",
+        "target": "clean win: the profit line before the first DCA level, within 336 hours",
+        "top": "50% of the scores of its own training rows"
+      },
+      "pooled": true,
+      "tested": false
+    },
+    {
+      "blocks": [
+        "P",
+        "Vp3"
+      ],
+      "description": "Logistic regression on clean wins from price and volume from an earlier time (3), top 50%",
+      "family": "linear",
+      "forecast_only": true,
+      "key": "pv.linear.t1.PVp3.q50",
+      "lockbox_seen": [],
+      "looks": [],
+      "params": {
+        "features": "27: P + Vp3",
+        "model": "logistic regression, L2 penalty, C = 1, standardised",
+        "rows": "every batch coin's rows before the fold, purged, weighted by uniqueness; common rows only",
+        "target": "clean win: the profit line before the first DCA level, within 336 hours",
+        "top": "50% of the scores of its own training rows"
+      },
+      "pooled": true,
+      "tested": false
+    },
+    {
+      "blocks": [
+        "P",
+        "Vp4"
+      ],
+      "description": "Logistic regression on clean wins from price and volume from an earlier time (4), top 50%",
+      "family": "linear",
+      "forecast_only": true,
+      "key": "pv.linear.t1.PVp4.q50",
+      "lockbox_seen": [],
+      "looks": [],
+      "params": {
+        "features": "27: P + Vp4",
+        "model": "logistic regression, L2 penalty, C = 1, standardised",
+        "rows": "every batch coin's rows before the fold, purged, weighted by uniqueness; common rows only",
+        "target": "clean win: the profit line before the first DCA level, within 336 hours",
+        "top": "50% of the scores of its own training rows"
+      },
+      "pooled": true,
+      "tested": false
+    },
+    {
+      "blocks": [
+        "P",
+        "Vp5"
+      ],
+      "description": "Logistic regression on clean wins from price and volume from an earlier time (5), top 50%",
+      "family": "linear",
+      "forecast_only": true,
+      "key": "pv.linear.t1.PVp5.q50",
+      "lockbox_seen": [],
+      "looks": [],
+      "params": {
+        "features": "27: P + Vp5",
+        "model": "logistic regression, L2 penalty, C = 1, standardised",
+        "rows": "every batch coin's rows before the fold, purged, weighted by uniqueness; common rows only",
+        "target": "clean win: the profit line before the first DCA level, within 336 hours",
+        "top": "50% of the scores of its own training rows"
+      },
+      "pooled": true,
+      "tested": false
+    }
+  ],
+  "declared": "pv-1",
+  "draws": 10000,
+  "fees": {
+    "ADA": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "AVAX": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "BNB": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "BTC": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "DASH": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "DOGE": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "ETH": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "HYPE": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "LINK": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "LTC": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "SOL": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "XRP": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    },
+    "ZEC": {
+      "exchange": "coinbase",
+      "order_type": "taker",
+      "rate": 0.005,
+      "slippage": 0.0005,
+      "source": "account"
+    }
+  },
+  "frozen_at": "2026-11-07T17:55:58Z",
+  "id": "20261107-175558",
+  "libraries": {
+    "numpy": "2.5.4",
+    "pandas": "3.1.0",
+    "scikit-learn": "1.9.1"
+  },
+  "min_shift_days": 160,
+  "neural_dca": "off for every contestant; the pattern model is also shown with it on",
+  "offline": true,
+  "pass_rule": {
+    "holm_alpha": 0.05,
+    "min_trades": 100,
+    "pbo_blocks": 16,
+    "pbo_max": 0.5,
+    "power": 0.8,
+    "screen_q": 0.1,
+    "too_few": 0.5
+  },
+  "rules": {
+    "dca_levels": [
+      -2.5,
+      -5.0,
+      -10.0,
+      -20.0,
+      -30.0,
+      -40.0,
+      -50.0
+    ],
+    "dca_multiplier": 2.0,
+    "max_coin_allocation_pct": 10.0,
+    "max_dca_buys_per_24h": 2,
+    "pm_start_pct_no_dca": 5.0,
+    "pm_start_pct_with_dca": 2.5,
+    "start_allocation_pct": 1.0,
+    "trade_start_level": 3,
+    "trailing_gap_pct": 0.5
+  },
+  "seeds": {
+    "fits": 0,
+    "r1": 500000,
+    "r2": 600000
+  },
+  "series": {
+    "ADA": {
+      "bars": 49385,
+      "coin": "ADA",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2021-03-18T16:00:00Z",
+      "gaps": [
+        {
+          "from": "2023-03-04T17:00:00Z",
+          "missing_bars": 5,
+          "to": "2023-03-04T21:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "ADA-USD",
+      "sha256": "5300034b117dc429cebe75c5c264f0a6bea7ad228b8a63ec660a53bb1df016b1",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "AVAX": {
+      "bars": 44679,
+      "coin": "AVAX",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2021-09-30T19:00:00Z",
+      "gaps": [
+        {
+          "from": "2023-03-04T18:00:00Z",
+          "missing_bars": 4,
+          "to": "2023-03-04T21:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "AVAX-USD",
+      "sha256": "5efd791d823603eaace3f3a8de19c02f4c1b700aba97b0bf4f4eadd8310237c5",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "BNB": {
+      "bars": 9091,
+      "coin": "BNB",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2025-10-22T18:00:00Z",
+      "gaps": [
+        {
+          "from": "2025-10-25T15:00:00Z",
+          "missing_bars": 6,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "BNB-USD",
+      "sha256": "ba706d8aa7cfb57e30934b9f3abb2323cdf6e6750dbed3edd03a63148c3f8299",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "BTC": {
+      "bars": 60008,
+      "coin": "BTC",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2020-01-01T00:00:00Z",
+      "gaps": [
+        {
+          "from": "2020-01-30T17:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-01-30T17:00:00Z"
+        },
+        {
+          "from": "2020-09-04T23:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-09-04T23:00:00Z"
+        },
+        {
+          "from": "2020-10-20T20:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-10-20T20:00:00Z"
+        },
+        {
+          "from": "2023-03-04T18:00:00Z",
+          "missing_bars": 3,
+          "to": "2023-03-04T20:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "BTC-USD",
+      "sha256": "53862fde3c219234652ac46f38adc6b6b3abc77e2e4e7bb44b0d6b7f35b44a75",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "DASH": {
+      "bars": 59999,
+      "coin": "DASH",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2020-01-01T00:00:00Z",
+      "gaps": [
+        {
+          "from": "2020-01-30T17:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-01-30T17:00:00Z"
+        },
+        {
+          "from": "2020-09-04T23:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-09-04T23:00:00Z"
+        },
+        {
+          "from": "2020-10-20T20:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-10-20T20:00:00Z"
+        },
+        {
+          "from": "2023-03-04T17:00:00Z",
+          "missing_bars": 5,
+          "to": "2023-03-04T21:00:00Z"
+        },
+        {
+          "from": "2023-04-07T23:00:00Z",
+          "missing_bars": 1,
+          "to": "2023-04-07T23:00:00Z"
+        },
+        {
+          "from": "2024-05-31T22:00:00Z",
+          "missing_bars": 1,
+          "to": "2024-05-31T22:00:00Z"
+        },
+        {
+          "from": "2024-10-26T16:00:00Z",
+          "missing_bars": 1,
+          "to": "2024-10-26T16:00:00Z"
+        },
+        {
+          "from": "2025-08-16T06:00:00Z",
+          "missing_bars": 1,
+          "to": "2025-08-16T06:00:00Z"
+        },
+        {
+          "from": "2025-09-01T19:00:00Z",
+          "missing_bars": 1,
+          "to": "2025-09-01T19:00:00Z"
+        },
+        {
+          "from": "2025-09-20T06:00:00Z",
+          "missing_bars": 1,
+          "to": "2025-09-20T06:00:00Z"
+        },
+        {
+          "from": "2025-09-21T00:00:00Z",
+          "missing_bars": 1,
+          "to": "2025-09-21T00:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "DASH-USD",
+      "sha256": "10d8fdde75120491e9c61a11da58b99d8a9250accc8372314439f1d905b52bae",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "DOGE": {
+      "bars": 47537,
+      "coin": "DOGE",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2021-06-03T16:00:00Z",
+      "gaps": [
+        {
+          "from": "2023-03-04T17:00:00Z",
+          "missing_bars": 5,
+          "to": "2023-03-04T21:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "DOGE-USD",
+      "sha256": "f73c735fe4912cb14f318c4f2a0c2a0d1c5dd231aa616a5ac5db44e8f861774d",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "ETH": {
+      "bars": 60008,
+      "coin": "ETH",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2020-01-01T00:00:00Z",
+      "gaps": [
+        {
+          "from": "2020-01-30T17:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-01-30T17:00:00Z"
+        },
+        {
+          "from": "2020-09-04T23:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-09-04T23:00:00Z"
+        },
+        {
+          "from": "2020-10-20T20:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-10-20T20:00:00Z"
+        },
+        {
+          "from": "2023-03-04T18:00:00Z",
+          "missing_bars": 3,
+          "to": "2023-03-04T20:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "ETH-USD",
+      "sha256": "4cde004c203286bb8d8b0f3eebc4f833f62b6ed7ff24ee66bb52166b8613c22a",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "HYPE": {
+      "bars": 6552,
+      "coin": "HYPE",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2026-02-05T19:00:00Z",
+      "gaps": [
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "HYPE-USD",
+      "sha256": "f09bffafc3330e9e929bb52da12f167133306b7b58a42adaef3ad9bb3c5ae526",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "LINK": {
+      "bars": 60005,
+      "coin": "LINK",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2020-01-01T00:00:00Z",
+      "gaps": [
+        {
+          "from": "2020-01-30T17:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-01-30T17:00:00Z"
+        },
+        {
+          "from": "2020-09-04T01:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-09-04T01:00:00Z"
+        },
+        {
+          "from": "2020-09-04T23:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-09-04T23:00:00Z"
+        },
+        {
+          "from": "2020-10-20T20:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-10-20T20:00:00Z"
+        },
+        {
+          "from": "2023-03-04T17:00:00Z",
+          "missing_bars": 5,
+          "to": "2023-03-04T21:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "LINK-USD",
+      "sha256": "0e04dd7042532734ea89ff3121a22e5655abbabd62ffb2c76a9ac5804286901b",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "LTC": {
+      "bars": 60006,
+      "coin": "LTC",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2020-01-01T00:00:00Z",
+      "gaps": [
+        {
+          "from": "2020-01-30T17:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-01-30T17:00:00Z"
+        },
+        {
+          "from": "2020-09-04T23:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-09-04T23:00:00Z"
+        },
+        {
+          "from": "2020-10-20T20:00:00Z",
+          "missing_bars": 1,
+          "to": "2020-10-20T20:00:00Z"
+        },
+        {
+          "from": "2023-03-04T17:00:00Z",
+          "missing_bars": 5,
+          "to": "2023-03-04T21:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "LTC-USD",
+      "sha256": "a4541ad7268594a77a6a8e1584d70debfbc16a936997ebfc9b19efe8eb7ff58d",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "SOL": {
+      "bars": 47201,
+      "coin": "SOL",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2021-06-17T16:00:00Z",
+      "gaps": [
+        {
+          "from": "2023-03-04T17:00:00Z",
+          "missing_bars": 5,
+          "to": "2023-03-04T21:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "SOL-USD",
+      "sha256": "6479acc1115965550aa6530473284f0e64449ef417d3a75be34315ed69aca34b",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "XRP": {
+      "bars": 29058,
+      "coin": "XRP",
+      "dropped_before": {
+        "last_open": "2021-01-19T18:00:00Z",
+        "next_open": "2023-07-13T20:00:00Z"
+      },
+      "exchange": "coinbase",
+      "first_open": "2023-07-13T20:00:00Z",
+      "gaps": [
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "XRP-USD",
+      "sha256": "d99839d9c305677b06bbf81abb353c354e2273b122c90e7ba364a32f2602ba0a",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    },
+    "ZEC": {
+      "bars": 51784,
+      "coin": "ZEC",
+      "dropped_before": null,
+      "exchange": "coinbase",
+      "first_open": "2020-12-08T17:00:00Z",
+      "gaps": [
+        {
+          "from": "2023-03-04T18:00:00Z",
+          "missing_bars": 4,
+          "to": "2023-03-04T21:00:00Z"
+        },
+        {
+          "from": "2024-06-09T09:00:00Z",
+          "missing_bars": 1,
+          "to": "2024-06-09T09:00:00Z"
+        },
+        {
+          "from": "2025-10-25T16:00:00Z",
+          "missing_bars": 5,
+          "to": "2025-10-25T20:00:00Z"
+        },
+        {
+          "from": "2026-05-08T02:00:00Z",
+          "missing_bars": 5,
+          "to": "2026-05-08T06:00:00Z"
+        }
+      ],
+      "last_open": "2026-11-05T23:00:00Z",
+      "pair": "ZEC-USD",
+      "sha256": "cf881a833975ffac341e2ed5542e5de591a9d67e5afa138a3cb03e510dc55715",
+      "why": "batch PV-1's coins (FDS-MH-001 section 7a)"
+    }
+  },
+  "sha256": "f4389fb8b07b70a44896b6981f6479113f1942619e758e49146ebc0e554b5be0",
+  "spec_version": "1.1"
+}

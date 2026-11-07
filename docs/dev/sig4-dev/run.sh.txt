@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# FDS-SIG-004 phase C, the development run, in a scratch sandbox: no real user folders,
+# no keys (the keyring fails), Settings from the shipped template (Coinbase primary),
+# candles from the cache copied in from FDS-MH-001 phase B's sandbox (read offline).
+# usage: run.sh freeze | run <batch id> | analyse <batch id>
+set -u
+S="<the scratch folder>"
+B="$S/sig4-dev/sbx"
+OUT="$S/sig4-dev/out"
+PY="$S/venv-test/Scripts/python.exe"
+APP="<this repo>/app"
+DRIVER="<this repo>/docs/dev/run_sig4_dev.py"
+export POWERTRADER_HOME="$(cygpath -w "$B/home")"
+export APPDATA="$(cygpath -w "$B/roaming")"
+export LOCALAPPDATA="$(cygpath -w "$B/local")"
+export PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1 PYTHONIOENCODING=utf-8 POWERTRADER_USER_REGION=GLOBAL
+cd "$B" || exit 1
+"$PY" -u "$(cygpath -w "$DRIVER")" "$(cygpath -w "$APP")" "$(cygpath -w "$OUT")" "$@"

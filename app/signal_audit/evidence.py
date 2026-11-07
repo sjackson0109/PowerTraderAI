@@ -10,9 +10,12 @@ evidence is not the cache file but a **snapshot** per (coin, timeframe):
 * **What it holds.** Exactly the bars of the round's span on that timeframe: from the
   warm-up before the window start to the last bar closing by the window end, as
   ``open_time_ms, open, high, low, close, volume`` in the candle cache's CSV form
-  (``repr`` of each float, LF line ends). The file's SHA-256 is the SHA-256 of those bars
-  (``bars_sha256``), the form ``pt_pattern_trainer.candle_sha256`` and FDS-MH-001's series
-  use, so the same bars give the same hash wherever they are read.
+  (``repr`` of each float, LF line ends). Their SHA-256 (``bars_sha256``) is the form
+  ``pt_pattern_trainer.candle_sha256`` and FDS-MH-001's series use, so the same bars
+  give the same hash wherever they are read.
+* **Where it is** (owner, D11). Gzip-compressed (no file name, time 0, level 9, so the
+  same bars give the same bytes) in the round's folder, ``candles/<coin>_<tf>.csv.gz``,
+  committed with the results. The record holds both the bars' SHA-256 and the file's.
 * **Fetch** (``fetch_round``). Each series is read through the exchange layer from the
   registered exchange only (``exchange_candles``, which fills the cache), and fetched again
   from that exchange alone without the cache (``ExchangeManager.candles``; a size the
@@ -26,10 +29,15 @@ evidence is not the cache file but a **snapshot** per (coin, timeframe):
 * **Run** (``load_round``). Only the snapshots are read, never the cache, and each must
   match its record; a snapshot that differs stops the run. The same snapshots give the
   same series, so a repeated run gives the same results; the cache can grow freely.
+* **Verify** (``load_round`` again, and ``refetch_differences``). Anyone with the repo
+  can check every snapshot against its record and the registration without the
+  exchange, re-derive the results from them with the frozen code, and fetch the span
+  from the exchange again to see whether its bars still agree.
 """
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import io
 import os
@@ -144,37 +152,64 @@ def fresh_rows(manager, exchange: str, coin: str, tf: str, start_s: int, end_s: 
     return _in_span(sorted(set(rows)), start_s, end_s, step), got.pair
 
 
+def _gzip(data: bytes) -> bytes:
+    """The same bytes for the same data: no file name, time 0, level 9."""
+    buf = io.BytesIO()
+    with gzip.GzipFile(
+        filename="", mode="wb", fileobj=buf, mtime=0, compresslevel=9
+    ) as g:
+        g.write(data)
+    return buf.getvalue()
+
+
 def write_snapshot(path: str, rows: Sequence[Row]) -> Dict[str, Any]:
-    """Write ``rows`` as a snapshot, once: an existing snapshot with other bars is never
-    overwritten."""
+    """Write ``rows`` as a compressed snapshot, once: an existing snapshot is never
+    rewritten, and one with other bars stops the fetch. Returns the bars' SHA-256, the
+    file's and the bar count."""
     data = canonical_bytes(rows)
     sha = hashlib.sha256(data).hexdigest()
     if os.path.exists(path):
         with open(path, "rb") as f:
-            if hashlib.sha256(f.read()).hexdigest() != sha:
-                raise EvidenceError(
-                    f"{path}: a snapshot with other bars already exists"
-                )
+            packed = f.read()
+        try:
+            same = hashlib.sha256(gzip.decompress(packed)).hexdigest() == sha
+        except (OSError, EOFError):
+            same = False
+        if not same:
+            raise EvidenceError(f"{path}: a snapshot with other bars already exists")
     else:
+        packed = _gzip(data)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "wb") as f:
-            f.write(data)
+            f.write(packed)
         os.replace(tmp, path)
-    return {"sha256": sha, "bars": len(rows)}
+    return {
+        "sha256": sha,
+        "file_sha256": hashlib.sha256(packed).hexdigest(),
+        "bars": len(rows),
+    }
 
 
 def read_snapshot(path: str, record: Mapping[str, Any]) -> List[Row]:
-    """The snapshot's bars, after checking them against ``record``."""
+    """The snapshot's bars, after checking the file and its bars against ``record``."""
     try:
         with open(path, "rb") as f:
-            data = f.read()
+            packed = f.read()
     except OSError as exc:
         raise EvidenceError(f"{path}: the snapshot cannot be read ({exc})") from exc
+    if hashlib.sha256(packed).hexdigest() != record["file_sha256"]:
+        raise EvidenceError(f"{path}: the snapshot file differs from its record")
+    try:
+        data = gzip.decompress(packed)
+    except (OSError, EOFError) as exc:
+        raise EvidenceError(
+            f"{path}: the snapshot cannot be decompressed ({exc})"
+        ) from exc
     if hashlib.sha256(data).hexdigest() != record["sha256"]:
-        raise EvidenceError(f"{path}: the snapshot differs from its record")
+        raise EvidenceError(f"{path}: the snapshot's bars differ from its record")
     rows: List[Row] = []
-    for line in io.StringIO(data.decode("utf-8")).read().splitlines()[1:]:
+    for line in data.decode("utf-8").splitlines()[1:]:
         t, o, h, lo, c, v = line.split(",")
         rows.append((int(t), float(o), float(h), float(lo), float(c), float(v)))
     if len(rows) != int(record["bars"]) or bars_sha256(rows) != record["sha256"]:
@@ -183,7 +218,7 @@ def read_snapshot(path: str, record: Mapping[str, Any]) -> List[Row]:
 
 
 def snapshot_name(coin: str, tf: str) -> str:
-    return f"{coin}_{tf}.csv"
+    return f"{coin}_{tf}.csv.gz"
 
 
 def fetch_round(
@@ -247,12 +282,13 @@ def fetch_round(
                     f"{key}: {exchange} has no bars in the round's span"
                 )
             name = snapshot_name(coin, tf)
-            write_snapshot(os.path.join(snapshot_dir, name), cached)
+            written = write_snapshot(os.path.join(snapshot_dir, name), cached)
             files[key] = {
                 "exchange": exchange,
                 "pair": pair,
                 "snapshot": name,
                 "sha256": sha,
+                "file_sha256": written["file_sha256"],
                 "bars": len(cached),
                 "first_open_ms": cached[0][0],
                 "last_open_ms": cached[-1][0],
@@ -308,4 +344,29 @@ def load_round(
             a[:, 4],
             a[:, 5],
         )
+    return out
+
+
+def refetch_differences(
+    record: Mapping[str, Any],
+    data: Mapping[str, Any],
+    snapshot_dir: str,
+    manager,
+) -> Dict[str, List[str]]:
+    """Each series whose snapshot no longer agrees with the registered exchange's own
+    bars now, fetched again without the cache (empty when every one agrees): the
+    independent check of the evidence against its source. A difference is reported,
+    not resolved: it may be a correction the exchange made since the fetch."""
+    load_round(record, data, snapshot_dir)  # the snapshots match their record first
+    out: Dict[str, List[str]] = {}
+    for key, f in sorted(data["files"].items()):
+        coin, tf = key.split("/")
+        start_s, end_s = span(record, tf)
+        rows = read_snapshot(os.path.join(snapshot_dir, f["snapshot"]), f)
+        fresh, pair = fresh_rows(manager, record["exchange"], coin, tf, start_s, end_s)
+        diff = differences(rows, fresh)
+        if pair != f.get("pair"):
+            diff = [f"the market is {pair} now, {f.get('pair')} in the record"] + diff
+        if diff:
+            out[key] = diff
     return out

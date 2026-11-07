@@ -9,6 +9,7 @@ Everything runs under the isolation guard; no network: the exchange is a fake be
 real ExchangeManager.
 """
 
+import gzip
 import hashlib
 import json
 import os
@@ -139,7 +140,10 @@ def test_the_snapshot_is_the_registered_span_with_its_provenance(tmp_path, layer
     assert f["span"] == [start_s, end_s] and f["first_open_ms"] == start_s * 1000
     assert f["last_open_ms"] == END_MS - H  # the last bar closing by the window end
     path = tmp_path / "snapshots" / f["snapshot"]
-    assert file_sha256(path) == f["sha256"]  # the file's hash is the bars' hash
+    # compressed (D11), with both the file's hash and the bars' hash recorded
+    assert f["snapshot"] == "AAA_1h.csv.gz" and file_sha256(path) == f["file_sha256"]
+    with open(path, "rb") as fh:
+        assert hashlib.sha256(gzip.decompress(fh.read())).hexdigest() == f["sha256"]
     bars = evidence.load_round(record, data, str(tmp_path / "snapshots"))
     assert len(bars[("AAA", "1h")]) == f["bars"]
     assert len(bars[("AAA", "4h")]) == data["files"]["AAA/4h"]["bars"]
@@ -207,11 +211,24 @@ def test_a_changed_snapshot_or_record_stops_the_run(tmp_path, layer):
     data = fetched(tmp_path, manager, record)
     snaps = str(tmp_path / "snapshots")
     path = os.path.join(snaps, data["files"]["AAA/1h"]["snapshot"])
-    text = open(path, encoding="utf-8").read()
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text.replace(",", ";", 7).replace(";", ",", 6))  # one byte changed
-    with pytest.raises(evidence.EvidenceError, match="differs from its record"):
+    with open(path, "rb") as f:
+        packed = f.read()
+    with open(path, "wb") as f:  # one byte of the compressed file changed
+        f.write(packed[:40] + bytes([packed[40] ^ 1]) + packed[41:])
+    with pytest.raises(evidence.EvidenceError, match="file differs from its record"):
         evidence.load_round(record, data, snaps)
+    # other bars, compressed afresh, with the record's file hash edited to match: the
+    # bars' hash still differs
+    text = gzip.decompress(packed).decode("utf-8")
+    lines = text.splitlines()
+    lines[5] = lines[5].rsplit(",", 1)[0] + ",9.5"
+    other = evidence._gzip(("\n".join(lines) + "\n").encode("utf-8"))
+    with open(path, "wb") as f:
+        f.write(other)
+    forged = json.loads(json.dumps(data))
+    forged["files"]["AAA/1h"]["file_sha256"] = hashlib.sha256(other).hexdigest()
+    with pytest.raises(evidence.EvidenceError, match="bars differ from its record"):
+        evidence.load_round(record, forged, snaps)
     os.remove(path)
     with pytest.raises(evidence.EvidenceError, match="cannot be read"):
         evidence.load_round(record, data, snaps)
@@ -253,3 +270,36 @@ def test_repeated_runs_give_identical_results(tmp_path, layer):
         return json.dumps(rp.results_record(result, 1, "0" * 64, {}), sort_keys=True)
 
     assert run_once() == run_once()
+
+
+def test_the_same_bars_give_the_same_compressed_bytes(tmp_path, layer):
+    """D11: the snapshot can be re-made and checked anywhere. The same bars give the
+    same file, an existing snapshot is never rewritten, and one with other bars stops
+    the fetch."""
+    _fake, manager = layer
+    record = registration()
+    data = fetched(tmp_path, manager, record)
+    again = fetched(tmp_path / "elsewhere", manager, record, cache="cache2")
+    assert again["files"] == data["files"]  # file hashes included
+    rows = [(1, 1.0, 2.0, 0.5, 1.5, 3.0)]
+    one = evidence.write_snapshot(str(tmp_path / "x" / "a.csv.gz"), rows)
+    two = evidence.write_snapshot(str(tmp_path / "y" / "a.csv.gz"), rows)
+    assert one == two
+    assert evidence.write_snapshot(str(tmp_path / "x" / "a.csv.gz"), rows) == one
+    with pytest.raises(evidence.EvidenceError, match="already exists"):
+        evidence.write_snapshot(str(tmp_path / "x" / "a.csv.gz"), rows * 2)
+
+
+def test_the_evidence_is_checked_against_the_exchange_again(tmp_path, layer):
+    """The independent check: each snapshot against the registered exchange's own bars
+    now, without the cache. They agree until the exchange changes a bar."""
+    fake, manager = layer
+    record = registration()
+    data = fetched(tmp_path, manager, record)
+    snaps = str(tmp_path / "snapshots")
+    assert evidence.refetch_differences(record, data, snaps, manager) == {}
+    i = next(k for k, r in enumerate(fake.rows["BTC"]) if r[0] == START_MS + 7 * H)
+    fake.rows["BTC"][i] = fake.rows["BTC"][i][:4] + [fake.rows["BTC"][i][4] * 1.02, 1.0]
+    found = evidence.refetch_differences(record, data, snaps, manager)
+    assert set(found) == {"BTC/1h", "BTC/4h"}  # the 4h bar is built from that hour
+    assert "2026-01-05T07:00:00Z" in found["BTC/1h"][0]

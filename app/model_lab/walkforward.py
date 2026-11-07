@@ -21,7 +21,10 @@ decision at every stream hour, made only from what was known then.
   stream at the first fold that starts ``history_days`` after the coin's first bar.
   Hours before a coin joins are undecided.
 * **Decisions** are one value per stream hour: 1 enter if flat, 0 don't, -1 undecided
-  (no entry is made there, by the contestant or by its random entries).
+  (no entry is made there, by the contestant or by its random entries). A trained
+  contestant whose fits give probabilities of their target (amendment 1) also has one
+  per stream hour; nothing in a decision reads them. Batch PV-1's contestants join at
+  their first decided hour, their first common row (section 7a).
 """
 
 from __future__ import annotations
@@ -148,6 +151,10 @@ class LabData:
     offline: bool = False
     seed: int = 0  # the fits' seed
     context: str = "BTC"  # the coin read for BTC's figures
+    # the batch's coins' fees (entry_gate.Fees), for the trained contestants' targets
+    fees: Dict[str, Any] = field(default_factory=dict)
+    # features and labels built once per run (``features.table``, ``targets.labels``)
+    cache: Dict[Any, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, eq=False)
@@ -192,6 +199,9 @@ class Decisions:
     values: np.ndarray  # int8 per position: 1, 0 or -1 (all -1 before ``join``)
     longs: Optional[List[Optional[int]]] = None  # the pattern model's long counts
     fits: List[Dict[str, Any]] = field(default_factory=list)
+    # a trained contestant's probability of its target per position (NaN where
+    # undecided), when its fits give one (amendment 1); entries never read it
+    probs: Optional[np.ndarray] = None
 
     def ones(self) -> List[int]:
         return np.nonzero(self.values == 1)[0].tolist()
@@ -282,9 +292,19 @@ def decide(
                 else:
                     values = fitted.entries(coin, s.close_s[where])
                 d.values[where] = values
+                probs = fitted.probabilities(coin, s.close_s[where])
+                if probs is not None:
+                    if d.probs is None:
+                        d.probs = np.full(len(s), np.nan)
+                    d.probs[where] = probs
             record = getattr(fitted, "record", None)
             if record is not None:
                 d.fits.append({"fold": f + 1, **record(coin)})
             if progress is not None:
                 progress("fits", done, total)
+    if getattr(contestant, "join_on_first_decided", False):
+        # batch PV-1: a coin joins at its first common row (section 7a)
+        for d in out.values():
+            decided = np.nonzero(d.values != -1)[0]
+            d.join = int(decided[0]) if len(decided) else len(d.values)
     return out

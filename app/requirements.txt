@@ -20,6 +20,9 @@ pandas>=2.0.0
 
 # Advanced analytics dependencies (Items 26-28)
 scipy>=1.9.0  # Required for portfolio optimization
+# The model lab's trained contestants (FDS-MH-001 phase C): logistic regression and
+# histogram gradient-boosted trees. BSD-3-Clause.
+scikit-learn>=1.5
 
 # Multi-Exchange Support Dependencies
 krakenex>=2.1.0

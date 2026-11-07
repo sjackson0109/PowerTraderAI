@@ -302,6 +302,7 @@ MIN_TAB_BUTTONS_W = 60
 MODULE_TAB_ORDER = (
     "Current Trades",
     "Trade History",
+    "Entry Assessments",
     "Order Management",
     "Market Data",
     "Long-term Holdings",

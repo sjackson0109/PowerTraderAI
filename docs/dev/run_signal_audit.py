@@ -8,25 +8,40 @@ FDS-SIG-001: the signal-candidate audit script (section 12). Round N's files are
         rank its markets by 30-day quote volume, apply the exclusions and the history
         check, and write the ranking evidence (network: public market data only)
     python docs/dev/run_signal_audit.py draft --round 1 --window-end 2027-08-01T00:00:00Z
+                                          [--replaces <cancelled round>]
         a draft registration.json from round one's candidates (FDS-SIG-002) and step
         0's evidence, for the owner's review; committing it (in its own commit, before
-        the window starts) is the registration
+        the window starts) is the registration. A replacement for a cancelled round
+        names it (its cancellation committed first)
     python docs/dev/run_signal_audit.py freeze --round 1
         step 2: freeze.json, for its own commit (the code freeze)
     python docs/dev/run_signal_audit.py fetch --round 1
         step 3, after the window ends: every audited and input coin's candles from the
         registered exchange, checked against a second fetch from it without the cache
-        and against any earlier record, written as window-scoped snapshots in the
-        sandbox, each snapshot's SHA-256 recorded (network: public data only)
+        and against any earlier record, written once as compressed window-scoped
+        snapshots in the round's folder (candles/), each with its bars' and its file's
+        SHA-256, for the results commit (network: public data only)
     python docs/dev/run_signal_audit.py run --round 1 [--supersede "<what and why>"]
         steps 4 and 5: the refusals, the snapshots checked against their record (the
         candle cache is not read), every row, both Holm procedures, the verdicts
-        (asserted and re-derived), the evidence series, results.json and the report
+        (asserted and re-derived), the evidence series, results.json and the report.
+        After results, only a defect fix runs, with --supersede: the earlier results,
+        series and report are kept in superseded/ with their SHA-256
+    python docs/dev/run_signal_audit.py cancel --round 1 --defect "<what and why>"
+        step 6, a material defect found before results: cancellation.json, for its own
+        commit; the round is then never run, and a new registration in a later round
+        (draft --replaces 1) takes a window that starts after its own registration
+    python docs/dev/run_signal_audit.py verify --round 1 [--refetch]
+        the independent check: every snapshot against its record and the registration,
+        the results re-derived from them with the frozen code and compared with
+        results.json, and with --refetch each snapshot against the exchange again
 
 Every command needs ``POWERTRADER_HOME`` set to a scratch folder outside the repo (the
-candle cache and every fetched file stay there). No API key is read, created or asked
-for; the only network use is the exchanges' public market data, in ``rank`` and
-``fetch``.
+candle cache stays there; the round's evidence, the ranking answers and the candle
+snapshots, is written to the round's folder for its commits). No API key is read,
+created or asked for; the only network use is the exchanges' public market data, in
+``rank``, ``fetch`` and ``verify --refetch``. A registered round runs from its own
+research worktree at the freeze commit (FDS-SIG-001 section 12.1).
 """
 
 from __future__ import annotations
@@ -34,10 +49,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 APP = os.path.join(REPO, "app")
@@ -236,11 +250,22 @@ def rank(n: int, ranking_date: str, window_days: int) -> Dict[str, Any]:
 
 
 def draft(
-    n: int, window_end: str, window_start: Optional[str] = None
+    n: int,
+    window_end: str,
+    window_start: Optional[str] = None,
+    replaces: Optional[int] = None,
 ) -> Dict[str, Any]:
     """A draft registration from round one's candidates and step 0's evidence. Its
     window starts at the first 00:00 UTC after now (the registration is committed
-    before then) unless given."""
+    before then) unless given. ``replaces`` names the cancelled round it replaces
+    (section 12, step 6), whose cancellation must be committed. A round that is
+    cancelled or already registered is not drafted again."""
+    folder = reg.round_dir(REPO, n)
+    if os.path.exists(os.path.join(folder, reg.CANCELLATION)):
+        raise Stop(f"round {n} is cancelled: its replacement is a later round")
+    if reg.git(REPO, "ls-files", "--", f"{reg.rel_round_dir(n)}/registration.json"):
+        raise Stop(f"round {n} already has a committed registration")
+    replacement = reg.replacement_record(REPO, replaces) if replaces else None
     ranked_record = _read_json(
         os.path.join(reg.round_dir(REPO, n), "ranking", "ranking.json")
     )
@@ -306,6 +331,8 @@ def draft(
         "sandbox_home": os.environ.get("POWERTRADER_HOME"),
         "owner_decisions_pending": [],
     }
+    if replacement:
+        record["replaces"] = replacement
     path = os.path.join(reg.round_dir(REPO, n), "registration.json")
     _write_json(path, record)
     print(f"draft registration {path}: F = {F}, window {start} to {window_end}")
@@ -318,12 +345,26 @@ def freeze(n: int) -> None:
     print(f"{path}: commit it on its own (the code freeze)")
 
 
+def cancel(n: int, defect: str) -> Dict[str, Any]:
+    """Step 6, a material defect found before results: the cancellation record, for
+    its own commit (``registration.cancellation_record``)."""
+    record = reg.cancellation_record(REPO, n, defect)
+    path = os.path.join(reg.round_dir(REPO, n), reg.CANCELLATION)
+    _write_json(path, record)
+    print(
+        f"{path}: commit it on its own; round {n} is then never run. Its replacement is "
+        f"a new registration in a later round (draft --replaces {n})"
+    )
+    return record
+
+
 # --- step 3 ----------------------------------------------------------------------------
 
 
 def snapshot_dir(n: int) -> str:
-    """Round N's candle snapshots, in the sandbox (``signal_audit.evidence``)."""
-    return os.path.join(sandbox(), "sig-audit", f"round-{n}", "candles")
+    """Round N's candle snapshots, in its folder, committed with the results (owner,
+    D11; ``signal_audit.evidence``)."""
+    return os.path.join(reg.round_dir(REPO, n), "candles")
 
 
 def fetch(n: int) -> Dict[str, Any]:
@@ -343,7 +384,7 @@ def fetch(n: int) -> Dict[str, Any]:
         "round": n,
         "exchange": data["exchange"],
         "files": data["files"],
-        "snapshots": os.path.relpath(snapshot_dir(n), sandbox()).replace("\\", "/"),
+        "snapshots": f"{reg.rel_round_dir(n)}/candles",
         "fetched_at": reg.iso(datetime.now(timezone.utc)),
     }
     if earlier and earlier.get("fetched_at"):
@@ -355,28 +396,19 @@ def fetch(n: int) -> Dict[str, Any]:
 # --- steps 4 and 5 ---------------------------------------------------------------------
 
 
-def run(n: int, supersede: Optional[str] = None) -> Dict[str, Any]:
-    sandbox()
-    folder = reg.round_dir(REPO, n)
-    state = reg.check_can_run(
-        REPO,
-        n,
-        supersede=supersede,
-        results_exist=os.path.exists(os.path.join(folder, "results.json")),
-    )
-    record = _read_json(os.path.join(folder, "registration.json"))
-    data = _read_json(os.path.join(folder, "data.json"))
-    try:
-        bars = evidence.load_round(record, data, snapshot_dir(n))
-    except evidence.EvidenceError as exc:
-        raise Stop(str(exc)) from exc
-    superseded = _supersede(folder, n, supersede)
+def report_path(n: int) -> str:
+    return os.path.join(REPO, "docs", "dev", f"SIG-AUDIT-REPORT-round-{n}.md")
+
+
+def evaluate(n: int, record: Mapping[str, Any], bars, state: Mapping[str, Any]):
+    """Every registered row from the snapshots' bars, both Holm procedures and the
+    verdicts: the round's result and its results record."""
+    from signal_audit.pairs import row_pairs
+
     cands = round_one.by_key()
     start = int(reg.parse_time(record["window"]["start"]).timestamp())
     end = int(reg.parse_time(record["window"]["end"]).timestamp())
     rows_data = []
-    from signal_audit.pairs import row_pairs
-
     for k in record["rows"]:
         key = engine.RowKey(k["candidate"], k["exchange"], k["coin"], k["timeframe"])
         c = cands[key.candidate]
@@ -393,7 +425,26 @@ def run(n: int, supersede: Optional[str] = None) -> Dict[str, Any]:
         mde_sims=int(record["power"]["mde_sims_per_run"]),
         mde_replicates=int(record["power"]["mde_runs"]),
     )
-    results = rp.results_record(result, n, state.registration_sha256, state.to_dict())
+    sha = state.get("registration_sha256") or reg.file_sha256(
+        os.path.join(reg.round_dir(REPO, n), "registration.json")
+    )
+    return result, rp.results_record(result, n, sha, dict(state))
+
+
+def run(n: int, supersede: Optional[str] = None) -> Dict[str, Any]:
+    sandbox()
+    folder = reg.round_dir(REPO, n)
+    state = reg.check_can_run(
+        REPO, n, supersede=supersede, results_exist=reg.has_results(folder)
+    )
+    record = _read_json(os.path.join(folder, "registration.json"))
+    data = _read_json(os.path.join(folder, "data.json"))
+    try:
+        bars = evidence.load_round(record, data, snapshot_dir(n))
+    except evidence.EvidenceError as exc:
+        raise Stop(str(exc)) from exc
+    superseded = reg.supersede_results(folder, supersede, report_path(n))
+    result, results = evaluate(n, record, bars, state.to_dict())
     os.makedirs(os.path.join(folder, "series"), exist_ok=True)
     for row in result.rows:
         k = row.key
@@ -404,46 +455,67 @@ def run(n: int, supersede: Optional[str] = None) -> Dict[str, Any]:
             f.write(rp.series_csv(row))
     _write_json(os.path.join(folder, "results.json"), results)
     text = rp.report_markdown(record, results, superseded)
-    with open(
-        os.path.join(REPO, "docs", "dev", f"SIG-AUDIT-REPORT-round-{n}.md"),
-        "w",
-        encoding="utf-8",
-        newline="\n",
-    ) as f:
+    with open(report_path(n), "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
     return results
 
 
-def _supersede(folder: str, n: int, note: Optional[str]) -> List[Dict[str, Any]]:
-    """After results only defect fixes, with the earlier verdicts kept beside the new
-    ones (section 12, step 6)."""
+def verify(n: int, refetch: bool = False) -> Dict[str, Any]:
+    """The independent check of a round's evidence (owner, D11): every snapshot
+    against its record and the registration; the results re-derived from them and
+    compared with results.json, when the code at HEAD is the code that produced them;
+    and, with ``refetch``, each snapshot against the registered exchange's bars now.
+    Nothing is written."""
+    sandbox()
+    folder = reg.round_dir(REPO, n)
+    record = _read_json(os.path.join(folder, "registration.json"))
+    data = _read_json(os.path.join(folder, "data.json"))
+    try:
+        bars = evidence.load_round(record, data, snapshot_dir(n))
+    except evidence.EvidenceError as exc:
+        raise Stop(str(exc)) from exc
+    report = {"round": n, "snapshots": f"{len(data['files'])} match their record"}
+    print(f"round {n}: {report['snapshots']} and the registration", flush=True)
     path = os.path.join(folder, "results.json")
-    old_dir = os.path.join(folder, "superseded")
-    earlier = []
-    if os.path.isdir(old_dir):
-        for name in sorted(os.listdir(old_dir)):
-            p = os.path.join(old_dir, name, "results.json")
-            if os.path.exists(p):
-                old = _read_json(p)
-                old["note"] = _read_json(os.path.join(old_dir, name, "note.json"))[
-                    "note"
-                ]
-                old["commit"] = (old.get("state") or {}).get("head")
-                earlier.append(old)
-    if not os.path.exists(path):
-        return earlier
-    if not (note and note.strip()):
-        raise Stop('results exist: a re-run needs --supersede "<what changed and why>"')
-    old = _read_json(path)
-    target = os.path.join(
-        old_dir, f"{len(earlier) + 1}-{(old.get('state') or {}).get('head', 'x')[:7]}"
-    )
-    os.makedirs(target)
-    _write_json(os.path.join(target, "note.json"), {"note": note.strip()})
-    shutil.move(path, os.path.join(target, "results.json"))
-    old["note"] = note.strip()
-    old["commit"] = (old.get("state") or {}).get("head")
-    return earlier + [old]
+    if os.path.exists(path):
+        committed = _read_json(path)
+        state = committed.get("state") or {}
+        produced_by = state.get("head")
+        changed = (
+            reg.git(
+                REPO,
+                "diff",
+                "--name-only",
+                produced_by,
+                "HEAD",
+                "--",
+                *reg.FROZEN_PATHS,
+            ).split()
+            if produced_by
+            else ["(no commit recorded)"]
+        )
+        if changed:
+            raise Stop(
+                f"the frozen code at HEAD is not the code that produced the results "
+                f"({produced_by}): {changed}; check out that commit to re-derive them"
+            )
+        _result, again = evaluate(n, record, bars, state)
+        same = {k: v for k, v in again.items() if k != "state"} == {
+            k: v for k, v in committed.items() if k != "state"
+        }
+        if not same:
+            raise Stop(
+                "the results re-derived from the snapshots differ from results.json"
+            )
+        report["results"] = "re-derived from the snapshots: identical"
+        print(f"round {n}: results {report['results']}", flush=True)
+    if refetch:
+        found = evidence.refetch_differences(record, data, snapshot_dir(n), _manager())
+        report["exchange"] = found or "every snapshot agrees with the exchange now"
+        if found:
+            raise Stop(f"the exchange's bars now differ from the snapshots: {found}")
+        print(f"round {n}: {report['exchange']}", flush=True)
+    return report
 
 
 def main(argv=None) -> int:
@@ -451,7 +523,7 @@ def main(argv=None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("rank", "draft", "freeze", "fetch", "run"):
+    for name in ("rank", "draft", "freeze", "fetch", "run", "cancel", "verify"):
         p = sub.add_parser(name)
         p.add_argument("--round", type=int, required=True)
         if name == "rank":
@@ -460,18 +532,27 @@ def main(argv=None) -> int:
         if name == "draft":
             p.add_argument("--window-end", required=True)
             p.add_argument("--window-start")
+            p.add_argument("--replaces", type=int)
         if name == "run":
             p.add_argument("--supersede")
+        if name == "cancel":
+            p.add_argument("--defect", required=True)
+        if name == "verify":
+            p.add_argument("--refetch", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.command == "rank":
             rank(args.round, args.ranking_date, args.window_days)
         elif args.command == "draft":
-            draft(args.round, args.window_end, args.window_start)
+            draft(args.round, args.window_end, args.window_start, args.replaces)
         elif args.command == "freeze":
             freeze(args.round)
         elif args.command == "fetch":
             fetch(args.round)
+        elif args.command == "cancel":
+            cancel(args.round, args.defect)
+        elif args.command == "verify":
+            verify(args.round, args.refetch)
         else:
             run(args.round, args.supersede)
     except (Stop, reg.Refused) as exc:

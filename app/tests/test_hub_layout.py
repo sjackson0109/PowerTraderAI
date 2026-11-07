@@ -408,6 +408,7 @@ def test_the_module_tabs_follow_the_one_order_list(hub):
     assert nb.select() == nb.tabs()[0]
     order = list(pt_hub.MODULE_TAB_ORDER)
     assert order.index("Holdings Management") == order.index("Long-term Holdings") + 1
+    assert order.index("Entry Assessments") == order.index("Trade History") + 1
     # Order Management has the order types; there is no Advanced Orders tab (owner,
     # 2026-11-05)
     assert "Advanced Orders" not in order and "Advanced Orders" not in names

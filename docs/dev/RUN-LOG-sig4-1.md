@@ -109,6 +109,51 @@ The owner approved FDS-SIG-004 revision 3 (`146ec05`, PR #229), its decisions D1
 - the compatibility test;
 - the registered artifact.
 
+## Phase E: the log-only entry assessment
+
+**Branch** `feat/sig4-e-log-only`, from phase B's branch. No other `pt_trader.py` change is open (§8.3).
+
+**Authority:** the owner authorised "the approved log-only GUI integration, with all new controls disabled by default". This version offers only **Off** and **Log only** for all four settings:
+- the entry assessment's Veto and the size reduction's On need their confirmation evidence and the owner's decision (§6.7), and activation is not authorised;
+- the two limits' On waits for their log-only counts (D11).
+
+A saved value this version does not offer reads as Off.
+
+**Built:**
+- `signal_fusion/settings.py`: `pt_config.json`'s `signal_fusion` section. Every setting is Off by default; only Off and Log only can be saved.
+- `signal_fusion/live.py`: the log-only assessment and its records, in `<data dir>/signal_fusion/assessments.jsonl`, with no outcome in any record.
+- `pt_trader.py`:
+  - the hook captures the entry's inputs right after the trader's own sizing;
+  - the assessment is made and recorded **after** `place_buy_order` returns;
+  - the time the quotes were read is kept, for the spread's age.
+- `entry_checks_ui.py`, `strategy_settings_ui.py`, `risk_settings_ui.py`: the four settings in Settings > Strategy (Entry assessment) and Settings > Risk (Entry checks).
+- `entry_assessment_view.py` and `pt_hub.py`: the Entry Assessments tab beside Trade History.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| When Log only runs | After the order is placed, from what was captured right after sizing | Log only must change no decision (invariant 3). Computing after the order also keeps the order's timing unchanged; the fee for the record is read after the order too |
+| The predictive part and the shrink in Log only | Recorded as unavailable, "no registered model" | No artifact is registered: registration is not authorised |
+| The participation cap's candles | The coin's 1-hour bars of the last 21 days, through the exchange layer (primary first) | Rule 4, and §5.2's 20 complete days |
+| Errors in Log only | Recorded in the line; never raised into the trader | §5.8.3: in Log only, any result and any failure has no effect |
+| Saving a window | The section is written only when one of its values changed | So the file is unchanged for an owner who never touches these settings |
+
+### Tests
+
+- `tests/test_signal_fusion_live.py`, 7 tests:
+  - invariant 3: a replayed trader session with every setting Off, with a control of Off run twice, and with every setting in Log only places byte-identical orders;
+  - Off writes nothing; Log only writes one record per entry, with no outcome field;
+  - a failure in the log never reaches the trader;
+  - the settings' defaults, refusals and normalising;
+  - the record on a stale quote, on missing candles and on the participation bound.
+- `tests/test_entry_checks_ui.py`, 5 tests:
+  - the rows offer exactly Off and Log only, Off by default;
+  - saving writes only on a change;
+  - a saved Veto or On shows as Off;
+  - the text states facts only;
+  - the table shows no outcome column.
+
 ## Backlog (non-critical, for later)
 
 - §12 item 10's wording, as above.

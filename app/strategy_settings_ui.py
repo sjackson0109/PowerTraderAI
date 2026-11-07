@@ -155,6 +155,14 @@ class StrategySettingsWindow(tk.Toplevel):
                 master=self, value=oid in saved_overlays
             )
             self._make_vars(oid, saved_overlays.get(oid, {}))
+        # the entry assessment (entry_checks_ui): Off or Log only in this version
+        import entry_checks_ui
+
+        self.entry_check_vars = entry_checks_ui.make_vars(
+            self,
+            self._factory().get("signal_fusion") or {},
+            entry_checks_ui.STRATEGY_KEYS,
+        )
 
         try:
             self._build()
@@ -287,6 +295,13 @@ class StrategySettingsWindow(tk.Toplevel):
             self.status_var.set(message)
             self._box.showerror(TITLE, message, parent=self)
             return False
+        import entry_checks_ui
+
+        if not entry_checks_ui.save_if_changed(self.entry_check_vars, self._factory):
+            message = "The entry assessment could not be saved."
+            self.status_var.set(message)
+            self._box.showerror(TITLE, message, parent=self)
+            return False
         if self._on_saved is not None:
             self._on_saved()
         self.destroy()
@@ -366,6 +381,16 @@ class StrategySettingsWindow(tk.Toplevel):
         self._catalogue_frame.columnconfigure(1, weight=1)
         r += 1
         self._build_catalogue(self._catalogue_frame)
+
+        import entry_checks_ui
+
+        checks = ttk.Frame(body)
+        checks.grid(row=r, column=0, sticky="ew", pady=(10, 0))
+        checks.columnconfigure(1, weight=1)
+        r += 1
+        entry_checks_ui.build(
+            checks, 0, "Entry assessment", self.entry_check_vars, HELP_WRAP, columns=2
+        )
 
         ttk.Label(
             self, textvariable=self.status_var, wraplength=HELP_WRAP, justify="left"

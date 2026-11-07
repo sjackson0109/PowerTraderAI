@@ -1,0 +1,358 @@
+"""
+The portfolio replay (FDS-SIG-004 section 6.0): a strategy's trades in one shared
+account, following the trader's rules, for many paths at once.
+
+**Opportunities.** A strategy's entries, with their fills and exits (``Opportunity``),
+from the backtester's logic per coin: a signal on bar t's close fills at bar t + 1's open,
+and the trade exits on the strategy's own EXIT, at the next open. STRAT-001 fires once per
+fresh cross, and a coin is flat at every fresh cross, so every path faces the same
+opportunities; a path differs only in which it vetoes or shrinks.
+
+**At each opportunity, in time order** (exits at the same time come first):
+
+1. the coin must be flat: one trade per coin;
+2. the amount is the trader's own (``position_sizing.entry_usd``): Start allocation % of the
+   account's value, raised to the minimum entry (the venue's minimum order with room for a
+   spread of 2 x the allowance, two taker fees and the margin) when it is below it;
+3. the coin budget (Max per coin %), the minimum entry always allowed above it;
+4. an amount above the free cash is skipped and counted as ineligible in that path;
+5. then the path's veto, its scale, and the minimum check: a scaled amount below the
+   minimum entry is skipped, never raised.
+
+**Costs** are the backtester's: the entry fee comes out of the amount spent, and the exit
+fee out of the proceeds, with the allowance as slippage on both fills, so a trade's net
+return is (1 + r_g) m(f, e) - 1, m(f, e) = (1 - f)^2 (1 - e) / (1 + e).
+
+**Equity** is marked at every hourly close (cash plus open positions at their coin's last
+close), and the maximum drawdown is taken from that curve. The account's value at an
+opportunity is its equity then. **Capital-days** are each trade's amount times the days
+held.
+
+**The drawdown halt is reported, not modelled.** Resuming after a halt is the owner's
+action, which a replay cannot know. Each path reports when its drawdown first reached the
+emergency level. With ``halt_ends`` the path ends there instead: nothing opens or closes
+after it, and open positions are marked at that hour.
+
+With ``size_fraction`` the amount is that share of the free cash instead (one coin at
+100% reproduces ``backtest.engine.run_backtest``'s trades).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import List, Mapping, Optional, Sequence, Tuple
+
+import numpy as np
+
+import position_sizing
+
+DAY_S = 86400
+HOUR_S = 3600
+
+
+@dataclass(frozen=True)
+class Opportunity:
+    coin: str
+    entry_s: int  # the fill time: the open of the bar after the signal
+    exit_s: int  # the exit's fill time
+    entry_price: float  # the raw open at the entry fill, before slippage
+    exit_price: float  # the raw open (or close, at the end) at the exit fill
+    assessable: bool = True  # the filter could assess it (an eligible p̂)
+
+    @property
+    def gross(self) -> float:
+        return self.exit_price / self.entry_price - 1.0
+
+    @property
+    def days(self) -> float:
+        return (self.exit_s - self.entry_s) / DAY_S
+
+
+@dataclass(frozen=True)
+class Account:
+    start: float = 10_000.0  # the default paper balance (trading_mode.py)
+    start_pct: float = position_sizing.DEFAULT_START_ALLOCATION_PCT
+    max_coin_pct: float = position_sizing.DEFAULT_MAX_COIN_ALLOCATION_PCT
+    margin_pct: float = position_sizing.DEFAULT_MIN_ORDER_MARGIN_PCT
+    halt_pct: float = 8.0  # risk.emergency_drawdown_pct's default
+
+
+@dataclass(frozen=True)
+class Costs:
+    fee: float  # taker, a fraction a side
+    allowance: float = 0.0005  # e: slippage a fill
+    minimum_usd: Mapping[str, float] = field(default_factory=dict)  # per coin
+
+    def multiplier(self) -> float:
+        """m(f, e)."""
+        f, e = self.fee, self.allowance
+        return (1.0 - f) ** 2 * (1.0 - e) / (1.0 + e)
+
+    def floor(self, coin: str, margin_pct: float) -> Optional[float]:
+        """The coin's minimum entry, or None when no minimum is known."""
+        return position_sizing.minimum_entry_usd(
+            self.minimum_usd.get(coin),
+            2.0 * self.allowance,
+            2.0 * self.fee,
+            margin_pct,
+        )
+
+
+@dataclass
+class Paths:
+    """Each path's results (arrays over paths)."""
+
+    net: np.ndarray
+    capital_days: np.ndarray
+    trades: np.ndarray
+    skipped_cash: np.ndarray
+    skipped_minimum: np.ndarray
+    vetoed: np.ndarray
+    max_drawdown: np.ndarray  # the largest fall from a peak, a fraction of it
+    max_drawdown_usd: np.ndarray
+    halt_s: np.ndarray  # when the drawdown first reached the halt level, or -1
+    final_equity: np.ndarray
+    time_in_market: np.ndarray  # the share of hours with an open position
+    mean_committed: np.ndarray  # mean capital in open positions, a share of equity
+    peak_committed: np.ndarray
+    start: float
+    # path 0's trades, when asked for: (opportunity index, amount, net, capital-days)
+    detail: List[Tuple[int, float, float, float]] = field(default_factory=list)
+    curve: Optional[Tuple[np.ndarray, np.ndarray]] = None  # path 0's (hours, equity)
+    # path 0's outcome at each opportunity, when asked for: "taken", "vetoed",
+    # "not_flat", "no_cash", "below_minimum" or "ended" (after a halt ended the path)
+    status: List[str] = field(default_factory=list)
+
+    def eligible(self) -> List[int]:
+        """Path 0's eligible opportunities: flat, with the cash there (taken or vetoed)."""
+        return [i for i, s in enumerate(self.status) if s in ("taken", "vetoed")]
+
+    @property
+    def rpcd(self) -> np.ndarray:
+        """Return per capital-day; 0 for a path with no trades."""
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.where(self.capital_days > 0, self.net / self.capital_days, 0.0)
+
+
+def _prices(prices: Mapping[str, Tuple[Sequence[int], Sequence[float]]], coins, hours):
+    """Each coin's last close at or before each hour: (hours, coins)."""
+    out = np.full((len(hours), len(coins)), np.nan)
+    for j, c in enumerate(coins):
+        t, p = prices[c]
+        t = np.asarray(t, dtype=np.int64)
+        p = np.asarray(p, dtype=float)
+        k = np.searchsorted(t, hours, side="right") - 1
+        ok = k >= 0
+        out[ok, j] = p[k[ok]]
+    return out
+
+
+def replay(
+    opps: Sequence[Opportunity],
+    prices: Mapping[str, Tuple[Sequence[int], Sequence[float]]],
+    costs: Costs,
+    account: Account = Account(),
+    veto: Optional[np.ndarray] = None,
+    scale: Optional[np.ndarray] = None,
+    paths: int = 1,
+    size_fraction: Optional[float] = None,
+    halt_ends: bool = False,
+    detail: bool = False,
+    end_s: Optional[int] = None,
+) -> Paths:
+    """Replay the opportunities on ``paths`` paths. ``veto`` (paths, n) is True where a
+    path vetoes an opportunity; ``scale`` (paths, n) is its scale (at most 1). ``prices``
+    gives each coin's hourly (close times, closes) for marking. ``end_s`` ends the curve
+    (default: the last exit)."""
+    n = len(opps)
+    if veto is not None:
+        paths = veto.shape[0]
+    elif scale is not None:
+        paths = scale.shape[0]
+    veto = np.zeros((paths, n), dtype=bool) if veto is None else np.asarray(veto, bool)
+    scale = np.ones((paths, n)) if scale is None else np.asarray(scale, dtype=float)
+    if np.any(scale > 1.0 + 1e-12):
+        raise ValueError("a scale is at most 1: nothing makes an entry larger")
+    coins = sorted({o.coin for o in opps})
+    col = {c: j for j, c in enumerate(coins)}
+    f, e = costs.fee, costs.allowance
+    floors = {c: costs.floor(c, account.margin_pct) for c in coins}
+
+    # the hourly marking grid, from the first entry to the end
+    if n:
+        first = min(o.entry_s for o in opps)
+        last = end_s if end_s is not None else max(o.exit_s for o in opps)
+        hours = np.arange(first // HOUR_S * HOUR_S, last + HOUR_S, HOUR_S)
+    else:
+        hours = np.zeros(0, dtype=np.int64)
+    marks = _prices(prices, coins, hours) if n else np.zeros((0, 0))
+
+    cash = np.full(paths, float(account.start))
+    qty = np.zeros((paths, len(coins)))
+    spent = np.zeros((paths, len(coins)))
+    holding = np.full((paths, len(coins)), -1, dtype=np.int64)  # opportunity held
+    net = np.zeros(paths)
+    held = np.zeros(paths)
+    trades = np.zeros(paths, dtype=np.int64)
+    skipped_cash = np.zeros(paths, dtype=np.int64)
+    skipped_min = np.zeros(paths, dtype=np.int64)
+    vetoed = np.zeros(paths, dtype=np.int64)
+    peak = np.full(paths, float(account.start))
+    mdd = np.zeros(paths)
+    mdd_usd = np.zeros(paths)
+    halt_s = np.full(paths, -1, dtype=np.int64)
+    alive = np.ones(paths, dtype=bool)
+    in_market = np.zeros(paths)
+    committed_sum = np.zeros(paths)
+    committed_peak = np.zeros(paths)
+    detail_rows: List[Tuple[int, float, float, float]] = []
+    curve_equity = np.zeros(len(hours)) if detail else None
+    status = ["ended"] * n if detail else []
+
+    # events: (time, 0 = exit, 1 = entry, opportunity)
+    events = sorted(
+        [(o.exit_s, 0, i) for i, o in enumerate(opps)]
+        + [(o.entry_s, 1, i) for i, o in enumerate(opps)]
+    )
+    ev = 0
+    last_close = np.full(len(coins), np.nan)
+
+    def equity_now() -> np.ndarray:
+        value = np.nan_to_num(qty * last_close[None, :], nan=0.0)
+        return cash + value.sum(axis=1)
+
+    for h, t in enumerate(hours.tolist()):
+        if len(coins):
+            row = marks[h]
+            last_close = np.where(np.isfinite(row), row, last_close)
+        while ev < len(events) and events[ev][0] <= t:
+            when, kind, i = events[ev]
+            ev += 1
+            o = opps[i]
+            j = col[o.coin]
+            if kind == 0:  # an exit: the paths holding this opportunity's trade
+                mine = (holding[:, j] == i) & alive
+                if mine.any():
+                    proceeds = qty[mine, j] * o.exit_price * (1.0 - e) * (1.0 - f)
+                    gain = proceeds - spent[mine, j]
+                    cash[mine] += proceeds
+                    net[mine] += gain
+                    days = spent[mine, j] * (o.exit_s - o.entry_s) / DAY_S
+                    held[mine] += days
+                    trades[mine] += 1
+                    if detail and mine[0]:
+                        detail_rows.append(
+                            (i, float(spent[0, j]), float(gain[0]), float(days[0]))
+                        )
+                    qty[mine, j] = 0.0
+                    spent[mine, j] = 0.0
+                    holding[mine, j] = -1
+                continue
+            # an entry
+            flat = (holding[:, j] == -1) & alive
+            if detail and alive[0] and not flat[0]:
+                status[i] = "not_flat"
+            if not flat.any():
+                continue
+            value = equity_now()
+            if size_fraction is not None:
+                amount = cash * float(size_fraction)
+            else:
+                amount = np.maximum(value, 0.0) * account.start_pct / 100.0
+                floor = floors[o.coin]
+                if floor:
+                    amount = np.maximum(amount, floor)
+                budget = np.maximum(value, 0.0) * account.max_coin_pct / 100.0
+                allowed = np.maximum(budget, floor or 0.0)
+                amount = np.where(amount > allowed + 0.005, 0.0, amount)
+            no_cash = flat & (amount > cash + 1e-9)
+            skipped_cash += no_cash
+            veto_here = flat & ~no_cash & veto[:, i]
+            vetoed += veto_here
+            scaled = amount * scale[:, i]
+            floor = floors[o.coin]
+            below = (
+                flat & ~no_cash & ~veto_here & (scale[:, i] < 1.0) & (scaled < floor)
+                if (floor and size_fraction is None)
+                else np.zeros(paths, dtype=bool)
+            )
+            skipped_min += below
+            go = flat & ~no_cash & ~veto_here & ~below & (scaled > 0)
+            if detail and flat[0]:
+                status[i] = (
+                    "no_cash"
+                    if no_cash[0]
+                    else (
+                        "vetoed"
+                        if veto_here[0]
+                        else (
+                            "below_minimum"
+                            if below[0]
+                            else "taken" if go[0] else "no_cash"
+                        )
+                    )
+                )
+            if go.any():
+                spend = scaled[go]
+                qty[go, j] = spend * (1.0 - f) / (o.entry_price * (1.0 + e))
+                spent[go, j] = spend
+                cash[go] -= spend
+                holding[go, j] = i
+        # mark the hour
+        value = equity_now()
+        committed = spent.sum(axis=1)
+        live = alive.copy()
+        in_market += live & (committed > 0)
+        share = np.where(value > 0, committed / np.where(value > 0, value, 1.0), 0.0)
+        committed_sum += np.where(live, share, 0.0)
+        committed_peak = np.maximum(committed_peak, np.where(live, share, 0.0))
+        peak = np.where(live, np.maximum(peak, value), peak)
+        fall = np.where(peak > 0, (peak - value) / peak, 0.0)
+        fall_usd = peak - value
+        mdd = np.where(live, np.maximum(mdd, fall), mdd)
+        mdd_usd = np.where(live, np.maximum(mdd_usd, fall_usd), mdd_usd)
+        first_halt = live & (halt_s < 0) & (fall >= account.halt_pct / 100.0)
+        halt_s[first_halt] = t
+        if detail:
+            curve_equity[h] = value[0]
+        if halt_ends and first_halt.any():
+            # the path ends here: open positions are marked, then frozen
+            for jj in range(len(coins)):
+                mine = first_halt & (holding[:, jj] >= 0)
+                if not mine.any():
+                    continue
+                mark = last_close[jj] if np.isfinite(last_close[jj]) else 0.0
+                proceeds = qty[mine, jj] * mark * (1.0 - e) * (1.0 - f)
+                gain = proceeds - spent[mine, jj]
+                k = holding[mine, jj]
+                entry = np.array([opps[x].entry_s for x in k.tolist()])
+                cash[mine] += proceeds
+                net[mine] += gain
+                held[mine] += spent[mine, jj] * (t - entry) / DAY_S
+                trades[mine] += 1
+                qty[mine, jj] = 0.0
+                spent[mine, jj] = 0.0
+                holding[mine, jj] = -1
+            alive &= ~first_halt
+
+    count = max(len(hours), 1)
+    final = equity_now()
+    return Paths(
+        net=net,
+        capital_days=held,
+        trades=trades,
+        skipped_cash=skipped_cash,
+        skipped_minimum=skipped_min,
+        vetoed=vetoed,
+        max_drawdown=mdd,
+        max_drawdown_usd=mdd_usd,
+        halt_s=halt_s,
+        final_equity=final,
+        time_in_market=in_market / count,
+        mean_committed=committed_sum / count,
+        peak_committed=committed_peak,
+        start=float(account.start),
+        detail=detail_rows,
+        curve=(hours, curve_equity) if detail else None,
+        status=status,
+    )

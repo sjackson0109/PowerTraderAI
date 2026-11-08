@@ -340,6 +340,24 @@ DESCRIPTIONS: Dict[str, Described] = {
             ),
         },
     ),
+    "OVL-REGIME": Described(
+        name="Market regime filter",
+        summary=(
+            "Allows a buy only while the reference coin's last daily close is above "
+            "its average over the average days. It never sells. With no daily "
+            "candles for the reference, or only old ones, it allows no buy."
+        ),
+        params={
+            "reference": Param(
+                "Reference",
+                "The coin whose trend is checked: Bitcoin, or the coin being bought.",
+                choices={"BTC": "Bitcoin", "self": "The coin itself"},
+            ),
+            "sma_days": Param(
+                "Average days", "Days of daily closes in the simple average."
+            ),
+        },
+    ),
 }
 
 

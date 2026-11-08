@@ -34,7 +34,7 @@ import pandas as pd
 from backtest.kpis import compute_kpis
 from market_data.timeframes import timeframe_seconds
 from strategies.base import Action
-from strategies.runner import PositionState, StrategyRunner
+from strategies.runner import PositionState, StrategyRunner, slice_context
 
 
 @dataclass(frozen=True)
@@ -140,10 +140,14 @@ def run_backtest(
     end_index: Optional[int] = None,
     cost: CostModel = CostModel(),
     initial_equity: float = 10_000.0,
+    context_frames: Optional[Dict[Any, pd.DataFrame]] = None,
 ) -> RunResult:
     """
     Trade the bars ``[start_index, end_index)`` of ``candles``. Bars before
     ``start_index`` are history only. ``candles`` must be closed bars.
+    ``context_frames`` holds the bars an overlay's entry gate declared
+    (``{(reference, timeframe): frame}``); each decision sees only those closed by its
+    bar's close (FDS-SR-001 section 5.6). A gate without them blocks entries.
     """
     n = len(candles) if end_index is None else end_index
     if not 0 <= start_index < n <= len(candles):
@@ -163,6 +167,8 @@ def run_backtest(
     open_ = candles["open"].to_numpy(dtype=float)
     close = candles["close"].to_numpy(dtype=float)
     times = candles["open_time"]
+    needs = runner.context_needs()
+    step = pd.Timedelta(seconds=tf_seconds)
 
     cash = float(initial_equity)
     qty = 0.0
@@ -235,7 +241,12 @@ def run_backtest(
         # 3) decide at this bar's close (executes at the next open)
         if i == last:
             break
-        decision = runner.evaluate(runner.window(candles, i), pos, symbol)
+        window = runner.window(candles, i)
+        if needs:  # an entry gate's context; other runners are called as before
+            context = slice_context(context_frames or {}, needs, times.iloc[i] + step)
+            decision = runner.evaluate(window, pos, symbol, context)
+        else:
+            decision = runner.evaluate(window, pos, symbol)
         if decision.action is Action.HOLD and decision.reason.startswith(MISSING_BARS):
             bars_missing[decision.reason] = bars_missing.get(decision.reason, 0) + 1
         if decision.action is Action.ENTER_LONG and pos is None:
@@ -351,6 +362,7 @@ def evaluate_split(
     cost: CostModel = CostModel(),
     in_sample_fraction: float = 0.7,
     initial_equity: float = 10_000.0,
+    context_frames: Optional[Dict[Any, pd.DataFrame]] = None,
 ) -> Dict[str, Any]:
     """
     Run the strategy and the buy-and-hold benchmark on the in-sample and
@@ -369,7 +381,15 @@ def evaluate_split(
         bench = buy_and_hold(candles, tf, a, b, cost, initial_equity)
         try:
             strat = run_backtest(
-                candles, runner_factory(), symbol, tf, a, b, cost, initial_equity
+                candles,
+                runner_factory(),
+                symbol,
+                tf,
+                a,
+                b,
+                cost,
+                initial_equity,
+                context_frames=context_frames,
             )
         except LookaheadError as exc:
             if name == "out_of_sample":

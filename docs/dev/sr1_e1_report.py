@@ -58,6 +58,35 @@ def _when(s: Optional[int]) -> str:
     return datetime.fromtimestamp(int(s), tz=timezone.utc).strftime("%Y-%m-%d")
 
 
+def _run_ps(member: Mapping[str, Any]) -> List[float]:
+    """Each seeded run's p for a member (a trading member's or an economic one's)."""
+    runs = member.get("runs") or (member.get("test") or {}).get("runs") or []
+    return [float(x) for x in runs if x is not None]
+
+
+def _blocks_line(result: Mapping[str, Any]) -> str:
+    """The economic bootstrap's block length, and how many blocks the period holds."""
+    parts = []
+    for fam, days in sorted((result.get("block_days") or {}).items()):
+        span = [
+            (m.get("test") or {}).get("days")
+            for m in (result.get("members") or {}).values()
+            if (m.get("test") or {}).get("days")
+        ]
+        held = f" in {span[0]:,} days, {span[0] / days:.1f} blocks" if span else ""
+        intervals = "; ".join(
+            f"{mid} {_f(t['interval'][0], '+.4%')} to {_f(t['interval'][1], '+.4%')}"
+            for mid, m in sorted((result.get("members") or {}).items())
+            for t in [m.get("test") or {}]
+            if t.get("interval")
+        )
+        parts.append(
+            f"family {fam}: {days} days by section 6.0's rule{held}. Its 95% intervals "
+            f"(return per capital-day): {intervals}"
+        )
+    return "- **Day blocks:** " + ("; ".join(parts) or "n/a") + "."
+
+
 OUTCOME = {
     "pass": "Pass",
     "fail": "Fail",
@@ -97,11 +126,32 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
             if m.family != fam:
                 continue
             v = result["verdicts"][m.id]
+            runs = _run_ps(result["members"].get(m.id) or {})
             rows.append(
                 [m.id, m.question, OUTCOME[v["outcome"]], pval(v["p"]),
+                 f"{min(runs):.4f} to {max(runs):.4f}" if runs else "n/a",
                  "yes" if v["holm_pass"] else "no"]
             )  # fmt: skip
-        L += table(["Member", "Question", "Outcome", "p", "Holm"], rows)
+        L += table(
+            [
+                "Member",
+                "Question",
+                "Outcome",
+                "p (pooled)",
+                "p in each run",
+                "p passes Holm",
+            ],
+            rows,
+        )
+        if fam == "S":
+            L += [
+                "For S3 and S4 the day-block bootstrap is the family member, and "
+                '"p passes Holm" is about it alone. The outcome also needs every '
+                "condition of FDS-SIG-004 F3; the line names the one that failed. With "
+                f"blocks of {result.get('block_days', {}).get('S', 'n/a')} days (section 2) "
+                "that bootstrap carries little information.",
+                "",
+            ]
         for m in e1.MEMBERS:
             if m.family == fam:
                 L += [f"- **{m.id}.** {result['verdicts'][m.id]['line']}"]
@@ -152,6 +202,7 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
         f"- **Model probabilities:** batch {record['models']['batch']}, "
         + ", ".join(f"`{k}` `{v[:12]}…`" for k, v in record["models"]["sha256"].items())
         + " (matching docs/dev/RUN-LOG-sig4-1.md).",
+        _blocks_line(result),
         f"- **Run:** {result.get('seconds')} s. Trials logged by kind: "
         + ", ".join(
             f"{k} {v}"

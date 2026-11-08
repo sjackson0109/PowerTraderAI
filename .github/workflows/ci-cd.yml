@@ -84,7 +84,7 @@ jobs:
     # and the Tk tests get a real desktop instead of skipping for want of a display.
     runs-on: windows-latest
     name: Full App Test Suite
-    timeout-minutes: 90
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -113,22 +113,27 @@ jobs:
 
     - name: Run the full app test suite
       id: pytest
-      # Shorter than the job, so a hung test still leaves time for the report steps.
-      timeout-minutes: 75
+      # The suite takes about 21 minutes here. Shorter than the job, so a hung test
+      # still leaves time for the report steps.
+      timeout-minutes: 50
       working-directory: app
       run: |
         set -o pipefail  # the job fails with pytest, not with tee
-        mkdir -p ../test-results
-        python -u -m pytest -p no:cacheprovider -ra --durations=25 \
-          -o junit_family=xunit1 --junitxml=../test-results/junit.xml \
+        # Outside the checkout: test_program_dir_read_only.py fails any test during
+        # which a file inside the install folder changes, this log included.
+        results="${RUNNER_TEMP//\\//}/test-results"
+        echo "RESULTS_DIR=$results" >> "$GITHUB_ENV"
+        mkdir -p "$results"
+        python -u -m pytest -q -p no:cacheprovider -ra --durations=25 \
+          -o junit_family=xunit1 --junitxml="$results/junit.xml" \
           -o faulthandler_timeout=900 \
-          2>&1 | tee ../test-results/pytest.log
+          2>&1 | tee "$results/pytest.log"
 
     - name: Test summary
       if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
       run: >-
         python .github/scripts/junit_summary.py
-        test-results/junit.xml test-results/pytest.log
+        "$RESULTS_DIR/junit.xml" "$RESULTS_DIR/pytest.log"
         --title "Full app test suite (Windows, Python 3.13)" --prefix app/
 
     - name: Check that no test created the real user folders
@@ -164,7 +169,7 @@ jobs:
       uses: actions/upload-artifact@v7
       with:
         name: full-app-test-suite-results
-        path: test-results/
+        path: ${{ env.RESULTS_DIR }}
         if-no-files-found: warn
         retention-days: 30
 

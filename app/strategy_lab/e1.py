@@ -522,10 +522,11 @@ def _utc(t) -> pd.Timestamp:
 
 @functools.lru_cache(maxsize=1)
 def settings_exchanges() -> Tuple[str, ...]:
-    """The exchanges in Settings order, primary first (the exchange layer)."""
-    from pt_multi_exchange import market_exchanges
+    """The exchanges in Settings order, primary first: the exchange layer's, as the
+    candle loader reads them."""
+    from market_data.candles import _exchange_manager
 
-    return tuple(market_exchanges().exchange_names())
+    return tuple(_exchange_manager().exchange_names())
 
 
 def first_cached(

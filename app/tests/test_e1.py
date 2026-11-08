@@ -156,6 +156,20 @@ class TestCandles:
         self.load("BTC-USD", "1d", "2019-06-01", e1.DEV_END)
         assert self.calls[-1][2] == pd.Timestamp("2020-01-01", tz="UTC")
 
+    def test_the_exchanges_are_the_candle_loaders_in_settings_order(self, monkeypatch):
+        import market_data.candles as candles
+
+        class Manager:
+            def exchange_names(self):
+                return ["second", "first"]
+
+        monkeypatch.setattr(candles, "_exchange_manager", lambda: Manager())
+        e1.settings_exchanges.cache_clear()
+        try:
+            assert e1.settings_exchanges() == ("second", "first")
+        finally:
+            e1.settings_exchanges.cache_clear()
+
     def test_a_coin_without_bars_is_left_out_with_the_reason(self):
         u, left = e1.development_universe(["BTC", "ADA", "BNB"], "1d", self.load)
         assert sorted(u.frames) == ["ADA", "BTC"]

@@ -206,7 +206,6 @@ def _left_out(data) -> Dict[str, str]:
 
 
 def freeze(out: str) -> Dict[str, Any]:
-    from pt_multi_exchange import market_exchanges
     from strategy_lab import e1, experiment
     from strategy_lab.venue import venue_rules
 
@@ -221,7 +220,7 @@ def freeze(out: str) -> Dict[str, Any]:
     log("venue rules")
     venue = venue_rules(kept).as_record()
     venue["read_at"] = datetime.now(timezone.utc).isoformat()
-    order = list(market_exchanges().exchange_names())
+    order = list(e1.settings_exchanges())
     record = e1.declaration(
         rate_record,
         venue,

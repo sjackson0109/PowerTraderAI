@@ -31,7 +31,8 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 | M3a | STRAT-004, the daily Donchian breakout | (see M3a), on M2b |
 | M3b | STRAT-005, time-series momentum decided weekly | (see M3b), on M3a |
 | M3c | OVL-REGIME and the entry gate's market context | (see M3c), on M3b |
-| M4a | The portfolio simulation, baselines, accounts and lot sizes | this branch, on M3c |
+| M4a | The portfolio simulation, baselines, accounts and lot sizes | (see M4a), on M3c |
+| M4b | Experiment records, the trial log, strategy looks, the reserved months | this branch, on M4a |
 
 ## M2a: the catalogue lifecycle
 
@@ -295,6 +296,51 @@ The existing `tests/test_strategy_settings_ui.py` passes unchanged, except that 
 - the replay's defaults unchanged;
 - the sell step from Coinbase, and primary first.
 
+## M4b: experiment records, the trial log, strategy looks and the reserved months
+
+**Branch** `feat/sr-m4b-experiment-records`, from M4a's branch.
+
+**Built** (`app/strategy_lab/`):
+- **`windows.py`:**
+  - development 2021-01-01 to 2025-05-06;
+  - FDS-MH-001's lockbox 2025-05-06 to 2026-11-06;
+  - `development_only`, which refuses any period reaching into the reserved months (E-D7).
+- **`looks.py`:**
+  - **Strategy looks:**
+    - STRAT-001 and STRAT-002 in strategy batch 1's backtest (BTC and ETH, 2023-01-01 to 2026-10-01, which covers the lockbox);
+    - STRAT-001 in FDS-SIG-004's development run.
+  - **Related looks:** the lab's `rule.high20` (beside STRAT-004) and `rule.mom14` (beside STRAT-005), from FDS-MH-001's phase B timing run, walk-forward only.
+  - It reuses `model_lab.catalogue.Look` and `seen_in`.
+- **`experiment.py`:**
+  - `strategy_record`: every parameter with its defaults, their SHA-256, and the overlays' versions;
+  - `freeze`: sealed with its SHA-256, with the code's hashes over `strategies/`, `strategy_lab/`, `backtest/`, `signal_fusion/` and `model_lab/` plus the libraries; never overwritten;
+  - `verify`: refuses a changed record, code, libraries or candles;
+  - the trial log `<data dir>/strategy_lab/trials.jsonl`, with its kinds and `trial_counts`.
+
+**Nothing is registered.** The mechanism is built and tested on records only. Freezing E1 is M5c, which needs the owner's separate approval.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| Which trial log | The strategy lab's own (`strategy_lab/trials.jsonl`), not the model lab's | The model lab's counts and kinds (FDS-MH-001 amendment 1) stay as they are; each lab counts its own trials |
+| The lockbox's opening ledger | Not built here | FDS-MH-001's final check, which opens the lockbox and would keep that ledger, is not built yet either. The two must share one ledger when either is built (backlog) |
+| The trial kinds | strategy, gate, model, forecast, calibration, sizing, exploration | One per kind of finding in §6.2, plus exploratory runs from Settings |
+
+### Tests
+
+`tests/test_strategy_experiments.py`, 10 tests:
+- the windows and the reserved months;
+- the looks (the existing strategies have seen the lockbox; the new ones have only related signals);
+- the strategy record;
+- the code hash's coverage;
+- freezing once;
+- refusing an incomplete declaration;
+- `verify` refusing an edited record, changed code, libraries or candles;
+- the trial counts, and an unknown kind refused.
+
 ## Backlog (non-critical)
 
-FDS-SR-001 §13. Nothing new yet.
+FDS-SR-001 §13, and:
+
+- **One lockbox opening ledger** shared by FDS-MH-001's final check and FDS-SR-001's, when either is built.

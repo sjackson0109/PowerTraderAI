@@ -36,7 +36,8 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 | M4c | The model cells | (see M4c), on M4b |
 | M5a | "Run a backtest..." and "Compare results..." | (see M5a), on M4c |
 | M5b | "Model evidence..." | (see M5b), on M5a |
-| M6a | The strategy in each trade record | this branch, on M5b |
+| M6a | The strategy in each trade record | (see M6a), on M5b |
+| M6b | Observation segments and "Reconcile..." | this branch, on M6a |
 
 ## M2a: the catalogue lifecycle
 
@@ -484,8 +485,47 @@ A legacy-engine row has `strategy_id: legacy_neural`. Records only: nothing read
 
 The tests that read trade-history rows pass unchanged (230 tests).
 
+## M6b: observation segments and "Reconcile..."
+
+**Branch** `feat/sr-m6b-observation`, from M6a's branch.
+
+**Built:**
+- **`strategy_lab/observation.py`.**
+  - **A segment** freezes the settings that decide a paper trade:
+    - from `pt_config.json`: `trading.mode`, `strategy`, `risk`, `paper` and `signal_fusion`;
+    - from `gui_settings.json`: the coins, the paper coins, sizing, and the legacy engine's levels.
+
+    The snapshot is kept with its SHA-256 under `<hub>/paper/observations/<id>.json`, and only one segment runs at a time.
+  - **`check`** ends a running segment when a deciding value changed, at the time the settings file was last written, naming the keys that changed.
+  - **`reconcile`** replays the segment's closed candles through the frozen strategy (one trade after another, flat after each exit). It compares each replayed trade with the paper trades (ENTRY buys, EXIT sells) as matched, a different candle (within 3), not placed, or extra. Each matched trade gets the paper fill against the replay's open and the fee paper charged per side.
+- **`observation_ui.py`, `ObservationWindow`:**
+  - "Start an observation", "End the observation", and "Reconcile..." (off the Tk thread);
+  - the status;
+  - the trade-by-trade table and the counts.
+- **`pt_hub.py`:** "Observation..." in Settings > Paper trading. It opens the window on the hub's own data folder, or raises the open one.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| When a change is noticed | Whenever the window opens or reconciles. The segment ends at the time the settings file was last written | The settings can change outside the hub (a hand edit); the file's time is when they changed |
+| A missed entry's reason | Not shown: "Not placed" | The trader does not record refused entries in a structured form (backlog) |
+| Neural levels | Not reconciled: they have no replay | The replay needs a rule-based strategy |
+| What a segment is | Operational evidence only | §5.11: it is not a registered forward confirmation |
+
+### Tests
+
+`tests/test_observation.py`, 7 tests:
+- one segment at a time; ended by hand;
+- a deciding change ends it, at the file's time, naming the keys; an unrelated setting changes nothing;
+- every trade classified (matched, a different candle, not placed, extra), with the fill and the fee;
+- the neural levels refused;
+- the window's start, reconcile and end-on-change;
+- Settings > Paper trading opens it (the real hub).
+
 ## Backlog (non-critical)
 
 FDS-SR-001 §13, and:
 
 - **One lockbox opening ledger** shared by FDS-MH-001's final check and FDS-SR-001's, when either is built.
+- **Refused entries recorded:** a structured record of each entry the trader refused (cash, minimum, price unavailable, halt), so "Reconcile..." can show why a trade was not placed.

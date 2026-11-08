@@ -7396,6 +7396,19 @@ Platform: {sys.platform}
                 )
         return None
 
+    def open_observation_window(self, parent=None):
+        """Settings > Paper trading, Observation... (raises the open one)."""
+        import observation_ui
+
+        current = getattr(self, "_observation_win", None)
+        if current is not None and current.winfo_exists():
+            current.lift()
+            return current
+        self._observation_win = observation_ui.ObservationWindow(
+            parent or self, self.hub_dir
+        )
+        return self._observation_win
+
     def open_paper_account_dialog(self, parent=None):
         """Settings > Paper Account: the starting balance, cash and positions the
         paper trader starts from (``<hub>/paper/paper_account.json``)."""
@@ -8076,6 +8089,17 @@ Platform: {sys.platform}
         ttk.Label(
             page, text="starting balance, cash and positions for paper trading"
         ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(12, 6))
+        r += 1
+        # Observation: a period of paper trading on frozen settings, reconciled with a
+        # replay of the same candles (FDS-SR-001 section 5.11)
+        ttk.Button(
+            page,
+            text="Observation...",
+            command=lambda: self.open_observation_window(win),
+        ).grid(row=r, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(
+            page, text="paper trading on frozen settings, compared with a replay"
+        ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(0, 6))
 
         # --- LLM: providers, their order and LLM signals (its own window) ----------
         page = new_page("LLM")

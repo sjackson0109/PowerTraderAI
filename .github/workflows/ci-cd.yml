@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main, development-* ]
 
+# A new push to a pull request cancels the run it supersedes, so the full test suite
+# never runs twice for one pull request. Pushes to branches always run to the end.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   security-scan:
     runs-on: ubuntu-latest
@@ -70,90 +76,117 @@ jobs:
         name: code-quality-reports
         path: pylint-report.json
 
-  test:
-    runs-on: ubuntu-latest
-    name: Unit Tests
-    timeout-minutes: 15
-    strategy:
-      matrix:
-        python-version: ['3.11', '3.12']
+  # The authoritative test run: every test under app/ (app/tests/ and app/test_*.py),
+  # run from app/ exactly as the suite is run and proven locally. A failing, erroring
+  # or uncollectable test fails this job; nothing in it ignores pytest's exit code.
+  full-suite:
+    # Windows and Python 3.13: where the suite is proven (README: 3.13 recommended),
+    # and the Tk tests get a real desktop instead of skipping for want of a display.
+    runs-on: windows-latest
+    name: Full App Test Suite
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      # As in the local runs. The isolation guard (app/tests/isolation.py, loaded by
+      # app/conftest.py and app/tests/conftest.py) sets a temp POWERTRADER_HOME and an
+      # in-memory keyring itself, and fails any test that touches the real user folders.
+      PYTHONNOUSERSITE: '1'
+      PYTHON_KEYRING_BACKEND: keyring.backends.fail.Keyring
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v7
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: '3.13'
+        cache: pip
+        cache-dependency-path: app/requirements.txt
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pytest pytest-cov pytest-mock
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        python -m pip install -r app/requirements.txt pytest
+        python -m pip list
 
-    - name: Create test database
+    - name: Run the full app test suite
+      id: pytest
+      # Shorter than the job, so a hung test still leaves time for the report steps.
+      timeout-minutes: 75
+      working-directory: app
       run: |
-        mkdir -p test_data
-        touch test_data/test.db
+        set -o pipefail  # the job fails with pytest, not with tee
+        mkdir -p ../test-results
+        python -u -m pytest -p no:cacheprovider -ra --durations=25 \
+          -o junit_family=xunit1 --junitxml=../test-results/junit.xml \
+          -o faulthandler_timeout=900 \
+          2>&1 | tee ../test-results/pytest.log
 
-    - name: Run tests with coverage
+    - name: Test summary
+      if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+      run: >-
+        python .github/scripts/junit_summary.py
+        test-results/junit.xml test-results/pytest.log
+        --title "Full app test suite (Windows, Python 3.13)" --prefix app/
+
+    - name: Check that no test created the real user folders
+      # The guard checks around every test; this also covers collection, imports and
+      # anything still running after the last test. The runner starts without them.
+      if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+      working-directory: app
       run: |
-        pytest \
-          app/test_advanced_features.py \
-          app/tests/test_backup_validation.py \
-          app/tests/test_binance_exchange.py \
-          app/tests/test_circuit_breaker.py \
-          app/tests/test_credential_audit.py \
-          app/tests/test_credentials_rotation.py \
-          app/tests/test_database_manager.py \
-          app/tests/test_error_handler.py \
-          app/tests/test_exchanges.py \
-          app/tests/test_integration.py \
-          app/tests/test_paper_mode.py \
-          app/tests/test_paper_trading_integration.py \
-          app/tests/test_phase3_integration.py \
-          app/tests/test_security_logger.py \
-          app/tests/test_suite.py \
-          app/tests/test_trade_proposal_approval.py \
-          app/tests/test_trading_config_fallback.py \
-          app/tests/test_trading_mode.py \
-          -v --cov=app --cov-report=xml --cov-report=html
+        python - <<'EOF'
+        import os
+        import sys
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+        os.environ.pop("POWERTRADER_HOME", None)
+        import pt_paths
+
+        kinds = ("config", "data", "log", "cache")
+        folders = sorted({pt_paths._platform_dir(kind) for kind in kinds})
+        found = [folder for folder in folders if os.path.exists(folder)]
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as out:
+            if found:
+                out.write("**Isolation check FAILED**: created during the run: ")
+                out.write(", ".join(f"`{folder}`" for folder in found) + "\n")
+            else:
+                out.write("Isolation check passed: no real user folder exists after the run.\n")
+        for folder in found:
+            print(f"::error title=Isolation check::the run created {folder}")
+        print("\n".join(f"{'FOUND' if f in found else 'absent'}  {f}" for f in folders))
+        sys.exit(1 if found else 0)
+        EOF
+
+    - name: Upload test results
+      if: ${{ !cancelled() && steps.pytest.outcome != 'skipped' }}
+      uses: actions/upload-artifact@v7
       with:
-        file: ./coverage.xml
-        fail_ci_if_error: false
+        name: full-app-test-suite-results
+        path: test-results/
+        if-no-files-found: warn
+        retention-days: 30
 
+  # A required check ("Protect main"). app/tests/test_integration.py now runs inside the
+  # Full App Test Suite, under the isolation guard, so this job reports that job's result
+  # instead of running the file a second time.
   integration-test:
     runs-on: ubuntu-latest
     name: Integration Tests
-    needs: [security-scan, code-quality, test]
-    if: github.event_name == 'pull_request'
+    needs: [full-suite]
+    if: ${{ always() && github.event_name == 'pull_request' }}
 
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
-
-    - name: Install dependencies
+    - name: Integration tests (run in the Full App Test Suite)
       run: |
-        python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-    - name: Run integration tests
-      run: |
-        cd app
-        python tests/test_integration.py
+        echo "Full App Test Suite: ${{ needs.full-suite.result }}"
+        test "${{ needs.full-suite.result }}" = "success"
 
   deployment-check:
     runs-on: ubuntu-latest
     name: Deployment Readiness
-    needs: [security-scan, code-quality, test, integration-test]
+    needs: [security-scan, code-quality, full-suite, integration-test]
     if: github.ref == 'refs/heads/main'
 
     steps:
@@ -176,13 +209,15 @@ jobs:
   notify-completion:
     runs-on: ubuntu-latest
     name: Notify Completion
-    needs: [security-scan, code-quality, test]
+    needs: [security-scan, code-quality, full-suite]
     if: always()
 
     steps:
     - name: Notify CI/CD completion
+      # The test suite must have passed: failed, cancelled or timed out all count.
       run: |
-        if [ "${{ needs.security-scan.result }}" == "failure" ] || [ "${{ needs.code-quality.result }}" == "failure" ] || [ "${{ needs.test.result }}" == "failure" ]; then
+        echo "Full App Test Suite: ${{ needs.full-suite.result }}"
+        if [ "${{ needs.security-scan.result }}" == "failure" ] || [ "${{ needs.code-quality.result }}" == "failure" ] || [ "${{ needs.full-suite.result }}" != "success" ]; then
           echo "❌ CI/CD pipeline failed - please review the failed checks"
           exit 1
         else

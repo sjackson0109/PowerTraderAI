@@ -341,6 +341,11 @@ class SettingsValidator:
             and all(isinstance(o, dict) and isinstance(o.get("id"), str) for o in v),
             "Strategy overlays must be a list of {id, params} objects",
         )
+        self.add_rule(
+            "strategy.research_enabled",
+            lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v),
+            "Strategies enabled for research must be a list of strategy ids",
+        )
 
         # Neural config validation
         self.add_rule(

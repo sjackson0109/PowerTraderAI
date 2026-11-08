@@ -125,7 +125,8 @@ def test_strat003_is_a_main_strategy_of_the_model_family():
     }
     assert "min_tf_agree" in entry["entry_logic_summary"]
     assert "primary timeframe" in entry["exit_logic_summary"]
-    assert catalogue.FAMILIES == ("trend", "risk_overlay", "model")
+    assert catalogue.FAMILIES[:3] == ("trend", "risk_overlay", "model")
+    assert entry["authorisation"] == "research" and entry["deterministic"] is False
     assert "STRAT-003" in catalogue.list_ids("main")
 
 

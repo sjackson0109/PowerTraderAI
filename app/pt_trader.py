@@ -1756,8 +1756,11 @@ class CryptoAPITrading:
     def _gate_or_refuse(self) -> Optional[OrderTarget]:
         """Run the gate; on refusal report it and return None (no order may follow)."""
         # Fail closed on the signal source too: an unknown strategy engine / id
-        # (or unusable strategy settings) means no orders at all.
-        problem = read_strategy_settings(self._settings_source).problem
+        # (or unusable strategy settings), or a strategy or overlay not authorised for
+        # this trader's mode (FDS-SR-001 section 5.3), means no orders at all.
+        problem = read_strategy_settings(
+            self._settings_source, mode=self._target.mode
+        ).problem
         if problem:
             print(
                 f"{Fore.RED}ORDER REFUSED: invalid strategy configuration: {problem}{Style.RESET_ALL}"
@@ -2262,7 +2265,9 @@ class CryptoAPITrading:
         # decides entries and exits and the legacy DCA / trailing-PM logic is off.
         # "legacy_neural": the old neural-signal logic (untrained mock - see
         # docs/technical/ARCHITECTURE.md). An invalid configuration trades nothing.
-        strategy_cfg = read_strategy_settings(self._settings_source)
+        strategy_cfg = read_strategy_settings(
+            self._settings_source, mode=self._target.mode
+        )
         self._catalogue_mode = strategy_cfg.is_catalogue and not strategy_cfg.problem
         if strategy_cfg.problem:
             self._warn_throttled(

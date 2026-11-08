@@ -8,13 +8,21 @@ required field is missing, or a default parameter is outside its bounds.
 
 Field names are identical to issue #121 so the full schema can be added later.
 (JSON, not YAML: PyYAML is not in requirements.txt.)
+
+**Lifecycle** (FDS-SR-001 sections 5.2 and 5.3). ``authorisation`` is the highest use
+an entry may be selected for: ``research`` (backtests and evaluations only),
+``paper`` (also paper trading) or ``live`` (also live trading, within FDS-LIVE-001's
+guards). Raising it is a reviewed change made on the owner's recorded decision. The
+optional fields ``timeframes_permitted`` (the timeframes it may trade on; every
+timeframe when absent), ``deterministic``, ``data_requirements`` and
+``research_refs`` take their defaults when absent.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 REQUIRED_FIELDS = (
     "strategy_id",
@@ -29,10 +37,29 @@ REQUIRED_FIELDS = (
     "default_params",
     "param_bounds",
     "version",
+    "authorisation",
 )
 CLASS_TYPES = ("main", "risk_overlay")
-# "model" (a trained model, STRAT-003) was added by FDS-MDL Phase 3
-FAMILIES = ("trend", "risk_overlay", "model")
+# "model" (a trained model, STRAT-003) was added by FDS-MDL Phase 3; the families
+# from "breakout" on by FDS-SR-001 section 5.2
+FAMILIES = (
+    "trend",
+    "risk_overlay",
+    "model",
+    "breakout",
+    "momentum",
+    "regime",
+    "mean_reversion",
+    "relative_strength",
+)
+# the highest use an entry may be selected for, lowest first
+AUTHORISATIONS = ("research", "paper", "live")
+# the authorisations that allow selection in each trading mode
+MODE_AUTHORISATIONS: Dict[str, Tuple[str, ...]] = {
+    "paper": ("paper", "live"),
+    "live": ("live",),
+}
+DATA_COINS = ("own", "own+reference", "all")
 CATALOGUE_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "catalogue.json"
 )
@@ -168,6 +195,40 @@ def _check_stages(where: str, value: Any) -> None:
 # --- building and validating -------------------------------------------------------
 
 
+def _lifecycle_fields(sid: str, entry: dict, timeframes: Mapping[str, int]) -> dict:
+    """``entry`` with its lifecycle fields checked and the optional ones defaulted
+    (FDS-SR-001 section 5.2). Returns a copy; the JSON is not changed."""
+    out = dict(entry)
+    if out["authorisation"] not in AUTHORISATIONS:
+        raise CatalogueError(f"{sid}: authorisation must be one of {AUTHORISATIONS}")
+    permitted = out.setdefault("timeframes_permitted", list(timeframes))
+    if (
+        not isinstance(permitted, list)
+        or not permitted
+        or any(tf not in timeframes for tf in permitted)
+        or len(set(permitted)) != len(permitted)
+    ):
+        raise CatalogueError(
+            f"{sid}: timeframes_permitted must be distinct supported timeframes"
+        )
+    if out["timeframe_primary"] not in permitted:
+        raise CatalogueError(
+            f"{sid}: timeframe_primary {out['timeframe_primary']!r} is not in "
+            "timeframes_permitted"
+        )
+    if not isinstance(out.setdefault("deterministic", True), bool):
+        raise CatalogueError(f"{sid}: deterministic must be true or false")
+    needs = out.setdefault("data_requirements", {"coins": "own"})
+    if not isinstance(needs, dict) or needs.get("coins") not in DATA_COINS:
+        raise CatalogueError(
+            f"{sid}: data_requirements must be {{'coins': one of {DATA_COINS}}}"
+        )
+    refs = out.setdefault("research_refs", [])
+    if not isinstance(refs, list) or any(not isinstance(r, str) for r in refs):
+        raise CatalogueError(f"{sid}: research_refs must be a list of text")
+    return out
+
+
 def build_catalogue(
     entries: List[dict], registry: Mapping[str, type]
 ) -> Dict[str, dict]:
@@ -207,7 +268,7 @@ def build_catalogue(
             )
         for name, spec in entry["param_bounds"].items():
             _check_bound_spec(sid, name, spec, entry["default_params"][name])
-        out[sid] = entry
+        out[sid] = _lifecycle_fields(sid, entry, TIMEFRAME_SECONDS)
 
     for sid in out:
         if sid not in registry:
@@ -244,6 +305,17 @@ def get_entry(strategy_id: str) -> dict:
         return CATALOGUE[strategy_id]
     except KeyError:
         raise CatalogueError(f"unknown strategy id {strategy_id!r}") from None
+
+
+def allowed_in_mode(strategy_id: str, mode: Any) -> bool:
+    """Whether ``strategy_id`` may be selected while trading in ``mode`` ("paper" or
+    "live"; a ``TradingMode`` works too). An unknown id or mode is never allowed."""
+    entry = CATALOGUE.get(strategy_id) if isinstance(strategy_id, str) else None
+    if entry is None:
+        return False
+    return entry["authorisation"] in MODE_AUTHORISATIONS.get(
+        str(getattr(mode, "value", mode)), ()
+    )
 
 
 def list_ids(class_type: Optional[str] = None) -> List[str]:

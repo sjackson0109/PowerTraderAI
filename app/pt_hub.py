@@ -6221,7 +6221,9 @@ Platform: {sys.platform}
         if mtime != getattr(self, "_signals_note_mtime", object()):
             self._signals_note_mtime = mtime
             try:
-                strategy = read_strategy_settings()
+                # the configured mode too: a strategy or overlay that mode may not
+                # use shows as blocked, as the trader refuses it (FDS-SR-001 5.3)
+                strategy = read_strategy_settings(mode=read_trading_settings().mode)
                 self._signals_note_text = strategy.note
                 self._signals_engine = str(strategy.engine or "")
             except Exception:

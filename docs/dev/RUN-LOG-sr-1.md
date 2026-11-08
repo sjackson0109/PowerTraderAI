@@ -34,7 +34,8 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 | M4a | The portfolio simulation, baselines, accounts and lot sizes | (see M4a), on M3c |
 | M4b | Experiment records, the trial log, strategy looks, the reserved months | (see M4b), on M4a |
 | M4c | The model cells | (see M4c), on M4b |
-| M5a | "Run a backtest..." and "Compare results..." | this branch, on M4c |
+| M5a | "Run a backtest..." and "Compare results..." | (see M5a), on M4c |
+| M5b | "Model evidence..." | this branch, on M5a |
 
 ## M2a: the catalogue lifecycle
 
@@ -421,6 +422,38 @@ The existing `tests/test_strategy_settings_ui.py` passes unchanged, except that 
 - the Strategy window opens both, with its current ticks.
 
 The window was rendered after a run and checked by eye.
+
+## M5b: "Model evidence..."
+
+**Branch** `feat/sr-m5b-model-evidence`, from M5a's branch.
+
+**Built:**
+- **`strategy_lab/evidence.py`:**
+  - `RECORDED`: STRAT-001's five findings from FDS-SIG-004's development run, copied verbatim from `docs/dev/SIG4-REPORT-dev.md`. A test checks each against the report.
+  - `write_results`: a frozen experiment's result lines, sealed and never overwritten.
+  - `lines_for(strategy_id)`: both sources, kept apart by kind (prediction, trading, economic).
+  - A results file, or its experiment, that changed since it was sealed is not shown.
+- **`strategy_lab_ui.py`, `EvidenceWindow`:** one row per finding. With none: "No model has been evaluated with this strategy."
+- **`strategy_settings_ui.py`:** "Model evidence..." for the highlighted strategy (disabled for a stop).
+
+**M5c,** the declared first evaluation (E1) and its report, waits for the owner's separate approval to register it, as authorised. Nothing in M5 freezes or runs it.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| Evidence from before the strategy lab | Recorded in code, verbatim, in a reviewed change (like the looks) | STRAT-001 already has development findings. Showing none would hide them |
+| F3's line | The verdict verbatim, with its trades and net added: "(385 trades, net -$131 on $10,000)" | The verdict names only the requirement that failed; the figures are the report's |
+
+### Tests
+
+`tests/test_strategy_evidence.py`, 7 tests:
+- STRAT-001's lines match the report verbatim, in kind order;
+- the empty case;
+- facts-only words;
+- a declared experiment's sealed results (shown only with their strategy; never overwritten; hidden once changed);
+- an unknown kind refused;
+- the button (enabled for a strategy, disabled for a stop).
 
 ## Backlog (non-critical)
 

@@ -562,6 +562,10 @@ class StrategySettingsWindow(tk.Toplevel):
         ttk.Button(actions, text="Compare results...", command=self.open_compare).pack(
             side="left", padx=(8, 0)
         )
+        self.evidence_button = ttk.Button(
+            actions, text="Model evidence...", command=self.open_evidence
+        )
+        self.evidence_button.pack(side="left", padx=(8, 0))
 
     def open_backtest(self):
         """Run a backtest... with the research ticks as they are now."""
@@ -574,6 +578,15 @@ class StrategySettingsWindow(tk.Toplevel):
         import strategy_lab_ui
 
         return strategy_lab_ui.CompareWindow(self)
+
+    def open_evidence(self):
+        """Model evidence... for the highlighted strategy (a stop has none)."""
+        import strategy_lab_ui
+
+        sid = self.highlight_var.get()
+        if CATALOGUE.get(sid, {}).get("class_type") != "main":
+            return None
+        return strategy_lab_ui.EvidenceWindow(self, sid)
 
     def _row(self, sid: str) -> tuple:
         entry = CATALOGUE[sid]
@@ -622,6 +635,9 @@ class StrategySettingsWindow(tk.Toplevel):
         self.highlight_use_var.set(use)
         self.research_tick.configure(variable=self.research_on[sid])
         self.use_button.state(["!disabled"] if self.can_use(sid) else ["disabled"])
+        main = CATALOGUE[sid]["class_type"] == "main"
+        if hasattr(self, "evidence_button"):
+            self.evidence_button.state(["!disabled"] if main else ["disabled"])
 
     def _build_catalogue(self, frm: ttk.Frame) -> None:
         r = 0

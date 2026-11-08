@@ -226,6 +226,43 @@ DESCRIPTIONS: Dict[str, Described] = {
             ),
         ),
     ),
+    "STRAT-005": Described(
+        name="Time-series momentum",
+        summary=(
+            "On each decision day, counts how many of three past returns are "
+            "positive: over the short, middle and long lookback days. Buys when at "
+            "least the required number are positive, and sells on a decision day "
+            "when fewer are. Between decision days it neither buys nor sells; a stop "
+            "can still sell."
+        ),
+        params={
+            "lookback_1": Param("Short lookback days", "Days of the shortest return."),
+            "lookback_2": Param(
+                "Middle lookback days",
+                "Days of the middle return. Must be more than the short lookback.",
+            ),
+            "lookback_3": Param(
+                "Long lookback days",
+                "Days of the longest return. Must be more than the middle lookback. "
+                "A coin needs this many days of candles before its first decision.",
+            ),
+            "min_agree": Param(
+                "Returns that must be positive",
+                "How many of the three returns must be above 0 to hold the coin.",
+            ),
+            "rebalance_days": Param(
+                "Days between decisions",
+                "Decision days are counted from Monday 6 January 2020: one every "
+                "this many days. 7 decides every Monday.",
+            ),
+        },
+        rules=(
+            (
+                lambda p: p["lookback_1"] < p["lookback_2"] < p["lookback_3"],
+                "Each lookback must be more than the one before.",
+            ),
+        ),
+    ),
     "OVL-RATCHET": Described(
         name="Ratchet stop",
         summary=(

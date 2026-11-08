@@ -294,6 +294,7 @@ from strategies import supertrend as _supertrend  # noqa: E402,F401
 from strategies import overlays as _overlays  # noqa: E402,F401
 from strategies import model_strategy as _model_strategy  # noqa: E402,F401
 from strategies import breakout as _breakout  # noqa: E402,F401
+from strategies import momentum as _momentum  # noqa: E402,F401
 
 CATALOGUE: Dict[str, dict] = build_catalogue(load_entries(), _REGISTRY)
 

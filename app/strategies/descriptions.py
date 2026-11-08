@@ -202,6 +202,30 @@ DESCRIPTIONS: Dict[str, Described] = {
             ),
         },
     ),
+    "STRAT-004": Described(
+        name="Donchian breakout",
+        summary=(
+            "Buys when a daily close is above every close of the previous breakout "
+            "days: a new closing high. Sells when a close is below every close of the "
+            "previous exit days: a new closing low. The days are calendar days."
+        ),
+        params={
+            "entry_days": Param(
+                "Breakout days", "Days of closes a new closing high must beat."
+            ),
+            "exit_days": Param(
+                "Exit days",
+                "Days of closes a new closing low must fall below. Must be fewer than "
+                "the breakout days.",
+            ),
+        },
+        rules=(
+            (
+                lambda p: p["exit_days"] < p["entry_days"],
+                "The exit days must be fewer than the breakout days.",
+            ),
+        ),
+    ),
     "OVL-RATCHET": Described(
         name="Ratchet stop",
         summary=(

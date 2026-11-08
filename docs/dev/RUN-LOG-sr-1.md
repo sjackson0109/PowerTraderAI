@@ -32,7 +32,8 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 | M3b | STRAT-005, time-series momentum decided weekly | (see M3b), on M3a |
 | M3c | OVL-REGIME and the entry gate's market context | (see M3c), on M3b |
 | M4a | The portfolio simulation, baselines, accounts and lot sizes | (see M4a), on M3c |
-| M4b | Experiment records, the trial log, strategy looks, the reserved months | this branch, on M4a |
+| M4b | Experiment records, the trial log, strategy looks, the reserved months | (see M4b), on M4a |
+| M4c | The model cells | this branch, on M4b |
 
 ## M2a: the catalogue lifecycle
 
@@ -338,6 +339,41 @@ The existing `tests/test_strategy_settings_ui.py` passes unchanged, except that 
 - refusing an incomplete declaration;
 - `verify` refusing an edited record, changed code, libraries or candles;
 - the trial counts, and an unknown kind refused.
+
+## M4c: the model cells
+
+**Branch** `feat/sr-m4c-model-cells`, from M4b's branch.
+
+**Built:** `app/strategy_lab/models.py`. **The strategy and its exits are held constant:** every cell starts from the same candidate trades, and can only veto or shrink them.
+- **`forecast_filter`:** a lab model's out-of-fold probability at each trade's decision hour (FDS-MH-001's `probabilities/<key>.npz`).
+  - It vetoes below a causal threshold: the q-quantile of every probability before the decision's calendar month, all coins pooled.
+  - With no probability at that hour, or fewer than 1,000 before it, it cannot assess, and never vetoes.
+- **`meta_filter`:** FDS-SIG-004's F_P or F_PV on this strategy's own trades (`signal_fusion.meta.walk_forward` and `signal_fusion.labels`).
+  - Forced trades are never labels, and calibration is out of fold.
+  - The payoff tables come from each fold's training trades. The veto acts where the expected value is at most 0.
+  - With fewer than 200 events or 200 non-events it is not assessable (D16).
+- **`shrink_scales`:** FDS-SIG-004's shrink per trade.
+- **`cell`:** one cell's path.
+- **`eligible_assessable`, `random_vetoes` (R3), `random_scales` (R3s):** thin wrappers over `signal_fusion.evaluation.baselines`.
+- **`development_folds`:** FDS-MH-001's 14 development folds.
+- **`label_trades`:** a strategy's trades as FDS-SIG-004's labelled opportunities. `signal_fusion/labels.py` is not changed.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| A generic filter's threshold | The q-quantile of the model's probabilities before the decision's month | The lab saves probabilities, not its per-fold thresholds. A month-start quantile is causal, and the same for every strategy |
+| The shrink where σ̂ is missing | Scale 1 (no shrink) | As the shrink is evaluated in Log only: it fails open |
+
+### Tests
+
+`tests/test_strategy_models.py`, 10 tests:
+- the folds;
+- the filter's causal threshold, its unassessable cases, and its share of vetoes;
+- the meta-model: forced trades, out of fold, the expected-value veto, the event floor;
+- **a cell keeps the candidates' own trades:** each kept trade's net is (1 + r_g) m − 1 of its candidate;
+- R3 per coin among the eligible candidates, repeatable for a seed;
+- the shrink and R3s.
 
 ## Backlog (non-critical)
 

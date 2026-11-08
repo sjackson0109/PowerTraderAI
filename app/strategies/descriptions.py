@@ -53,6 +53,30 @@ STOPS_HELP = (
     "highest one applies. A stop never moves down."
 )
 
+# The strategy list's words (FDS-SR-001 section 5.8)
+FAMILY_NAMES: Dict[str, str] = {
+    "trend": "Trend",
+    "breakout": "Breakout",
+    "momentum": "Momentum",
+    "regime": "Market regime",
+    "mean_reversion": "Mean reversion",
+    "relative_strength": "Relative strength",
+    "model": "Trained model",
+    "risk_overlay": "Stop or filter",
+}
+KIND_NAMES: Dict[str, str] = {"main": "Strategy", "risk_overlay": "Stop or filter"}
+# what each authorisation allows, as the list shows it
+USE_NAMES: Dict[str, str] = {
+    "research": "Research only",
+    "paper": "Paper",
+    "live": "Paper and live",
+}
+USE_HELP: Dict[str, str] = {
+    "research": "Can be used in backtests only, not for trading.",
+    "paper": "Can be used for paper trading, not for live trading.",
+    "live": "Can be used for paper and live trading.",
+}
+
 
 @dataclass(frozen=True)
 class Param:
@@ -157,6 +181,24 @@ DESCRIPTIONS: Dict[str, Described] = {
                 "Confirmation candles",
                 "Closed candles the up-trend must last after it turns up before "
                 "the buy. 0 buys on the candle it turns up.",
+            ),
+        },
+    ),
+    "STRAT-003": Described(
+        name="Trained pattern model",
+        summary=(
+            "Buys when enough of the trained pattern model's timeframes signal up "
+            "and none signals down. Sells when its own timeframe signals down. It "
+            "needs a trained model, so it cannot be chosen here."
+        ),
+        params={
+            "model_id": Param("Model", "The trained model it uses."),
+            "min_tf_agree": Param(
+                "Timeframes that must agree",
+                "How many of the counted timeframes must signal up before a buy.",
+            ),
+            "timeframes": Param(
+                "Timeframes counted", "The model's timeframes that are counted."
             ),
         },
     ),

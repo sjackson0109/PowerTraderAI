@@ -34,13 +34,18 @@ def all_text():
 
 
 def test_the_window_offers_every_strategy_but_one_that_needs_a_model():
+    """For trading: the strategies the mode may use (FDS-SR-001 5.3), never a model."""
     offered = ui.offered_strategies()
     assert "STRAT-001" in offered and "STRAT-003" not in offered
-    assert offered == [
-        sid
-        for sid, e in CATALOGUE.items()
-        if e["class_type"] == "main" and e["family"] != "model"
-    ]
+    for mode in ("paper", "live"):
+        assert ui.offered_strategies(mode) == [
+            sid
+            for sid, e in CATALOGUE.items()
+            if e["class_type"] == "main"
+            and e["family"] != "model"
+            and e["authorisation"]
+            in ({"paper", "live"} if mode == "paper" else {"live"})
+        ]
     assert ui.overlay_ids() == ["OVL-RATCHET", "OVL-ATR", "OVL-PLOCK", "OVL-COOLDOWN"]
 
 

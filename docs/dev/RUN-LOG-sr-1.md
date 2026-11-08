@@ -27,13 +27,14 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 | Milestone | What | PR |
 |---|---|---|
 | M2a | Catalogue lifecycle, authorisation, fail-closed checks | #237 |
-| M2b | The strategy list in Settings > Strategy | (see M2b), on M2a |
+| M2b | The strategy list in Settings > Strategy | #238, on M2a |
 | M3a | STRAT-004, the daily Donchian breakout | (see M3a), on M2b |
 | M3b | STRAT-005, time-series momentum decided weekly | (see M3b), on M3a |
 | M3c | OVL-REGIME and the entry gate's market context | (see M3c), on M3b |
 | M4a | The portfolio simulation, baselines, accounts and lot sizes | (see M4a), on M3c |
 | M4b | Experiment records, the trial log, strategy looks, the reserved months | (see M4b), on M4a |
-| M4c | The model cells | this branch, on M4b |
+| M4c | The model cells | (see M4c), on M4b |
+| M5a | "Run a backtest..." and "Compare results..." | this branch, on M4c |
 
 ## M2a: the catalogue lifecycle
 
@@ -374,6 +375,52 @@ The existing `tests/test_strategy_settings_ui.py` passes unchanged, except that 
 - **a cell keeps the candidates' own trades:** each kept trade's net is (1 + r_g) m − 1 of its candidate;
 - R3 per coin among the eligible candidates, repeatable for a seed;
 - the shrink and R3s.
+
+## M5a: "Run a backtest..." and "Compare results..."
+
+**Branch** `feat/sr-m5a-backtest-windows`, from M4c's branch.
+
+**Built:**
+- **`strategy_lab/runs.py`, `run(config)`:**
+  - refuses a period reaching the reserved months;
+  - reads candles once, from far enough back for the warm-up;
+  - takes the trades decided in the period, with today's venue minimums and sell steps;
+  - replays them in one account against buy-and-hold, cash and random entries (through the strategy's own exits);
+  - logs an exploratory trial with its months, and saves `runs/<id>/run.json`.
+
+  A stop between stages saves nothing. `list_runs()` lists the saved runs.
+- **`strategy_lab/baselines.py`:** buy-and-hold and the random draws can start at a run's own start.
+- **`strategy_lab_ui.py`, `BacktestWindow`:**
+  - a strategy enabled for research, with its bounded parameters;
+  - stops enabled for research, the candles and the coins in Settings;
+  - the period (development only) and the account in pounds with the stated rate;
+  - the fee, slippage and random draws.
+
+  It runs off the Tk thread (`ui_jobs`) and can be stopped. It shows the results table, per coin, the facts and the equity line.
+- **`strategy_lab_ui.py`, `CompareWindow`:** every saved run, with a search.
+- **`strategy_settings_ui.py`:** the buttons "Run a backtest..." and "Compare results..." beside the list. The backtest window uses the research ticks as they are now, saved or not. The coins come from Settings.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| A stop or filter's parameters in a backtest | Their catalogue defaults | Keeps the window to one strategy's parameters. Tuning stops is out of E-D9's scope |
+| The fee's default | 0.50% a side, editable | The account's rate (E-D10's recommendation); the window cannot read the account's tier |
+| Random draws | 200 by default, up to 10,000 | Exploratory only. A declared test uses 10 runs × 1,000 |
+| The share of random draws at or above | Shown as a fact, not a p-value | An exploratory run is never evidence |
+
+### Tests
+
+`tests/test_strategy_backtest_window.py`, 12 tests:
+- **a run:** compares, saves and logs itself; counts only trades in its period; refuses the reserved months; a stopped run saves nothing; the rate and the coins are required;
+- only research-enabled entries are offered;
+- the window explains wrong inputs and runs nothing;
+- a run shows its results; Stop ends a run without saving;
+- facts-only words;
+- "Compare results..." lists and searches;
+- the Strategy window opens both, with its current ticks.
+
+The window was rendered after a run and checked by eye.
 
 ## Backlog (non-critical)
 

@@ -72,6 +72,22 @@ def listed_ids() -> List[str]:
     return main + overlay_ids()
 
 
+def settings_coins() -> List[str]:
+    """The coins in Settings (``gui_settings.json``), as the trader reads them."""
+    import json
+
+    import paper_coins
+    import pt_paths
+
+    try:
+        with open(pt_paths.gui_settings_file(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    coins = data.get("coins") if isinstance(data, dict) else None
+    return paper_coins.normalise(coins if isinstance(coins, list) else ())
+
+
 def trading_mode_of(manager: Any) -> str:
     """The trading mode the settings name: "live" only when it is exactly that, as
     the trader reads it (trading_mode.py); anything else is paper."""
@@ -119,8 +135,10 @@ class StrategySettingsWindow(tk.Toplevel):
         on_saved: Optional[Callable[[], None]] = None,
         messagebox=None,
         palette: Optional[dict] = None,
+        coins_factory: Optional[Callable[[], List[str]]] = None,
     ) -> None:
         super().__init__(parent)
+        self._coins = coins_factory or settings_coins
         self.title(TITLE)
         self.geometry("760x780")
         self.minsize(640, 480)
@@ -538,6 +556,24 @@ class StrategySettingsWindow(tk.Toplevel):
             actions, text="Use for trading", command=self.use_highlighted
         )
         self.use_button.pack(side="left", padx=(12, 0))
+        ttk.Button(actions, text="Run a backtest...", command=self.open_backtest).pack(
+            side="left", padx=(24, 0)
+        )
+        ttk.Button(actions, text="Compare results...", command=self.open_compare).pack(
+            side="left", padx=(8, 0)
+        )
+
+    def open_backtest(self):
+        """Run a backtest... with the research ticks as they are now."""
+        import strategy_lab_ui
+
+        settings = {"strategy": {"research_enabled": self.research_enabled()}}
+        return strategy_lab_ui.BacktestWindow(self, settings, self._coins())
+
+    def open_compare(self):
+        import strategy_lab_ui
+
+        return strategy_lab_ui.CompareWindow(self)
 
     def _row(self, sid: str) -> tuple:
         entry = CATALOGUE[sid]

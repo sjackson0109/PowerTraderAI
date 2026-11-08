@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
@@ -34,11 +34,23 @@ from strategy_lab.candidates import Trade
 from strategy_lab.simulate import Simulation
 
 
-def hold_trades(sim: Simulation) -> List[Trade]:
-    """REF-HOLD: one trade per coin, from its first decision bar to the last close."""
+def _first_free(table, from_s: Optional[int]) -> int:
+    """The first bar a trade may be decided on: the strategy's warm-up met, and the bar
+    opening at or after ``from_s`` (a run's start) when given."""
+    first = table.first_decision
+    if from_s is not None:
+        opens = table.candles["open_time"].map(lambda t: int(t.timestamp()))
+        later = np.flatnonzero(opens.to_numpy() >= int(from_s))
+        first = max(first, int(later[0]) if len(later) else table.n)
+    return first
+
+
+def hold_trades(sim: Simulation, from_s: Optional[int] = None) -> List[Trade]:
+    """REF-HOLD: one trade per coin, from its first decision bar (at or after
+    ``from_s``) to the last close."""
     out = []
     for table in sim.tables.values():
-        first = table.first_decision
+        first = _first_free(table, from_s)
         if first <= table.n - 2:
             entry = first + 1
             out.append(table._trade(first, entry, table.n - 1, "end_of_data", True))
@@ -54,12 +66,14 @@ def _shuffled(values: List[int], rng: random.Random) -> List[int]:
     return out
 
 
-def waits(sim: Simulation, taken: Sequence[Trade]) -> Dict[str, List[int]]:
+def waits(
+    sim: Simulation, taken: Sequence[Trade], from_s: Optional[int] = None
+) -> Dict[str, List[int]]:
     """Per coin, the flat bars before each of ``taken``'s entries: from the coin's first
-    decision bar, then from each exit fill's bar."""
+    decision bar (at or after ``from_s``), then from each exit fill's bar."""
     out: Dict[str, List[int]] = {}
     for coin, table in sim.tables.items():
-        free = table.first_decision
+        free = _first_free(table, from_s)
         mine = sorted((t for t in taken if t.coin == coin), key=lambda t: t.decided)
         gaps = []
         for t in mine:
@@ -79,10 +93,15 @@ class RandomDraws:
 
 
 def random_draws(
-    sim: Simulation, taken: Sequence[Trade], seed: int, count: int
+    sim: Simulation,
+    taken: Sequence[Trade],
+    seed: int,
+    count: int,
+    from_s: Optional[int] = None,
 ) -> RandomDraws:
-    """``count`` REF-RANDOM draws matched to ``taken`` (the strategy's path's trades)."""
-    gaps = waits(sim, taken)
+    """``count`` REF-RANDOM draws matched to ``taken`` (the strategy's path's trades),
+    starting at ``from_s`` when given."""
+    gaps = waits(sim, taken, from_s)
     draws: List[List[Trade]] = []
     reached: List[int] = []
     for b in range(count):
@@ -90,7 +109,7 @@ def random_draws(
         trades: List[Trade] = []
         for coin in sorted(sim.tables):
             table = sim.tables[coin]
-            cursor = table.first_decision
+            cursor = _first_free(table, from_s)
             for wait in _shuffled(gaps[coin], rng):
                 decided = cursor + wait
                 if decided > table.n - 2:

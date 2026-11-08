@@ -27,7 +27,8 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 | Milestone | What | PR |
 |---|---|---|
 | M2a | Catalogue lifecycle, authorisation, fail-closed checks | (see M2a) |
-| M2b | The strategy list in Settings > Strategy | this branch, on M2a |
+| M2b | The strategy list in Settings > Strategy | (see M2b), on M2a |
+| M3a | STRAT-004, the daily Donchian breakout | this branch, on M2b |
 
 ## M2a: the catalogue lifecycle
 
@@ -115,6 +116,40 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 - facts-only words.
 
 The existing `tests/test_strategy_settings_ui.py` passes unchanged, except that its "offered strategies" test now states the authorisation rule.
+
+## M3a: STRAT-004, the daily Donchian breakout
+
+**Branch** `feat/sr-m3a-strat-004-donchian`, from M2b's branch.
+
+**Built:**
+- **`strategies/breakout.py`:**
+  - **Entry:** on the closed bar, a close above every close of the previous `entry_days` days.
+  - **Exit:** a close below every close of the previous `exit_days` days.
+  - **Defaults:** 55/20 (the Turtle System 2 rule, not tuned; E-D9). Bounds are 20–250 and 5–120, with `exit_days < entry_days`.
+- **Catalogue entry:** family `breakout`; `authorisation: research`; `timeframes_permitted: ["1d"]`; not enabled for research by default.
+- **Its description** for the strategy list.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| The channel's prices | Closes, for both the entry and the exit | Zarattini et al. build the channel from closes. Decisions are on closed bars, so an intrabar high is never used |
+| Ties | Equal to the previous high is not a breakout; equal to the previous low is not a new low | "Above every close" / "below every close", as §5.4.3 states |
+| Days on other candles | Calendar days, turned into whole bars by the run's bar length (rounded up) | §5.4.3: so 4-hour and 12-hour robustness runs span the same time |
+| The window | Exactly the rule's span plus the decision bar | Rolling maxima and minima have no warm-up; a larger window would make the live engine fetch more bars for nothing |
+| Missing bars | The channel counts bars, as every catalogue strategy does | Gaps are rare in daily bars. FDS-SR-001 §6.3 reports per coin |
+
+### Tests
+
+`tests/test_strategy_breakout.py`:
+- hand-worked entries, exits and ties;
+- the warm-up;
+- calendar days on 4-hour and 1-hour bars;
+- bounds and the rule;
+- no look-ahead: appending bars changes no earlier decision, and the rule reads only its window;
+- parity: the live signal engine and a replayed runner agree on every closed daily bar;
+- the backtester's next-open fills;
+- research-only, not enabled, refused for trading, described.
 
 ## Backlog (non-critical)
 

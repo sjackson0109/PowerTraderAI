@@ -88,6 +88,26 @@
     "deterministic": false
   },
   {
+    "strategy_id": "STRAT-004",
+    "strategy_name": "Donchian Breakout (daily)",
+    "family": "breakout",
+    "class_type": "main",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1d",
+    "timeframes_permitted": ["1d"],
+    "entry_logic_summary": "The closed bar's close is above every close of the previous entry_days days (a new closing high).",
+    "exit_logic_summary": "The closed bar's close is below every close of the previous exit_days days (a new closing low), or a risk overlay exits.",
+    "dependencies_indicators": ["DONCHIAN"],
+    "default_params": {"entry_days": 55, "exit_days": 20},
+    "param_bounds": {
+      "entry_days": {"min": 20, "max": 250},
+      "exit_days": {"min": 5, "max": 120}
+    },
+    "version": "1.0.0",
+    "authorisation": "research",
+    "research_refs": ["FDS-SR-001 5.4.3", "strategy-research/A-research-report.md 4"]
+  },
+  {
     "strategy_id": "OVL-RATCHET",
     "strategy_name": "Ratchet Stop",
     "family": "risk_overlay",

@@ -14,13 +14,21 @@ Composition rules (FDS-129 section 2):
 4. Entry needs the strategy's ENTER **and** every overlay's ``allow_entry``.
 5. Everything is evaluated on **closed bars**; exits fill at the next bar's open.
    (Intrabar stop simulation is out of scope.)
+
+**Market context** (FDS-SR-001 section 5.6). An overlay whose entry gate depends on the
+market declares the bars it needs (``context_needs``: reference, timeframe, bars, where
+reference is "self" or a coin) and decides in ``allow_entry_in`` from ``context``, a
+mapping ``{(reference, timeframe): closed bars}``. The caller gives only bars that
+closed at or before the decision bar's close (``slice_context``): the backtester from
+its frames, the live engine from the same closed-only provider. Overlays that declare
+nothing are called exactly as before.
 """
 
 from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 
@@ -72,6 +80,35 @@ class PositionState:
         )
 
 
+# (reference, timeframe, bars): reference is "self" or a coin such as "BTC"
+ContextNeed = Tuple[str, str, int]
+# {(reference, timeframe): closed bars, oldest first}
+Context = Mapping[Tuple[str, str], pd.DataFrame]
+
+
+def slice_context(
+    frames: Mapping[Tuple[str, str], pd.DataFrame],
+    needs: Sequence[ContextNeed],
+    decision_close: pd.Timestamp,
+) -> Dict[Tuple[str, str], pd.DataFrame]:
+    """For each need, the last ``bars`` bars of its frame that closed at or before
+    ``decision_close``. A need with no frame, or no closed bar, is left out: the gate
+    then decides without it (and fails closed)."""
+    from market_data.timeframes import candle_timeframe_seconds
+
+    out: Dict[Tuple[str, str], pd.DataFrame] = {}
+    for reference, tf, bars in needs:
+        frame = frames.get((reference, tf))
+        if frame is None or frame.empty:
+            continue
+        step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
+        # bars are oldest first: the closed ones are a prefix
+        k = int(((frame["open_time"] + step) <= pd.Timestamp(decision_close)).sum())
+        if k > 0:
+            out[(reference, tf)] = frame.iloc[max(0, k - int(bars)) : k]
+    return out
+
+
 @dataclass(frozen=True)
 class OverlayDecision:
     stop_price: Optional[float] = None
@@ -120,6 +157,21 @@ class Overlay(ABC):
     def allow_entry(self, symbol: str, now_bar_time: pd.Timestamp) -> GateResult:
         return GateResult(True, "")
 
+    def context_needs(self) -> Tuple[ContextNeed, ...]:
+        """The other bars the entry gate reads: ``(reference, timeframe, bars)``,
+        where reference is "self" (the coin decided on) or a coin."""
+        return ()
+
+    def allow_entry_in(
+        self,
+        symbol: str,
+        now_bar_time: pd.Timestamp,
+        context: Optional[Context] = None,
+    ) -> GateResult:
+        """The entry gate, given the market ``context`` it declared. By default the
+        plain ``allow_entry``, so an overlay that needs no context is unchanged."""
+        return self.allow_entry(symbol, now_bar_time)
+
     def on_exit(
         self, pos: PositionState, bar_time: pd.Timestamp, exit_price: float
     ) -> None:
@@ -152,6 +204,16 @@ class StrategyRunner:
         return max(
             [self.strategy.lookback_bars] + [o.lookback_bars for o in self.overlays]
         )
+
+    def context_needs(self) -> Tuple[ContextNeed, ...]:
+        """Every overlay's context needs, one per (reference, timeframe), with the
+        most bars any of them needs."""
+        most: Dict[Tuple[str, str], int] = {}
+        for overlay in self.overlays:
+            for reference, tf, bars in overlay.context_needs():
+                key = (reference, tf)
+                most[key] = max(most.get(key, 0), int(bars))
+        return tuple((ref, tf, bars) for (ref, tf), bars in most.items())
 
     def set_timeframe(self, tf_seconds: int) -> None:
         """Tell the strategy and the overlays how long a bar is (cooldowns count bars;
@@ -206,8 +268,11 @@ class StrategyRunner:
         candles: pd.DataFrame,
         position: Optional[PositionState],
         symbol: str,
+        context: Optional[Context] = None,
     ) -> Decision:
-        """Decision at the close of the last bar of ``candles`` (a closed bar)."""
+        """Decision at the close of the last bar of ``candles`` (a closed bar).
+        ``context`` holds the bars the overlays' entry gates declared, closed by then.
+        """
         bar_time = candles["open_time"].iloc[-1]
         sid = self.strategy.strategy_id
         signal: Signal = self.strategy.on_bar(candles)
@@ -222,7 +287,7 @@ class StrategyRunner:
                 )
                 return Decision(Action.HOLD, reason, indicators, bar_time, sid)
             for overlay in self.overlays:
-                gate = overlay.allow_entry(symbol, bar_time)
+                gate = overlay.allow_entry_in(symbol, bar_time, context)
                 if not gate.allowed:
                     return Decision(
                         Action.HOLD,

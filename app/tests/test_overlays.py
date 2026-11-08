@@ -62,9 +62,10 @@ def candles_from_closes(closes):
 
 class CatalogueTests(unittest.TestCase):
     def test_all_four_overlays_are_registered_as_risk_overlays(self):
+        # the four of FDS-129, and FDS-SR-001's regime gate (research only)
         self.assertEqual(
             list_ids("risk_overlay"),
-            ["OVL-ATR", "OVL-COOLDOWN", "OVL-PLOCK", "OVL-RATCHET"],
+            ["OVL-ATR", "OVL-COOLDOWN", "OVL-PLOCK", "OVL-RATCHET", "OVL-REGIME"],
         )
         for oid in list_ids("risk_overlay"):
             self.assertEqual(CATALOGUE[oid]["class_type"], "risk_overlay")

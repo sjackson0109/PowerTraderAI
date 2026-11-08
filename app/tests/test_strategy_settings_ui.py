@@ -46,7 +46,13 @@ def test_the_window_offers_every_strategy_but_one_that_needs_a_model():
             and e["authorisation"]
             in ({"paper", "live"} if mode == "paper" else {"live"})
         ]
-    assert ui.overlay_ids() == ["OVL-RATCHET", "OVL-ATR", "OVL-PLOCK", "OVL-COOLDOWN"]
+    assert ui.overlay_ids() == [
+        "OVL-RATCHET",
+        "OVL-ATR",
+        "OVL-PLOCK",
+        "OVL-COOLDOWN",
+        "OVL-REGIME",  # listed; research only, so its tick is disabled
+    ]
 
 
 def test_every_offered_strategy_and_stop_and_parameter_is_described():

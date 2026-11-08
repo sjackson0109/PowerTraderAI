@@ -14,14 +14,21 @@ exit fills at the next bar's open.
 from __future__ import annotations
 
 import math
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 import pandas as pd
 
 from strategies.base import StrategyError
 from strategies.catalogue import register
 from strategies.indicators import atr
-from strategies.runner import GateResult, Overlay, OverlayDecision, PositionState
+from strategies.runner import (
+    Context,
+    ContextNeed,
+    GateResult,
+    Overlay,
+    OverlayDecision,
+    PositionState,
+)
 
 _EPS = 1e-9  # float noise guard when a close lands exactly on a threshold
 
@@ -158,3 +165,48 @@ class EntryCooldown(Overlay):
             for k, v in state.items()
             if isinstance(v, (list, tuple)) and len(v) == 2
         }
+
+
+@register("OVL-REGIME")
+class RegimeGate(Overlay):
+    """
+    FDS-SR-001 section 5.4.3. Allows an entry only while the reference coin's last
+    closed daily close is above its ``sma_days``-day simple average (that close
+    included). It never exits, so it can only remove trades.
+
+    ``reference`` is "BTC" (the market) or "self" (the coin decided on). The daily bars
+    come in ``context`` (``context_needs``), closed at or before the decision bar's
+    close. It fails closed: without the bars, with fewer than ``sma_days`` of them, or
+    with the last one closed more than ``STALE_DAYS`` before the decision, it blocks.
+    """
+
+    STALE_DAYS = 2
+
+    def context_needs(self) -> Tuple[ContextNeed, ...]:
+        return ((self.params["reference"], "1d", self.params["sma_days"]),)
+
+    def allow_entry(self, symbol: str, now_bar_time: pd.Timestamp) -> GateResult:
+        return GateResult(False, "REFERENCE_UNAVAILABLE")  # no context: cannot decide
+
+    def allow_entry_in(
+        self,
+        symbol: str,
+        now_bar_time: pd.Timestamp,
+        context: Optional[Context] = None,
+    ) -> GateResult:
+        n = self.params["sma_days"]
+        frame = (context or {}).get((self.params["reference"], "1d"))
+        if frame is None or len(frame) < n:
+            return GateResult(False, "REFERENCE_UNAVAILABLE")
+        bar = pd.Timedelta(seconds=self.bar_seconds or 86_400)
+        decision_close = pd.Timestamp(now_bar_time) + bar
+        last_close = pd.Timestamp(frame["open_time"].iloc[-1]) + pd.Timedelta(days=1)
+        if decision_close - last_close > pd.Timedelta(days=self.STALE_DAYS):
+            return GateResult(False, "REFERENCE_STALE")
+        closes = frame["close"].to_numpy(dtype=float)[-n:]
+        if any(math.isnan(c) for c in closes):
+            return GateResult(False, "REFERENCE_UNAVAILABLE")
+        average = float(closes.mean())
+        if closes[-1] > average:
+            return GateResult(True, "")
+        return GateResult(False, "BELOW_AVERAGE")

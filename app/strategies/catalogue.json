@@ -206,4 +206,24 @@
     },
     "version": "1.0.0",
     "authorisation": "live"
+  },
+  {
+    "strategy_id": "OVL-REGIME",
+    "strategy_name": "Market Regime Gate",
+    "family": "regime",
+    "class_type": "risk_overlay",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1d",
+    "entry_logic_summary": "Allows an entry only while the reference coin's last closed daily close is above its sma_days-day simple average; a missing or stale reference blocks entries.",
+    "exit_logic_summary": "No exit logic: it never forces an exit.",
+    "dependencies_indicators": ["SMA"],
+    "default_params": {"reference": "BTC", "sma_days": 200},
+    "param_bounds": {
+      "reference": {"values": ["BTC", "self"]},
+      "sma_days": {"min": 50, "max": 400}
+    },
+    "version": "1.0.0",
+    "authorisation": "research",
+    "data_requirements": {"coins": "own+reference"},
+    "research_refs": ["FDS-SR-001 5.4.3", "strategy-research/A-research-report.md 6"]
   }]

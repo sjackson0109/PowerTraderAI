@@ -26,10 +26,11 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 
 | Milestone | What | PR |
 |---|---|---|
-| M2a | Catalogue lifecycle, authorisation, fail-closed checks | (see M2a) |
+| M2a | Catalogue lifecycle, authorisation, fail-closed checks | #237 |
 | M2b | The strategy list in Settings > Strategy | (see M2b), on M2a |
 | M3a | STRAT-004, the daily Donchian breakout | (see M3a), on M2b |
-| M3b | STRAT-005, time-series momentum decided weekly | this branch, on M3a |
+| M3b | STRAT-005, time-series momentum decided weekly | (see M3b), on M3a |
+| M3c | OVL-REGIME and the entry gate's market context | this branch, on M3b |
 
 ## M2a: the catalogue lifecycle
 
@@ -188,6 +189,52 @@ The existing `tests/test_strategy_settings_ui.py` passes unchanged, except that 
 - next-open fills;
 - bounds and the rule;
 - research-only, not enabled, refused for trading, described.
+
+## M3c: OVL-REGIME and the entry gate's market context
+
+**Branch** `feat/sr-m3c-ovl-regime`, from M3b's branch.
+
+**Built:**
+- **`strategies/runner.py`, the context interface (§5.6):**
+  - An overlay may declare `context_needs()`: (reference, timeframe, bars), where the reference is "self" or a coin. It then decides in `allow_entry_in(symbol, bar_time, context)`.
+  - The default `allow_entry_in` calls the plain `allow_entry`, so the four existing overlays are unchanged.
+  - `StrategyRunner.evaluate` takes an optional `context`.
+  - `slice_context` keeps only the bars closed at or before the decision bar's close, and only as many as declared.
+- **`strategies/overlays.py`, OVL-REGIME:**
+  - It allows an entry only while the reference's last closed daily close is above its `sma_days`-day simple average (that close included). The defaults are BTC and 200 days.
+  - It never exits.
+  - It fails closed: with no bars, too few, bars whose last one closed more than 2 days before the decision, or a missing close, it blocks.
+- **`backtest/engine.py`:** `run_backtest` and `evaluate_split` take `context_frames`. Each decision sees only bars closed by its own close. Without them the gate blocks.
+- **`signal_engine.py`:** fetches the declared bars through the same closed-only provider, cached per series, with the same retry rule. An unfetchable series is left out, and the gate blocks.
+- **`backtest/cli.py`:** loads the reference bars from the run's own exchange and cache, and records them in the results' provenance.
+- **Catalogue entry:**
+  - family `regime`, `authorisation: research`;
+  - `data_requirements: own+reference`;
+  - not enabled for research;
+  - its description, with Bitcoin and the coin itself as the reference choices.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| Calling an existing runner | `evaluate` is given a context only when an overlay declared needs | A subclass overriding `evaluate` (`backtest/model_eval.py`'s `RecordingRunner`) keeps working unchanged |
+| "Stale" | The reference's last daily bar closed more than 2 days before the decision bar's close | A daily series should have closed a bar within the last day. Two days allows one late bar |
+| The average | The last `sma_days` daily closes, the latest included; the latest must be strictly above it | §5.4.3: "above its average" |
+| "self" | The coin being decided on, at the gate's own timeframe (daily), fetched as its own series | A 1-hour strategy's coin has no daily bars of its own in the run |
+
+### Tests
+
+`tests/test_regime_gate.py`:
+- closed-bar slicing (an intraday decision never sees that day's forming daily bar);
+- allow and block, the average's span, and every fail-closed case;
+- existing overlays declare nothing and are called as before;
+- the runner's block reason;
+- the backtester with and without context;
+- **parity:** the live engine and a replay agree on every hourly bar, with the gate both blocking and allowing;
+- the CLI loads and records the reference;
+- research-only and refused for trading.
+
+`tests/test_overlays.py` and `tests/test_strategy_settings_ui.py` changed only where they pin the list of overlays.
 
 ## Backlog (non-critical)
 

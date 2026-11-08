@@ -239,8 +239,56 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             path = source["path"]
             source["sha256"] = file_sha256(path) if os.path.isfile(path) else None
 
+    # an entry gate's market context (FDS-SR-001 5.6): from the same exchange and
+    # cache as the run's candles, from far enough back for its first decision
+    context_frames: Dict[Any, pd.DataFrame] = {}
+    needs = probe.context_needs()
+    if needs:
+        first, last = candles["open_time"].iloc[0], candles["open_time"].iloc[-1]
+        end = last + pd.Timedelta(seconds=timeframe_seconds(args.tf))
+        offline = bool(args.offline or args.candles_file)
+        source["context"] = {}
+        for reference, tf, bars in needs:
+            symbol = args.symbol if reference == "self" else dollar_symbol(reference)
+            back = pd.Timedelta(seconds=candle_timeframe_seconds(tf) * (int(bars) + 2))
+            label = f"{reference}:{tf}"
+            try:
+                frame = exchange_candles(
+                    symbol,
+                    tf,
+                    first - back,
+                    end,
+                    cache_dir=args.cache_dir,
+                    offline=offline,
+                    exchanges=[exchange] if exchange else None,
+                )
+            except (CandleDataError, OSError) as exc:
+                source["context"][label] = {"missing": str(exc)}
+                continue
+            context_frames[(reference, tf)] = frame
+            path = cache_path(
+                frame.attrs.get("pair", symbol),
+                tf,
+                args.cache_dir,
+                frame.attrs.get("exchange", exchange),
+            )
+            source["context"][label] = {
+                "exchange": frame.attrs.get("exchange"),
+                "pair": frame.attrs.get("pair"),
+                "bars": len(frame),
+                "sha256": file_sha256(path) if os.path.isfile(path) else None,
+            }
+
     cost = CostModel(args.fee_bps, args.slippage_bps, args.size_fraction)
-    split = evaluate_split(candles, factory, args.symbol, args.tf, cost, args.split)
+    split = evaluate_split(
+        candles,
+        factory,
+        args.symbol,
+        args.tf,
+        cost,
+        args.split,
+        context_frames=context_frames,
+    )
     strategy = factory().strategy
     results = {
         "strategy_id": args.strategy,

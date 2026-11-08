@@ -30,13 +30,13 @@ from typing import Callable, Dict, Optional, Tuple
 import pandas as pd
 
 from market_data.candles import CandleDataError, exchange_candles
-from market_data.timeframes import timeframe_seconds
+from market_data.timeframes import candle_timeframe_seconds, timeframe_seconds
 from pt_logging import get_logger
 from model_store import ModelStoreError
 from strategies.base import Action, StrategyError
 from strategies.catalogue import CatalogueError, ParamError
 from strategies.factory import build_runner
-from strategies.runner import Decision, PositionState, StrategyRunner
+from strategies.runner import Decision, PositionState, StrategyRunner, slice_context
 from strategies.settings import StrategySettings, read_strategy_settings
 
 logger = get_logger("signal_engine")
@@ -86,6 +86,9 @@ class SignalEngine:
         # per pair: (expected last-closed open_time, candles) and fetch bookkeeping
         self._candles: Dict[str, Tuple[pd.Timestamp, pd.DataFrame]] = {}
         self._last_fetch_attempt: Dict[str, float] = {}
+        # an entry gate's market context (FDS-SR-001 5.6), per (pair, timeframe)
+        self._context: Dict[Tuple[str, str], Tuple[pd.Timestamp, pd.DataFrame]] = {}
+        self._context_attempt: Dict[Tuple[str, str], float] = {}
         self._logged: Dict[str, tuple] = {}
         self._warned: Dict[str, float] = {}
         self.last_decisions: Dict[str, Decision] = {}
@@ -317,9 +320,13 @@ class SignalEngine:
         pos = (
             position if position is not None else self._positions.get(str(base).upper())
         )
-        decision = runner.evaluate(
-            runner.window(candles, len(candles) - 1), pos, str(base).upper()
-        )
+        window = runner.window(candles, len(candles) - 1)
+        needs = runner.context_needs()
+        if needs:  # an entry gate's context; other runners are called as before
+            context = self._context_for(str(base).upper(), needs, last_open + step, now)
+            decision = runner.evaluate(window, pos, str(base).upper(), context)
+        else:
+            decision = runner.evaluate(window, pos, str(base).upper())
         if pos is not None:
             self._persist()  # the stop / overlay state may have moved
         return self._record(
@@ -358,6 +365,48 @@ class SignalEngine:
         if df is None or df.empty:
             return cached[1] if cached is not None else None
         self._candles[pair] = (expected_last_open, df)
+        return df
+
+    def _context_for(
+        self, base: str, needs, decision_close: pd.Timestamp, now: pd.Timestamp
+    ) -> Dict[Tuple[str, str], pd.DataFrame]:
+        """The bars the overlays' entry gates declared, closed by the decision bar's
+        close. A series that cannot be fetched is left out: the gate blocks."""
+        frames: Dict[Tuple[str, str], pd.DataFrame] = {}
+        for reference, tf, bars in needs:
+            coin = base if reference == "self" else reference
+            frame = self._context_candles(market_for(coin), tf, int(bars), now)
+            if frame is not None:
+                frames[(reference, tf)] = frame
+        return slice_context(frames, needs, decision_close)
+
+    def _context_candles(
+        self, pair: str, tf: str, bars: int, now: pd.Timestamp
+    ) -> Optional[pd.DataFrame]:
+        """``pair``'s closed ``tf`` bars, fetched once per new bar through the same
+        provider and retry rule as the decision's own candles."""
+        key = (pair, tf)
+        step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
+        expected_last_open = now.floor(step) - step
+        cached = self._context.get(key)
+        if cached is not None and cached[0] == expected_last_open:
+            return cached[1]
+        mono = self._clock()
+        last_attempt = self._context_attempt.get(key)
+        if last_attempt is not None and mono - last_attempt < FETCH_RETRY_SECONDS:
+            return cached[1] if cached is not None else None
+        self._context_attempt[key] = mono
+        try:
+            df = self._provider(pair, tf, bars + 5, now)
+        except (CandleDataError, OSError) as exc:
+            self._warn_once(
+                f"fetch:{pair}:{tf}", f"Could not fetch {pair} {tf} candles: {exc}"
+            )
+            return cached[1] if cached is not None else None
+        if df is None or df.empty:
+            return cached[1] if cached is not None else None
+        df = df[df["open_time"] + step <= now].reset_index(drop=True)
+        self._context[key] = (expected_last_open, df)
         return df
 
     def _record(

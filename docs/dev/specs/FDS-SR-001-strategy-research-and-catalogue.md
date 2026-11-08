@@ -3,7 +3,10 @@
 **Issue:** none yet. Raise "Strategy research: a small, evidence-backed catalogue, tested with and without models" and link it here.
 **Target repo:** `sjackson0109/powertraderai`.
 **Branch:** this spec is on `docs/fds-sr-001-strategy-research`, cut from `main` at `cdae9c9`. Each milestone (§8) is built on its own branch, cut from `main` after the previous one is merged.
-**Status:** draft for the owner's approval, 2026-11-07. Documentation only: nothing here is built, registered, enabled or activated.
+**Status:** approved for implementation by the owner on 2026-11-07 (E-D1, E-D2, E-D3, E-D4, E-D7 and E-D9 as recommended; the rest deferred to their milestones).
+**Amendments:** 2026-11-07, by the owner's instruction and the code as found, both recorded in `docs/dev/RUN-LOG-sr-1.md`:
+1. REF-RANDOM replays the strategy's own exit rules (§5.4.1).
+2. The lot-size model follows how Coinbase sizes market orders (§5.10).
 **Authority** (owner, 2026-11-07):
 - **Authorised:** research, repository inspection, this specification and its plan, as one documentation-only draft PR.
 - **Not authorised:**
@@ -183,7 +186,7 @@ The catalogue keeps its fields, its registry cross-check and its fail-loudly loa
 |---|---|---|
 | REF-HOLD | Buy-and-hold: each coin bought once at its first eligible bar, equal amounts, the same costs | Per coin and as a portfolio. Exists per coin (`backtest.engine.buy_and_hold`) |
 | REF-CASH | No trades | Net 0; the floor for "economically viable" |
-| REF-RANDOM | Matched random entries: the strategy's coins and number of entries per coin, holding times resampled from its own trades, the same costs and account | Extends `backtest.random_baseline` (mean hold only) to the portfolio replay. B = 10,000 as 10 runs × 1,000 |
+| REF-RANDOM | Random entries replayed through the strategy's **own exit rules**, in the same account with the same costs and constraints. Per coin, a draw keeps the strategy's number of entries and its waits between them, in a random order (as FDS-MH-001's R1) | Amended on the owner's instruction (2026-11-07): resampled holding periods are not used, since they are not equivalent to replaying the actual exits unless that is validated. `strategy_lab.baselines`. B = 10,000 as 10 runs × 1,000 |
 | REF-ACCUM | Periodic accumulation: a fixed amount each week into each coin, held | An execution-policy baseline, not a strategy (A §9) |
 | STRAT-000 | EMA cross 20/50, 1h | A trend baseline |
 | STRAT-001 | TEMA cross 12/48 with ADX, 1h | The strategy in use; FDS-SIG-004's subject |
@@ -408,7 +411,11 @@ One data load serves every strategy, model, account and baseline in an experimen
 
 **What a small account changes, and must show:**
 - **The minimum entry:** below about 100 × the minimum entry, every entry is the minimum, above 1% (FDS-SIG-004 §3.7 item 1).
-- **Lot sizes:** an order's quantity is rounded down to the product's base increment, from the exchange layer's public product data (cached). A rounded order below the minimum is skipped and counted. This matters at $1 orders: a 0.1-coin increment at $0.15 is 1.5% of the order.
+- **Lot sizes** (amended, 2026-11-07, to match `pt_exchanges.py`'s Coinbase orders):
+  - a market buy is sized in dollars, and is raised to the minimum entry as today;
+  - a market sell is sized in coins, rounded down to the product's base increment. The increment comes from the exchange layer's public product data (`lot_increment`, primary first).
+  - The remainder cannot be sold. It stays in the account, marked at the coin's close, and is never realised in a trade's net. Each account reports its value.
+  - This matters at $1 orders: a 0.1-coin increment at $0.15 is 1.5% of the position.
 - **Fees** are proportional, with no fixed fee per order [R]. This is an assumption, recorded per experiment.
 - **Reported per account:** how many entries were raised, rounded or skipped.
 

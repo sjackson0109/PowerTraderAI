@@ -10,7 +10,9 @@ opportunities; a path differs only in which it vetoes or shrinks.
 
 **At each opportunity, in time order** (exits at the same time come first):
 
-1. the coin must be flat: one trade per coin;
+1. the coin must be flat: one trade per coin. An entry that fills at the same open as the
+   coin's own exit was decided while the position was still open, so it is not taken
+   (the backtester ignores ENTER while long); exits first still free cash for other coins;
 2. the amount is the trader's own (``position_sizing.entry_usd``): Start allocation % of the
    account's value, raised to the minimum entry (the venue's minimum order with room for a
    spread of 2 x the allowance, two taker fees and the margin) when it is below it;
@@ -35,6 +37,21 @@ after it, and open positions are marked at that hour.
 
 With ``size_fraction`` the amount is that share of the free cash instead (one coin at
 100% reproduces ``backtest.engine.run_backtest``'s trades).
+
+**Extensions for FDS-SR-001** (section 5.10). Each is off unless asked for, so a call
+without them replays exactly as before:
+
+* ``mark_s`` marks equity on another grid than the hour, e.g. at every daily close.
+* ``cooldown`` applies OVL-COOLDOWN's rule per path: an entry decided less than its bars
+  after the coin's (or, with ``global_``, any coin's) last exit fill is skipped, longer
+  after a loss (the exit fill below the entry fill).
+* ``Costs.base_increment``: a sell is sized in coins, rounded down to the coin's
+  increment (Coinbase sizes a market sell so; a market buy is sized in dollars). The
+  remainder cannot be sold: it stays in the account, marked at the coin's close, and is
+  never realised in a trade's net. Each path reports its value at the end (``dust_usd``).
+* Each path reports the value of its positions open when the halt level was first
+  reached (``halt_exposure``) and their largest further fall in the next 30 days
+  (``halt_further_loss``): a halted trader manages nothing.
 """
 
 from __future__ import annotations
@@ -82,6 +99,8 @@ class Costs:
     fee: float  # taker, a fraction a side
     allowance: float = 0.0005  # e: slippage a fill
     minimum_usd: Mapping[str, float] = field(default_factory=dict)  # per coin
+    # per coin: the step a sell's quantity is rounded down to (none: not rounded)
+    base_increment: Mapping[str, float] = field(default_factory=dict)
 
     def multiplier(self) -> float:
         """m(f, e)."""
@@ -96,6 +115,19 @@ class Costs:
             2.0 * self.fee,
             margin_pct,
         )
+
+
+@dataclass(frozen=True)
+class Cooldown:
+    """OVL-COOLDOWN's rule, in bars of ``bar_s`` seconds (the strategy's bar)."""
+
+    bars_after_exit: int
+    bars_after_loss: int
+    global_: bool
+    bar_s: int
+
+
+HALT_WATCH_S = 30 * DAY_S
 
 
 @dataclass
@@ -122,6 +154,11 @@ class Paths:
     # path 0's outcome at each opportunity, when asked for: "taken", "vetoed",
     # "not_flat", "no_cash", "below_minimum" or "ended" (after a halt ended the path)
     status: List[str] = field(default_factory=list)
+    # FDS-SR-001 section 5.10 (zeros when not asked for)
+    skipped_cooldown: Optional[np.ndarray] = None
+    dust_usd: Optional[np.ndarray] = None
+    halt_exposure: Optional[np.ndarray] = None
+    halt_further_loss: Optional[np.ndarray] = None
 
     def eligible(self) -> List[int]:
         """Path 0's eligible opportunities: flat, with the cash there (taken or vetoed)."""
@@ -159,6 +196,8 @@ def replay(
     halt_ends: bool = False,
     detail: bool = False,
     end_s: Optional[int] = None,
+    mark_s: int = HOUR_S,
+    cooldown: Optional[Cooldown] = None,
 ) -> Paths:
     """Replay the opportunities on ``paths`` paths. ``veto`` (paths, n) is True where a
     path vetoes an opportunity; ``scale`` (paths, n) is its scale (at most 1). ``prices``
@@ -178,11 +217,11 @@ def replay(
     f, e = costs.fee, costs.allowance
     floors = {c: costs.floor(c, account.margin_pct) for c in coins}
 
-    # the hourly marking grid, from the first entry to the end
+    # the marking grid (hourly unless ``mark_s`` says otherwise), first entry to end
     if n:
         first = min(o.entry_s for o in opps)
         last = end_s if end_s is not None else max(o.exit_s for o in opps)
-        hours = np.arange(first // HOUR_S * HOUR_S, last + HOUR_S, HOUR_S)
+        hours = np.arange(first // mark_s * mark_s, last + mark_s, mark_s)
     else:
         hours = np.zeros(0, dtype=np.int64)
     marks = _prices(prices, coins, hours) if n else np.zeros((0, 0))
@@ -208,6 +247,16 @@ def replay(
     detail_rows: List[Tuple[int, float, float, float]] = []
     curve_equity = np.zeros(len(hours)) if detail else None
     status = ["ended"] * n if detail else []
+    increments = np.array([float(costs.base_increment.get(c) or 0.0) for c in coins])
+    exited = np.full((paths, len(coins)), -1, dtype=np.int64)  # the last exit fill
+    dust = np.zeros((paths, len(coins)))  # unsellable remainders, in coins
+    skipped_cool = np.zeros(paths, dtype=np.int64)
+    keys = 1 if (cooldown is not None and cooldown.global_) else len(coins)
+    last_exit = np.full((paths, max(keys, 1)), np.iinfo(np.int64).min // 2, np.int64)
+    last_loss = np.zeros((paths, max(keys, 1)), dtype=bool)
+    halt_qty = np.zeros((paths, len(coins)))
+    halt_value = np.zeros(paths)
+    halt_low = np.zeros(paths)
 
     # events: (time, 0 = exit, 1 = entry, opportunity)
     events = sorted(
@@ -218,7 +267,7 @@ def replay(
     last_close = np.full(len(coins), np.nan)
 
     def equity_now() -> np.ndarray:
-        value = np.nan_to_num(qty * last_close[None, :], nan=0.0)
+        value = np.nan_to_num((qty + dust) * last_close[None, :], nan=0.0)
         return cash + value.sum(axis=1)
 
     for h, t in enumerate(hours.tolist()):
@@ -233,7 +282,11 @@ def replay(
             if kind == 0:  # an exit: the paths holding this opportunity's trade
                 mine = (holding[:, j] == i) & alive
                 if mine.any():
-                    proceeds = qty[mine, j] * o.exit_price * (1.0 - e) * (1.0 - f)
+                    sold = qty[mine, j]
+                    if increments[j] > 0:  # a sell is sized in whole increments
+                        sold = np.floor(sold / increments[j] + 1e-9) * increments[j]
+                        dust[mine, j] += qty[mine, j] - sold
+                    proceeds = sold * o.exit_price * (1.0 - e) * (1.0 - f)
                     gain = proceeds - spent[mine, j]
                     cash[mine] += proceeds
                     net[mine] += gain
@@ -247,11 +300,32 @@ def replay(
                     qty[mine, j] = 0.0
                     spent[mine, j] = 0.0
                     holding[mine, j] = -1
+                    exited[mine, j] = o.exit_s
+                    if cooldown is not None:
+                        k = 0 if cooldown.global_ else j
+                        last_exit[mine, k] = o.exit_s
+                        last_loss[mine, k] = o.exit_price * (1.0 - e) < (
+                            o.entry_price * (1.0 + e)
+                        )
                 continue
-            # an entry
-            flat = (holding[:, j] == -1) & alive
+            # an entry: flat when it was decided (not exiting at its own fill)
+            flat = (holding[:, j] == -1) & alive & (exited[:, j] != o.entry_s)
             if detail and alive[0] and not flat[0]:
                 status[i] = "not_flat"
+            if cooldown is not None and flat.any():
+                k = 0 if cooldown.global_ else j
+                decided = o.entry_s - cooldown.bar_s  # the decision bar's open
+                elapsed = (decided - last_exit[:, k]) // cooldown.bar_s
+                need = np.where(
+                    last_loss[:, k],
+                    max(cooldown.bars_after_exit, cooldown.bars_after_loss),
+                    cooldown.bars_after_exit,
+                )
+                cooling = flat & (elapsed < need)
+                skipped_cool += cooling
+                if detail and cooling[0]:
+                    status[i] = "cooldown"
+                flat &= ~cooling
             if not flat.any():
                 continue
             value = equity_now()
@@ -313,6 +387,15 @@ def replay(
         mdd_usd = np.where(live, np.maximum(mdd_usd, fall_usd), mdd_usd)
         first_halt = live & (halt_s < 0) & (fall >= account.halt_pct / 100.0)
         halt_s[first_halt] = t
+        if first_halt.any():  # what was open, and what it was worth, at the halt
+            halt_qty[first_halt] = qty[first_halt]
+            marks_now = np.nan_to_num(last_close, nan=0.0)
+            halt_value[first_halt] = (halt_qty[first_halt] * marks_now).sum(axis=1)
+            halt_low[first_halt] = halt_value[first_halt]
+        watching = (halt_s >= 0) & (t - halt_s <= HALT_WATCH_S)
+        if watching.any():
+            worth = (halt_qty[watching] * np.nan_to_num(last_close, nan=0.0)).sum(1)
+            halt_low[watching] = np.minimum(halt_low[watching], worth)
         if detail:
             curve_equity[h] = value[0]
         if halt_ends and first_halt.any():
@@ -355,4 +438,12 @@ def replay(
         detail=detail_rows,
         curve=(hours, curve_equity) if detail else None,
         status=status,
+        skipped_cooldown=skipped_cool,
+        dust_usd=(
+            np.nan_to_num(dust * last_close[None, :], nan=0.0).sum(axis=1)
+            if len(coins)
+            else np.zeros(paths)
+        ),
+        halt_exposure=halt_value,
+        halt_further_loss=np.maximum(halt_value - halt_low, 0.0),
     )

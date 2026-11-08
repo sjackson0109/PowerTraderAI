@@ -35,7 +35,8 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 | M4b | Experiment records, the trial log, strategy looks, the reserved months | (see M4b), on M4a |
 | M4c | The model cells | (see M4c), on M4b |
 | M5a | "Run a backtest..." and "Compare results..." | (see M5a), on M4c |
-| M5b | "Model evidence..." | this branch, on M5a |
+| M5b | "Model evidence..." | (see M5b), on M5a |
+| M6a | The strategy in each trade record | this branch, on M5b |
 
 ## M2a: the catalogue lifecycle
 
@@ -454,6 +455,34 @@ The window was rendered after a run and checked by eye.
 - a declared experiment's sealed results (shown only with their strategy; never overwritten; hidden once changed);
 - an unknown kind refused;
 - the button (enabled for a strategy, disabled for a stop).
+
+## M6a: the strategy in each trade record
+
+**Branch** `feat/sr-m6a-trade-strategy-fields`, from M5b's branch.
+
+**Built:** `pt_trader.py`, `_strategy_fields`, added to every trade-history row:
+- `strategy_id`, `strategy_version`;
+- `strategy_params_sha256` (the full parameters, defaults included, as canonical JSON);
+- `strategy_timeframe`;
+- `strategy_overlays` (IDs and versions).
+
+A legacy-engine row has `strategy_id: legacy_neural`. Records only: nothing reads them to trade, and an error leaves the row as it was.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| Which strategy a row names | The strategy in effect when the order was placed | Positions have no owning strategy (B §4.6). An exit after a switch is made, and so named, by the new one. Ownership belongs to multi-strategy execution, which is not built |
+| Refused settings | No fields | No order is placed then |
+
+### Tests
+
+`tests/test_trade_strategy_fields.py`, 3 tests:
+- a replayed paper session places byte-identical orders with and without the fields;
+- each row names the strategy, its version, parameter hash, timeframe and overlays;
+- the legacy engine, and a refused configuration.
+
+The tests that read trade-history rows pass unchanged (230 tests).
 
 ## Backlog (non-critical)
 

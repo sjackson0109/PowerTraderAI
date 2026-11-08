@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import os
@@ -1025,11 +1026,42 @@ class CryptoAPITrading:
             self._note_price_event(price_source, ts)
         if side_l == "sell":
             entry["closes_position"] = bool(closes_position)
+        entry.update(self._strategy_fields())
         self._append_jsonl(self.trade_history_path, entry)
         if base and side_l == "buy":
             self._trade_ended[base] = False
         elif base and side_l == "sell" and closes_position:
             self._trade_ended[base] = True
+
+    def _strategy_fields(self) -> dict:
+        """What decided the trade, for its record (FDS-SR-001 section 5.11): the
+        strategy in effect when the order was placed, its version, the SHA-256 of its
+        full parameters, its timeframe and its overlays. Records only: never read to
+        trade, and an error here leaves the record without them."""
+        try:
+            s = read_strategy_settings(self._settings_source)
+            if s.is_legacy:
+                return {"strategy_id": "legacy_neural"}
+            if s.problem:
+                return {}
+            from strategies.catalogue import create, get_entry
+
+            params = dict(create(s.active_id, **dict(s.params)).params)
+            canonical = json.dumps(
+                params, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+            return {
+                "strategy_id": s.active_id,
+                "strategy_version": get_entry(s.active_id)["version"],
+                "strategy_params_sha256": hashlib.sha256(canonical).hexdigest(),
+                "strategy_timeframe": s.timeframe,
+                "strategy_overlays": [
+                    {"id": o["id"], "version": get_entry(o["id"])["version"]}
+                    for o in s.overlays
+                ],
+            }
+        except Exception:
+            return {}
 
     @staticmethod
     def _sell_ends_trade(entry: dict) -> bool:

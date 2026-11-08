@@ -254,7 +254,7 @@ The segment's hash equals the one above only if the frozen parts of the owner's 
 1. **At the start.** Read the new segment file, `<hub>/paper/observations/<id>.json`, which holds `snapshot` and `sha256`. If `sha256` equals `b0e54cdf…` (or `a4462959…`), the settings are exactly as proposed. If it does not, compare the file's `snapshot` with 6.2 key by key. The deciding values must match: `trading.mode`, `strategy.active_id`, `engine`, `timeframe`, STRAT-004's absence from `params`, `overlays`, `signal_fusion` (absent or all Off), `risk`, `paper` (values, not formats), `coins`, `paper_coins_mode`, `start_allocation_pct`, `max_coin_allocation_pct` and `min_order_margin_pct`. Any other differences must be recorded. The legacy keys (`dca_*`, `pm_*`, `trailing_gap_pct`, `trade_start_level`) do not decide a catalogue trade.
 2. **During the segment.** The segment's own `sha256` is then the frozen reference. Opening the Observation window compares the settings files with it, and ends the segment on any difference (`observation.py:174-190`).
 
-Until D6 is fixed, the window does not show the hash or the frozen settings. The lead reads the segment file and records the hash in the observation log.
+Until D6 is fixed, the window does not show the hash or the frozen settings. The reviewer reads the segment file and records the hash in the observation log.
 
 ### 6.4 Gaps
 
@@ -310,7 +310,7 @@ For each matched or different-candle trade it also reports two figures:
    - **Matched:** the delay is "Paper entry" minus "Replay entry", in minutes.
 4. **Exits** (not in Reconcile). In Trade History, filter Source = Strategy. For each sell, record its time against Reconcile's "Replay exit". Record its price against that candle's open, from the chart's daily candles.
 5. **Fees and quantities** (Trade History). For every Strategy row, the fee rate is Fees ÷ Value. Compare it with the fee the segment assumed. That is the account's taker rate when Coinbase keys are set (0.50% at 2026-11-05, read by an authenticated call that already exists, `pt_exchanges.py:2079-2098`), else Coinbase's standard 1.20% (`trading_mode.py:717-741`). E1 assumed 0.50% + 0.05% slippage. For each coin, the quantity sold must equal the quantity bought.
-6. **Strategy fields.** Every row in the segment must carry `strategy_id` STRAT-004, `strategy_version` 1.0.0, `strategy_params_sha256` `89579608…6265`, `strategy_timeframe` 1d and `strategy_overlays` []. Read them from `<hub>/paper/trade_history.jsonl`, the lead's step until the tool exists. Any other value is an unexpected trade (D3).
+6. **Strategy fields.** Every row in the segment must carry `strategy_id` STRAT-004, `strategy_version` 1.0.0, `strategy_params_sha256` `89579608…6265`, `strategy_timeframe` 1d and `strategy_overlays` []. Read them from `<hub>/paper/trade_history.jsonl`, the reviewer's step until the tool exists. Any other value is an unexpected trade (D3).
 7. **Orders against fills.** Every ENTRY and EXIT row is a fill. Refused and rejected orders exist only in the trader's log (`pt_trader.py:1797-1806`, `1860-1870`). The paper book keeps cash and positions but no orders (`trading_mode.py:972-995`). Search the log for the coin and day: "ORDER REFUSED", "ORDER REJECTED", "RISK BLOCK", "No price available", "STALE", "CANDLES_UNAVAILABLE", "TRADING HALTED". The log rotates at 10 MB × 5 files (`pt_logging.py:180-212`), so copy the relevant lines at each weekly reconcile.
 8. **Decisions.** The trader logs one line per coin per daily bar: `Decision <coin>: strategy=STRAT-004 action=… bar=…` (`signal_engine.py:412-434`). Spot-check that each coin has one line for the last closed bar. If a coin has none, or one for an older bar after about 00:05 UTC, that is D1 or stale candles.
 9. **Record.** Add the week to the observation log: the counts, every non-matched row with its class and reason, the delays (median and maximum), fees by side, residuals, and the segment's `sha256`.
@@ -513,7 +513,7 @@ diff --git a/app/strategies/catalogue.json b/app/strategies/catalogue.json
 
 1. **Authorisation:** approve the change in section 13 (STRAT-004 `research` → `paper`), with the record text in section 2.
 2. **D1:** fix the late-bar defect before the start (recommended), or start with it known and record its rows as such.
-3. **D2, D3, D6, D7:** fix them before the start, or accept the manual checks in sections 7 and 9 (the lead reads the segment file and the rows' fields; the LLM mode, exchange order and code are checked by hand).
+3. **D2, D3, D6, D7:** fix them before the start, or accept the manual checks in sections 7 and 9 (the reviewer reads the segment file and the rows' fields; the LLM mode, exchange order and code are checked by hand).
 4. **Coins:** E1's 11 coins (recommended, so paper observes E1's universe) or the current Settings list. Reconcile replays the Settings coins, so an override would show other coins as "Not placed".
 5. **Paper balance:** $13,476 (£10,000 at E1's rate, the same entry size as E1's deciding account) or $10,000.
 6. **Fee source:** with Coinbase keys, paper charges the account's own taker rate (0.50% at 2026-11-05) through an existing authenticated read. Without keys it charges the standard 1.20%. E1 assumed 0.50% + 0.05%.
@@ -541,7 +541,7 @@ diff --git a/app/strategies/catalogue.json b/app/strategies/catalogue.json
 | `tests/test_risk_state.py` | 24 passed |
 | `tests/test_risk_settings_ui.py` | 34 passed |
 
-The full suite was not run here; the lead runs it. CI runs none of FDS-SR-001's tests (run log backlog).
+The full suite was run separately on this branch before the PR (see the PR description).
 
 ## Appendix A: evidence scripts
 

@@ -1,0 +1,78 @@
+{
+  "experiment": "SR1-E1",
+  "lines": [
+    {
+      "kind": "trading",
+      "model": "The strategy against random entries with its own exits",
+      "period": "2021-01-01 to 2025-05-06, 11 coins, 0.50% taker + 0.05% slippage, £10,000 (E1)",
+      "recorded": "2026-11-08, development only",
+      "strategy_id": "STRAT-004",
+      "text": "Beats random entries (return per capital-day +0.2882% against a random median of +0.0104%, p = 0.0065 (Holm over 4, B = 10,000), 135 trades). Development only: not evidence for enabling anything."
+    },
+    {
+      "kind": "trading",
+      "model": "The strategy against random entries with its own exits",
+      "period": "2021-01-01 to 2025-05-06, 11 coins, 0.50% taker + 0.05% slippage, £10,000 (E1)",
+      "recorded": "2026-11-08, development only",
+      "strategy_id": "STRAT-005",
+      "text": "Too few trades to tell: this test could only see an edge above +0.2087% a capital-day (return per capital-day +0.1683% against a random median of +0.1094%, p = 0.1836 (Holm over 4, B = 10,000), 151 trades). Development only: not evidence for enabling anything."
+    },
+    {
+      "kind": "economic",
+      "model": "No model: the strategy alone",
+      "period": "2021-01-01 to 2025-05-06, 11 coins, 0.50% taker + 0.05% slippage, £10,000 (E1)",
+      "recorded": "2026-11-08, development only",
+      "strategy_id": "STRAT-004",
+      "text": "Not shown to be profitable after fees: a profit in each half (net $+1,692.94 on £10,000, return per capital-day +0.2882%, 135 trades, maximum drawdown 7.32%, p = 0.0086 (Holm over 4), smallest detectable return per capital-day +0.5595%). Development only: not evidence for enabling anything."
+    },
+    {
+      "kind": "economic",
+      "model": "No model: the strategy alone",
+      "period": "2021-01-01 to 2025-05-06, 11 coins, 0.50% taker + 0.05% slippage, £10,000 (E1)",
+      "recorded": "2026-11-08, development only",
+      "strategy_id": "STRAT-005",
+      "text": "Not shown to be profitable after fees: a drawdown below the halt level (net $+1,528.33 on £10,000, return per capital-day +0.1683%, 151 trades, maximum drawdown 10.14%, p = 0.0001 (Holm over 4), smallest detectable return per capital-day +0.2586%). Development only: not evidence for enabling anything."
+    },
+    {
+      "kind": "trading",
+      "model": "The regime gate (OVL-REGIME) against random vetoes",
+      "period": "2021-01-01 to 2025-05-06, 11 coins, 0.50% taker + 0.05% slippage, £10,000 (E1)",
+      "recorded": "2026-11-08, development only",
+      "strategy_id": "STRAT-001",
+      "text": "No better than random vetoes (return per capital-day -1.3641% against a random median of -1.4247%, p = 0.1827 (Holm over 3, B = 10,000), 3851 trades; smallest detectable edge +0.2026% a capital-day). Development only: not evidence for enabling anything."
+    },
+    {
+      "kind": "trading",
+      "model": "The regime gate (OVL-REGIME) against random vetoes",
+      "period": "2021-01-01 to 2025-05-06, 11 coins, 0.50% taker + 0.05% slippage, £10,000 (E1)",
+      "recorded": "2026-11-08, development only",
+      "strategy_id": "STRAT-004",
+      "text": "The gate adds value over random vetoes (return per capital-day +0.3929% against a random median of +0.2785%, p = 0.0001 (Holm over 3, B = 10,000), 111 trades). Development only: not evidence for enabling anything."
+    },
+    {
+      "kind": "trading",
+      "model": "The regime gate (OVL-REGIME) against random vetoes",
+      "period": "2021-01-01 to 2025-05-06, 11 coins, 0.50% taker + 0.05% slippage, £10,000 (E1)",
+      "recorded": "2026-11-08, development only",
+      "strategy_id": "STRAT-005",
+      "text": "The gate adds value over random vetoes (return per capital-day +0.1907% against a random median of +0.1422%, p = 0.0126 (Holm over 3, B = 10,000), 114 trades). Development only: not evidence for enabling anything."
+    },
+    {
+      "kind": "trading",
+      "model": "The PV model (pv.linear.t1.PV.q50) against random vetoes",
+      "period": "2021-01-01 to 2025-05-06, 11 coins, 0.50% taker + 0.05% slippage, £10,000 (E1)",
+      "recorded": "2026-11-08, development only",
+      "strategy_id": "STRAT-004",
+      "text": "The model adds value over random vetoes (return per capital-day +0.3877% against a random median of +0.3085%, p = 0.0011 (Holm over 2, B = 10,000), 104 trades). Development only: not evidence for enabling anything."
+    },
+    {
+      "kind": "trading",
+      "model": "The PV model (pv.linear.t1.PV.q50) against random vetoes",
+      "period": "2021-01-01 to 2025-05-06, 11 coins, 0.50% taker + 0.05% slippage, £10,000 (E1)",
+      "recorded": "2026-11-08, development only",
+      "strategy_id": "STRAT-005",
+      "text": "The model adds value over random vetoes (return per capital-day +0.2052% against a random median of +0.1546%, p = 0.0255 (Holm over 2, B = 10,000), 99 trades). Development only: not evidence for enabling anything."
+    }
+  ],
+  "sha256": "3c80d5d03cf09d3ebc444db483b684ce7710c237a82a10b5219472b5588b5725"
+}

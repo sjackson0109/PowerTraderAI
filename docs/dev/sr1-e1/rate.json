@@ -1,0 +1,25 @@
+{
+ "ecb_latest": {
+  "cross": 1.3384882814841457,
+  "rate_date": "2026-11-06"
+ },
+ "gbp_usd": 1.3476,
+ "note": "the latest day both publish at retrieval; frozen in E1's record and applied to every account; never read during the replay",
+ "rate_date": "2026-11-05",
+ "raw_sha256": "a3ee04959eb1f3087ab01d8cd6200fb41291636f4b0afe3090dad29c1f556bd1",
+ "retrieved_at": "2026-11-08T12:18:57.506361+00:00",
+ "source": "Bank of England Database, series XUDLUSS (spot exchange rate, US$ into sterling)",
+ "url": "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp?csv.x=yes&Datefrom=09/Oct/2026&Dateto=now&SeriesCodes=XUDLUSS&CSVF=TN&UsingCodes=Y&VPD=Y&VFD=N",
+ "verification": {
+  "agrees": true,
+  "cross": 1.345916323912079,
+  "gbp_per_eur": 0.83393,
+  "rate_date": "2026-11-05",
+  "raw_sha256": "5a476fa75ac3d5fbe895071dc34335e6a59540981984c64d039965e64b66fe97",
+  "relative_difference": 0.0012493886078367433,
+  "source": "European Central Bank euro foreign exchange reference rates (USD per EUR / GBP per EUR)",
+  "tolerance": 0.0025,
+  "url": "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml",
+  "usd_per_eur": 1.1224
+ }
+}

@@ -1,0 +1,575 @@
+{
+ "cut_ms": 1746489600000,
+ "files": {
+  "ADA-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 3018,
+   "sha256": "6527db0c417e8bad94c6f917326641a6eaba95878efa474a773ceff804d04ac7"
+  },
+  "ADA-USD_15m.csv": {
+   "rows_dropped": 52560,
+   "rows_kept": 52502,
+   "sha256": "f859a1796a1665a38f9578ba3b6953db20374e7fdd1ec9ea6cd03c8589611eb5"
+  },
+  "ADA-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1509,
+   "sha256": "5389f2082c7119d5a8f8deb3337ea13a1c36b69300609a1a176bb30ab6c23022"
+  },
+  "ADA-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 36219,
+   "sha256": "d81dc64096ba6fd1585a99701645620d8b0da9554c158707cbb2f0474d0d6bc3"
+  },
+  "ADA-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 216,
+   "sha256": "429f7968d7e317971cb70665ace4eb703007d1b36d8464afa41aa7b8d6cce043"
+  },
+  "ADA-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 18109,
+   "sha256": "d7c436be05c8bf1b80893e2b3a17dcc87e64d78bad9c7319f4bc84abd2799634"
+  },
+  "ADA-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 9054,
+   "sha256": "718f5e3240f3bba0fe3ddfb277e5841e66b8a6fcb3194b227093c350f5d55fce"
+  },
+  "ADA-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 6037,
+   "sha256": "56b50cf03018e144bd9bb293edafb8e743dca90134da2f416b871603b91b43c8"
+  },
+  "ADA-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 4527,
+   "sha256": "5836993ad6b8ee1e3abf567900ab46d6fda53e08fe774b5e63c9a6ab314bc5f2"
+  },
+  "AVAX-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 2626,
+   "sha256": "9edf398c28ef5d00b96c24918153e8c582aaa69263a00140cdb9ecdb46d296d8"
+  },
+  "AVAX-USD_15m.csv": {
+   "rows_dropped": 52546,
+   "rows_kept": 52503,
+   "sha256": "7bf0268d1e887bd0505659434a790ef7553c3041a795a645c0e696d42360e2ce"
+  },
+  "AVAX-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1313,
+   "sha256": "dfe89f2b006a1e1309d728db32f060db4028a58c9b37606a78ffacc5213f88a2"
+  },
+  "AVAX-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 31513,
+   "sha256": "60f7a367c46ef7f7e706fec8acaee42963f1a9c7df72dba857d9394cd12c2173"
+  },
+  "AVAX-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 188,
+   "sha256": "1bf5c576fc8d9ffc54c82177dcf39fecf0f3c501413be638f83ae922eb2bed49"
+  },
+  "AVAX-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 15756,
+   "sha256": "32a3da2d932024d2f30533c473345b0732a005a61f1ab14ac99721d29db05150"
+  },
+  "AVAX-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 7877,
+   "sha256": "81d6966f46ec3a0f3924c8323639757072d189ab24d6de9394728897f95f7fe9"
+  },
+  "AVAX-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 5252,
+   "sha256": "d3464b71ab58c803c34d232c4661f6e562cf3094f9bd06fe08b447ab9aa64bf1"
+  },
+  "AVAX-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 3938,
+   "sha256": "f5cd7589557c0e26fb7024a1c49e7ddd7a40e3d186dd4ee6286029b9b8503bed"
+  },
+  "BNB-USD_12h.csv": {
+   "rows_dropped": 756,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "BNB-USD_15m.csv": {
+   "rows_dropped": 36258,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "BNB-USD_1d.csv": {
+   "rows_dropped": 379,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "BNB-USD_1h.csv": {
+   "rows_dropped": 9105,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "BNB-USD_1w.csv": {
+   "rows_dropped": 53,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "BNB-USD_2h.csv": {
+   "rows_dropped": 4532,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "BNB-USD_4h.csv": {
+   "rows_dropped": 2264,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "BNB-USD_6h.csv": {
+   "rows_dropped": 1513,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "BNB-USD_8h.csv": {
+   "rows_dropped": 1131,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "BTC-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 3904,
+   "sha256": "1328e753cee8318cbfee69a1e925429e723475805fc02d16c73937c30c1aed82"
+  },
+  "BTC-USD_15m.csv": {
+   "rows_dropped": 52560,
+   "rows_kept": 52503,
+   "sha256": "09248cb68bf21aacfce88f265cac4b2822e495582ca57c0c1977f8d3be36a19d"
+  },
+  "BTC-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1952,
+   "sha256": "7b54882c02b46f147fea031077f3628a177d34441e053c86e00f80a5cc5958bd"
+  },
+  "BTC-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 46842,
+   "sha256": "ce14f9bbbe31a6d19cf63f6652fc091360e0f36dc77e7cc9338d31d6f026f471"
+  },
+  "BTC-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 279,
+   "sha256": "64c995f1a8764e21a08d350011216330125640c35ca807e5c1d5f6062682088c"
+  },
+  "BTC-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 23419,
+   "sha256": "33f7e145f571caa555af23d4ff8095ad4d5bde2c3f0858e1acb9c552120716d3"
+  },
+  "BTC-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 11707,
+   "sha256": "c152cbdb880cef58314cfcb72df299866aa27c2f95d8db9bab355d2100b913fc"
+  },
+  "BTC-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 7808,
+   "sha256": "b8c22eba8ab978eb02923808eb41ad024fa7848d449a5afa0d6a4a1da01126fb"
+  },
+  "BTC-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 5852,
+   "sha256": "c7148be305ede16fe4a9ed9512e967b2c62c747923fc213b66ca7c469ced37f0"
+  },
+  "DASH-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 3904,
+   "sha256": "3518e894530295cc7c1003ceef4c431842352d86c405b7a769066f1011ca0987"
+  },
+  "DASH-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1952,
+   "sha256": "ea07eece6cbe0b33d8580eea73f6082d0f0f6a298b41ea1170794f0baaf7aab4"
+  },
+  "DASH-USD_1h.csv": {
+   "rows_dropped": 13176,
+   "rows_kept": 46837,
+   "sha256": "f8e6788de962a47e1adfeb45191498f3fae438806ec9ced9ad4099e09b7bd9a5"
+  },
+  "DASH-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 279,
+   "sha256": "ddb3be4750a97f6ce7ca5bd8444f13a30095c70df4d037ecac4e7a33bd8d3cfc"
+  },
+  "DASH-USD_2h.csv": {
+   "rows_dropped": 6566,
+   "rows_kept": 23415,
+   "sha256": "8a6cb76b189f504457712fa564ff68f34d5f14cd4671189e51ceda2dad39f87a"
+  },
+  "DASH-USD_4h.csv": {
+   "rows_dropped": 3280,
+   "rows_kept": 11704,
+   "sha256": "1fcb9a8cfeceabf9151c9d5e1f187dbeabd661bae85cde71be2c64523c0ef96f"
+  },
+  "DASH-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 7808,
+   "sha256": "4baa308b493445094282ed4fafc4cd503ec383b47580348675a14128dbddcf09"
+  },
+  "DASH-USD_8h.csv": {
+   "rows_dropped": 1638,
+   "rows_kept": 5849,
+   "sha256": "8899a8337ab6d883dff71a485d20476f260c59e776d5e96300f2157c33a8ac9a"
+  },
+  "DOGE-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 2864,
+   "sha256": "3b6fb566829af4ff9122cc3119cc89cd6ae0d898d4855840d87f74b9ecc4b9a3"
+  },
+  "DOGE-USD_15m.csv": {
+   "rows_dropped": 52560,
+   "rows_kept": 52503,
+   "sha256": "f3e38dec6df19bcf13bc702dbb8dbca9d74e33b904d157db8daaad64a43946fe"
+  },
+  "DOGE-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1432,
+   "sha256": "fa735e5e16828de6c3be7508b81ee2cb35fdab189f4551b5cb0505c45ea51fc1"
+  },
+  "DOGE-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 34371,
+   "sha256": "21b7a701b394b46b7d3a4cbe1bbcefd84f50bb31aae5491ea92992b1014e7dd3"
+  },
+  "DOGE-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 205,
+   "sha256": "573d66b95e60e5652aa9c07298cb03b7396ce506c2a2a3a20abe23eaf1c31996"
+  },
+  "DOGE-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 17185,
+   "sha256": "da569edb073761ab952a159c2d8f4f42fe714730e6faae6942c0fdcd8c4cab5a"
+  },
+  "DOGE-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 8592,
+   "sha256": "a6988a2e0319a34df9cf830fd7f27e2f7529644eb8e9a2193530e75106a6a67c"
+  },
+  "DOGE-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 5729,
+   "sha256": "0cdd6d8dae44e3e7db77038fc5da855a679dd17de5629e6560885e79dc673edc"
+  },
+  "DOGE-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 4296,
+   "sha256": "51140c3e97dba640fa004765386dd761cdc8083d451a1978fe48b03c581d76fc"
+  },
+  "ETH-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 3904,
+   "sha256": "0ca5392193e87356d8ae3be8a1755c2b61036e5b37ebe01ef883449a444ef805"
+  },
+  "ETH-USD_15m.csv": {
+   "rows_dropped": 52560,
+   "rows_kept": 52501,
+   "sha256": "ba56ad00497dbed70ebaa2f5745d6e01748e94de1b17eedaa0e52d3529165fe7"
+  },
+  "ETH-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1952,
+   "sha256": "92e17ecd9642a33203d183ec872609a79b6ceeba34eb9c68bb73bc53b8474444"
+  },
+  "ETH-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 46842,
+   "sha256": "14ad60beb792916314862c0bc5d29097f7b2381363a41cb29c4f88698cb4196d"
+  },
+  "ETH-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 279,
+   "sha256": "ba6a5809e820f2d871c29965c98fa9a1dad6f55ed3790dde1a751facb63246ef"
+  },
+  "ETH-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 23419,
+   "sha256": "4c93d32a438f7c7bdbe461115020299db4c9d7b456ffdf870c4a905faf326864"
+  },
+  "ETH-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 11707,
+   "sha256": "ffd10460fa8dd192c757515b8a4198e5f98812181cfba0459524ae344b5fd0f4"
+  },
+  "ETH-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 7808,
+   "sha256": "8673eff0778e4ed44e1d50c41b2906e74ea899468bc617797a866a15c88c5866"
+  },
+  "ETH-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 5852,
+   "sha256": "f1d8a430bdeedf353274e1a566c14c91c7415d51cd89e6d8e32992574e2334e9"
+  },
+  "HYPE-USD_12h.csv": {
+   "rows_dropped": 544,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "HYPE-USD_1d.csv": {
+   "rows_dropped": 273,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "HYPE-USD_1h.csv": {
+   "rows_dropped": 6566,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "HYPE-USD_1w.csv": {
+   "rows_dropped": 38,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "HYPE-USD_2h.csv": {
+   "rows_dropped": 3263,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "HYPE-USD_4h.csv": {
+   "rows_dropped": 1631,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "HYPE-USD_6h.csv": {
+   "rows_dropped": 1089,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "HYPE-USD_8h.csv": {
+   "rows_dropped": 815,
+   "rows_kept": 0,
+   "sha256": "7d85dfefc35695eb6eff881211a86fb1fb2ee696961e5af983b176e1ba949ee1"
+  },
+  "LINK-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 3904,
+   "sha256": "498a3ff4138a05bb7b3397f8ace1dad230a0edf321c8e168f415c138dce12859"
+  },
+  "LINK-USD_15m.csv": {
+   "rows_dropped": 52560,
+   "rows_kept": 52503,
+   "sha256": "9dfb13d555f95fd060238c96bad0da3f781cb194e9e460c488f052af06211136"
+  },
+  "LINK-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1952,
+   "sha256": "4fe2bbe6d99fe777a67173195c03f8506771f1cb5beb078ee78a4e2b6d3c672d"
+  },
+  "LINK-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 46839,
+   "sha256": "ff62ee5bf16dbd8e2083adf6412c7d6aa79c72cbfc52a9c230d04bc9d7040dd7"
+  },
+  "LINK-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 279,
+   "sha256": "d8fae187d3976fb85960b512af94fb8984a535fdf05b8423126ba6f44811601d"
+  },
+  "LINK-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 23417,
+   "sha256": "41bb2a04e1a3ae05b3acbb8fbaf66e89190b2ed2584ceb765d6401e3e687e437"
+  },
+  "LINK-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 11706,
+   "sha256": "8cf4bc531793dec8698944256e3295e4dd1ee341dc2c73bec5e8c83a69a3f050"
+  },
+  "LINK-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 7808,
+   "sha256": "c9b02a5d2772969f88865bab2ad3e15d4f885c2e60e7e90d1f250e3f2cd5a211"
+  },
+  "LINK-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 5851,
+   "sha256": "fc78844bdbc2a9f4fe2c4c15d1f008d4418e58947fd0792e7f19782edea79e44"
+  },
+  "LTC-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 3904,
+   "sha256": "4224f5bb27ea693ab24530dac0e54d464d0c90c564d70363385b4688af451226"
+  },
+  "LTC-USD_15m.csv": {
+   "rows_dropped": 52560,
+   "rows_kept": 52503,
+   "sha256": "7ac5b2db5700371bf3dac0588e288e2e45bbfafa9dfb79219db730c65ff16be1"
+  },
+  "LTC-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1952,
+   "sha256": "6260bc6af15ab41c00d85809665486dc8d825956e33b8a236257f2be5cc03f69"
+  },
+  "LTC-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 46840,
+   "sha256": "9c0ec23fccca6b4163892c85e840d36df3f21c38cd188b3e00672537dbb3de9e"
+  },
+  "LTC-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 279,
+   "sha256": "4068ebd8ab3026d240b8df9a72bc461c217d145ea68a51adbf23ca6b11f51f5f"
+  },
+  "LTC-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 23418,
+   "sha256": "ee60720d858227369fc5539d8152011ce97f0209ae1893cb9c72a541d7ab209a"
+  },
+  "LTC-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 11707,
+   "sha256": "a53840d99b871525e8c00e9a82b077515e7eee5a1f23f64766f78514f34d99e1"
+  },
+  "LTC-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 7808,
+   "sha256": "9bd4d2e3d883c5f0cb5d0b482f1e426afb96d67dcb604922f75e1d7dfeb1f2e8"
+  },
+  "LTC-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 5852,
+   "sha256": "c491054c2e47846fd4549226346808158b1bcab22ee26dd657712715f1f9f8c2"
+  },
+  "SOL-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 2836,
+   "sha256": "fd1a6c5d0f9c2998c3eb8a6ccd78fc2f064490b0ebb40bfa40ea1245b3511b69"
+  },
+  "SOL-USD_15m.csv": {
+   "rows_dropped": 52560,
+   "rows_kept": 52502,
+   "sha256": "49a079bccc1adbdf61ce2dbd4094ab057a8620cc609d7811d13e4742e187b5d5"
+  },
+  "SOL-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1418,
+   "sha256": "860623616944637ae3d55f4218a8df0b1baeb916e91131985e979461544e7ea1"
+  },
+  "SOL-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 34035,
+   "sha256": "6935f35baaea47292aa2abd5d2b7af071ea94fcba02e669cf33e83c971743c09"
+  },
+  "SOL-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 203,
+   "sha256": "1c075ebfca815b7346dae18ea8b2964554372e7d679f26d76164c4befced46ae"
+  },
+  "SOL-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 17017,
+   "sha256": "eb1efbe35075145d7b79bfa37c4b3f14853c3c8b9f752275e1509bc28cd9c719"
+  },
+  "SOL-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 8508,
+   "sha256": "bc764e35c7f09cd7909bca19621039a0a32d1ced747625ce7ca4efbb3e913a08"
+  },
+  "SOL-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 5673,
+   "sha256": "0162e373a5a9b986f17b59a9a0e2b3bddf523344df23307ef6e036ed45d117c4"
+  },
+  "SOL-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 4254,
+   "sha256": "0c151c7369d8d89f44546211845b24c15ad64a881670131040b1ec8c4def3003"
+  },
+  "XRP-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 1324,
+   "sha256": "5882e2570342042287e8a5795547525a442842fb12bc7b43e8fe5332011d8820"
+  },
+  "XRP-USD_15m.csv": {
+   "rows_dropped": 52560,
+   "rows_kept": 52502,
+   "sha256": "0292a9ceb0d50533000b12b29d62b5790197993a2f6116fb3a2e014b8705de1e"
+  },
+  "XRP-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 662,
+   "sha256": "3f1f80caad9f2915bacf9b66ed7f8832cf6d01bc4476a1c19a8d0d28993dcbe3"
+  },
+  "XRP-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 25124,
+   "sha256": "5ac412a79a5741ff962013961d656eb977f9cdfd6cd0f5bdea7aebc0e6fc7721"
+  },
+  "XRP-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 95,
+   "sha256": "f188f9573aeccf23c3c81b96099feb402cd45138be7cb922f5cff49f85cc5a4a"
+  },
+  "XRP-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 7946,
+   "sha256": "0f9d457d4de35442a96fcff0543f614522f1714fc8d3c6d59b1e3078d12a5fed"
+  },
+  "XRP-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 3973,
+   "sha256": "0b7caacb8f7bb68e9f4a03147c94b088bbeff3442d9eeefdffdc59f79bc7d94c"
+  },
+  "XRP-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 2648,
+   "sha256": "03c870d1e7a51624eb06bbd9aaa4d58c188522475af18fae216a3971b4d1e0de"
+  },
+  "XRP-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 1986,
+   "sha256": "c79ecd0cbafd28e0a6d7e21eac85550934bb2242e4eb7b65e150cefdab16628d"
+  },
+  "ZEC-USD_12h.csv": {
+   "rows_dropped": 1096,
+   "rows_kept": 3218,
+   "sha256": "6e73fa57e863a3217c4b772330d007b7229a2c58179d6b4e545466d37bfe0f4a"
+  },
+  "ZEC-USD_1d.csv": {
+   "rows_dropped": 548,
+   "rows_kept": 1609,
+   "sha256": "368c828c3ac978621262aa617486ae4848308fadf6840a8b6aa1fb3949fce56d"
+  },
+  "ZEC-USD_1h.csv": {
+   "rows_dropped": 13180,
+   "rows_kept": 38618,
+   "sha256": "2f5fe939b3b610edd0da811fef09a60b455cd39fe5c1b20010c75aabbe21ab33"
+  },
+  "ZEC-USD_1w.csv": {
+   "rows_dropped": 77,
+   "rows_kept": 230,
+   "sha256": "e4b3babf3628847730baaeb908021ad2a8e6fb505fb2d3bdc36b4e7337707c6f"
+  },
+  "ZEC-USD_2h.csv": {
+   "rows_dropped": 6570,
+   "rows_kept": 19308,
+   "sha256": "dc9778bc1a2752feb1acf101b15da67b42600ecf3eea0542533d57ae7d0e9221"
+  },
+  "ZEC-USD_4h.csv": {
+   "rows_dropped": 3284,
+   "rows_kept": 9652,
+   "sha256": "54791269d016290e502f01c1fc2f895339ce7ecdb36078a90d949d4a0daeb40f"
+  },
+  "ZEC-USD_6h.csv": {
+   "rows_dropped": 2192,
+   "rows_kept": 6437,
+   "sha256": "149b0b287ff6f6e1ee98a26e13ce5defe239ab3cf972393bf9a7ba9268040804"
+  },
+  "ZEC-USD_8h.csv": {
+   "rows_dropped": 1642,
+   "rows_kept": 4825,
+   "sha256": "0ee4dd89fc7d10cfb59a32a37618df6fa92124bf5a4ecddb49f7cf69008428d8"
+  }
+ }
+}

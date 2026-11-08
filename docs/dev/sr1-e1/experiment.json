@@ -1,0 +1,922 @@
+{
+  "accounts": {
+    "deciding_gbp": 10000.0,
+    "gbp": [
+      10000.0,
+      500.0,
+      50.0
+    ],
+    "gbp_usd": 1.3476,
+    "rate": {
+      "ecb_latest": {
+        "cross": 1.3384882814841457,
+        "rate_date": "2026-11-06"
+      },
+      "gbp_usd": 1.3476,
+      "note": "the latest day both publish at retrieval; frozen in E1's record and applied to every account; never read during the replay",
+      "rate_date": "2026-11-05",
+      "raw_sha256": "a3ee04959eb1f3087ab01d8cd6200fb41291636f4b0afe3090dad29c1f556bd1",
+      "retrieved_at": "2026-11-08T12:18:57.506361+00:00",
+      "source": "Bank of England Database, series XUDLUSS (spot exchange rate, US$ into sterling)",
+      "url": "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp?csv.x=yes&Datefrom=09/Oct/2026&Dateto=now&SeriesCodes=XUDLUSS&CSVF=TN&UsingCodes=Y&VPD=Y&VFD=N",
+      "verification": {
+        "agrees": true,
+        "cross": 1.345916323912079,
+        "gbp_per_eur": 0.83393,
+        "rate_date": "2026-11-05",
+        "raw_sha256": "5a476fa75ac3d5fbe895071dc34335e6a59540981984c64d039965e64b66fe97",
+        "relative_difference": 0.0012493886078367433,
+        "source": "European Central Bank euro foreign exchange reference rates (USD per EUR / GBP per EUR)",
+        "tolerance": 0.0025,
+        "url": "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml",
+        "usd_per_eur": 1.1224
+      }
+    },
+    "sizing": {
+      "halt": "reported, not modelled",
+      "halt_pct": 8.0,
+      "max_coin_pct": 10.0,
+      "min_order_margin_pct": 2.0,
+      "start_allocation_pct": 1.0
+    },
+    "usd": {
+      "10000.0": 13476.0,
+      "50.0": 67.38,
+      "500.0": 673.8
+    }
+  },
+  "approved": "2026-11-08",
+  "authority": "registration and execution of the declared development experiments only; no paper or live activation, no promotion, the lockbox stays closed",
+  "baselines": {
+    "R3": "per coin, as many random vetoes as the gate or model made among the trades it could assess and its path could take; run r seeded seed + r; members 10 runs of 1,000, shown cells 10 runs of 100",
+    "REF-CASH": "no trades",
+    "REF-HOLD": "each coin bought once at its first decision bar, held to the end",
+    "REF-RANDOM": "random entries replayed through the strategy's own exits, the same waits per coin in a random order (strategy_lab.baselines); draw b seeded seed + b; members 10 runs of 1,000, shown cells 10 runs of 100"
+  },
+  "code": {
+    "backtest/__init__.py": "21b5ed9d6ef2acb51657ab5c0e2d9fcb379318dee059b8c05e939251ab1bb091",
+    "backtest/__main__.py": "13a1a5b340cdcfc1902b62be90e508c7c71886000d5bf087e7854aadf09fb35e",
+    "backtest/cli.py": "8b947b9406959772ed045cc8f3e32c8cb804e407bf6a6934843d43226ba986a7",
+    "backtest/engine.py": "057775101820a91c6c34b39dd59ae982cb39e61ab56735aa37d0cade57f31c62",
+    "backtest/kpis.py": "c2c5b7c079f0a147cf1cffd809d20caa81230cd42a86dfd4cc81b4243e540c28",
+    "backtest/model_eval.py": "7d9dd37aac7d370cefdb60da222cddb6931be78bc58ba5b8bf3b06e25320220a",
+    "backtest/random_baseline.py": "b73e40daa128b7d4f8ad57d4258bff0296e988baf009a65317e96101cd64c6e1",
+    "market_data/candles.py": "2158b386ccd3c1421d58e9609c73281f9c4c83dcc61ec4a8b6f86d4ced10a45e",
+    "market_data/timeframes.py": "7e27157c45a4e37b6164eed995688d19c87929f2e62121e09439a8b967800a5c",
+    "model_lab/__init__.py": "803c1587948240831df70a5f62f6f2237dcbe1ca8d9537caf88d2c5efab18e3b",
+    "model_lab/baselines.py": "5d912d0ff94b207f7aca9940b9483e08c27f7952e03704fe6f083e0fc4761f5d",
+    "model_lab/batch.py": "3a5ffbc87b83650fa3c6b1561965dba1a876fe8d8241be5623bd4e02c948b5f6",
+    "model_lab/catalogue.py": "00b5b553d55e15107f3e8b0e73868518065e2c2cae9783ec04a61c36c5dcf5f8",
+    "model_lab/contestants.py": "f03b84bc2ae5162ad0b122254910e9d11c702adce6edaeb03fcef4ce3002dab0",
+    "model_lab/features.py": "d5adc85935d2368c746e780e167b5f023155005e7922551366c7cf70ac4f0610",
+    "model_lab/replay.py": "8ecbf7a4d2c59b94442b59be15ff8efc39739254113e6f690deb3a476f16df5c",
+    "model_lab/series.py": "8a29df6861b0c8e663584dae5f74d208dfab2c1fd3852b1b9585229dfc3e0e5b",
+    "model_lab/stats.py": "e12163a27cf21f38a1e03ca52df88ca35f60eb2c0202085e6b5771adf8821ba3",
+    "model_lab/targets.py": "9111c08aa26ba1a351a353ad98d3b13eda7d336161e598decc11676c7100ac0e",
+    "model_lab/walkforward.py": "1bf0e4d913a486014050fa0fbaebd6c0d27610d00c9142912b225010fbf8d839",
+    "position_sizing.py": "05c8dec225474082e96b5db760308cb537240cc7949033795d1a923d0ff8a328",
+    "signal_fusion/__init__.py": "fa7976a62f754def91982bc88b2b0c38781cd10bf585c09480fd57883573599b",
+    "signal_fusion/artifact.py": "558c8a14931bf5c962c4a14304f81ad006d426789ef527ace8b785af2734d60a",
+    "signal_fusion/assessment.py": "4eee8d99f9c446538e0a9b5748c5bbf5dd97e9115a2dc55c4593328494485811",
+    "signal_fusion/compat.py": "914aa228e5ca5f9889436e9e532b953bf0db66040fa226269c390864483fcdaa",
+    "signal_fusion/evaluation/__init__.py": "ad4674c5a4d6c843d04ca6496e737846889757b2571f15c08a18f6a484e6f840",
+    "signal_fusion/evaluation/baselines.py": "1c32a231981ab1d2741e326019d5da3f45c4d5a9e4f65b8cfb091da8f7115e0c",
+    "signal_fusion/evaluation/bootstrap.py": "0d863f1be3f3a96fb536df16c24b04cced0d75f40ad87c966dcbd9a5622c70b9",
+    "signal_fusion/evaluation/findings.py": "91c405d84e155d8efc225116423d2c1f445c04045e3d5619b43a743301fb6a58",
+    "signal_fusion/evaluation/replay.py": "5c84c37b29888c3fd6a3bb16479e6820723e914f02ca88b7ce5edc86cd642051",
+    "signal_fusion/evaluation/scoring.py": "977cd6f782eef4940da4acf9af9ebeae700841fd0eb839bb07455a7d16e4a835",
+    "signal_fusion/labels.py": "3a02cfa423740b377b9c30211dac8d4b51ffe64a0917bed4cb7922e035e1ccf8",
+    "signal_fusion/liquidity.py": "fb63ad44a310e0bd8f11105e24967f5a1f30940325d44194f8541602538a0442",
+    "signal_fusion/live.py": "76e15e59f7aa6d5c4dd4ef92e254f5f628e4a16c9dc8e17ec42a0a1c121964c5",
+    "signal_fusion/meta.py": "ea717304025a2bb31cc43c830344d196ce0e952667cc335dd528ca8715d6a580",
+    "signal_fusion/settings.py": "fc087756ef773f6efd93429b83d53fba4c9596154223b17731cf5190447317ee",
+    "signal_fusion/volatility.py": "6df80ce22c35cbf0f5dced944955b5408875676055416e6543871168ed3e0585",
+    "strategies/__init__.py": "5d42e7a41b0b77ce9aed7c689935b028776d857909cee4bd335da4fd8a279dbc",
+    "strategies/base.py": "c0ce5908a169bcb5465b75f5c8ff7924d6ab569c1d8dcea319e82d3649b0b88e",
+    "strategies/breakout.py": "44c477aa585acc64525982049ce2fec58f311f6bfdde5b847d692bec2d9b0e35",
+    "strategies/builtin.py": "820694a814969643bc48dc66f32be3e8dd2383dbe8192f60b83798d7a0d928e0",
+    "strategies/catalogue.py": "3dc3d9697dc4be96cf322716109cb71dc84780871745aa23c93b2f175f504283",
+    "strategies/descriptions.py": "cd0dd10e056c0da5b506817cad375e23d5daef1d44e3b7f1a05ba24dfee3a118",
+    "strategies/factory.py": "218c812339988578bc40f1fe79495e68f826d41430073a3c681542ec41022887",
+    "strategies/indicators.py": "f5afe8ed7ff2a7d21fb5658a75dbdce5d9fc7fee0f7a71e34cba940c7b0f8ae8",
+    "strategies/model_strategy.py": "f3ca870e7c0880790359f4461f12a22f642266758d47a42eeb76a63390aabf06",
+    "strategies/momentum.py": "680764d6ec86a74f0b71de2498e2ff2935fbcfd2edb372a81e1570e6f1f845f4",
+    "strategies/overlays.py": "40814070fc68f9ce391262756ecd336145c34577b4770641981e3190dd9006ef",
+    "strategies/runner.py": "054f34d6cc41117fbb4973f389dd796977d4aa287d6b78420cc455e9eeb09383",
+    "strategies/settings.py": "1b7577f60901bc35feba1e7f68f8bcea7b2e8033600d7c598fab4efc07555abf",
+    "strategies/supertrend.py": "4eebe9c88f3a29090a2e53aba6c5a94ca42ec6e90483671e1be9cc7373ea3790",
+    "strategies/trend_crossover.py": "0f79415ae2e24219ca43324853d32ce387ac2fc4ed782416b61f341be8257873",
+    "strategy_lab/__init__.py": "2b4a2fd4c785990839d7a06bf5e1306e7e78f85b38b0ef5f77a2305d5693703b",
+    "strategy_lab/baselines.py": "5635cadba4d289b91f34fb8089739764c7f66b551a8a0883cabb5d4e53fb8daf",
+    "strategy_lab/candidates.py": "463bf9f0862ede72f9c4ced4fe89b203b653bb6d901f4fa298f419bbe1c9f4a6",
+    "strategy_lab/e1.py": "678c2a979c856f3379469225b0dd27a9f9a1d24efcaa7294e6f3a4b26ab7c7f8",
+    "strategy_lab/evidence.py": "29ae010fcf91f8760eb791b084a8f59e03f150fc1e81cd4e5689caf315cb4d6c",
+    "strategy_lab/experiment.py": "612638f0e0b497f8b9c2795ef6649f46d7250404e8bf7b387ff482ebd007ac70",
+    "strategy_lab/looks.py": "e70ebd08b26c4a53ffc8d4f8ccfc0cf5de7c8265244a69d0b11070cb96004d3a",
+    "strategy_lab/models.py": "2ef38c4e503fbf2d31f400d07201150194d4e97cc1e7b5784de3d0493c07d2af",
+    "strategy_lab/observation.py": "8c6f1f5246026e490fb04872540c09e8bcae9a117fa1147fc50aa580e5f3ab22",
+    "strategy_lab/runs.py": "e264afd92a37bd67a2d8b141cadfa0f8d6e705a91a89dcaaa7dba266f82948dd",
+    "strategy_lab/simulate.py": "34e91190cfd473ab7e43c9b395ef61f9f3fbdc7a5cfab4127dc0a9dff7c51f23",
+    "strategy_lab/venue.py": "8c51005b1b19cd2e995572aba6182318ca523b42925db8d26b5a775b11ffad7e",
+    "strategy_lab/windows.py": "3f9901e0cf91be51fc6eb58dd500f8885dddeda0c29748c2478edc403e26c32b"
+  },
+  "costs": {
+    "allowance": 0.0005,
+    "applied": "to every entry and exit fill, once (the replay's m(f, e))",
+    "base_increment": {
+      "ADA": 1e-08,
+      "AVAX": 1e-08,
+      "BTC": 1e-08,
+      "DASH": 1e-08,
+      "DOGE": 0.1,
+      "ETH": 1e-08,
+      "LINK": 0.01,
+      "LTC": 1e-08,
+      "SOL": 1e-08,
+      "XRP": 1e-06,
+      "ZEC": 1e-08
+    },
+    "fee": 0.005,
+    "fee_source": "the owner's account taker rate on Coinbase, 0.50% (E-D10; FDS-MH-001 section 7, from the check window on 2026-11-05)",
+    "minimum_usd": {
+      "ADA": 1.0,
+      "AVAX": 1.0,
+      "BTC": 1.0,
+      "DASH": 1.0,
+      "DOGE": 1.0,
+      "ETH": 1.0,
+      "LINK": 1.0,
+      "LTC": 1.0,
+      "SOL": 1.0,
+      "XRP": 1.0,
+      "ZEC": 1.0
+    },
+    "proportional": "no fixed fee an order (an assumption)",
+    "scenarios": [
+      {
+        "allowance": 0.0005,
+        "fee": 0.012,
+        "name": "taker 1.20%",
+        "note": "Coinbase's published taker rate"
+      },
+      {
+        "allowance": 0.0005,
+        "fee": 0.006,
+        "name": "maker 0.60% (hypothetical)",
+        "note": "a limit-order scenario only: the orders stay market orders, which are not filled at a maker rate"
+      }
+    ],
+    "venue_note": "today's Coinbase product data; past values are not recorded",
+    "venue_read_at": "2026-11-08T12:38:00.671185+00:00",
+    "venue_unknown": {}
+  },
+  "execution": "market orders: an entry fills at the next bar's open after the decision, an exit at the next open after the exit decision; a trade open at the end is closed at the last close",
+  "family": {
+    "G": {
+      "alpha": 0.05,
+      "correction": "Holm",
+      "k": 3,
+      "members": [
+        "G1",
+        "G2",
+        "G3"
+      ],
+      "name": "The regime gate"
+    },
+    "M": {
+      "alpha": 0.05,
+      "correction": "Holm",
+      "k": 2,
+      "members": [
+        "M1",
+        "M2"
+      ],
+      "name": "Models with strategies"
+    },
+    "S": {
+      "alpha": 0.05,
+      "correction": "Holm",
+      "k": 4,
+      "members": [
+        "S1",
+        "S2",
+        "S3",
+        "S4"
+      ],
+      "name": "Strategies alone"
+    }
+  },
+  "frozen_at": "2026-11-08T12:38:00.703293+00:00",
+  "id": "SR1-E1",
+  "libraries": {
+    "numpy": "2.5.4",
+    "pandas": "3.1.0",
+    "sklearn": "1.9.1"
+  },
+  "market": {
+    "candles": "read once per (coin, timeframe) from the exchange layer's cache, from 2020-01-01 or the coin's first cached bar, to 2025-05-06 (exclusive)",
+    "coins": [
+      "BTC",
+      "ETH",
+      "XRP",
+      "BNB",
+      "DOGE",
+      "SOL",
+      "ZEC",
+      "DASH",
+      "HYPE",
+      "ADA",
+      "AVAX",
+      "LINK",
+      "LTC"
+    ],
+    "coins_with_development_bars": [
+      "ADA",
+      "AVAX",
+      "BTC",
+      "DASH",
+      "DOGE",
+      "ETH",
+      "LINK",
+      "LTC",
+      "SOL",
+      "XRP",
+      "ZEC"
+    ],
+    "exchange_order": [
+      "coinbase",
+      "kraken",
+      "kucoin",
+      "binance"
+    ],
+    "left_out": {
+      "BNB:12h": "BNB-USD 12h: no cached bars",
+      "BNB:1d": "BNB-USD 1d: no cached bars",
+      "BNB:1h": "BNB-USD 1h: no cached bars",
+      "BNB:4h": "BNB-USD 4h: no cached bars",
+      "HYPE:12h": "HYPE-USD 12h: no cached bars",
+      "HYPE:1d": "HYPE-USD 1d: no cached bars",
+      "HYPE:1h": "HYPE-USD 1h: no cached bars",
+      "HYPE:4h": "HYPE-USD 4h: no cached bars"
+    },
+    "listed_by_2021": [
+      "BTC",
+      "DASH",
+      "ETH",
+      "LINK",
+      "LTC",
+      "ZEC"
+    ],
+    "offline": true,
+    "series_sha256": {
+      "ADA:12h": "941a1622d89087f4b488c15f769ef1deb2f9b73e0564c2db81ee4a17b3061685",
+      "ADA:1d": "db248a30b60895e1c87ffd44919db60a678abf033fd6a0b67e01ad1dfbe90c3f",
+      "ADA:1h": "0dd2c971e7794ab8fee36e40f9ca503e5d2c51275b2e21826159e05958eb5095",
+      "ADA:4h": "41d26abf2cd05475b4bbded94bfa6bf44ecd67b46c5d56edb8b3d6589836a28c",
+      "AVAX:12h": "f67ef2aa5a51d158ec0f06d5058e6e55fa1873e9be96e920ad13779ceabfb628",
+      "AVAX:1d": "2dd92b773795a98a084fd07609f6999af304c690db3d08e923a1a6e6c2c72158",
+      "AVAX:1h": "67f45a346281e9c6538e57330cc34d2beffc03ab23ffa6aaaf02e93d421db953",
+      "AVAX:4h": "bce9226e1fb4447dc3d3abc349afea22492130231471bf5a408c98fbdecb58bf",
+      "BTC:12h": "8c9d78b4692dc0131b12bb30247117b7f7234f0afe6e5790c35d930e0ed4680f",
+      "BTC:1d": "206cfa3016c230a6ee9356e50e2d9d1a9222f94d7965d8123266a82d66855e1c",
+      "BTC:1h": "94c68c5b83f7f7997787ef09ba6c929e73d99387b5b9835c6131a8aa4990a7e1",
+      "BTC:4h": "851e10440214b87caca86900504716e761121f46f29a6e7d5e77339b327e300c",
+      "DASH:12h": "0cc488b86fd1e915594f1a207ef70305e58e886a4d473a0c191b0e5673ceb2b1",
+      "DASH:1d": "547870c910594628412c2be2c4478c588bf559adc1d9d2c77f0dc3e3f62857c7",
+      "DASH:1h": "e36156bd08e9608efa2c6a8087ddca80fb057b189888ba9c9750303178395673",
+      "DASH:4h": "3ec7fd5f8451cf58f906e4fbf1b18ccd440639ec8e171f1446c485851c5fe768",
+      "DOGE:12h": "21e91eb0d189eb91b5197b11c55ef871eb8aacc360dd5a79610925de1903273a",
+      "DOGE:1d": "16a9ac890d1e0c1dcd397a03f6d3141aad921087d2e7aebc22c8aa0633b2beee",
+      "DOGE:1h": "621ef12ee9dc6f1d781a9e1bd9d0a90a69905b26bb9f6899a6a113e65c699e1a",
+      "DOGE:4h": "7292f744b1bcae1ce0bafa8f291adce2dc08f4a9f36512f7eb78af68e649e16d",
+      "ETH:12h": "542d948182ec599de98adace3f9ea8115cb4394a3aa0e6129684e870e0cc6fe6",
+      "ETH:1d": "0763f5f33c0b1916baaf6bd60d7658cd8db03ff8d90c2869afb4336ff36d5b7f",
+      "ETH:1h": "4cecefa3eb4512a91748560d79d83285697274c47a8f38c1007eeacc8ec653c8",
+      "ETH:4h": "699b2b5b37d1c9868b39542171ad3538b19989f337ef35b64cc4b4b2cd619410",
+      "LINK:12h": "564d5a6f877d0df44095a41fb2628082565c2b59d64b208bab56e39423c3cb57",
+      "LINK:1d": "04379920af40892ccdcc0420f916289fa61e97462dab7929bf12aac485a37576",
+      "LINK:1h": "dc81aa5e1b5c60931cbde759e7dec9520aff05f81f10392bb0a4343f77cddd00",
+      "LINK:4h": "fdfe009f5b38b4b027fd1ab88bed6ef53aa010ce8f75a9f5cd2c290985551211",
+      "LTC:12h": "b3ace7f2d91322211767e52efce1e3f59c2e42ed15af999827738a38b580e616",
+      "LTC:1d": "b47f2aee300d6c299302dae9b7db2630b2b200fa8e761468f679e5840e869665",
+      "LTC:1h": "36615d977d921330b9395d79a9232157bcdf396c5568ccaba41cdc5847fd9e9f",
+      "LTC:4h": "893f034ca4344b7d87a93cc31214183d147877710d68ef1068ae5e93b195fa3a",
+      "SOL:12h": "c201af05f7dd2a21574fdfdf3432c8bdf769534297e2ad17b8761fc909e31528",
+      "SOL:1d": "f77ced64f69fa4a64f2586fe79ede9150ad37683a64ba66d6e0de768f8f27889",
+      "SOL:1h": "8e06c213bc4c46c891823f6e78a5917950f4b20e7e436aa53adf0ce6b92e9038",
+      "SOL:4h": "743e5879d1508a8e693e6ee5d21f4326720b0589892097fdc298c7e9ccfa75aa",
+      "XRP:12h": "1f042c0a2b8e1f9cb03c857b37cc16a0a5592aa1d7b95a3b71aed0994700dc9c",
+      "XRP:1d": "fa49ba01e49a90956e64e03f2f8efc2459f18d3d68382644363958d1422d2c0d",
+      "XRP:1h": "f12ae1e32fb7a62921a1dad3d2262158822d910b88b8f84044c210306d099091",
+      "XRP:4h": "284f19cea59c429e3b9a023b81ee133776033a7f3576ab1e5296512d30d5921c",
+      "ZEC:12h": "52c3a8e9dc1cf00cc160dbdbb3b6aabe7688a5d9f920dc4c941c9a142d5664b9",
+      "ZEC:1d": "b72cccf126157333138337d0194e47d3a515180d5239f8651929efea709e550a",
+      "ZEC:1h": "633624329672fd7de16b4ebb508af3a260934cb1de3eca6d9d605621aecc8cfe",
+      "ZEC:4h": "2b10a09767d1113fb3de8aacdc49e51c1bb996471da762c18d698c08da3e0def"
+    },
+    "served_by": {
+      "ADA:12h": "coinbase",
+      "ADA:1d": "coinbase",
+      "ADA:1h": "coinbase",
+      "ADA:4h": "coinbase",
+      "AVAX:12h": "coinbase",
+      "AVAX:1d": "coinbase",
+      "AVAX:1h": "coinbase",
+      "AVAX:4h": "coinbase",
+      "BTC:12h": "coinbase",
+      "BTC:1d": "coinbase",
+      "BTC:1h": "coinbase",
+      "BTC:4h": "coinbase",
+      "DASH:12h": "coinbase",
+      "DASH:1d": "coinbase",
+      "DASH:1h": "coinbase",
+      "DASH:4h": "coinbase",
+      "DOGE:12h": "coinbase",
+      "DOGE:1d": "coinbase",
+      "DOGE:1h": "coinbase",
+      "DOGE:4h": "coinbase",
+      "ETH:12h": "coinbase",
+      "ETH:1d": "coinbase",
+      "ETH:1h": "coinbase",
+      "ETH:4h": "coinbase",
+      "LINK:12h": "coinbase",
+      "LINK:1d": "coinbase",
+      "LINK:1h": "coinbase",
+      "LINK:4h": "coinbase",
+      "LTC:12h": "coinbase",
+      "LTC:1d": "coinbase",
+      "LTC:1h": "coinbase",
+      "LTC:4h": "coinbase",
+      "SOL:12h": "coinbase",
+      "SOL:1d": "coinbase",
+      "SOL:1h": "coinbase",
+      "SOL:4h": "coinbase",
+      "XRP:12h": "coinbase",
+      "XRP:1d": "coinbase",
+      "XRP:1h": "coinbase",
+      "XRP:4h": "coinbase",
+      "ZEC:12h": "coinbase",
+      "ZEC:1d": "coinbase",
+      "ZEC:1h": "coinbase",
+      "ZEC:4h": "coinbase"
+    },
+    "timeframes": [
+      "12h",
+      "1d",
+      "1h",
+      "4h"
+    ]
+  },
+  "members": [
+    {
+      "family": "S",
+      "id": "S1",
+      "kind": "strategy",
+      "layer": null,
+      "question": "Does STRAT-004 time its entries better than random entries with its own exits?",
+      "seed": 910000,
+      "strategy": "STRAT-004",
+      "test": "random"
+    },
+    {
+      "family": "S",
+      "id": "S2",
+      "kind": "strategy",
+      "layer": null,
+      "question": "Does STRAT-005 time its entries better than random entries with its own exits?",
+      "seed": 920000,
+      "strategy": "STRAT-005",
+      "test": "random"
+    },
+    {
+      "family": "S",
+      "id": "S3",
+      "kind": "strategy",
+      "layer": null,
+      "question": "Is STRAT-004 profitable after fees at £10,000 and 0.50% + 0.05%?",
+      "seed": 970000,
+      "strategy": "STRAT-004",
+      "test": "economic"
+    },
+    {
+      "family": "S",
+      "id": "S4",
+      "kind": "strategy",
+      "layer": null,
+      "question": "Is STRAT-005 profitable after fees at £10,000 and 0.50% + 0.05%?",
+      "seed": 971000,
+      "strategy": "STRAT-005",
+      "test": "economic"
+    },
+    {
+      "family": "G",
+      "id": "G1",
+      "kind": "gate",
+      "layer": "OVL-REGIME",
+      "question": "Does the regime gate add value to STRAT-001 over random vetoes?",
+      "seed": 960000,
+      "strategy": "STRAT-001",
+      "test": "r3"
+    },
+    {
+      "family": "G",
+      "id": "G2",
+      "kind": "gate",
+      "layer": "OVL-REGIME",
+      "question": "Does the regime gate add value to STRAT-004 over random vetoes?",
+      "seed": 961000,
+      "strategy": "STRAT-004",
+      "test": "r3"
+    },
+    {
+      "family": "G",
+      "id": "G3",
+      "kind": "gate",
+      "layer": "OVL-REGIME",
+      "question": "Does the regime gate add value to STRAT-005 over random vetoes?",
+      "seed": 962000,
+      "strategy": "STRAT-005",
+      "test": "r3"
+    },
+    {
+      "family": "M",
+      "id": "M1",
+      "kind": "model",
+      "layer": "pv.linear.t1.PV.q50",
+      "question": "Does the PV model's veto improve STRAT-004's entries over random vetoes?",
+      "seed": 963000,
+      "strategy": "STRAT-004",
+      "test": "r3"
+    },
+    {
+      "family": "M",
+      "id": "M2",
+      "kind": "model",
+      "layer": "pv.linear.t1.PV.q50",
+      "question": "Does the PV model's veto improve STRAT-005's entries over random vetoes?",
+      "seed": 964000,
+      "strategy": "STRAT-005",
+      "test": "r3"
+    }
+  ],
+  "models": {
+    "batch": "20261107-175558",
+    "keys": {
+      "P": "pv.linear.t1.P.q50",
+      "PV": "pv.linear.t1.PV.q50"
+    },
+    "sha256": {
+      "pv.linear.t1.P.q50": "fab539dda03b3f5c7020d3ca8986bfe6268a5a6418e4ed8a5cf3201ce7aad62e",
+      "pv.linear.t1.PV.q50": "ce72439610a93fb2e6ad4fa28915417c82bf2ff8f1b9957a98291ecf4dc25d03"
+    },
+    "strategy_specific": "F_P and F_PV refitted on each strategy's own candidate trades (strategy_lab.models.meta_filter), labels at 0.50% + 0.05%, pooled payoffs, FDS-MH-001's development folds; not assessable below 200 events or 200 non-events (shown only)",
+    "threshold": "q = 0.5: a trade is vetoed when the model's probability at its decision hour is below the 0.5-quantile of every probability the model gave before the decision's calendar month, all coins pooled; not assessable before 1000 probabilities exist (strategy_lab.models.forecast_filter)"
+  },
+  "robustness": {
+    "not_run": {
+      "STRAT-004 entry 20 / exit 20": "its exit_days must be below its entry_days",
+      "exchanges": "Kraken, second in the Settings order, serves only its latest 720 bars of a series: they do not reach the development period, and reading them would read the reserved months",
+      "the volatility shrink": "it needs FDS-SIG-004's hourly volatility estimate per trade, which E1 does not build; recorded for a later declared run"
+    },
+    "pbo": {
+      "blocks": 16,
+      "main": {
+        "OVL-REGIME with STRAT-001": "G1",
+        "OVL-REGIME with STRAT-004": "G2",
+        "OVL-REGIME with STRAT-005": "G3",
+        "STRAT-004 parameters": "STRAT-004",
+        "STRAT-005 decision interval": "STRAT-005"
+      },
+      "sets": [
+        "OVL-REGIME with STRAT-001",
+        "OVL-REGIME with STRAT-004",
+        "OVL-REGIME with STRAT-005",
+        "STRAT-004 parameters",
+        "STRAT-005 decision interval"
+      ]
+    },
+    "variants": [
+      {
+        "coins": null,
+        "name": "STRAT-004 entry 20 / exit 10",
+        "overlays": [],
+        "params": {
+          "entry_days": 20,
+          "exit_days": 10
+        },
+        "pbo_set": "STRAT-004 parameters",
+        "strategy": "STRAT-004",
+        "timeframe": "1d"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-004 entry 55 / exit 10",
+        "overlays": [],
+        "params": {
+          "entry_days": 55,
+          "exit_days": 10
+        },
+        "pbo_set": "STRAT-004 parameters",
+        "strategy": "STRAT-004",
+        "timeframe": "1d"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-004 entry 100 / exit 10",
+        "overlays": [],
+        "params": {
+          "entry_days": 100,
+          "exit_days": 10
+        },
+        "pbo_set": "STRAT-004 parameters",
+        "strategy": "STRAT-004",
+        "timeframe": "1d"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-004 entry 100 / exit 20",
+        "overlays": [],
+        "params": {
+          "entry_days": 100,
+          "exit_days": 20
+        },
+        "pbo_set": "STRAT-004 parameters",
+        "strategy": "STRAT-004",
+        "timeframe": "1d"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-005 every 28 days",
+        "overlays": [],
+        "params": {
+          "rebalance_days": 28
+        },
+        "pbo_set": "STRAT-005 decision interval",
+        "strategy": "STRAT-005",
+        "timeframe": "1d"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-004 + OVL-REGIME 100 days",
+        "overlays": [
+          {
+            "id": "OVL-REGIME",
+            "params": {
+              "sma_days": 100
+            }
+          }
+        ],
+        "params": {},
+        "pbo_set": "OVL-REGIME with STRAT-004",
+        "strategy": "STRAT-004",
+        "timeframe": "1d"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-004 + OVL-REGIME 300 days",
+        "overlays": [
+          {
+            "id": "OVL-REGIME",
+            "params": {
+              "sma_days": 300
+            }
+          }
+        ],
+        "params": {},
+        "pbo_set": "OVL-REGIME with STRAT-004",
+        "strategy": "STRAT-004",
+        "timeframe": "1d"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-005 + OVL-REGIME 100 days",
+        "overlays": [
+          {
+            "id": "OVL-REGIME",
+            "params": {
+              "sma_days": 100
+            }
+          }
+        ],
+        "params": {},
+        "pbo_set": "OVL-REGIME with STRAT-005",
+        "strategy": "STRAT-005",
+        "timeframe": "1d"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-005 + OVL-REGIME 300 days",
+        "overlays": [
+          {
+            "id": "OVL-REGIME",
+            "params": {
+              "sma_days": 300
+            }
+          }
+        ],
+        "params": {},
+        "pbo_set": "OVL-REGIME with STRAT-005",
+        "strategy": "STRAT-005",
+        "timeframe": "1d"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-001 + OVL-REGIME 100 days",
+        "overlays": [
+          {
+            "id": "OVL-REGIME",
+            "params": {
+              "sma_days": 100
+            }
+          }
+        ],
+        "params": {},
+        "pbo_set": "OVL-REGIME with STRAT-001",
+        "strategy": "STRAT-001",
+        "timeframe": "1h"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-001 + OVL-REGIME 300 days",
+        "overlays": [
+          {
+            "id": "OVL-REGIME",
+            "params": {
+              "sma_days": 300
+            }
+          }
+        ],
+        "params": {},
+        "pbo_set": "OVL-REGIME with STRAT-001",
+        "strategy": "STRAT-001",
+        "timeframe": "1h"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-004 on 12h candles",
+        "overlays": [],
+        "params": {},
+        "pbo_set": null,
+        "strategy": "STRAT-004",
+        "timeframe": "12h"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-004 on 4h candles",
+        "overlays": [],
+        "params": {},
+        "pbo_set": null,
+        "strategy": "STRAT-004",
+        "timeframe": "4h"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-005 on 12h candles",
+        "overlays": [],
+        "params": {},
+        "pbo_set": null,
+        "strategy": "STRAT-005",
+        "timeframe": "12h"
+      },
+      {
+        "coins": null,
+        "name": "STRAT-005 on 4h candles",
+        "overlays": [],
+        "params": {},
+        "pbo_set": null,
+        "strategy": "STRAT-005",
+        "timeframe": "4h"
+      },
+      {
+        "coins": "BTC+ETH",
+        "name": "STRAT-004, BTC and ETH only",
+        "overlays": [],
+        "params": {},
+        "pbo_set": null,
+        "strategy": "STRAT-004",
+        "timeframe": "1d"
+      },
+      {
+        "coins": "BTC+ETH",
+        "name": "STRAT-005, BTC and ETH only",
+        "overlays": [],
+        "params": {},
+        "pbo_set": null,
+        "strategy": "STRAT-005",
+        "timeframe": "1d"
+      },
+      {
+        "coins": "listed_by_2021",
+        "name": "STRAT-004, coins with bars from 2021-01-01",
+        "overlays": [],
+        "params": {},
+        "pbo_set": null,
+        "strategy": "STRAT-004",
+        "timeframe": "1d"
+      },
+      {
+        "coins": "listed_by_2021",
+        "name": "STRAT-005, coins with bars from 2021-01-01",
+        "overlays": [],
+        "params": {},
+        "pbo_set": null,
+        "strategy": "STRAT-005",
+        "timeframe": "1d"
+      }
+    ]
+  },
+  "sha256": "ba060bb6006ec8620dcc96a4357c673ea58318248bdce216ae0b0eff092acecb",
+  "spec": "FDS-SR-001",
+  "spec_version": "1",
+  "strategy": {
+    "STRAT-000": {
+      "id": "STRAT-000",
+      "overlays": [],
+      "params": {
+        "fast_len": 20,
+        "slow_len": 50
+      },
+      "params_sha256": "a903bcbb9f1ef07c305b7071552dfcae60066ca63a16658839ced87b8a24341e",
+      "timeframe": "1h",
+      "version": "1.0.0"
+    },
+    "STRAT-001": {
+      "id": "STRAT-001",
+      "overlays": [],
+      "params": {
+        "adx_len": 14,
+        "adx_min": 20.0,
+        "fast_len": 12,
+        "ma_type": "TEMA",
+        "persistence_bars": 2,
+        "regime_filter": "adx",
+        "slow_len": 48
+      },
+      "params_sha256": "f81e11f588515a5009cd320d972dd6501ff1c077107d2da4574f3fe38143c500",
+      "timeframe": "1h",
+      "version": "1.0.0"
+    },
+    "STRAT-002": {
+      "id": "STRAT-002",
+      "overlays": [],
+      "params": {
+        "atr_len": 10,
+        "confirm_bars": 1,
+        "mult": 3.0
+      },
+      "params_sha256": "a7f0f13c4b70e6986024e1cf2bf68008fd36c662ebd1164b84309f4c5b70d0cd",
+      "timeframe": "4h",
+      "version": "1.0.0"
+    },
+    "STRAT-004": {
+      "id": "STRAT-004",
+      "overlays": [],
+      "params": {
+        "entry_days": 55,
+        "exit_days": 20
+      },
+      "params_sha256": "89579608ee854d67afce197674141a23848b1adb3bcca6b5096d72dcfd726265",
+      "timeframe": "1d",
+      "version": "1.0.0"
+    },
+    "STRAT-005": {
+      "id": "STRAT-005",
+      "overlays": [],
+      "params": {
+        "lookback_1": 30,
+        "lookback_2": 90,
+        "lookback_3": 365,
+        "min_agree": 2,
+        "rebalance_days": 7
+      },
+      "params_sha256": "159b1c1553fce06684ec3af1b535808082d04da08f65e7ef21210e0035e14292",
+      "timeframe": "1d",
+      "version": "1.0.0"
+    },
+    "gate": {
+      "id": "OVL-REGIME",
+      "params": {
+        "reference": "BTC",
+        "sma_days": 200
+      },
+      "version": "1.0.0"
+    }
+  },
+  "tests": {
+    "block_rule": "L = 28 x 2^k days: at most 1% of the family's trades longer than L / 2",
+    "bootstrap": "day blocks, circular, all coins together, 10 runs of 1,000",
+    "economic": "FDS-SIG-004 F3 (signal_fusion.evaluation.findings.f3)",
+    "exploratory": "Benjamini-Hochberg at q = 0.1, shown, never a pass",
+    "holm_alpha": 0.05,
+    "power": 0.8,
+    "random_p": "(1 + #{draw >= value}) / (B + 1), pooled; each run's p shown",
+    "seeds": {
+      "G1": 960000,
+      "G2": 961000,
+      "G3": 962000,
+      "M1": 963000,
+      "M2": 964000,
+      "S1": 910000,
+      "S2": 920000,
+      "S3": 970000,
+      "S4": 971000
+    },
+    "shown_seeds": {
+      "calibration STRAT-004 F_PV": 974000,
+      "calibration STRAT-005 F_PV": 974100,
+      "paired STRAT-004 PV vs P": 972000,
+      "paired STRAT-005 PV vs P": 972100,
+      "r3 STRAT-000 + OVL-REGIME": 965000,
+      "r3 STRAT-001 + P": 965500,
+      "r3 STRAT-001 + PV": 965400,
+      "r3 STRAT-002 + OVL-REGIME": 965100,
+      "r3 STRAT-004 + F_P": 965700,
+      "r3 STRAT-004 + F_PV": 965600,
+      "r3 STRAT-004 + P": 965200,
+      "r3 STRAT-005 + F_P": 965900,
+      "r3 STRAT-005 + F_PV": 965800,
+      "r3 STRAT-005 + P": 965300,
+      "random STRAT-000": 930000,
+      "random STRAT-001": 940000,
+      "random STRAT-002": 950000,
+      "random STRAT-004 at £50": 991000,
+      "random STRAT-004 at £500": 990000,
+      "random STRAT-005 at £50": 993000,
+      "random STRAT-005 at £500": 992000
+    },
+    "statistic": "return per capital-day: summed net / summed (amount x days held)",
+    "too_few": "a trading member that does not pass, whose smallest detectable edge is above 50% of |the random median|",
+    "variant_seed": 1000000
+  },
+  "windows": {
+    "development": [
+      "2021-01-01",
+      "2025-05-06"
+    ],
+    "folds": [
+      [
+        1640995200,
+        1648771200
+      ],
+      [
+        1648771200,
+        1656633600
+      ],
+      [
+        1656633600,
+        1664582400
+      ],
+      [
+        1664582400,
+        1672531200
+      ],
+      [
+        1672531200,
+        1680307200
+      ],
+      [
+        1680307200,
+        1688169600
+      ],
+      [
+        1688169600,
+        1696118400
+      ],
+      [
+        1696118400,
+        1704067200
+      ],
+      [
+        1704067200,
+        1711929600
+      ],
+      [
+        1711929600,
+        1719792000
+      ],
+      [
+        1719792000,
+        1727740800
+      ],
+      [
+        1727740800,
+        1735689600
+      ],
+      [
+        1735689600,
+        1743465600
+      ],
+      [
+        1743465600,
+        1746489600
+      ]
+    ],
+    "history_from": "2020-01-01",
+    "lockbox": [
+      "2025-05-06",
+      "2026-11-06"
+    ],
+    "lockbox_read": false,
+    "scored": "trades whose entry fills from 2021-01-01 to 2025-05-06"
+  }
+}

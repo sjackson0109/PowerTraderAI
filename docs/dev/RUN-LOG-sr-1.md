@@ -523,9 +523,105 @@ The tests that read trade-history rows pass unchanged (230 tests).
 - the window's start, reconcile and end-on-change;
 - Settings > Paper trading opens it (the real hub).
 
+## M5c: E1, registered and run
+
+**Branch** `feat/sr-m5c-e1`, from `main` at `d7b9aae`.
+
+### 2026-11-08: the owner's authorisation
+
+The owner approved E1 for registration and execution: the declared development experiments only. No paper or live activation, no promotion, and the lockbox (2025-05-06 to 2026-11-06) stays closed.
+
+**Decisions:**
+- **E-D5:** £10,000 decides; £500 and £50 are sensitivity runs on the same data, configurations and periods, each with its own minimums, rounding, cash, costs and risk limits.
+- **E-D6:** one fixed GBP/USD rate, retrieved at registration, recorded with its source and time, frozen before any evaluation, and never read during the replay.
+- **E-D8:** STRAT-004, STRAT-005 and OVL-REGIME stay research-only.
+- **E-D10:** 0.50% taker + 0.05% slippage a fill decides; 1.20% taker and a hypothetical 0.60% maker rate are shown, each with the same slippage.
+- **E-D11:** three families, each with Holm at 5%: S (4 members), G (3) and M (2), as in §6.2.
+
+### What was done, in the order required
+
+1. **The merged tree.** `main` at `d7b9aae` has the tree (`81418c8`) of the tested `f708809`.
+2. **The rate.**
+   - **Value:** £1 = $1.3476, from the Bank of England Database's series XUDLUSS, for 2026-11-05.
+   - **Retrieved:** 2026-11-08T12:18:57Z.
+   - **Checked:** against the ECB's same-day cross (USD per EUR ÷ GBP per EUR = 1.34592). They differ by 0.125%, against a 0.25% tolerance.
+   - **Why the 5th:** the BoE's latest day at retrieval was 5 November; its database adds a day on the next working day. The ECB's 6 November cross (1.33849) is in the record, but it is not used.
+   - **Raw files:** in `docs/dev/sr1-e1/rate/`, with their SHA-256s in `rate.json`.
+3. **The code, committed before the freeze.**
+   - `ff6d130` holds E1's declaration and evaluation, the driver and the report. The full guarded suite passed at it: 3,039 passed, 13 skipped, 0 failed.
+   - `ca38500` fixes the one call the first freeze attempt refused on, before writing anything: the exchange order now comes from the candle loader's exchange layer. It adds a test; the related tests passed (66).
+4. **The freeze.**
+   - **Record:** `SR1-E1`, frozen 2026-11-08T12:38:00Z, SHA-256 `ba060bb6006ec8620dcc96a4357c673ea58318248bdce216ae0b0eff092acecb`.
+   - **What it holds:**
+     - every member, seed, cost, account and rule;
+     - 65 code files' SHA-256s (LF line endings);
+     - 44 candle series' SHA-256s;
+     - the two probability files' SHA-256s (`pv.linear.t1.PV.q50` `ce72439610a9…`, `pv.linear.t1.P.q50` `fab539dda03b…`);
+     - today's venue rules.
+   - **The trial log** was empty before the freeze.
+5. **The run.**
+   - **Duration:** 9,558 s, in a sandbox with its own data folder, a keyring that fails and no keys.
+   - **Candles:** from Coinbase's cache, offline, cut at 2025-05-06 00:00 UTC (`cache_cut.json`), so no bar from the reserved months exists there.
+   - **Checks:** the record and the candle hashes were verified before scoring, and the evidence was sealed against the same code hashes.
+   - **Trials logged:** 46 (strategy 24, gate 11, model 10, calibration 1).
+6. **The rehearsal.** Before the freeze, the whole run ran once on synthetic candles in a separate sandbox (1h48m). It found four report-formatting fixes. It also showed that the evidence writer refuses once the code changes.
+
+**After the run,** three presentation changes were made to the report generator: a per-run p column, the day-block line and a note under family S. No figure changed. Section 13 of the report was written by hand after the results were read, and section 14 holds the recommendation.
+
+**Files** in `docs/dev/sr1-e1/`:
+
+| File | What | SHA-256 |
+|---|---|---|
+| `experiment.json` | The frozen record, as the sandbox stores it | `9a095a59…` |
+| `results.json` | Every figure | `697b09c7…` |
+| `evidence.json` | The sealed result lines | `461d0812…` |
+| `trials.jsonl` | The trial log | `331baec9…` |
+| `rate.json`, `rate/` | The rate and its two raw sources | `ba19ea6f…` |
+| `cache_cut.json` | The candle cache's cut, file by file | `0519d566…` |
+| `SR1-E1-REPORT-dev.md` | The report | — |
+| `run.log`, `freeze.log` | The run's progress | — |
+
+### Results, in brief
+
+The full results are in `docs/dev/sr1-e1/SR1-E1-REPORT-dev.md`.
+
+| Member | Outcome |
+|---|---|
+| S1 STRAT-004 vs random entries | Pass (p = 0.0065) |
+| S2 STRAT-005 vs random entries | Too few trades to tell (p = 0.18) |
+| S3 STRAT-004 economic | Fail: a loss in the first half |
+| S4 STRAT-005 economic | Fail: a drawdown of 10.1%, above the halt |
+| G1 STRAT-001 + the gate | Fail (p = 0.18) |
+| G2, G3 STRAT-004, STRAT-005 + the gate | Pass (p = 0.0001, 0.013), mostly by skipping 2022 |
+| M1, M2 STRAT-004, STRAT-005 + the PV model | Pass (p = 0.0011, 0.026), mostly by skipping 2022 |
+
+Every line is development only: not evidence for enabling anything.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| The GBP/USD source | The BoE's XUDLUSS on its latest day, checked against the ECB's same-day cross within 0.25% | E-D6 asks for a recorded, verified rate. The BoE is sterling's reference, and the ECB is an independent second source |
+| The coins | 11 of the 13 PV-1 coins. BNB and HYPE have no cached development bars | Recorded at the freeze, before scoring. They are the same 11 coins as FDS-SIG-004's run |
+| Late listings | Each coin from its first cached bar | The cache holds nothing earlier, and the offline loader refuses a range it does not cover |
+| Which exchange | The first in Settings order whose cache holds the series (Coinbase for all 44) | The multi-exchange rule: no exchange is named in code |
+| The gate as a veto | The plain strategy's candidates, vetoed where the gated runner had none; the trades it kept are checked to be identical | R3 needs the gate's veto counts per coin |
+| The model threshold | The 0.5 quantile of the model's earlier probabilities, all coins pooled, fixed at each month's start | Causal, and the same for both models |
+| REF-RANDOM at £500 and £50 | Run and shown | E-D5's sensitivity accounts |
+| Not run | STRAT-004 at 20/20 (its own rule refuses it); the second exchange (Kraken serves only its latest 720 bars); the volatility shrink (it needs FDS-SIG-004's hourly volatility per trade) | Recorded in the record before the run |
+
+### Found by the run
+
+- **The block rule and long trades.** §6.0's rule gave family S blocks of 896 days: 1.8 blocks in 1,586 days. S3's and S4's bootstrap intervals include zero, while their p-values are below 0.01. The rule stays as frozen for E1, and an amendment is proposed for later experiments.
+- **STRAT-005's gap rule.** A missing bar anywhere in the 365-day window holds every decision for up to a year, exits included. It held 42% of the weekly decisions on 4h bars. The daily and 12h series have no gaps, so the deciding results are unaffected. The module's docstring describes the narrower intended rule.
+
 ## Backlog (non-critical)
 
 FDS-SR-001 §13, and:
 
 - **One lockbox opening ledger** shared by FDS-MH-001's final check and FDS-SR-001's, when either is built.
 - **Refused entries recorded:** a structured record of each entry the trader refused (cash, minimum, price unavailable, halt), so "Reconcile..." can show why a trade was not placed.
+- **STRAT-005's lookback bars by time** (found by E1): hold only when a lookback's own bar is missing. Add a test with a gap away from the lookback bars.
+- **§6.0's block rule for long-holding strategies** (found by E1): a spec amendment before any further economic test of the daily strategies.
+- **CI runs none of FDS-SR-001's tests:** `ci-cd.yml` runs 19 older test files. The full suite has to be run locally before each merge.
+- **A point-in-time coin universe** (§9 item 3): E1's STRAT-004 profit came from the five coins listed after 2021.

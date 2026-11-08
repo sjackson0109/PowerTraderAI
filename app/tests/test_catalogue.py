@@ -25,6 +25,7 @@ def good_entry(**overrides):
         "default_params": {"fast": 5, "mode": "A"},
         "param_bounds": {"fast": {"min": 1, "max": 10}, "mode": {"values": ["A", "B"]}},
         "version": "1.0.0",
+        "authorisation": "live",
     }
     entry.update(overrides)
     return entry

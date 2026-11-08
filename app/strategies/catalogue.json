@@ -14,7 +14,8 @@
       "fast_len": {"min": 2, "max": 100},
       "slow_len": {"min": 5, "max": 400}
     },
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "authorisation": "live"
   },
   {
     "strategy_id": "STRAT-001",
@@ -44,7 +45,8 @@
       "adx_len": {"min": 7, "max": 30},
       "adx_min": {"min": 10, "max": 40}
     },
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "authorisation": "live"
   },
   {
     "strategy_id": "STRAT-002",
@@ -62,7 +64,8 @@
       "mult": {"min": 1.0, "max": 5.0},
       "confirm_bars": {"min": 0, "max": 3}
     },
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "authorisation": "live"
   },
   {
     "strategy_id": "STRAT-003",
@@ -80,7 +83,9 @@
       "min_tf_agree": {"min": 1, "max": 7},
       "timeframes": {"type": "model_timeframes"}
     },
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "authorisation": "research",
+    "deterministic": false
   },
   {
     "strategy_id": "OVL-RATCHET",
@@ -98,7 +103,8 @@
       "lock_pct": {"min": 0.0, "max": 50.0},
       "step_pct": {"min": 0.1, "max": 50.0}
     },
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "authorisation": "live"
   },
   {
     "strategy_id": "OVL-ATR",
@@ -115,7 +121,8 @@
       "atr_len": {"min": 5, "max": 50},
       "mult": {"min": 0.5, "max": 10.0}
     },
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "authorisation": "live"
   },
   {
     "strategy_id": "OVL-PLOCK",
@@ -129,7 +136,8 @@
     "dependencies_indicators": [],
     "default_params": {"stages": [[3, 1], [6, 3], [10, 6]]},
     "param_bounds": {"stages": {"type": "stages"}},
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "authorisation": "live"
   },
   {
     "strategy_id": "OVL-COOLDOWN",
@@ -147,5 +155,6 @@
       "bars_after_loss": {"min": 0, "max": 500},
       "global": {"type": "bool"}
     },
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "authorisation": "live"
   }]

@@ -15,6 +15,14 @@ Missing keys take their defaults. A value that is present but wrong (unknown
 engine, unknown strategy id, bad timeframe, bad overlay spec, a parameter that is
 unknown, out of bounds or breaks a rule between two of them) is *not* replaced:
 it is reported in ``problem`` and the trader places no orders.
+
+**Authorisation** (FDS-SR-001 section 5.3). Given the trading ``mode``, a strategy or
+overlay whose catalogue ``authorisation`` does not cover it is a problem too, so a
+research-only entry can never trade and a paper-only one cannot trade live. A
+strategy's timeframe must be one of its ``timeframes_permitted``.
+
+``strategy.research_enabled`` (``read_research_enabled``) lists the strategies and
+overlays the research windows offer. It never affects trading.
 """
 
 from __future__ import annotations
@@ -24,13 +32,31 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 
 from market_data.timeframes import TIMEFRAME_SECONDS
 from strategies.base import StrategyError
-from strategies.catalogue import CATALOGUE, CatalogueError, ParamError, create
+from strategies.catalogue import (
+    CATALOGUE,
+    CatalogueError,
+    ParamError,
+    allowed_in_mode,
+    create,
+)
 from trading_mode import lookup_setting, settings_mapping
 
 ENGINES = ("catalogue", "legacy_neural")
 DEFAULT_ENGINE = "catalogue"
 DEFAULT_ACTIVE_ID = "STRAT-001"
 DEFAULT_TIMEFRAME = "1h"
+# enabled for research unless the settings say otherwise: the strategies and overlays
+# that existed before FDS-SR-001, so they stay usable; every later one starts disabled
+DEFAULT_RESEARCH_ENABLED = (
+    "STRAT-000",
+    "STRAT-001",
+    "STRAT-002",
+    "OVL-RATCHET",
+    "OVL-ATR",
+    "OVL-PLOCK",
+    "OVL-COOLDOWN",
+)
+USES = {"research": "research only", "paper": "paper trading", "live": "live trading"}
 
 
 @dataclass(frozen=True)
@@ -86,7 +112,23 @@ def params_problem(strategy_id: str, params: Mapping[str, Any]) -> Optional[str]
     return None
 
 
-def read_strategy_settings(settings: Any = None) -> StrategySettings:
+def authorisation_problem(entry_id: Any, mode: Any) -> Optional[str]:
+    """Why ``entry_id`` (a strategy or overlay) may not be selected in ``mode``
+    ("paper" or "live"), or None (FDS-SR-001 section 5.3)."""
+    if allowed_in_mode(entry_id, mode):
+        return None
+    entry = CATALOGUE.get(entry_id) if isinstance(entry_id, str) else None
+    if entry is None:
+        return f"unknown id {entry_id!r}"
+    use = USES.get(entry["authorisation"], entry["authorisation"])
+    return (
+        f"{entry_id} can be used for {use}, not {getattr(mode, 'value', mode)} trading"
+    )
+
+
+def read_strategy_settings(settings: Any = None, mode: Any = None) -> StrategySettings:
+    """The strategy settings. With ``mode`` (the trading mode the caller trades in),
+    an entry whose authorisation does not cover it is a problem as well."""
     src = settings_mapping(settings)
     problems = []
 
@@ -126,6 +168,13 @@ def read_strategy_settings(settings: Any = None) -> StrategySettings:
     timeframe = lookup_setting(src, "strategy.timeframe", DEFAULT_TIMEFRAME)
     if timeframe not in TIMEFRAME_SECONDS:
         problems.append(f"unsupported strategy.timeframe {timeframe!r}")
+    elif engine == "catalogue":
+        entry = CATALOGUE.get(active_id) if isinstance(active_id, str) else None
+        if entry is not None and timeframe not in entry["timeframes_permitted"]:
+            problems.append(
+                f"strategy.timeframe {timeframe!r} is not one {active_id} can trade on "
+                f"({', '.join(entry['timeframes_permitted'])})"
+            )
 
     raw_overlays = lookup_setting(src, "strategy.overlays", [])
     overlays: Tuple[dict, ...] = ()
@@ -149,6 +198,13 @@ def read_strategy_settings(settings: Any = None) -> StrategySettings:
     else:
         problems.append(f"invalid strategy.overlays {raw_overlays!r}")
 
+    if engine == "catalogue" and mode is not None:
+        for entry_id in [active_id] + [o["id"] for o in overlays]:
+            if isinstance(entry_id, str) and entry_id in CATALOGUE:
+                problem = authorisation_problem(entry_id, mode)
+                if problem:
+                    problems.append(problem)
+
     if engine == "legacy_neural":
         problems = []  # the catalogue settings are not used by the legacy engine
 
@@ -160,3 +216,18 @@ def read_strategy_settings(settings: Any = None) -> StrategySettings:
         problem="; ".join(problems) if problems else None,
         params=params,
     )
+
+
+def read_research_enabled(settings: Any = None) -> Tuple[str, ...]:
+    """The strategies and overlays enabled for research (``strategy.research_enabled``),
+    in catalogue order. Missing, or not a list: ``DEFAULT_RESEARCH_ENABLED``. Unknown ids
+    are ignored. This setting never affects trading."""
+    src = settings_mapping(settings)
+    raw = lookup_setting(src, "strategy.research_enabled", None)
+    if raw is None:
+        wanted = set(DEFAULT_RESEARCH_ENABLED)
+    elif isinstance(raw, (list, tuple)):
+        wanted = {x for x in raw if isinstance(x, str)}
+    else:
+        wanted = set(DEFAULT_RESEARCH_ENABLED)
+    return tuple(sid for sid in CATALOGUE if sid in wanted)

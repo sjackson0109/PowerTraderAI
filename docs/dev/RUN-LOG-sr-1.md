@@ -30,7 +30,8 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 | M2b | The strategy list in Settings > Strategy | (see M2b), on M2a |
 | M3a | STRAT-004, the daily Donchian breakout | (see M3a), on M2b |
 | M3b | STRAT-005, time-series momentum decided weekly | (see M3b), on M3a |
-| M3c | OVL-REGIME and the entry gate's market context | this branch, on M3b |
+| M3c | OVL-REGIME and the entry gate's market context | (see M3c), on M3b |
+| M4a | The portfolio simulation, baselines, accounts and lot sizes | this branch, on M3c |
 
 ## M2a: the catalogue lifecycle
 
@@ -235,6 +236,64 @@ The existing `tests/test_strategy_settings_ui.py` passes unchanged, except that 
 - research-only and refused for trading.
 
 `tests/test_overlays.py` and `tests/test_strategy_settings_ui.py` changed only where they pin the list of overlays.
+
+## M4a: the portfolio simulation, baselines, accounts and lot sizes
+
+**Branch** `feat/sr-m4a-portfolio-simulation`, from M3c's branch.
+
+**Built:**
+- **`app/strategy_lab/`**, a new package:
+  - **`candidates.py`:** `RunnerSpec` (a strategy, its parameters and overlays, on a timeframe) and `TradeTable` (one coin's trades).
+    - `trade_from(i)` is the trade `run_backtest` makes at zero cost from an entry decided on bar i. It replays the strategy's and the overlays' own exits.
+    - `candidates()` are the trades from every bar the runner, flat, enters on. That includes the regime gate's context.
+    - Each bar's strategy signal is computed once.
+  - **`simulate.py`:**
+    - `load_universe`: one read per coin and per declared context series, through `exchange_candles`.
+    - `Simulation`: the replay at each account size from the same trades, marked at the strategy's closes, with the cooldown.
+    - `usd_accounts` (pounds to dollars at a stated rate); `ACCOUNTS_GBP` = (50, 500, 10,000).
+  - **`baselines.py`:**
+    - REF-HOLD;
+    - REF-RANDOM: random entries replayed through the strategy's own exits, the same entries and waits in a random order, `random()` only;
+    - `replay_draws`: many draws in one replay, each vetoing the trades that are not its own.
+  - **`venue.py`:** today's minimum order and sell step per coin, through the exchange layer.
+- **`signal_fusion/evaluation/replay.py`.** Every extension is off unless asked for, and FDS-SIG-004's tests pass unchanged:
+  - `mark_s`;
+  - `cooldown` (OVL-COOLDOWN's rule per path);
+  - `Costs.base_increment` (sells rounded down, the remainder kept and reported);
+  - the halt's exposure and its further fall over 30 days.
+
+  **One correction for strategies in general:** an entry that fills at the same open as its own coin's exit is not taken. The backtester ignores ENTER while long. STRAT-001 could never meet this, since it cannot signal ENTER and EXIT at once.
+- **The exchange layer:**
+  - `lot_increment` on the connector base (unknown);
+  - Coinbase, from the public product endpoint `min_order_usd` already reads;
+  - the managers, primary first.
+- **FDS-SR-001 amended:** REF-RANDOM (§5.4.1) and the lot-size model (§5.10).
+
+### Where the spec was not explicit, or the code said otherwise
+
+| Point | As built | Why |
+|---|---|---|
+| REF-RANDOM | Random entries replayed through the strategy's own exits; per coin, its number of entries and waits in a random order (FDS-MH-001's R1 idea) | The owner's instruction of 2026-11-07, which replaces §5.4.1's resampled holding periods |
+| Lot sizes | Buys in dollars, raised to the minimum entry. Sells in coins, rounded down to the base increment, with the unsellable remainder kept and reported | `pt_exchanges.py`: Coinbase sizes a market buy in `quote_size` and a sell in `base_size`, rounded down. §5.10 had both rounded |
+| A forced exit's time | The last bar's close | Its fill is that close. A trade entering on the last bar would otherwise open and close at the same instant. The backtester labels it with the bar's open; the tests allow for that |
+| Path-dependent gates | OVL-COOLDOWN is applied by the replay, per path. Gates that read only the market (OVL-REGIME) shape the candidates | A cooldown counts from the path's own last exit |
+| Prices for candidates | Raw opens and closes; costs once, in the replay | As FDS-SIG-004's opportunities: (1 + r_g) m(f, e) − 1 |
+| `vetoed` in a batch of random draws | Counts the other draws' trades a path does not take | It is the batching's mechanism, not a measure. The draws' results are their net, capital-days and drawdown |
+
+### Tests
+
+`tests/test_strategy_lab.py`, 21 tests:
+- **Exactness:** with one coin at 100% and no costs, the replay makes exactly `run_backtest`'s trades for STRAT-001 at 1h, STRAT-002 at 4h with an ATR stop, STRAT-004 with a ratchet, STRAT-005, and STRAT-001 with the cooldown;
+- the regime gate's context;
+- an entry at its coin's own exit, a case shown to occur in the test's data;
+- one load for three accounts (counting the loader's calls);
+- the stated rate;
+- small accounts: the minimum entry, and the rounded sells with their reported remainder;
+- the halt's exposure;
+- REF-HOLD;
+- **REF-RANDOM:** own exits, counts and waits, seeds, and batch against alone;
+- the replay's defaults unchanged;
+- the sell step from Coinbase, and primary first.
 
 ## Backlog (non-critical)
 

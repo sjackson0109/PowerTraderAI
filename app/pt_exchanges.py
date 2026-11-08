@@ -2031,6 +2031,20 @@ class CoinbaseExchange(AbstractExchange):
             return None
         return minimum if minimum > 0 else None
 
+    def lot_increment(self, symbol: str) -> Optional[float]:
+        """The step Coinbase rounds a market sell of ``symbol`` down to (the
+        product's ``base_increment``), from the unauthenticated product endpoint.
+        None if it cannot be read."""
+        try:
+            self.wait_for_request_slot()
+            response = requests.get(
+                f"{self.base_url}/products/{self._convert_symbol(symbol)}", timeout=10
+            )
+            step = float(response.json().get("base_increment") or 0)
+        except Exception:
+            return None
+        return step if step > 0 else None
+
     def candle_timeframes(self):
         return frozenset(_COINBASE_GRANULARITY)
 

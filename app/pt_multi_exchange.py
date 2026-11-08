@@ -540,6 +540,14 @@ class MultiExchangeManager:
 
         return self.exchange_manager.min_order_usd(symbol)
 
+    def lot_increment(self, symbol: str) -> Optional[float]:
+        """The step a market sell of ``symbol`` is rounded down to: the primary
+        exchange's, else the first other enabled exchange's that states one."""
+        if not self.initialized:
+            raise RuntimeError("MultiExchangeManager not initialized")
+
+        return self.exchange_manager.lot_increment(symbol)
+
     def candles(
         self,
         symbol: str,

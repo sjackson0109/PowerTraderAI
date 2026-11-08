@@ -629,6 +629,12 @@ class AbstractExchange(abc.ABC):
         Connectors that can read it from their exchange override this."""
         return None
 
+    def lot_increment(self, symbol: str) -> Optional[float]:
+        """The step a market sell's quantity of ``symbol`` is rounded down to, in
+        coins, or None when this connector does not know it (FDS-SR-001 5.10).
+        Connectors that can read it from public product data override this."""
+        return None
+
     # --- public market data (FDS-MX-001 section 5.1) ------------------------------
     # Optional: a connector that leaves these as they are answers "not supported",
     # and the exchange layer asks the next exchange.
@@ -1025,6 +1031,21 @@ class ExchangeManager:
             primary=exchange_type == self.primary_exchange,
             built_from=built_from,
         )
+
+    def lot_increment(self, symbol: str) -> Optional[float]:
+        """The step a market sell of ``symbol`` is rounded down to: the primary
+        exchange's; when it does not state one, the first other connected exchange's
+        that does. None when no exchange states one."""
+        symbol = dollar_symbol(symbol)
+        for exchange_type, exchange in self._ordered():
+            try:
+                step = exchange.lot_increment(symbol)
+            except Exception as exc:
+                logger.debug(f"No lot increment from {exchange_type.value}: {exc}")
+                continue
+            if step is not None and step > 0:
+                return float(step)
+        return None
 
     def min_order_usd(self, symbol: str) -> Optional[float]:
         """The minimum order value for ``symbol``: the primary exchange's; when it does

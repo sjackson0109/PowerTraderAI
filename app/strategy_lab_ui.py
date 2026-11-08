@@ -616,3 +616,51 @@ class CompareWindow(tk.Toplevel):
             row = compare_row(record)
             if self.search.matches(row):
                 tree.insert("", "end", values=row)
+
+
+EVIDENCE_COLUMNS = ("kind", "model", "finding", "period", "recorded")
+EVIDENCE_HEADINGS = {
+    "kind": "Finding",
+    "model": "Compared",
+    "finding": "Result",
+    "period": "Data",
+    "recorded": "Recorded",
+}
+NO_EVIDENCE = "No model has been evaluated with this strategy."
+
+
+class EvidenceWindow(tk.Toplevel):
+    """Model evidence...: every frozen finding about models with one strategy, kept
+    apart by kind (prediction, trading, economic)."""
+
+    def __init__(self, master: tk.Misc, strategy_id: str, lines_fn=None):
+        from strategy_lab import evidence
+
+        super().__init__(master)
+        self.title(f"Model evidence: {words.name_of(strategy_id)}")
+        self.geometry("1100x360")
+        lines = (lines_fn or evidence.lines_for)(strategy_id)
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill="both", expand=True)
+        self.table = ui_table.DataTable(
+            body,
+            EVIDENCE_COLUMNS,
+            EVIDENCE_HEADINGS,
+            empty_text=NO_EVIDENCE,
+            sortable=False,
+            height=8,
+        )
+        self.table.pack(fill="both", expand=True)
+        for line in lines:
+            self.table.tree.insert(
+                "",
+                "end",
+                values=(
+                    evidence.KIND_NAMES.get(line.kind, line.kind),
+                    line.model,
+                    line.text,
+                    line.period,
+                    line.recorded,
+                ),
+            )
+        self.table.settle()

@@ -1,0 +1,12 @@
+replay bar 70 (2024-03-11): ENTER_LONG NEW_CLOSING_HIGH
+replay bar 71 (2024-03-12): HOLD INSIDE_CHANNEL
+
+exchange 0 s late: provider calls 2; first decision (1, datetime.date(2024, 3, 11), 'ENTER_LONG', 'NEW_CLOSING_HIGH'); last (86400, datetime.date(2024, 3, 12), 'HOLD', 'INSIDE_CHANNEL'); ENTER_LONG decisions 144
+  bars decided on: ['2024-03-11', '2024-03-12']
+
+exchange 5 s late: provider calls 2; first decision (1, datetime.date(2024, 3, 10), 'HOLD', 'INSIDE_CHANNEL'); last (86400, datetime.date(2024, 3, 11), 'ENTER_LONG', 'NEW_CLOSING_HIGH'); ENTER_LONG decisions 1
+  bars decided on: ['2024-03-10', '2024-03-11']
+
+late once, at the close of bar 70 only:
+  bars decided on: ['2024-03-10', '2024-03-12', '2024-03-13']
+  ENTER_LONG decisions: 0

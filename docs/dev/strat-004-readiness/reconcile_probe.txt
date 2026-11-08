@@ -1,0 +1,21 @@
+replay trades: 5 last forced: True
+
+1 duplicated entry (two ENTRY buys, one EXIT sell): {'matched': 1, 'timing': 0, 'missed': 4, 'extra': 0}
+   matched fill_vs_open 0.0 fee_rate_paid 0.005
+   paper_trades(): [(6652890, 9244830, 0.005)]
+
+2 entry 20 hours late, in the same candle: {'matched': 1, 'timing': 0, 'missed': 4, 'extra': 0}
+   matched fill_vs_open 0.03 fee_rate_paid 0.005
+   paper_trades(): [(6724800, 9244830, 0.005)]
+
+3 exit fee 1.20% against entry fee 0.50%: {'matched': 1, 'timing': 0, 'missed': 4, 'extra': 0}
+   matched fill_vs_open 0.0 fee_rate_paid 0.005
+   paper_trades(): [(6652830, 9244830, 0.012)]
+
+4 trade still open at reconcile (replay closes it at the last close): {'matched': 0, 'timing': 1, 'missed': 4, 'extra': 0}
+   timing fill_vs_open 0.0 fee_rate_paid 0.005
+   paper_trades(): [(29808030, None, None)]
+
+5 a row placed by another strategy (STRAT-001) on the replay's bar: {'matched': 1, 'timing': 0, 'missed': 4, 'extra': 0}
+   matched fill_vs_open 0.0 fee_rate_paid 0.005
+   paper_trades(): [(6652830, 9244830, 0.005)]

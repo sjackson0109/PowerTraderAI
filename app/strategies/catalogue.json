@@ -108,6 +108,35 @@
     "research_refs": ["FDS-SR-001 5.4.3", "strategy-research/A-research-report.md 4"]
   },
   {
+    "strategy_id": "STRAT-005",
+    "strategy_name": "Time-Series Momentum (daily, weekly decisions)",
+    "family": "momentum",
+    "class_type": "main",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1d",
+    "timeframes_permitted": ["1d"],
+    "entry_logic_summary": "On a decision day (every rebalance_days days from Monday 2020-01-06), at least min_agree of the returns over lookback_1, lookback_2 and lookback_3 days are positive.",
+    "exit_logic_summary": "On a decision day, fewer than min_agree of the three returns are positive; or a risk overlay exits. Between decision days it holds.",
+    "dependencies_indicators": ["RETURN"],
+    "default_params": {
+      "lookback_1": 30,
+      "lookback_2": 90,
+      "lookback_3": 365,
+      "min_agree": 2,
+      "rebalance_days": 7
+    },
+    "param_bounds": {
+      "lookback_1": {"min": 5, "max": 120},
+      "lookback_2": {"min": 20, "max": 200},
+      "lookback_3": {"min": 60, "max": 400},
+      "min_agree": {"min": 1, "max": 3},
+      "rebalance_days": {"min": 1, "max": 30}
+    },
+    "version": "1.0.0",
+    "authorisation": "research",
+    "research_refs": ["FDS-SR-001 5.4.3", "strategy-research/A-research-report.md 3"]
+  },
+  {
     "strategy_id": "OVL-RATCHET",
     "strategy_name": "Ratchet Stop",
     "family": "risk_overlay",

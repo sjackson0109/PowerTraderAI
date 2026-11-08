@@ -28,7 +28,8 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 |---|---|---|
 | M2a | Catalogue lifecycle, authorisation, fail-closed checks | (see M2a) |
 | M2b | The strategy list in Settings > Strategy | (see M2b), on M2a |
-| M3a | STRAT-004, the daily Donchian breakout | this branch, on M2b |
+| M3a | STRAT-004, the daily Donchian breakout | (see M3a), on M2b |
+| M3b | STRAT-005, time-series momentum decided weekly | this branch, on M3a |
 
 ## M2a: the catalogue lifecycle
 
@@ -149,6 +150,43 @@ The existing `tests/test_strategy_settings_ui.py` passes unchanged, except that 
 - no look-ahead: appending bars changes no earlier decision, and the rule reads only its window;
 - parity: the live signal engine and a replayed runner agree on every closed daily bar;
 - the backtester's next-open fills;
+- research-only, not enabled, refused for trading, described.
+
+## M3b: STRAT-005, time-series momentum decided weekly
+
+**Branch** `feat/sr-m3b-strat-005-tsmom`, from M3a's branch.
+
+**Built:**
+- **`strategies/momentum.py`.** On a decision day it counts how many of the 30-, 90- and 365-day returns are positive.
+  - **Entry:** at least `min_agree` (2) are positive.
+  - **Exit:** fewer are.
+  - **Between decision days:** HOLD, so only an overlay can exit.
+  - **Decision days:** every `rebalance_days` (7) days from Monday 2020-01-06. The decision is made on the bar that closes at midnight UTC at the end of the day.
+  - **Each lookback's earlier close** is the bar that opened exactly L calendar days earlier. A gap there holds.
+  - **Defaults:** 30/90/365, two of three, weekly (E-D9), not tuned.
+- **Catalogue entry:** family `momentum`; `authorisation: research`; `timeframes_permitted: ["1d"]`; not enabled for research by default.
+- **Its description** for the strategy list.
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| The decision bar on intraday candles | The bar that closes at 00:00 UTC ending a decision day | One decision per decision day on any candles, as on daily bars |
+| A gap at a lookback's date | HOLD, "BARS_MISSING"; no other bar stands in | A return over a different span would be a different rule |
+| Entering mid-trend | On any decision day with enough positive returns, not only when the vote first turns | It is the published rule: long while the signal is positive. After a stop's exit it re-enters on the next decision day if the vote still holds |
+| A zero return | Not positive | "Positive" (§5.4.3) |
+| The lookback's earlier bar on intraday candles | Exactly L days of bars before the decision bar | Every supported timeframe divides a day, so L days is a whole number of bars |
+
+### Tests
+
+`tests/test_strategy_momentum.py`:
+- the schedule (weekly Mondays, `rebalance_days`, 4-hour bars);
+- hand-worked votes, `min_agree`, a zero return, a gap;
+- the warm-up;
+- no look-ahead;
+- engine/runner parity on every closed daily bar;
+- next-open fills;
+- bounds and the rule;
 - research-only, not enabled, refused for trading, described.
 
 ## Backlog (non-critical)

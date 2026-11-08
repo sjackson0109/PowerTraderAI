@@ -585,7 +585,9 @@ def analyse(batch_id: str, out_dir: str) -> Dict[str, Any]:
         "F2": fd.f2_line(
             d["F2"], passes["F2"], pv["net"], pv["trades"], d["F2"]["edge"]
         ),
-        "F3": fd.f3_line(d["F3"], passes["F3"], fd.f3_failed(d["F3"], holm["F3"])),
+        "F3": fd.f3_line(
+            d["F3"], passes["F3"], fd.f3_failed(d["F3"], holm["F3"]), holm["F3"]
+        ),
         "Q3": fd.shrink_line(d["Q3"], passes["Q3"]),
         "Q2": {
             "calibrated": "Calibrated within tolerance",

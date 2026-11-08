@@ -285,17 +285,92 @@ class TestWords:
         r.update(kw)
         return r
 
-    def economic(self, trades=150, half=(70, 80)):
+    def economic(self, trades=150, half=(70, 80), p=0.03, **met):
+        req = {"stable": True, "not_one_coin": True, "within_halt": True, **met}
+        req["trades"] = trades >= 100 and min(half) >= 30
         return {
-            "requirements": {"trades": trades >= 100 and min(half) >= 30},
-            "test": {"p": 0.03},
+            "requirements": req,
+            "test": {"p": p},
             "report": {
                 "net_usd": 250.0, "rpcd": 0.0003, "trades": trades,
                 "trades_by_half": list(half), "max_drawdown": 0.02,
+                "net_by_half": [-40.0, 290.0], "without_best_coin": 90.0,
+                "net_by_coin": {"SOL": 160.0, "BTC": 90.0},
             },
             "smallest_detectable": 0.0002,
             "failed": "a profit in each half",
         }  # fmt: skip
+
+    def test_an_economic_failure_says_it_failed(self):
+        # E1's S3: every F3 requirement met but a profit in each half
+        s3 = e1.member_line(
+            self.member("S3"), self.economic(stable=False), False, holm_pass=True
+        )
+        assert s3.startswith(
+            "Not shown to be profitable after fees. STRAT-004 failed the requirement "
+            "for a positive net profit in both evaluation halves (first half $-40.00, "
+            "second half $+290.00). Its bootstrap test of return per capital-day "
+            "passed Holm over 4 (p = 0.0300), but that is one of F3's five "
+            "requirements, and a pass needs all five."
+        )
+        # E1's S4: every F3 requirement met but the drawdown
+        result = self.economic(within_halt=False)
+        result["report"]["max_drawdown"] = 0.1014
+        result["failed"] = "a drawdown below the halt level"
+        s4 = e1.member_line(self.member("S4"), result, False, holm_pass=True)
+        assert s4.startswith(
+            "Not shown to be profitable after fees. STRAT-005 exceeded the permitted "
+            "8% maximum drawdown, reaching 10.14%. Its bootstrap test"
+        )
+        for line in (s3, s4):
+            assert "maximum drawdown" in line and line.endswith(e1.DEV_ONLY)
+
+    def test_a_failed_bootstrap_is_named_with_the_others(self):
+        result = self.economic(p=0.4, not_one_coin=False)
+        result["failed"] = "a profit per capital-day"
+        line = e1.member_line(self.member("S3"), result, False)  # holm from "failed"
+        assert line.startswith(
+            "Not shown to be profitable after fees. STRAT-004 failed the requirement "
+            "that its bootstrap test of return per capital-day passes Holm "
+            "(p = 0.4000), and failed the requirement for a positive net profit "
+            "without its most profitable coin ($+90.00 without SOL)."
+        )
+        assert "passed Holm" not in line
+
+    def test_the_sealed_e1_results_read_as_failures(self):
+        """The corrected words, rendered from E1's sealed results; the outcomes stay."""
+        import json
+        import os
+
+        path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "..",
+            "docs",
+            "dev",
+            "sr1-e1",
+            "results.json",
+        )
+        with open(path, encoding="utf-8") as f:
+            sealed = json.load(f)
+        for mid, words in (
+            (
+                "S3",
+                "STRAT-004 failed the requirement for a positive net profit in both "
+                "evaluation halves (first half $-116.89, second half $+1,809.83).",
+            ),
+            (
+                "S4",
+                "STRAT-005 exceeded the permitted 8% maximum drawdown, reaching 10.14%.",
+            ),
+        ):
+            v = sealed["verdicts"][mid]
+            assert (v["outcome"], v["passed"], v["holm_pass"]) == ("fail", False, True)
+            line = e1.member_line(
+                self.member(mid), sealed["members"][mid], v["passed"], v["holm_pass"]
+            )
+            assert line.startswith(f"Not shown to be profitable after fees. {words}")
+            assert "a pass needs all five" in line
 
     def test_only_an_economic_line_says_profitable(self):
         lines = [
@@ -315,11 +390,13 @@ class TestWords:
             assert "profitable" not in line.lower()
             assert line.endswith(e1.DEV_ONLY)
         win = e1.member_line(self.member("S3"), self.economic(), True)
-        lose = e1.member_line(self.member("S3"), self.economic(), False)
+        lose = e1.member_line(
+            self.member("S3"), self.economic(stable=False), False, holm_pass=True
+        )
         few = e1.member_line(self.member("S4"), self.economic(80, (50, 30)), False)
         assert win.startswith("Profitable after fees at £10,000")
         assert lose.startswith(
-            "Not shown to be profitable after fees: a profit in each half"
+            "Not shown to be profitable after fees. STRAT-004 failed the requirement"
         )
         assert few.startswith("Not assessable: 80 trades")
         assert all(x.endswith(e1.DEV_ONLY) for x in (win, lose, few))

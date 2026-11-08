@@ -1,17 +1,23 @@
 """
 Settings > Strategy: what decides each buy and sale, and every value it uses.
 
+* **Strategies and stops** - every catalogue entry, with what it may be used for
+  (research only, paper, or paper and live), whether it is enabled for research,
+  and whether it is in use (FDS-SR-001 section 5.8). Highlighting one shows its
+  description, its research tick and "Use for trading", offered only where its
+  authorisation covers the trading mode.
 * **Signals from** - a rule-based strategy, or the legacy neural levels with DCA and
   the trailing profit margin.
-* **Strategy** - the catalogue's strategies (not one that needs a trained model),
-  what each buys and sells on, and each parameter with its range, default and
-  description.
+* **Strategy** - the strategies this trading mode may use (not one that needs a
+  trained model), what each buys and sells on, and each parameter with its range,
+  default and description.
 * **Candles** - the timeframe the strategy decides on.
 * **Stops and filters** - the risk overlays, each ticked on or off, with theirs.
 
 Save writes the ``strategy`` keys of ``pt_config.json``
 (``SettingsManager.set_strategy``); the trader reads them before every decision, so
-no restart is needed. Every value is checked first (bounds, whole numbers, the rules
+no restart is needed. ``research_enabled`` is written only when a research tick
+changed, so a settings file nobody changed stays as it was. Every value is checked first (bounds, whole numbers, the rules
 between two parameters): a refused save changes nothing. A strategy's parameters are
 saved only where they differ from its defaults, so "Reset to defaults" saves none.
 
@@ -25,35 +31,56 @@ from tkinter import messagebox as _messagebox
 from tkinter import ttk
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
+import ui_table
 import ui_tokens
 from market_data.timeframes import TIMEFRAME_SECONDS
 from strategies import descriptions as words
-from strategies.catalogue import CATALOGUE
+from strategies.catalogue import CATALOGUE, allowed_in_mode
 from strategies.settings import (
     DEFAULT_ACTIVE_ID,
     DEFAULT_ENGINE,
     DEFAULT_TIMEFRAME,
     ENGINES,
     params_problem,
+    read_research_enabled,
 )
 
 TITLE = "Strategy"
 HELP_WRAP = 520
 
 
-def offered_strategies() -> List[str]:
-    """The strategies the window offers, in catalogue order: every main strategy
-    except one that needs a trained model."""
+def offered_strategies(mode: str = "paper") -> List[str]:
+    """The strategies the window offers for trading in ``mode``, in catalogue order:
+    every main strategy authorised for it, except one that needs a trained model."""
     return [
         sid
         for sid, e in CATALOGUE.items()
-        if e["class_type"] == "main" and e["family"] != "model"
+        if e["class_type"] == "main"
+        and e["family"] != "model"
+        and allowed_in_mode(sid, mode)
     ]
 
 
 def overlay_ids() -> List[str]:
     """The stops and filters, in catalogue order."""
     return [sid for sid, e in CATALOGUE.items() if e["class_type"] == "risk_overlay"]
+
+
+def listed_ids() -> List[str]:
+    """Every entry the strategy list shows: the strategies, then the stops."""
+    main = [sid for sid, e in CATALOGUE.items() if e["class_type"] == "main"]
+    return main + overlay_ids()
+
+
+def trading_mode_of(manager: Any) -> str:
+    """The trading mode the settings name: "live" only when it is exactly that, as
+    the trader reads it (trading_mode.py); anything else is paper."""
+    try:
+        trading = manager.get("trading") or {}
+    except Exception:
+        return "paper"
+    mode = trading.get("mode") if isinstance(trading, Mapping) else None
+    return "live" if mode == "live" else "paper"
 
 
 def _number(value: Any) -> str:
@@ -95,7 +122,7 @@ class StrategySettingsWindow(tk.Toplevel):
     ) -> None:
         super().__init__(parent)
         self.title(TITLE)
-        self.geometry("760x680")
+        self.geometry("760x780")
         self.minsize(640, 480)
         if manager_factory is None:
             from pt_settings_manager import SettingsManager
@@ -110,6 +137,7 @@ class StrategySettingsWindow(tk.Toplevel):
 
         saved = self._factory().get("strategy") or {}
         self._saved = saved if isinstance(saved, Mapping) else {}
+        self._mode = trading_mode_of(self._factory())
         raw_params = self._saved.get("params")
         self._saved_params: Dict[str, dict] = (
             {k: dict(v) for k, v in raw_params.items() if isinstance(v, Mapping)}
@@ -123,7 +151,7 @@ class StrategySettingsWindow(tk.Toplevel):
             notes.append(f"The saved signal source {engine!r} is not one of these.")
             engine = DEFAULT_ENGINE
         active = self._saved.get("active_id", DEFAULT_ACTIVE_ID)
-        if active not in offered_strategies():
+        if active not in offered_strategies(self._mode):
             notes.append(f"The saved strategy {active!r} is not one of these.")
             active = DEFAULT_ACTIVE_ID
         timeframe = self._saved.get("timeframe", DEFAULT_TIMEFRAME)
@@ -134,6 +162,12 @@ class StrategySettingsWindow(tk.Toplevel):
         raw_overlays = self._saved.get("overlays")
         for spec in raw_overlays if isinstance(raw_overlays, list) else ():
             if isinstance(spec, Mapping) and spec.get("id") in overlay_ids():
+                if not allowed_in_mode(spec["id"], self._mode):
+                    notes.append(
+                        f"The saved stop {words.name_of(spec['id'])} cannot be used "
+                        f"for {self._mode} trading."
+                    )
+                    continue
                 params = spec.get("params")
                 saved_overlays[spec["id"]] = (
                     dict(params) if isinstance(params, Mapping) else {}
@@ -145,6 +179,15 @@ class StrategySettingsWindow(tk.Toplevel):
             master=self, value=words.timeframe_name(timeframe)
         )
         self.status_var = tk.StringVar(master=self, value=" ".join(notes))
+        # the strategy list: what is enabled for research, and what is highlighted
+        self._research_saved = set(read_research_enabled({"strategy": self._saved}))
+        self.research_on: Dict[str, tk.BooleanVar] = {
+            sid: tk.BooleanVar(master=self, value=sid in self._research_saved)
+            for sid in listed_ids()
+        }
+        self.highlight_var = tk.StringVar(master=self, value=active)
+        self.highlight_help_var = tk.StringVar(master=self)
+        self.highlight_use_var = tk.StringVar(master=self)
         self.strategy_help_var = tk.StringVar(master=self)
         self.timeframe_help_var = tk.StringVar(master=self)
         # per strategy / overlay id: {parameter: variable}, made when first shown
@@ -172,18 +215,44 @@ class StrategySettingsWindow(tk.Toplevel):
         self.engine_var.trace_add("write", lambda *_: self._show_engine())
         self.strategy_var.trace_add("write", lambda *_: self._show_strategy())
         self.timeframe_var.trace_add("write", lambda *_: self._show_timeframe())
+        for var in list(self.research_on.values()) + list(self.overlay_on.values()):
+            var.trace_add("write", lambda *_: self._refresh_list())
         self._show_engine()
         self._show_strategy()
+        self._show_highlight()
         self.transient(parent)
 
     # -- values ----------------------------------------------------------------------
 
     def selected_strategy(self) -> str:
         name = self.strategy_var.get()
-        for sid in offered_strategies():
+        for sid in offered_strategies(self._mode):
             if words.name_of(sid) == name:
                 return sid
         return DEFAULT_ACTIVE_ID
+
+    def research_enabled(self) -> List[str]:
+        """The entries ticked for research, in the list's order."""
+        return [sid for sid in listed_ids() if self.research_on[sid].get()]
+
+    def can_use(self, sid: str) -> bool:
+        """Whether "Use for trading" is offered for ``sid`` in this trading mode."""
+        if CATALOGUE[sid]["class_type"] == "main":
+            return sid in offered_strategies(self._mode)
+        return allowed_in_mode(sid, self._mode)
+
+    def use_highlighted(self) -> None:
+        """ "Use for trading": the highlighted strategy becomes the one Save trades,
+        or the highlighted stop is ticked. Nothing happens where it is not allowed."""
+        sid = self.highlight_var.get()
+        if sid not in CATALOGUE or not self.can_use(sid):
+            return
+        if CATALOGUE[sid]["class_type"] == "main":
+            self.engine_var.set("catalogue")
+            self.strategy_var.set(words.name_of(sid))
+        else:
+            self.overlay_on[sid].set(True)
+            self._show_overlay(sid)
 
     def selected_timeframe(self) -> str:
         name = self.timeframe_var.get()
@@ -261,8 +330,14 @@ class StrategySettingsWindow(tk.Toplevel):
         """What Save writes: the ``strategy`` keys. With the neural levels chosen,
         only the signal source (the strategy's own values are kept as saved)."""
         engine = self.engine_var.get()
+        research = self.research_enabled()
+        extra = (
+            {"research_enabled": research}
+            if set(research) != self._research_saved
+            else {}
+        )
         if engine != "catalogue":
-            return {"engine": engine}
+            return {"engine": engine, **extra}
         sid = self.selected_strategy()
         params = dict(self._saved_params)
         changed = _changed(sid, self._parse(sid))
@@ -281,6 +356,7 @@ class StrategySettingsWindow(tk.Toplevel):
             "timeframe": self.selected_timeframe(),
             "params": params,
             "overlays": overlays,
+            **extra,
         }
 
     def save(self) -> bool:
@@ -355,6 +431,12 @@ class StrategySettingsWindow(tk.Toplevel):
         body.columnconfigure(0, weight=1)
 
         r = 0
+        listing = ttk.Frame(body)
+        listing.grid(row=r, column=0, sticky="ew", pady=(0, 12))
+        listing.columnconfigure(0, weight=1)
+        r += 1
+        self._build_list(listing)
+
         ttk.Label(body, text="Signals from", style="Header.TLabel").grid(
             row=r, column=0, sticky="w"
         )
@@ -402,6 +484,109 @@ class StrategySettingsWindow(tk.Toplevel):
             side="left", padx=8
         )
 
+    def _build_list(self, frm: ttk.Frame) -> None:
+        """The strategy list, and the highlighted entry's details under it."""
+        ttk.Label(frm, text="Strategies and stops", style="Header.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        columns = ("name", "kind", "family", "candles", "use", "research", "in_use")
+        headings = {
+            "name": "Name",
+            "kind": "Kind",
+            "family": "Family",
+            "candles": "Candles",
+            "use": "Use",
+            "research": "Research",
+            "in_use": "In use",
+        }
+        self.list_table = ui_table.DataTable(
+            frm,
+            columns,
+            headings,
+            empty_text="No strategies",
+            sortable=False,
+            height=min(len(listed_ids()), 10),
+            selectmode="browse",
+        )
+        self.list_table.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        tree = self.list_table.tree
+        for sid in listed_ids():
+            tree.insert("", "end", iid=sid, values=self._row(sid))
+        tree.bind("<<TreeviewSelect>>", self._on_list_select, add="+")
+
+        detail = ttk.Frame(frm)
+        detail.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        detail.columnconfigure(0, weight=1)
+        ttk.Label(
+            detail,
+            textvariable=self.highlight_help_var,
+            wraplength=HELP_WRAP,
+            justify="left",
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        ttk.Label(
+            detail,
+            textvariable=self.highlight_use_var,
+            style="Muted.TLabel",
+            wraplength=HELP_WRAP,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 0))
+        actions = ttk.Frame(detail)
+        actions.grid(row=2, column=0, sticky="w", pady=(4, 0))
+        self.research_tick = ttk.Checkbutton(actions, text="Enabled for research")
+        self.research_tick.pack(side="left")
+        self.use_button = ttk.Button(
+            actions, text="Use for trading", command=self.use_highlighted
+        )
+        self.use_button.pack(side="left", padx=(12, 0))
+
+    def _row(self, sid: str) -> tuple:
+        entry = CATALOGUE[sid]
+        if entry["class_type"] == "main":
+            in_use = (
+                self.engine_var.get() == "catalogue" and self.selected_strategy() == sid
+            )
+            candles = words.timeframe_name(entry["timeframe_primary"])
+        else:
+            in_use = bool(self.overlay_on[sid].get())
+            candles = "Any"
+        return (
+            words.name_of(sid),
+            words.KIND_NAMES[entry["class_type"]],
+            words.FAMILY_NAMES.get(entry["family"], entry["family"]),
+            candles,
+            words.USE_NAMES[entry["authorisation"]],
+            "Yes" if self.research_on[sid].get() else "No",
+            "Yes" if in_use else "",
+        )
+
+    def _refresh_list(self) -> None:
+        table = getattr(self, "list_table", None)
+        if table is None:
+            return
+        for sid in listed_ids():
+            table.tree.item(sid, values=self._row(sid))
+        self._show_highlight()
+
+    def _on_list_select(self, _event=None) -> None:
+        chosen = self.list_table.tree.selection()
+        if chosen:
+            self.highlight_var.set(chosen[0])
+            self._show_highlight()
+
+    def _show_highlight(self) -> None:
+        sid = self.highlight_var.get()
+        if sid not in CATALOGUE or not hasattr(self, "research_tick"):
+            return
+        described = words.DESCRIPTIONS.get(sid)
+        summary = described.summary if described is not None else ""
+        self.highlight_help_var.set(f"{words.name_of(sid)}: {summary}".strip())
+        use = words.USE_HELP[CATALOGUE[sid]["authorisation"]]
+        if not self.can_use(sid) and allowed_in_mode(sid, "paper"):
+            use += f" Trading is set to {self._mode}."
+        self.highlight_use_var.set(use)
+        self.research_tick.configure(variable=self.research_on[sid])
+        self.use_button.state(["!disabled"] if self.can_use(sid) else ["disabled"])
+
     def _build_catalogue(self, frm: ttk.Frame) -> None:
         r = 0
         ttk.Label(frm, text="Strategy:").grid(
@@ -410,7 +595,7 @@ class StrategySettingsWindow(tk.Toplevel):
         self.strategy_combo = ttk.Combobox(
             frm,
             textvariable=self.strategy_var,
-            values=[words.name_of(sid) for sid in offered_strategies()],
+            values=[words.name_of(sid) for sid in offered_strategies(self._mode)],
             state="readonly",
         )
         self.strategy_combo.grid(row=r, column=1, sticky="ew", pady=4)
@@ -474,12 +659,15 @@ class StrategySettingsWindow(tk.Toplevel):
         self._overlay_frames: Dict[str, ttk.Frame] = {}
         for oid in overlay_ids():
             described = words.DESCRIPTIONS[oid]
-            ttk.Checkbutton(
+            tick = ttk.Checkbutton(
                 frm,
                 text=described.name,
                 variable=self.overlay_on[oid],
                 command=lambda o=oid: self._show_overlay(o),
-            ).grid(row=r, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            )
+            tick.grid(row=r, column=0, columnspan=2, sticky="w", pady=(8, 0))
+            if not allowed_in_mode(oid, self._mode):
+                tick.state(["disabled"])  # this trading mode may not use it
             r += 1
             ttk.Label(
                 frm,
@@ -570,12 +758,23 @@ class StrategySettingsWindow(tk.Toplevel):
             self._catalogue_frame.grid()
         else:
             self._catalogue_frame.grid_remove()
+        self._refresh_list()
 
     def _show_strategy(self) -> None:
         sid = self.selected_strategy()
         self.strategy_help_var.set(words.DESCRIPTIONS[sid].summary)
         self._param_rows(self._params_frame, sid)
+        permitted = CATALOGUE[sid]["timeframes_permitted"]
+        offered = [tf for tf in words.timeframes() if tf in permitted]
+        self.timeframe_combo.configure(
+            values=[words.timeframe_name(tf) for tf in offered]
+        )
+        if self.selected_timeframe() not in permitted:
+            self.timeframe_var.set(
+                words.timeframe_name(CATALOGUE[sid]["timeframe_primary"])
+            )
         self._show_timeframe()
+        self._refresh_list()
 
     def _show_timeframe(self) -> None:
         tf = self.selected_timeframe()

@@ -26,7 +26,8 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
 
 | Milestone | What | PR |
 |---|---|---|
-| M2a | Catalogue lifecycle, authorisation, fail-closed checks | this branch |
+| M2a | Catalogue lifecycle, authorisation, fail-closed checks | (see M2a) |
+| M2b | The strategy list in Settings > Strategy | this branch, on M2a |
 
 ## M2a: the catalogue lifecycle
 
@@ -72,6 +73,48 @@ The owner accepted FDS-SR-001, with its research report, architecture assessment
   - a paper strategy trades in paper as before.
 
 `tests/test_catalogue.py` and `tests/test_model_strategy.py` changed only where they pin the schema (the new required field, the longer families list).
+
+## M2b: the strategy list in Settings > Strategy
+
+**Branch** `feat/sr-m2b-strategy-catalogue-view`, from M2a's branch.
+
+**Built:**
+- **`strategy_settings_ui.py`:** a "Strategies and stops" list at the top of the window.
+  - **Rows:** every strategy, then every stop. Each shows its name, kind, family and candles, what it may be used for ("Research only", "Paper", "Paper and live"), whether it is enabled for research, and whether it is in use.
+  - **Highlighting a row shows:**
+    - its description;
+    - what it can be used for;
+    - an "Enabled for research" tick;
+    - "Use for trading". This is offered only where the entry's authorisation covers the trading mode in Settings: for a strategy it chooses it, for a stop it ticks it.
+- **Trading choices:**
+  - The strategy and stop choices below the list offer only what the trading mode may use.
+  - A saved strategy or stop the mode may not use is reported, as an unknown one is today.
+  - The candles offered are the strategy's `timeframes_permitted`.
+- **Save** writes `strategy.research_enabled` only when a research tick changed.
+- **`strategies/descriptions.py`:**
+  - the words for families, kinds and uses;
+  - a description of STRAT-003, which the list now shows (it still cannot be chosen).
+
+### Where the spec was not explicit
+
+| Point | As built | Why |
+|---|---|---|
+| Evidence references in the details (§5.8) | Not shown | The owner's rule: on-screen text states facts only, with no spec or document names. The references stay in `catalogue.json` |
+| Parameters of a strategy that is not in use | Not edited in this window | The trader uses only the selected strategy's parameters. A research-only strategy's parameters are chosen per run in "Run a backtest…" (M5a) |
+| The trading mode the window checks | `trading.mode` in the settings file: "live" only when it is exactly that, as the trader reads it | One rule for both |
+
+### Tests
+
+`tests/test_strategy_catalogue_view.py`, 15 tests:
+- the rows and their words;
+- "In use" following the choices;
+- "Use for trading" for a strategy and a stop;
+- research-only, paper-only (in live) and research-only stop entries;
+- research ticks saved only when changed, with either signal source;
+- the permitted candles;
+- facts-only words.
+
+The existing `tests/test_strategy_settings_ui.py` passes unchanged, except that its "offered strategies" test now states the authorisation rule.
 
 ## Backlog (non-critical)
 

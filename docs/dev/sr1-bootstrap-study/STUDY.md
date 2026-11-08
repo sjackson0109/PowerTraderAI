@@ -281,7 +281,7 @@ M-14 against absolute effects, in return per capital-day:
 | exo(300,10):bear | 0.134% | 6 | 9 | 19 | 49 | 18 |
 | exo(300,30):bear | 0.148% | 4 | 7 | 17 | 56 | 17 |
 | donchian:bear | 0.241% | 4 | 5 | 8 | 22 | 11 |
-| tsmom:bear | 0.225% | 2 | 3 | 6 | 16 | 11 |
+| tsmom:bear | 0.225% | 2 | 3 | 5 | 16 | 11 |
 
 - **Power is low.** An edge of 0.10% per capital-day (36.5% a year on the capital in use) is found 5% to 23% of the time over 4.3 years.
 - For the two strategy rules, the chance was 16% to 26% even at 0.20% per capital-day.
@@ -486,6 +486,10 @@ The §6.0 rule (E-rule):
 
 - Every number is a function of the seeds (run r: 20261108 + r; oracle and bootstrap draws on their own seed streams).
 - The script refuses to resume from saved parts made by a different version of itself.
+- **The script that ran.** It hashes its own file to tie its saved parts to its text. The run's stamp was `684cb71133df2b860b353e5a5e7b00ee8ba46746dfc332c4b1b560287999edf3`, from the Windows checkout, where `core.autocrlf` gives the file CRLF line endings.
+  - The committed text, with LF endings, hashes to `388144c1577e838afc46e13b2637d07ec422a774302354f64cdcbb21cd262e69`.
+  - The two differ only in line endings. So a rerun on a checkout that keeps LF endings starts a fresh parts folder.
+- On Windows the table reader needs `PYTHONIOENCODING=utf-8`, because its tables print λ and θ̂.
 
 ## References
 

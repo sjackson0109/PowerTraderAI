@@ -12,6 +12,7 @@
 **Branch:** `spec/sr-001-long-holding-bootstrap`, from `main` at `cf858a7`.
 **Authority** (owner, 2026-11-08): review alternative resampling methods, and deliver this amendment for review before any new economic evaluation is implemented or registered.
 - **Not authorised:** implementing it; registering, freezing or re-running anything; changing E1.
+- **The review's seven questions** are answered one by one in §8.
 
 > **Read this first.**
 > - **§6.0's long-trade rule does not give dependable p-values.** On synthetic data with daily trend-like trades it rejected a true null 7% to 42% of the time at a nominal 5% (STUDY §4.2).
@@ -156,6 +157,9 @@ Coverage is for the basic interval. Power is comparable only at matched size: th
 **The choice of 14 days:**
 - The pre-stated rule required size within [2.5%, 7.5%] in every deciding cell. No method qualified.
 - The pre-stated fallback took the smallest worst-case size: 14 days at 4.20%, then 28 days and the stationary bootstrap at 4.23%, 7 days at 4.27% and 56 days at 4.30%.
+- In the pre-statement's words, M-14 is therefore "the least anti-conservative option, not a valid one".
+  - It is outside the band only on the conservative side: below 2.5% in 4 of the 22 deciding cells, and never above 4.2%.
+  - The fallback was written with anti-conservative failures in mind, and was applied as written (STUDY §6, §7).
 - Those differences are one or two replications in 3,000. The study does not distinguish blocks of 7 to 56 days (decision AM1-D2).
 
 ## 4. Acceptance (for the later implementation)
@@ -248,6 +252,21 @@ Replace the paragraph that begins "**Block length for long trades**", with its t
 **If AM1-D2 chooses 28 days,** replace 14 by 28 in this text and in §2.2, §2.6 and §4. The window floor stays at 183 days, which is 7 blocks of 28.
 - The study ran M-28 in the floor cells too (`tables.md`). Its size was at most 5.3% in the base cells and 7.2% in the bear cells, so the pre-stated floor rule, applied to M-28, also gives 183 days.
 - That application was made after the selection, and is recorded as such.
+
+## 8. The review's questions
+
+The owner's review asked the methodology review to address seven questions and to support its recommendation with simulation. Each answer below is from the synthetic study. None comes from E1's data.
+
+| The review asked about | What the study found | Where |
+|---|---|---|
+| **Serial dependence and overlapping positions** | Entry-day sums put a trade's whole profit on one day. Overlapping trades share market days but fall into different blocks, so the bootstrap's spread was 0.54 to 0.75 of the true scale (median by method), and every entry-day block length was anti-conservative somewhere. Marking positions to market each day removes that long dependence: M-14's spread was 0.99 of the true scale. Joining overlapping trades into episodes fails differently: in 13 of the 22 deciding cells a replication had a single episode | STUDY §4.6, §5 |
+| **Portfolio-wide shocks and cross-coin correlation** | Every cell has a common GARCH-t factor (coin loadings 0.8 to 1.3) and entries that cluster across coins, on a base market and with a 365-day bear market. Resampling trades independently ignores the common factor: size 7.2% to 20.8%. Day blocks keep every coin's positions together on the same days | PRE-STATEMENT §4; STUDY §4.1, §5 |
+| **Long and variable holding periods** | Holding times were lognormal, with medians of 10 to 120 days and a heavy right tail (the 99th percentile about 10 × the median). STRAT-004's and STRAT-005's own exits were also simulated. §6.0's rule follows the longest 1% and reached 224 to 3,584 days. M-14's block length does not depend on the holds, and its size stayed at or below 4.2% at every holding time | STUDY §1, §4.2 |
+| **Effective sample size** | The effective sample is the number of resampled blocks, not the number of trades: trades that overlap are not independent (the T-iid row). With K blocks the bootstrap's variance is about (1 − 1 ÷ K) of the truth. On marked days, size was flat from 1- to 56-day blocks (29 or more blocks), then rose by about 1 point at 8 blocks, 3 at 4 and 8 at 2. Two blocks, which §6.0's rule gives on a 4.3-year period once L reaches 896 days, gave mean sizes of 11% (marked) and 13% (entry day). M-14 has 114 blocks over 1,586 days, and §2.4 requires at least 14. F3's trade floor binds first in practice: 29% to 39% of the n = 100 replications met it | STUDY §4.3, §4.7 |
+| **Interval coverage and consistency with p-values** | The percentile interval, reported today, disagreed with "p ≤ 5%" in up to 2.8% of replications for M-14, and in up to 26.6% for episodes. The basic interval agrees with the p-value by construction: 99.5% to 100% in the simulation, where the rest comes from interpolating the percentiles. M-14's worst 90% coverage was 87.6% (basic). §6.0's rule covered the true value in 0% of replications where its block was as long as the period | STUDY §4.1, §5 |
+| **Block length and power** | Among the marked methods, power at λ = 2.5 rises a little with the block length: a lowest cell of 82% at 14 days and 85% at 112. Size rises with it, and coverage falls from 87.6% to 84.7%. From 448 days the size leaves the band. Power is only comparable at matched size: entry-day methods look more powerful because they reject too often under the null. Absolute power is low: an edge of 0.10% per capital-day was found 5% to 23% of the time | STUDY §4.1, §4.3, §4.5 |
+| **Multiple comparisons within families** | Holm at 5% over four correlated members (θ̂ correlations 0.80 to 1.00) gave a family-wise error of at most 1.0% under M-14, against 11.8% to 45.3% under §6.0's rule. Holm holds under any dependence only if each member's p-value is valid, which is what §6.0's rule fails. A not-assessable member enters Holm with p = 1, and K does not change | STUDY §4.4; §2.5 |
+| **Not chosen on STRAT-004's or STRAT-005's results** | The selection rule was committed (`cb311c1`) before the study script existed. The grids are round numbers, and no E1 file was opened. The one line of E1 context in the session, that its two economic members did not pass, held no figures and is disclosed. The block length was then chosen by the rule, mechanically | PRE-STATEMENT §1, §8; STUDY §2 |
 
 ## References
 

@@ -1,0 +1,65 @@
+A: signal_fusion absent (never saved)
+{
+ "config": {
+  "paper": {
+   "max_quote_age_s": 30,
+   "price_fallback_policy": "pause"
+  },
+  "risk": {
+   "drawdown_critical_pct": 5.0,
+   "drawdown_warning_pct": 3.0,
+   "emergency_drawdown_pct": 8.0
+  },
+  "signal_fusion": null,
+  "strategy": {
+   "active_id": "STRAT-004",
+   "engine": "catalogue",
+   "overlays": [],
+   "params": {},
+   "timeframe": "1d"
+  },
+  "trading.mode": "paper"
+ },
+ "gui": {
+  "coins": [
+   "BTC",
+   "ETH",
+   "XRP",
+   "DOGE",
+   "SOL",
+   "ZEC",
+   "DASH",
+   "ADA",
+   "AVAX",
+   "LINK",
+   "LTC"
+  ],
+  "dca_levels": [
+   -2.5,
+   -5.0,
+   -10.0,
+   -20.0,
+   -30.0,
+   -40.0,
+   -50.0
+  ],
+  "dca_multiplier": 2.0,
+  "max_coin_allocation_pct": 10.0,
+  "max_dca_buys_per_24h": 2,
+  "min_order_margin_pct": 2.0,
+  "paper_coins": [],
+  "paper_coins_mode": "inherit",
+  "pm_start_pct_no_dca": 5.0,
+  "pm_start_pct_with_dca": 2.5,
+  "start_allocation_pct": 1.0,
+  "trade_start_level": 3,
+  "trailing_gap_pct": 0.5
+ }
+}
+canonical: {"config":{"paper":{"max_quote_age_s":30,"price_fallback_policy":"pause"},"risk":{"drawdown_critical_pct":5.0,"drawdown_warning_pct":3.0,"emergency_drawdown_pct":8.0},"signal_fusion":null,"strategy":{"active_id":"STRAT-004","engine":"catalogue","overlays":[],"params":{},"timeframe":"1d"},"trading.mode":"paper"},"gui":{"coins":["BTC","ETH","XRP","DOGE","SOL","ZEC","DASH","ADA","AVAX","LINK","LTC"],"dca_levels":[-2.5,-5.0,-10.0,-20.0,-30.0,-40.0,-50.0],"dca_multiplier":2.0,"max_coin_allocation_pct":10.0,"max_dca_buys_per_24h":2,"min_order_margin_pct":2.0,"paper_coins":[],"paper_coins_mode":"inherit","pm_start_pct_no_dca":5.0,"pm_start_pct_with_dca":2.5,"start_allocation_pct":1.0,"trade_start_level":3,"trailing_gap_pct":0.5}}
+A sha256: b0e54cdfdd2a1615b0cf779d6f819101dd035a0b11ff2814830736a1efe1cc70
+B signal_fusion: {"entry_assessment": "off", "participation_cap": "off", "participation_pi": 0.01, "spread_cap": "off", "spread_max": 0.005, "volatility_shrink": "off"}
+B sha256: a446295996744388dc4379c5c481559452b62881cb94191636f237db404f344f
+spec_of: RunnerSpec(strategy_id='STRAT-004', params={}, overlays=(), timeframe='1d')
+params: {"entry_days":55,"exit_days":20} version 1.0.0
+params sha256: 89579608ee854d67afce197674141a23848b1adb3bcca6b5096d72dcfd726265

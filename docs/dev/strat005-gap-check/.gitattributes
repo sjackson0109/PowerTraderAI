@@ -1,0 +1,2 @@
+# Evidence: keep the exact bytes, so the recorded SHA-256s hold on any checkout.
+* -text

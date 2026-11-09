@@ -13,8 +13,13 @@ volatility-scaled sizes (sizing is not a strategy's in this app).
   The decision is made on the bar that closes at 00:00 UTC at the end of a decision
   day: on daily bars, that day's bar.
 * **Calendar days.** Each lookback's earlier close is the bar that opened exactly L
-  days before the decision bar. If that bar is missing (a gap), it returns HOLD: no
-  other bar stands in.
+  days before the decision bar, found by its open time. If that bar is missing (a gap),
+  it returns HOLD: no other bar stands in, earlier or later. A gap anywhere else in the
+  window changes nothing.
+* **Warm-up is by time.** It holds WARMUP until the candles reach back ``lookback_3``
+  days, not until there are ``warmup_bars`` of them. A gap in a coin's first year then
+  never holds a decision whose reference bars are all there. On a series with no gaps
+  the two rules agree.
 * **Defaults** (FDS-SR-001 E-D9): 30, 90 and 365 days, two of three, weekly. Not tuned.
 """
 
@@ -24,7 +29,7 @@ import math
 
 import pandas as pd
 
-from strategies.base import Action, Signal, Strategy, StrategyError
+from strategies.base import Action, Signal, Strategy, StrategyError, check_candles
 from strategies.breakout import DAY_SECONDS, days_to_bars
 from strategies.catalogue import register
 
@@ -67,10 +72,22 @@ class TimeSeriesMomentum(Strategy):
         day = (close - pd.Timedelta(days=1) - ANCHOR).days
         return day % self.params["rebalance_days"] == 0
 
+    def on_bar(self, candles: pd.DataFrame) -> Signal:
+        """As every strategy's, but the warm-up is by time (``compute``)."""
+        check_candles(candles)
+        return self.compute(candles)
+
     def compute(self, candles: pd.DataFrame) -> Signal:
         p = self.params
         times = candles["open_time"]
-        last_time = times.iloc[-1]
+        last_time = times.iloc[-1] if len(times) else None
+        if last_time is None or times.iloc[0] > last_time - pd.Timedelta(
+            days=p["lookback_3"]
+        ):
+            return Signal.hold(
+                "WARMUP",
+                {"bars": float(len(candles)), "needed": float(self.warmup_bars)},
+            )
         if not self.is_decision_bar(last_time):
             return Signal.hold("NOT_DECISION_DAY")
         close = candles["close"].to_numpy(dtype=float)
@@ -79,8 +96,11 @@ class TimeSeriesMomentum(Strategy):
         votes = 0
         for key in LOOKBACKS:
             days = p[key]
-            j = len(close) - 1 - self.bars(days)
-            if j < 0 or times.iloc[j] != last_time - pd.Timedelta(days=days):
+            then_time = last_time - pd.Timedelta(days=days)
+            j = int(
+                times.searchsorted(then_time)
+            )  # by time: a gap elsewhere is no matter
+            if j >= len(close) - 1 or times.iloc[j] != then_time:
                 return Signal.hold("BARS_MISSING", ind)
             then = float(close[j])
             if math.isnan(last) or math.isnan(then) or then <= 0:

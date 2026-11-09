@@ -1,8 +1,8 @@
 """Tests for docs/dev/check_issue_forms.py.
 
 Run:  python -m pytest docs/dev/test_check_issue_forms.py
-Needs pytest and PyYAML; skipped without PyYAML. CI doesn't run this file (it collects
-app/test_*.py and .github/scripts/ only).
+Needs pytest and PyYAML; skipped without PyYAML. CI doesn't run this file (it runs the
+tests under app/ only).
 
 Each case writes a small valid set of forms to a temporary folder, breaks one thing
 and runs the checker. It must exit 1 with the expected message, with no traceback,

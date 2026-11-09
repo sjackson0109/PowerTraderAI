@@ -5070,6 +5070,23 @@ Platform: {sys.platform}
             return
         self._gate_check_window = GateCheckWindow(self, coins, self.run_gate_check)
 
+    def open_compare_models(self, parent=None):
+        """Settings > Training, "Compare models...": model_lab_ui's window (raises the
+        open one). It belongs to the hub, so a batch keeps running when Settings
+        closes."""
+        from model_lab_ui import CompareModelsWindow
+
+        win = getattr(self, "_compare_models_window", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                return win
+        except tk.TclError:
+            pass
+        coins = [c for c in (self.coins or []) if c]
+        self._compare_models_window = CompareModelsWindow(self, coins)
+        return self._compare_models_window
+
     def train_selected_coin(self) -> None:
         print(f"DEBUG: train_selected_coin() called")
         coin = (
@@ -7918,6 +7935,21 @@ Platform: {sys.platform}
             text="Check the models in use...",
             command=lambda: self.check_models_against_gate(win),
         ).grid(row=r, column=0, sticky="w", pady=(0, 6))
+        r += 1
+        ttk.Button(
+            page,
+            text="Compare models...",
+            command=lambda: self.open_compare_models(win),
+        ).grid(row=r, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(
+            page,
+            text=(
+                "Runs the model lab's models on the same coins and hours, each against "
+                "random entries, on the months before the held-back period."
+            ),
+            style="Muted.TLabel",
+            wraplength=560,
+        ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(0, 6))
         r += 1
         add_check(page, r, "Retrain each trained coin automatically", auto_retrain_var)
         r += 1

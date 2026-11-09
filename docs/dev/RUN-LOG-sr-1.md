@@ -583,7 +583,7 @@ The owner approved E1 for registration and execution: the declared development e
 
 ### Results, in brief
 
-The full results are in `docs/dev/sr1-e1/SR1-E1-REPORT-dev.md`.
+The full results are in `docs/dev/sr1-e1/SR1-E1-REPORT-dev.md`. Addendum 1 (`SR1-E1-REPORT-dev.addendum-1.md`, 2026-11-08) rewords its S3 and S4 lines so each says which F3 requirement failed. No figure or outcome changes, and the sealed report is unchanged.
 
 | Member | Outcome |
 |---|---|

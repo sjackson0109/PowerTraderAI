@@ -146,10 +146,11 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
         if fam == "S":
             L += [
                 "For S3 and S4 the day-block bootstrap is the family member, and "
-                '"p passes Holm" is about it alone. The outcome also needs every '
-                "condition of FDS-SIG-004 F3; the line names the one that failed. With "
-                f"blocks of {result.get('block_days', {}).get('S', 'n/a')} days (section 2) "
-                "that bootstrap carries little information.",
+                '"p passes Holm" is about it alone. It is one of FDS-SIG-004 F3\'s five '
+                "requirements, and a pass needs all five: each line names the "
+                "requirement that failed. With blocks of "
+                f"{result.get('block_days', {}).get('S', 'n/a')} days (section 2), that "
+                "bootstrap carries little information.",
                 "",
             ]
         for m in e1.MEMBERS:

@@ -368,9 +368,13 @@ def test_f3_on_constructed_paths():
     r = fd.f3(_path(one), entries(one), coins(one), first, last, seed=1)
     assert not r["requirements"]["not_one_coin"]
     assert fd.f3_failed(r, True) == "a profit without the most profitable coin"
-    assert fd.f3_line(r, False, fd.f3_failed(r, True)).startswith(
-        "Not shown to be profitable after fees"
+    line = fd.f3_line(r, False, fd.f3_failed(r, True))
+    assert line.startswith(
+        "Not shown to be profitable after fees. It failed the requirement for a "
+        "positive net profit without its most profitable coin ($"
     )
+    # the bootstrap passed, and the line says that is not the pass
+    assert "passed Holm" in line and "a pass needs all five" in line
     # 99 trades: not assessable
     few = _many(99, lambda k: 0.01)
     r = fd.f3(_path(few), entries(few), coins(few), first, last, seed=1)
@@ -381,6 +385,15 @@ def test_f3_on_constructed_paths():
     crash = [_opp("BTC", 0, 1, -0.5)] + _many(150, lambda k: 0.02)[1:]
     r = fd.f3(_path(crash, big), entries(crash), coins(crash), first, last, seed=1)
     assert not r["requirements"]["within_halt"]
+    assert r["report"]["halt_pct"] == 8.0
+    failures = fd.f3_failures(r, True)
+    assert failures[-1] == (
+        "exceeded the permitted 8% maximum drawdown, reaching "
+        f"{r['report']['max_drawdown']:.2%}"
+    )
+    assert "exceeded the permitted 8% maximum drawdown" in fd.f3_line(
+        r, False, fd.f3_failed(r, True)
+    )
 
 
 def test_losing_less_is_reducing_losses_and_never_profitable():

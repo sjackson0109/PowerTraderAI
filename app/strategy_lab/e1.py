@@ -1074,8 +1074,16 @@ def _pct(x: Optional[float], digits: int = 4) -> str:
     return f"{x:+.{digits}%}"
 
 
-def member_line(member: Member, result: Mapping[str, Any], passed: bool) -> str:
-    """The member's verdict, worded by section 6.6, with its caveat in the line."""
+def member_line(
+    member: Member,
+    result: Mapping[str, Any],
+    passed: bool,
+    holm_pass: Optional[bool] = None,
+) -> str:
+    """The member's verdict, worded by section 6.6, with its caveat in the line. An
+    economic failure names each unmet F3 requirement as a failure. ``holm_pass`` is the
+    member's bootstrap after Holm. Without it, it follows from ``result["failed"]``,
+    which names the bootstrap only when it failed."""
     k = family_k(member.family)
     if member.test == "economic":
         rep = result["report"]
@@ -1099,8 +1107,17 @@ def member_line(member: Member, result: Mapping[str, Any], passed: bool) -> str:
                 f"a fill ({detail})"
             )
         else:
+            if holm_pass is None:
+                holm_pass = result.get("failed") != fd.F3_PROFIT
+            figures = (
+                f"net ${rep['net_usd']:+,.2f} on £10,000, return per capital-day "
+                f"{_pct(rep['rpcd'])}, {rep['trades']} trades, maximum drawdown "
+                f"{rep.get('max_drawdown', float('nan')):.2%}, smallest detectable "
+                f"return per capital-day {_pct(result.get('smallest_detectable'))}"
+            )
             text = (
-                f"Not shown to be profitable after fees: {result['failed']} ({detail})"
+                f"{fd.f3_not_shown(result, holm_pass, HALT_PCT, k, member.strategy)} "
+                f"Figures: {figures}"
             )
         return fd.check_wording(f"{text}. {DEV_ONLY}", True)
     if not result.get("assessable", True):
@@ -1422,7 +1439,7 @@ def evaluate(
                 "passed": bool(passed),
                 "outcome": outcome,
                 "kind": kind,
-                "line": member_line(m, r, passed),
+                "line": member_line(m, r, passed, holm_pass=bool(h)),
             }
     out["block_days"] = {"S": block_s}
     out["members"] = results

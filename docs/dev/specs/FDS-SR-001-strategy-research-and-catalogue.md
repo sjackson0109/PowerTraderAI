@@ -462,6 +462,7 @@ These apply unchanged unless stated:
 **Block length for long trades** extends FDS-SIG-004's fixed rule: L = 28 × 2^k days, with k the smallest integer ≥ 0 for which at most 1% of the family's scored trades last longer than L ÷ 2 days.
 - It is applied mechanically, before any result is read.
 - Daily trend trades can last months, so L may reach 112 or 224 days, which leaves few blocks in 4.3 years. Power falls. That is reported, not avoided.
+- **Proposed, not approved:** [amendment 1](FDS-SR-001-amendment-1-long-holding-resampling.md) would replace this rule for experiments registered after its approval; E1 used the rule above and stays frozen under it.
 
 ### 6.1 Data windows and earlier exposures
 

@@ -37,6 +37,7 @@ POWER = 0.8
 # F3's requirements (D18)
 F3_MIN_TRADES = 100
 F3_MIN_HALF = 30
+F3_PROFIT = "a profit per capital-day"  # f3_failed's name for the bootstrap requirement
 
 # Q2's tolerances (D16)
 INTERCEPT_BAND = (-0.10, 0.10)
@@ -280,6 +281,7 @@ def f3(
             "median_return": float(np.median(returns)) if n else float("nan"),
             "largest_loss_usd": float(net.min()) if n else float("nan"),
             "halt_reached_s": int(path.halt_s[0]),
+            "halt_pct": float(halt_pct),
             **dd,
         },
     }
@@ -301,7 +303,7 @@ def f3_failed(result: Dict[str, Any], holm_pass: bool) -> Optional[str]:
     if not r["trades"]:
         return "too few trades"
     for name, ok in (
-        ("a profit per capital-day", holm_pass),
+        (F3_PROFIT, holm_pass),
         ("a profit in each half", r["stable"]),
         ("a profit without the most profitable coin", r["not_one_coin"]),
         ("a drawdown below the halt level", r["within_halt"]),
@@ -309,6 +311,78 @@ def f3_failed(result: Dict[str, Any], holm_pass: bool) -> Optional[str]:
         if not ok:
             return name
     return None
+
+
+def f3_failures(
+    result: Dict[str, Any], holm_pass: bool, halt_pct: Optional[float] = None
+) -> List[str]:
+    """Every F3 requirement the result did not meet, in ``f3_failed``'s order, each
+    worded as a failure with its figures; empty when all are met. ``f3_failed`` names
+    only the first, as the condition itself ("a profit in each half"), which read alone
+    can sound met. ``halt_pct`` defaults to the level the result was scored with."""
+    r = result["requirements"]
+    rep = result["report"]
+    if halt_pct is None:
+        halt_pct = rep.get("halt_pct")
+    out: List[str] = []
+    if not r["trades"]:
+        first, second = rep["trades_by_half"]
+        out.append(
+            f"failed the requirement for at least {F3_MIN_TRADES} trades and "
+            f"{F3_MIN_HALF} in each half ({rep['trades']} trades: {first} and {second})"
+        )
+    if not holm_pass:
+        out.append(
+            "failed the requirement that its bootstrap test of return per capital-day "
+            f"passes Holm (p = {result['test']['p']:.4f})"
+        )
+    if not r["stable"]:
+        first, second = rep["net_by_half"]
+        out.append(
+            "failed the requirement for a positive net profit in both evaluation halves "
+            f"(first half ${first:+,.2f}, second half ${second:+,.2f})"
+        )
+    if not r["not_one_coin"]:
+        by_coin = rep.get("net_by_coin") or {}
+        best = max(by_coin, key=by_coin.get) if by_coin else "the best coin"
+        out.append(
+            "failed the requirement for a positive net profit without its most "
+            f"profitable coin (${rep['without_best_coin']:+,.2f} without {best})"
+        )
+    if not r["within_halt"]:
+        level = f"{halt_pct:g}% " if halt_pct is not None else ""
+        out.append(
+            f"exceeded the permitted {level}maximum drawdown, reaching "
+            f"{rep.get('max_drawdown', float('nan')):.2%}"
+        )
+    return out
+
+
+def f3_not_shown(
+    result: Dict[str, Any],
+    holm_pass: bool,
+    halt_pct: Optional[float] = None,
+    holm_over: Optional[int] = None,
+    subject: str = "It",
+) -> str:
+    """A failed F3's sentences: "Not shown to be profitable after fees.", then each unmet
+    requirement as a failure. When the bootstrap test passed Holm, a sentence says that
+    is one of the five requirements, so a small p is never read as the pass."""
+    failures = f3_failures(result, holm_pass, halt_pct)
+    if not failures:
+        raise ValueError("every F3 requirement is met: the result is not a failure")
+    text = f"Not shown to be profitable after fees. {subject} " + ", and ".join(
+        failures
+    )
+    text += "."
+    if holm_pass:
+        over = f" over {holm_over}" if holm_over else ""
+        text += (
+            f" Its bootstrap test of return per capital-day passed Holm{over} "
+            f"(p = {result['test']['p']:.4f}), but that is one of F3's five "
+            "requirements, and a pass needs all five."
+        )
+    return text
 
 
 # --- Q2 --------------------------------------------------------------------------------------
@@ -480,7 +554,15 @@ def f2_line(
     )
 
 
-def f3_line(result: Dict[str, Any], passed: bool, failed: Optional[str]) -> str:
+def f3_line(
+    result: Dict[str, Any],
+    passed: bool,
+    failed: Optional[str],
+    holm_pass: Optional[bool] = None,
+) -> str:
+    """F3's verdict. A failure names every unmet requirement as a failure
+    (``f3_not_shown``). Without ``holm_pass`` it follows from ``failed``:
+    ``f3_failed`` checks the bootstrap first, so it names it only when it failed."""
     rep = result["report"]
     if not result["requirements"]["trades"]:
         return (
@@ -493,7 +575,9 @@ def f3_line(result: Dict[str, Any], passed: bool, failed: Optional[str]) -> str:
             f"drawdown {rep.get('max_drawdown', float('nan')):.2%}",
             True,
         )
-    return check_wording(f"Not shown to be profitable after fees: {failed}", True)
+    if holm_pass is None:
+        holm_pass = failed != F3_PROFIT
+    return check_wording(f3_not_shown(result, holm_pass), True)
 
 
 def shrink_line(result: Dict[str, Any], passed: bool) -> str:

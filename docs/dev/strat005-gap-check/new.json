@@ -1,0 +1,268 @@
+{
+  "code": {
+    "strategies/momentum.py": "cc33db8f56453b4584d51c0796bb48071c52a4548c1af779e305c7aa2df5757c"
+  },
+  "rows": {
+    "STRAT-005 (deciding, 1d)": {
+      "candidates": 927,
+      "decisions": {
+        "by_coin": {
+          "ADA": {
+            "FLAT:MOMENTUM_DOWN": 105,
+            "MOMENTUM_UP": 59,
+            "WARMUP": 52
+          },
+          "AVAX": {
+            "FLAT:MOMENTUM_DOWN": 82,
+            "MOMENTUM_UP": 54,
+            "WARMUP": 52
+          },
+          "BTC": {
+            "FLAT:MOMENTUM_DOWN": 92,
+            "MOMENTUM_UP": 135
+          },
+          "DASH": {
+            "FLAT:MOMENTUM_DOWN": 146,
+            "MOMENTUM_UP": 81
+          },
+          "DOGE": {
+            "FLAT:MOMENTUM_DOWN": 84,
+            "MOMENTUM_UP": 69,
+            "WARMUP": 52
+          },
+          "ETH": {
+            "FLAT:MOMENTUM_DOWN": 89,
+            "MOMENTUM_UP": 138
+          },
+          "LINK": {
+            "FLAT:MOMENTUM_DOWN": 109,
+            "MOMENTUM_UP": 118
+          },
+          "LTC": {
+            "FLAT:MOMENTUM_DOWN": 108,
+            "MOMENTUM_UP": 119
+          },
+          "SOL": {
+            "FLAT:MOMENTUM_DOWN": 78,
+            "MOMENTUM_UP": 73,
+            "WARMUP": 52
+          },
+          "XRP": {
+            "FLAT:MOMENTUM_DOWN": 12,
+            "MOMENTUM_UP": 31,
+            "WARMUP": 52
+          },
+          "ZEC": {
+            "FLAT:MOMENTUM_DOWN": 122,
+            "MOMENTUM_UP": 56,
+            "WARMUP": 49
+          }
+        },
+        "total": {
+          "FLAT:MOMENTUM_DOWN": 1027,
+          "MOMENTUM_UP": 933,
+          "WARMUP": 309
+        }
+      },
+      "figures": {
+        "entries_raised_to_minimum": 0,
+        "max_drawdown": 0.10141049581040172,
+        "mean_committed": 0.03973911928958956,
+        "net_gbp": 1134.1100900735971,
+        "net_usd": 1528.3267573831795,
+        "return_on_account": 0.11341100900735972,
+        "rpcd": 0.0016828503846566222,
+        "skipped_cash": 0,
+        "skipped_minimum": 0,
+        "time_in_market": 0.8313329121920404,
+        "trades": 151,
+        "unsold_remainder_usd": 1.2692387674661039
+      },
+      "timeframe": "1d",
+      "trades_sha256": "12624844d355344e4fe4eeb06ce7f202e109cb2f74815a53775aaad104da93cd"
+    },
+    "STRAT-005 on 12h candles": {
+      "candidates": 927,
+      "decisions": {
+        "by_coin": {
+          "ADA": {
+            "FLAT:MOMENTUM_DOWN": 105,
+            "MOMENTUM_UP": 59,
+            "WARMUP": 52
+          },
+          "AVAX": {
+            "FLAT:MOMENTUM_DOWN": 82,
+            "MOMENTUM_UP": 54,
+            "WARMUP": 52
+          },
+          "BTC": {
+            "FLAT:MOMENTUM_DOWN": 92,
+            "MOMENTUM_UP": 135
+          },
+          "DASH": {
+            "FLAT:MOMENTUM_DOWN": 146,
+            "MOMENTUM_UP": 81
+          },
+          "DOGE": {
+            "FLAT:MOMENTUM_DOWN": 84,
+            "MOMENTUM_UP": 69,
+            "WARMUP": 52
+          },
+          "ETH": {
+            "FLAT:MOMENTUM_DOWN": 89,
+            "MOMENTUM_UP": 138
+          },
+          "LINK": {
+            "FLAT:MOMENTUM_DOWN": 109,
+            "MOMENTUM_UP": 118
+          },
+          "LTC": {
+            "FLAT:MOMENTUM_DOWN": 108,
+            "MOMENTUM_UP": 119
+          },
+          "SOL": {
+            "FLAT:MOMENTUM_DOWN": 78,
+            "MOMENTUM_UP": 73,
+            "WARMUP": 52
+          },
+          "XRP": {
+            "FLAT:MOMENTUM_DOWN": 12,
+            "MOMENTUM_UP": 31,
+            "WARMUP": 52
+          },
+          "ZEC": {
+            "FLAT:MOMENTUM_DOWN": 122,
+            "MOMENTUM_UP": 56,
+            "WARMUP": 49
+          }
+        },
+        "total": {
+          "FLAT:MOMENTUM_DOWN": 1027,
+          "MOMENTUM_UP": 933,
+          "WARMUP": 309
+        }
+      },
+      "figures": {
+        "entries_raised_to_minimum": 0,
+        "max_drawdown": 0.1015389507609489,
+        "mean_committed": 0.039749372680687935,
+        "net_gbp": 1134.1100900735971,
+        "net_usd": 1528.3267573831795,
+        "return_on_account": 0.11341100900735972,
+        "rpcd": 0.0016828503846566222,
+        "skipped_cash": 0,
+        "skipped_minimum": 0,
+        "time_in_market": 0.8315955766192733,
+        "trades": 151,
+        "unsold_remainder_usd": 1.2692387674661039
+      },
+      "ref_random": {
+        "assessable": true,
+        "draws": 1000,
+        "median": 0.0010676665154110273,
+        "p": 0.17782217782217782,
+        "value": 0.0016828503846566222
+      },
+      "timeframe": "12h",
+      "trades_sha256": "12624844d355344e4fe4eeb06ce7f202e109cb2f74815a53775aaad104da93cd"
+    },
+    "STRAT-005 on 4h candles": {
+      "candidates": 915,
+      "decisions": {
+        "by_coin": {
+          "ADA": {
+            "BARS_MISSING": 1,
+            "FLAT:MOMENTUM_DOWN": 105,
+            "MOMENTUM_UP": 58,
+            "WARMUP": 52
+          },
+          "AVAX": {
+            "BARS_MISSING": 1,
+            "FLAT:MOMENTUM_DOWN": 82,
+            "MOMENTUM_UP": 53,
+            "WARMUP": 52
+          },
+          "BTC": {
+            "BARS_MISSING": 2,
+            "FLAT:MOMENTUM_DOWN": 92,
+            "MOMENTUM_UP": 133
+          },
+          "DASH": {
+            "BARS_MISSING": 2,
+            "FLAT:MOMENTUM_DOWN": 145,
+            "MOMENTUM_UP": 80
+          },
+          "DOGE": {
+            "BARS_MISSING": 1,
+            "FLAT:MOMENTUM_DOWN": 84,
+            "MOMENTUM_UP": 68,
+            "WARMUP": 52
+          },
+          "ETH": {
+            "BARS_MISSING": 2,
+            "FLAT:MOMENTUM_DOWN": 89,
+            "MOMENTUM_UP": 136
+          },
+          "LINK": {
+            "BARS_MISSING": 2,
+            "FLAT:MOMENTUM_DOWN": 109,
+            "MOMENTUM_UP": 116
+          },
+          "LTC": {
+            "BARS_MISSING": 2,
+            "FLAT:MOMENTUM_DOWN": 108,
+            "MOMENTUM_UP": 117
+          },
+          "SOL": {
+            "BARS_MISSING": 1,
+            "FLAT:MOMENTUM_DOWN": 77,
+            "MOMENTUM_UP": 73,
+            "WARMUP": 52
+          },
+          "XRP": {
+            "FLAT:MOMENTUM_DOWN": 12,
+            "MOMENTUM_UP": 31,
+            "WARMUP": 52
+          },
+          "ZEC": {
+            "BARS_MISSING": 1,
+            "FLAT:MOMENTUM_DOWN": 121,
+            "MOMENTUM_UP": 56,
+            "WARMUP": 49
+          }
+        },
+        "total": {
+          "BARS_MISSING": 15,
+          "FLAT:MOMENTUM_DOWN": 1024,
+          "MOMENTUM_UP": 921,
+          "WARMUP": 309
+        }
+      },
+      "figures": {
+        "entries_raised_to_minimum": 0,
+        "max_drawdown": 0.10451476538467738,
+        "mean_committed": 0.03953702537887752,
+        "net_gbp": 1135.8906434515638,
+        "net_usd": 1530.7262311153274,
+        "return_on_account": 0.11358906434515638,
+        "rpcd": 0.001694234172227678,
+        "skipped_cash": 0,
+        "skipped_minimum": 0,
+        "time_in_market": 0.8317707784683451,
+        "trades": 151,
+        "unsold_remainder_usd": 1.126382224584658
+      },
+      "ref_random": {
+        "assessable": true,
+        "draws": 1000,
+        "median": 0.0010324576208610723,
+        "p": 0.15984015984015984,
+        "value": 0.001694234172227678
+      },
+      "timeframe": "4h",
+      "trades_sha256": "ab8efad67fef52f7ab5f95c1d7d867189767b02d82d7a6e771b5151c39df2208"
+    }
+  },
+  "seconds": 327.1,
+  "series_checked": 33
+}

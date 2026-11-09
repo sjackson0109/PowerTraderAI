@@ -583,7 +583,7 @@ The owner approved E1 for registration and execution: the declared development e
 
 ### Results, in brief
 
-The full results are in `docs/dev/sr1-e1/SR1-E1-REPORT-dev.md`.
+The full results are in `docs/dev/sr1-e1/SR1-E1-REPORT-dev.md`. Addendum 1 (`SR1-E1-REPORT-dev.addendum-1.md`, 2026-11-08) rewords its S3 and S4 lines so each says which F3 requirement failed. No figure or outcome changes, and the sealed report is unchanged.
 
 | Member | Outcome |
 |---|---|
@@ -621,7 +621,7 @@ FDS-SR-001 §13, and:
 
 - **One lockbox opening ledger** shared by FDS-MH-001's final check and FDS-SR-001's, when either is built.
 - **Refused entries recorded:** a structured record of each entry the trader refused (cash, minimum, price unavailable, halt), so "Reconcile..." can show why a trade was not placed.
-- **STRAT-005's lookback bars by time** (found by E1): hold only when a lookback's own bar is missing. Add a test with a gap away from the lookback bars.
+- **STRAT-005's lookback bars by time** (found by E1). Fixed on 2026-11-08: each reference bar is found by its open time, and the warm-up is by time. The tests, and the comparison with E1's 4h robustness row, are in `docs/dev/STRAT-005-lookbacks-by-time.md`. E1's results stay as frozen.
 - **§6.0's block rule for long-holding strategies** (found by E1): a spec amendment before any further economic test of the daily strategies.
 - **CI runs none of FDS-SR-001's tests:** `ci-cd.yml` runs 19 older test files. The full suite has to be run locally before each merge.
 - **A point-in-time coin universe** (§9 item 3): E1's STRAT-004 profit came from the five coins listed after 2021.

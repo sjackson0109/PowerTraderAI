@@ -34,6 +34,7 @@ DRAWS = 200
 SEEDS = [700_000 + 1000 * k for k in range(10)]
 STRATEGIES = ["STRAT-000", "STRAT-001", "STRAT-002", "STRAT-004", "STRAT-005"]
 FILTER = "OVL-REGIME"
+_CHOSEN = {}  # (symbol, timeframe) -> (exchanges to read, exchanges passed over)
 
 
 def _setup(app: str) -> None:
@@ -58,22 +59,34 @@ def late_listing_loader(symbol, tf, start, end, **kw):
     def early(frame) -> bool:
         return len(frame) > 0 and frame["open_time"].iloc[0] < limit
 
+    if (symbol, tf) in _CHOSEN:
+        name, passed = _CHOSEN[symbol, tf]
+        frame = exchange_candles(symbol, tf, start, end, exchanges=name, **kw)
+        if passed:
+            frame.attrs["passed_over"] = list(passed)
+        return frame
     first = exchange_candles(symbol, tf, start, end, **kw)
     if early(first):
+        _CHOSEN[symbol, tf] = (None, [])
         return first
     passed = [first.attrs.get("exchange")]
-    for name in market_exchanges().exchange_names():
+    for name in market_exchanges().exchange_manager.exchange_names():
         if name in passed:
             continue
         try:
             frame = exchange_candles(symbol, tf, start, end, exchanges=[name], **kw)
         except Exception as exc:  # no market, or no history: the next one
             print(f"  {symbol} {tf}: {name} passed over ({exc})", flush=True)
+            passed.append(name)
             continue
         if early(frame):
-            frame.attrs["passed_over"] = [p for p in passed if p]
+            print(f"  {symbol} {tf}: from {name}; passed over {passed}", flush=True)
+            _CHOSEN[symbol, tf] = ([name], list(passed))
+            frame.attrs["passed_over"] = list(passed)
             return frame
         passed.append(name)
+    print(f"  {symbol} {tf}: no exchange starts before {END}", flush=True)
+    _CHOSEN[symbol, tf] = (None, [])
     return first
 
 

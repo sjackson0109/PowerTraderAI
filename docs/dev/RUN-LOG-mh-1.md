@@ -241,7 +241,7 @@ No module under `model_lab/` changes, so batch 1's and PV-1's code hashes are un
 
 | Point | As built | Why |
 |---|---|---|
-| The window's end | Every batch frozen from the window ends on **2026-11-06** (`model_lab_ui.END`, `strategy_lab.windows.LOCKBOX[1]`). Its last 18 months are then 2025-05-06 to 2026-11-06, and its walk-forward ends at 2025-05-06 | §5.8 and `freeze()` end a batch at the last closed hour. A batch frozen after 2026-11-06 would then score hours inside the shared lockbox (2025-05-06 to 2026-11-06) and lock months reserved for a forward check. The fixed end keeps every window batch on batch 1's dates. **A deviation for the owner to confirm** |
+| The window's end | Every batch frozen from the window ends on **2026-11-06** (`model_lab_ui.END`, `strategy_lab.windows.LOCKBOX[1]`). Its last 18 months are then 2025-05-06 to 2026-11-06, and its walk-forward ends at 2025-05-06 | §5.8 and `freeze()` end a batch at the last closed hour. A batch frozen after 2026-11-06 would then score hours inside the shared lockbox (2025-05-06 to 2026-11-06) and lock months reserved for a forward check. The fixed end keeps every window batch on batch 1's dates: §7 gives its lockbox as from 2025-05-06, and PV-1 was frozen with this end (`run_sig4_dev.py`). **A deviation, kept:** on 2026-11-10 the owner left the choice to me, and I kept it |
 | The final check (§5.9, "Final check…") | Not built | The owner's instruction for this phase. Nothing in the window reads the lockbox |
 | Declared batches | Two buttons tick batch 1 or PV-1. When the ticks are exactly a declared batch, it is frozen as that batch (`declared`), in its declared order | So a declared batch run from the window records its spec version. An addition |
 | The last batch's choices | The newest readable batch's contestants, coins and start are ticked. With no batch, batch 1's contestants and the coin list | §5.9: "The last batch's choices are ticked" |
@@ -272,5 +272,5 @@ No module under `model_lab/` changes, so batch 1's and PV-1's code hashes are un
 
 ### Not done (phase E and later)
 
-- Batch 1 and PV-1 have not been run. A run from the window is the owner's choice, and each is a trial in `trials.jsonl`.
+- This phase runs no batch. PV-1 was run on 2026-11-07, in FDS-SIG-004's development run (a sandbox, `docs/dev/sig4-dev/`). Batch 1 is phase E. A batch run from the window is a trial in `trials.jsonl`.
 - No final check, no lockbox opening, no change to any model in use.

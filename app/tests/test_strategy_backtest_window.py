@@ -104,6 +104,17 @@ class TestRun:
             runs.run(config(), loader=loader, venue=venue, stop=stop)
         assert runs.list_runs() == [] and experiment.trials() == []
 
+    def test_a_run_with_the_market_regime_gate_runs(self, lab):
+        # The run passes load_universe a tz-aware start; a gate's context series used
+        # to stop there ("Cannot pass a datetime or Timestamp with tzinfo").
+        gate = {"id": "OVL-REGIME", "params": {"reference": "self", "sma_days": 50}}
+        gated = runs.run(
+            config(overlays=[gate]), loader=loader, venue=venue, save=False
+        )
+        plain = runs.run(config(), loader=loader, venue=venue, save=False)
+        assert gated["strategy"]["overlays"][0]["id"] == "OVL-REGIME"
+        assert gated["strategy_result"]["trades"] <= plain["strategy_result"]["trades"]
+
     def test_the_rate_and_the_coins_are_required(self, lab):
         with pytest.raises(ValueError, match="rate"):
             runs.run(config(gbp_usd=0), loader=loader, venue=venue)

@@ -15,8 +15,12 @@ are drawn as 10 seeded runs of 200 draws (plan section 7): seed 700000 is saved 
 app saves a run, and seeds 701000 to 709000 are reported only. ``<out dir>/compare9.json``
 holds every figure the report uses.
 
+Seed 700000's run is ``strategy_lab.runs.run``'s own, saved. The ten seeds are then drawn
+on one simulation of the same config (``ten_seeds``), which must reproduce that run's
+figures exactly; the pooled 2,000 draws are reported too.
+
 It resumes: a finished run's figures are kept in ``<out dir>/lines/``, and a run saved by
-an earlier launch is reused once the same config, replayed again, gives the same figures.
+an earlier launch is reused, checked by the same reproduction.
 ``naive_start`` works around a bug in ``strategy_lab.simulate.load_universe`` that stops
 every run with OVL-REGIME; it changes no candle and no figure.
 """
@@ -133,6 +137,88 @@ def _same(a, b) -> bool:
     return norm(a) == norm(b)
 
 
+def _random_part(rand, draws, mine):
+    """The random-entry figures, as ``strategy_lab.runs.run`` records them."""
+    import numpy as np
+
+    return {
+        "draws": int(len(rand.net)),
+        "median_net_usd": float(np.median(rand.net)),
+        "median_return_per_capital_day": float(np.median(rand.rpcd)),
+        "share_at_or_above": float(np.mean(rand.rpcd >= mine)),
+        "entries_wanted": draws.wanted,
+        "entries_reached_median": float(np.median(draws.reached)),
+    }
+
+
+def ten_seeds(runs, config, saved):
+    """Every seed's random entries on one simulation of ``config``.
+
+    ``strategy_lab.runs.run`` builds a new simulation for each run, so each seed would
+    replay every random trade again (with an overlay, bar by bar). Here the simulation is
+    built once, as ``run`` builds it, and its trades are reused by every seed. Seed
+    ``SEEDS[0]``'s figures, and the strategy's own, must equal the saved run's, which
+    ``run`` made: so this route computes what ten runs would."""
+    import numpy as np
+
+    from signal_fusion.evaluation.replay import Account, Costs
+    from strategy_lab import baselines as bl
+    from strategy_lab.simulate import Simulation
+
+    a, b = runs.development_only(config.start, config.end)
+    spec = config.spec()
+    universe = runs.load_universe(
+        list(config.coins),
+        spec,
+        runs._warmup_start(spec, a),
+        b,
+        loader=late_listing_loader,
+    )
+    sim = Simulation(universe, spec)
+    start_s = runs._seconds(a)
+    trades = [t for t in sim.candidates() if t.entry_s >= start_s]
+    rules = runs.venue_rules(list(config.coins))
+    costs = Costs(
+        fee=float(config.fee),
+        allowance=float(config.allowance),
+        minimum_usd=rules.minimum_usd,
+        base_increment=rules.base_increment,
+    )
+    account = Account(start=round(float(config.account_gbp) * float(config.gbp_usd), 2))
+    path = sim.replay(trades, costs, account, detail=True)
+    taken = [trades[i] for i, *_ in path.detail]
+    hold = sim.replay(bl.hold_trades(sim, start_s), costs, account)
+    per_coin = {}
+    for i, _amount, net, _days in path.detail:
+        row = per_coin.setdefault(trades[i].coin, {"trades": 0, "net_usd": 0.0})
+        row["trades"] += 1
+        row["net_usd"] += float(net)
+    mine = float(path.rpcd[0])
+    per_seed, nets, rpcds = [], [], []
+    for seed in SEEDS:
+        draws = bl.random_draws(sim, taken, seed, int(config.draws), start_s)
+        rand = bl.replay_draws(sim, draws.draws, costs, account)
+        per_seed.append({"seed": seed, **_random_part(rand, draws, mine)})
+        nets.append(np.asarray(rand.net, dtype=float))
+        rpcds.append(np.asarray(rand.rpcd, dtype=float))
+    mine_record = {
+        "strategy_result": runs._figures(path),
+        "buy_and_hold": runs._figures(hold),
+        "per_coin": per_coin,
+        "random_entries": {k: v for k, v in per_seed[0].items() if k != "seed"},
+    }
+    if not _same(json.loads(json.dumps(mine_record, default=str)), saved):
+        raise SystemExit(f"{config.strategy_id}: one simulation differs from the run")
+    net, rpcd = np.concatenate(nets), np.concatenate(rpcds)
+    pooled = {
+        "draws": int(len(net)),
+        "median_net_usd": float(np.median(net)),
+        "median_return_per_capital_day": float(np.median(rpcd)),
+        "share_at_or_above": float(np.mean(rpcd >= mine)),
+    }
+    return per_seed, pooled
+
+
 def _saved_run(runs, config):
     """The run already saved for this config (an earlier launch), or None."""
     from dataclasses import asdict
@@ -164,43 +250,35 @@ def main(argv) -> None:
                 with open(done, encoding="utf-8") as f:
                     lines.append(json.load(f))
                 continue
-            per_seed = []
-            saved = None
             t0 = time.time()
-            for k, seed in enumerate(SEEDS):
-                config = runs.RunConfig(
-                    strategy_id=sid,
-                    params=params,
-                    overlays=overlays,
-                    timeframe=tf,
-                    coins=COINS,
-                    start=START,
-                    end=END,
-                    account_gbp=ACCOUNT_GBP,
-                    gbp_usd=GBP_USD,
-                    fee=FEE,
-                    allowance=ALLOWANCE,
-                    draws=DRAWS,
-                    seed=seed,
-                )
-                earlier = _saved_run(runs, config) if k == 0 else None
-                record = runs.run(
-                    config, loader=late_listing_loader, save=(k == 0 and not earlier)
-                )
-                if earlier is not None:
-                    if not _same(record, earlier):
-                        raise SystemExit(f"{label}: differs from its saved run")
-                    print(f"  {label}: saved run {earlier['id']} reused", flush=True)
-                    record = earlier
-                if k == 0:
-                    saved = record
-                elif record["strategy_result"] != saved["strategy_result"]:
-                    raise SystemExit(
-                        f"{label}: the strategy's trades changed with the seed"
-                    )
-                per_seed.append({"seed": seed, **(record["random_entries"] or {})})
+            config = runs.RunConfig(
+                strategy_id=sid,
+                params=params,
+                overlays=overlays,
+                timeframe=tf,
+                coins=COINS,
+                start=START,
+                end=END,
+                account_gbp=ACCOUNT_GBP,
+                gbp_usd=GBP_USD,
+                fee=FEE,
+                allowance=ALLOWANCE,
+                draws=DRAWS,
+                seed=SEEDS[0],
+            )
+            saved = _saved_run(runs, config)
+            if saved is None:
+                saved = runs.run(config, loader=late_listing_loader, save=True)
+            else:
+                print(f"  {label}: saved run {saved['id']} reused", flush=True)
+            per_seed, pooled = ten_seeds(runs, config, saved)
             print(f"{label}: {time.time() - t0:.0f} s", flush=True)
-            line = {"label": label, "run": saved, "random_runs": per_seed}
+            line = {
+                "label": label,
+                "run": saved,
+                "random_runs": per_seed,
+                "random_pooled": pooled,
+            }
             with open(done, "w", encoding="utf-8", newline="\n") as f:
                 json.dump(line, f, indent=2, sort_keys=True, default=str)
                 f.write("\n")

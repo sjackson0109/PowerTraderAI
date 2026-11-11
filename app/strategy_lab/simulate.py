@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from market_data.candles import exchange_candles
+from market_data.candles import exchange_candles, to_utc
 from signal_fusion.evaluation.replay import Account, Costs, Paths, replay
 from strategy_lab.candidates import RunnerSpec, Trade, TradeTable
 
@@ -83,7 +83,7 @@ def load_universe(
     needs = spec.build().context_needs()
     for reference, tf, bars in needs:
         back = pd.Timedelta(days=int(bars) + 2) if tf == "1d" else pd.Timedelta(0)
-        begin = pd.Timestamp(start, tz="UTC") - back
+        begin = to_utc(start) - back
         if reference == "self":
             for coin in coins:
                 if tf == spec.timeframe:

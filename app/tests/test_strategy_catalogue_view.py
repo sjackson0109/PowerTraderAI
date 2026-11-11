@@ -1,13 +1,15 @@
 """FDS-SR-001 milestone M2b: the strategy list in Settings > Strategy (sections 5.3,
 5.8 and 12).
 
-* The list shows every strategy, then every stop, with its kind, family, candles, what
-  it may be used for, whether it is enabled for research and whether it is in use.
+* The list shows every strategy, then every stop, with its ID, name, kind, family,
+  candles, what it may be used for, whether it is enabled for research and whether it
+  is in use.
 * "Use for trading" is offered only where the entry's authorisation covers the trading
   mode; elsewhere the row says what it can be used for, and nothing changes.
 * The research ticks are saved as ``strategy.research_enabled`` only when one changed,
   so a file nobody changed stays as it was.
-* Its words state facts only.
+* Its words state facts only. The ID column is the one place an ID is shown: it names
+  each entry as the reports do.
 
 The window runs under the isolation guard (app/conftest.py) with a hidden root, and
 saves to a pt_config.json in a temporary folder."""
@@ -66,6 +68,7 @@ def test_the_list_shows_every_entry_with_its_use_and_state(root, folder):  # noq
     assert list(shown) == ui.listed_ids()
     assert ui.listed_ids()[:4] == ["STRAT-000", "STRAT-001", "STRAT-002", "STRAT-003"]
     assert shown["STRAT-001"] == (
+        "STRAT-001",
         "Trend crossover (DEMA/TEMA)",
         "Strategy",
         "Trend",
@@ -75,6 +78,7 @@ def test_the_list_shows_every_entry_with_its_use_and_state(root, folder):  # noq
         "Yes",
     )
     assert shown["STRAT-003"] == (
+        "STRAT-003",
         "Trained pattern model",
         "Strategy",
         "Trained model",
@@ -84,6 +88,7 @@ def test_the_list_shows_every_entry_with_its_use_and_state(root, folder):  # noq
         "",
     )
     assert shown["OVL-ATR"] == (
+        "OVL-ATR",
         "ATR trailing stop",
         "Stop or filter",
         "Stop or filter",
@@ -100,10 +105,10 @@ def test_in_use_follows_the_strategy_and_the_stop_ticks(root, folder):  # noqa: 
     win.strategy_var.set("Supertrend")
     win.overlay_on["OVL-ATR"].set(True)
     shown = rows(win)
-    assert shown["STRAT-002"][6] == "Yes" and shown["STRAT-001"][6] == ""
-    assert shown["OVL-ATR"][6] == "Yes"
+    assert shown["STRAT-002"][7] == "Yes" and shown["STRAT-001"][7] == ""
+    assert shown["OVL-ATR"][7] == "Yes"
     win.engine_var.set("legacy_neural")
-    assert rows(win)["STRAT-002"][6] == ""
+    assert rows(win)["STRAT-002"][7] == ""
     win.destroy()
 
 
@@ -147,7 +152,7 @@ def test_a_research_strategy_is_not_offered_and_a_saved_one_is_reported(
             win.status_var.get()
             == "The saved strategy 'STRAT-002' is not one of these."
         )
-        assert rows(win)["STRAT-002"][4] == "Research only"
+        assert rows(win)["STRAT-002"][5] == "Research only"
         highlight(win, "STRAT-002")
         assert win.use_button.instate(["disabled"])
         win.destroy()
@@ -195,10 +200,10 @@ def test_research_ticks_are_saved_only_when_changed(root, folder):  # noqa: F811
     win = open_window(root, folder)
     highlight(win, "STRAT-003")
     win.research_tick.invoke()
-    assert rows(win)["STRAT-003"][5] == "Yes"
+    assert rows(win)["STRAT-003"][6] == "Yes"
     highlight(win, "OVL-PLOCK")
     win.research_tick.invoke()
-    assert rows(win)["OVL-PLOCK"][5] == "No"
+    assert rows(win)["OVL-PLOCK"][6] == "No"
     assert win.save()
     wanted = [
         sid
@@ -237,7 +242,10 @@ def test_the_timeframes_offered_are_the_strategys_own(root, folder):  # noqa: F8
 
 def test_the_lists_words_state_facts_only(root, folder):  # noqa: F811
     win = open_window(root, folder)
-    texts = [str(v) for row in rows(win).values() for v in row]
+    shown = rows(win)
+    # the ID column shows each entry's ID, and nothing else does
+    assert [row[0] for row in shown.values()] == ui.listed_ids()
+    texts = [str(v) for row in shown.values() for v in row[1:]]
     for sid in ui.listed_ids():
         highlight(win, sid)
         texts += [win.highlight_help_var.get(), win.highlight_use_var.get()]

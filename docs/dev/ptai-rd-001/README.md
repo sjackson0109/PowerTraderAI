@@ -27,9 +27,11 @@ The owner's programme brief of 2026-11-11.
 | PR | Milestone | What |
 |---|---|---|
 | #260 | M1 | The signal engine decides a bar the exchange publishes late, instead of a bar later or never (D1) |
-| Research engine | M5 | A local job queue and scheduler: resource modes, worker processes, pause, resume, cancel, checkpoints, deduplication, seeds, time and memory per job |
-| Strategy runs | M5 | Strategy backtests as engine jobs; unique run folders; candle-cache writes safe across processes |
-| Research engine window | M5 | Settings > Training > "Research engine...": the computer, the mode, energy figures, and the queue |
+| #262 | M5 | A local job queue and scheduler: resource modes, worker processes, pause, resume, cancel, checkpoints, deduplication, seeds, time and memory per job |
+| #263 | M5 | Strategy backtests as engine jobs; unique run folders; candle-cache writes safe across processes |
+| #264 | M5 | Settings > Training > "Research engine...": the computer, the mode, energy figures, and the queue |
+| #265 | M1 | Strategy-lab series end at a gap longer than a day, so no trade spans an exchange halt (N17) |
+| #266 | M1 | A stationary bootstrap on marked daily results, measured for size and power (N19; adoption is O3) |
 
 ## The headline findings
 

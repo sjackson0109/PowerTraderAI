@@ -26,8 +26,8 @@ Work packages (WP) by milestone, with what they depend on, the tests they need a
 | WP | What | Fixes | Changes trading? | Test required | Gate | Status |
 |---|---|---|---|---|---|---|
 | 1.1 | Decide a late bar after a retry, not a bar later | D1 | Yes (fix) | 4 late-bar tests that fail on the old code | Review | **PR #260** |
-| 1.2 | Engine-safe candle cache writes; unique run folders | (found building M5) | No (cache only) | cache-replace failure; same-second runs | Review | **In the M5a-2 PR** |
-| 1.3 | Research series end at gaps over a day (strategy lab, backtester) | N17 | No | a 30-day hole: no trade spans it; XRP compare row recomputed as a diagnostic | Review | Next |
+| 1.2 | Engine-safe candle cache writes; unique run folders | (found building M5) | No (cache only) | cache-replace failure; same-second runs | Review | **PR #263** |
+| 1.3 | Research series end at gaps over a day (strategy lab; the single-coin backtester `backtest/` still to do) | N17 | No | a 30-day hole: no trade spans it; XRP compare row recomputed as a diagnostic | Review | **PR #265** |
 | 1.4 | `MarketNotFound` is a HOLD, and each coin is handled in its own `try` | N8 | Yes (fix) | first coin raises; second still decided; status written | Review | Next |
 | 1.5 | The decision log names the exchange whose bars were used | N15 | No | primary fails; log names the fallback | Review | Next |
 | 1.6 | Refetch the last cached bars; refill interior gaps | N16 | Yes (data) | provisional close revised; the cache holds the revision | Review | Planned |
@@ -35,7 +35,7 @@ Work packages (WP) by milestone, with what they depend on, the tests they need a
 | 1.8 | Entry actionable only within a window after its bar | N12 | Yes | ENTER at close + 6 h is recorded as missed | **Owner (O4)** | Proposed |
 | 1.9 | Risk states: entries refused / exits only / liquidate-if-authorised; remove false stub logs | N1 to N4 | Yes | a halt with held positions: exits still sell (after O1) | **Owner (O1)** | Proposed |
 | 1.10 | Persisted order intents, resent with the same client id | N5, N6 | Yes (live) | a network error after acceptance: one order, not two | **Owner (O2)** | Proposed |
-| 1.11 | Stationary bootstrap on marked days; calibration on null and known-skill fixtures | N19, N22 | No | size near 5% on null series; power reported on skill fixtures | **Owner (O3)** to adopt | Next (library + tests) |
+| 1.11 | Stationary bootstrap on marked days; calibration on null and known-skill fixtures | N19, N22 | No | size near 5% on null series; power reported on skill fixtures | **Owner (O3)** to adopt | **PR #266** (library + tests) |
 | 1.12 | Observation fixes: freeze LLM mode and exchange order; code hash; Reconcile completeness | D2 to D7 | No | the readiness tests listed in A2 | Review | Planned |
 | 1.13 | Fee defaults from the exchange layer, or a refusal; paper applies sell steps and minimums | N27, N28 | Yes (paper) | fee feed fails: paper refuses; DOGE sell rounds to 0.1 | Review | Planned |
 | 1.14 | Intrabar drawdown for the halt check in replays | N18 | No | 9% intraday dip, 7% on closes: halt reported | Review | Planned |
@@ -95,9 +95,9 @@ Mean-reversion and microstructure candidates are priority 4 in B: the evidence i
 
 | WP | What | Status |
 |---|---|---|
-| 5.1 | Queue, scheduler, resources, modes, self-test | **PR (M5a)** |
-| 5.2 | Strategy backtests as jobs | **PR (M5a-2)** |
-| 5.3 | Settings > Training > Research engine window | **PR (M5b)** |
+| 5.1 | Queue, scheduler, resources, modes, self-test | **PR #262** |
+| 5.2 | Strategy backtests as jobs | **PR #263** |
+| 5.3 | Settings > Training > Research engine window | **PR #264** |
 | 5.4 | Model-lab batches as jobs | Next |
 | 5.5 | Dataset and feature caches shared by jobs | after 2.2, 4.1 |
 | 5.6 | Budgets per hypothesis; backlog-driven queueing; the next-experiment rule (C L12) | after 2.1 |

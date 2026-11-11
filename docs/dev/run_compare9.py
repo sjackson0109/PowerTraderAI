@@ -240,15 +240,16 @@ def main(argv) -> None:
     from strategy_lab import runs
 
     naive_start(runs)
-    lines = []
+    # an optional list of strategies, so that two processes can share the runs
+    only = argv[3].split(",") if len(argv) > 3 else STRATEGIES
+    done_files = []
     for sid in STRATEGIES:
         params, tf = _defaults(sid)
         for overlays in ([], [{"id": FILTER}]):
             label = sid + (f" + {FILTER}" if overlays else "")
             done = os.path.join(done_dir, label.replace(" + ", "+") + ".json")
-            if os.path.exists(done):
-                with open(done, encoding="utf-8") as f:
-                    lines.append(json.load(f))
+            done_files.append(done)
+            if os.path.exists(done) or sid not in only:
                 continue
             t0 = time.time()
             config = runs.RunConfig(
@@ -282,7 +283,14 @@ def main(argv) -> None:
             with open(done, "w", encoding="utf-8", newline="\n") as f:
                 json.dump(line, f, indent=2, sort_keys=True, default=str)
                 f.write("\n")
-            lines.append(line)
+    missing = [os.path.basename(p) for p in done_files if not os.path.exists(p)]
+    if missing:
+        print(f"not yet done: {', '.join(missing)}", flush=True)
+        return
+    lines = []
+    for path in done_files:
+        with open(path, encoding="utf-8") as f:
+            lines.append(json.load(f))
     with open(
         os.path.join(out, "compare9.json"), "w", encoding="utf-8", newline="\n"
     ) as f:

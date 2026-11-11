@@ -1,7 +1,8 @@
 """
 Settings > Strategy: what decides each buy and sale, and every value it uses.
 
-* **Strategies and stops** - every catalogue entry, with what it may be used for
+* **Strategies and stops** - every catalogue entry by its ID (STRAT-000, OVL-ATR: the
+  names the reports use) and name, with what it may be used for
   (research only, paper, or paper and live), whether it is enabled for research,
   and whether it is in use (FDS-SR-001 section 5.8). Highlighting one shows its
   description, its research tick and "Use for trading", offered only where its
@@ -507,8 +508,18 @@ class StrategySettingsWindow(tk.Toplevel):
         ttk.Label(frm, text="Strategies and stops", style="Header.TLabel").grid(
             row=0, column=0, sticky="w"
         )
-        columns = ("name", "kind", "family", "candles", "use", "research", "in_use")
+        columns = (
+            "id",
+            "name",
+            "kind",
+            "family",
+            "candles",
+            "use",
+            "research",
+            "in_use",
+        )
         headings = {
+            "id": "ID",
             "name": "Name",
             "kind": "Kind",
             "family": "Family",
@@ -599,6 +610,7 @@ class StrategySettingsWindow(tk.Toplevel):
             in_use = bool(self.overlay_on[sid].get())
             candles = "Any"
         return (
+            sid,
             words.name_of(sid),
             words.KIND_NAMES[entry["class_type"]],
             words.FAMILY_NAMES.get(entry["family"], entry["family"]),

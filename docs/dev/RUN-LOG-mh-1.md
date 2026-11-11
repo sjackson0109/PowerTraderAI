@@ -223,3 +223,54 @@ Each run's `results.json` was taken without the batch's own id and SHA-256. Thos
 
 - **T2's labels replay every hour in Python.** Batch 1's real run (13 coins, about 5 years) needs about 600,000 replays. They are made once per run and cached; phase E should measure the time.
 - **`ModelFit` scores each fold's hours twice,** once for entries and once for probabilities.
+
+## 2026-11-09: phase D, Settings > Training, "Compare models…"
+
+**Authority.** The owner asked why none of the model lab's models appears in Settings ("UI, not CLI"), and on 2026-11-09 authorised phase D as specified, without the final check.
+
+**Branch** `feat/mh-d-compare-models`, from `main` at `2ab8ce8`.
+
+**New:**
+- `model_lab_ui.py`: the window (§5.9).
+- `pt_hub.py`: the "Compare models…" button on Settings > Training, under "Check the models in use…", and `open_compare_models`. The window belongs to the hub, so a batch keeps running when Settings closes.
+- `tests/test_model_lab_ui.py`: 14 tests.
+
+No module under `model_lab/` changes, so batch 1's and PV-1's code hashes are unchanged.
+
+### Where the spec was not explicit, and where this differs from it
+
+| Point | As built | Why |
+|---|---|---|
+| The window's end | Every batch frozen from the window ends on **2026-11-06** (`model_lab_ui.END`, `strategy_lab.windows.LOCKBOX[1]`). Its last 18 months are then 2025-05-06 to 2026-11-06, and its walk-forward ends at 2025-05-06 | §5.8 and `freeze()` end a batch at the last closed hour. A batch frozen after 2026-11-06 would then score hours inside the shared lockbox (2025-05-06 to 2026-11-06) and lock months reserved for a forward check. The fixed end keeps every window batch on batch 1's dates: §7 gives its lockbox as from 2025-05-06, and PV-1 was frozen with this end (`run_sig4_dev.py`). **A deviation, kept:** on 2026-11-10 the owner left the choice to me, and I kept it |
+| The final check (§5.9, "Final check…") | Not built | The owner's instruction for this phase. Nothing in the window reads the lockbox |
+| Declared batches | Two buttons tick batch 1 or PV-1. When the ticks are exactly a declared batch, it is frozen as that batch (`declared`), in its declared order | So a declared batch run from the window records its spec version. An addition |
+| The last batch's choices | The newest readable batch's contestants, coins and start are ticked. With no batch, batch 1's contestants and the coin list | §5.9: "The last batch's choices are ticked" |
+| Coins | The coin list as ticks, with other coins typed in, separated by commas or spaces | §5.9 |
+| The start | Refused unless before 2024-05-06, the latest start that leaves 12 months before a first fold ending by 2025-05-06 | The calendar's own rule, with the reason in plain words |
+| Progress | The run's stages in words: reading candles, replaying trades, fitting models, scoring models, each as "n of m" | §5.9's "folds, coins and draws": the harness reports these stages |
+| Stop | Stop, or closing the window, stops the run at its next check. The batch keeps its frozen record, marked as stopped | §5.8 |
+| Results | A batch chooser (the newest first, each with its state), the batch's dates, fees, models tested and probability of backtest overfitting, then a table: model, result, trades, return per day held, total profit, worst drawdown, time in a trade, then the percentiles among R1's and R2's draws and the smallest detectable edge. Selecting a row shows its coins, rising and falling markets, half and double fees, the best rule on shared hours, neural DCA, and whether its held-back months were looked at before | §5.9's list. The deciding figures come first so they fit the window; the rest scroll |
+| Words | No spec names, contestant keys, "R1"/"R2", "Holm", "lockbox" or exchange names in the window's own words (a test). The verdicts are `batch.VERDICTS`' own, as §5.6 and §5.7 word them, so a finalist whose lockbox was seen before reads "Passed; its lockbox was seen before…" | The facts-only rule |
+| Fees and candles | A read-only line: the primary exchange, then the others in Settings > Exchanges, and each coin's fee as that exchange states it, plus slippage. The batch's own fees are shown with its results | `freeze()`'s defaults (`series.load`, `entry_gate.trading_fees`) |
+
+### Tests
+
+- **The window's dates:** a batch ending on `END` has its lockbox exactly at FDS-SR-001's, its last fold ends at 2025-05-06, and the latest start is 2024-05-06.
+- **Choices:** wrong choices are explained, and nothing is frozen. Typed coins join the ticked ones once. The declared buttons freeze PV-1 and batch 1 as declared, and a set that is not declared is frozen in catalogue order. Every catalogue contestant is offered.
+- **Runs:**
+  - a real batch on fixture candles, run from the window, with its rows and a row's detail;
+  - progress and Stop with a fake run;
+  - closing the window stops a run;
+  - a real batch stopped is shown as stopped, with no rows.
+- **Saved batches:** the newest first with their states, and the last batch's choices ticked. With no batch, batch 1 is ticked.
+- **Words:** the facts-only check over every label, row, detail and heading.
+- **The hub:** Settings > Training has the button; it opens the window and raises the open one.
+
+**One fix in the tests.** A closed window's Tk variables, collected later by garbage collection on a worker thread, each waited on a destroyed test interpreter (about 60 s). The tests collect them on the Tk thread after each test. This is a test effect only: the app's interpreter lives as long as the hub.
+
+**Screenshot:** the real hub, alpha 0, captured with PrintWindow; checked by eye, not committed.
+
+### Not done (phase E and later)
+
+- This phase runs no batch. PV-1 was run on 2026-11-07, in FDS-SIG-004's development run (a sandbox, `docs/dev/sig4-dev/`). Batch 1 is phase E. A batch run from the window is a trial in `trials.jsonl`.
+- No final check, no lockbox opening, no change to any model in use.

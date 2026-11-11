@@ -24,6 +24,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+import pt_paths
+
 STATES = ("queued", "running", "paused", "done", "failed", "cancelled")
 TERMINAL = ("done", "failed", "cancelled")
 REQUESTS = ("pause", "cancel")
@@ -110,16 +112,14 @@ def _job(row: sqlite3.Row) -> Job:
 
 
 def default_root() -> str:
-    import pt_paths
-
     return os.path.join(pt_paths.data_dir(), "research_engine")
 
 
 class JobStore:
     def __init__(self, root: Optional[str] = None, clock=time.time) -> None:
-        self.root = root or default_root()
+        self.root = os.path.abspath(root or default_root())
         os.makedirs(self.root, exist_ok=True)
-        self.path = os.path.join(self.root, "jobs.sqlite")
+        self.path = pt_paths.file_in(self.root, "jobs.sqlite")
         self._clock = clock
         with self._connect() as db:
             db.executescript(_SCHEMA)

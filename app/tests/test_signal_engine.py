@@ -836,7 +836,7 @@ class LongGapTests(DailyTraderCase):
         acted, held = {}, {}
         for k in range(55, len(self.frame)):
             before = len(self.sides())
-            logged = self.passes(trader, k, 10, n=2)
+            logged = self.passes(trader, k, candles.SETTLE_SECONDS + 10, n=2)
             if len(self.sides()) > before:
                 acted[k] = self.sides()[-1]
             gap = [line for line in logged if "LONG_GAP" in line]
@@ -871,8 +871,8 @@ class LongGapTests(DailyTraderCase):
             }
         }
 
-        def clock():
-            return (last + DAY).timestamp() + 10
+        def clock():  # 10 s after the last bar settled
+            return (last + DAY).timestamp() + candles.SETTLE_SECONDS + 10
 
         def decide(reference):
             def provider(symbol, tf, n, now):

@@ -31,6 +31,7 @@ import pandas as pd
 
 from market_data.candles import CandleDataError, exchange_candles
 from market_data.timeframes import candle_timeframe_seconds, timeframe_seconds
+from pt_exchange_abstraction import MarketNotFound
 from pt_logging import get_logger
 from model_store import ModelStoreError
 from strategies.base import Action, StrategyError
@@ -378,7 +379,8 @@ class SignalEngine:
         self._last_fetch_attempt[pair] = mono
         try:
             df = self._provider(pair, tf, runner.lookback_bars + 5, now)
-        except (CandleDataError, OSError) as exc:
+        except (CandleDataError, OSError, MarketNotFound) as exc:
+            # MarketNotFound: no exchange in Settings lists the coin; it holds
             self._warn_once(
                 f"fetch:{pair}", f"Could not fetch {pair} {tf} candles: {exc}"
             )
@@ -420,7 +422,8 @@ class SignalEngine:
         self._context_attempt[key] = mono
         try:
             df = self._provider(pair, tf, bars + 5, now)
-        except (CandleDataError, OSError) as exc:
+        except (CandleDataError, OSError, MarketNotFound) as exc:
+            # MarketNotFound: no exchange in Settings lists the coin; it holds
             self._warn_once(
                 f"fetch:{pair}:{tf}", f"Could not fetch {pair} {tf} candles: {exc}"
             )

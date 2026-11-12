@@ -615,6 +615,24 @@ Every line is development only: not evidence for enabling anything.
 - **The block rule and long trades.** §6.0's rule gave family S blocks of 896 days: 1.8 blocks in 1,586 days. S3's and S4's bootstrap intervals include zero, while their p-values are below 0.01. The rule stays as frozen for E1, and an amendment is proposed for later experiments.
 - **STRAT-005's gap rule.** A missing bar anywhere in the 365-day window holds every decision for up to a year, exits included. It held 42% of the weekly decisions on 4h bars. The daily and 12h series have no gaps, so the deciding results are unaffected. The module's docstring describes the narrower intended rule.
 
+## 2026-11-12: STRAT-004 raised to `paper` (the owner's decision)
+
+The owner approved raising STRAT-004 to `paper` once the late-candle defect D1 was fixed. D1's fix is PR #260 (merged `2709b99`). The record text is the one proposed in `STRAT-004-paper-readiness.md` section 2:
+
+> STRAT-004 version 1.0.0 (Donchian breakout, daily, entry 55 days, exit 20 days, parameter SHA-256 `89579608ee854d67afce197674141a23848b1adb3bcca6b5096d72dcfd726265`) is raised from `research` to `paper` on the owner's decision of 2026-11-12, for operational observation in paper only.
+>
+> **Evidence.** Its M3a tests pass, including the backtest–paper parity test, and the declared development evaluation E1 has reported.
+> - **S1 passed:** it beats random entries with its own exits (return per capital-day +0.2882% against a random median of +0.0104%, p = 0.0065, Holm over 4, 135 trades; +12.56% of the account over the period).
+> - **S3 failed:** it was not shown to be profitable after fees at £10,000 and 0.50% + 0.05%. It lost $116.89 in the first half. Over the period it made +12.56% of the account (2.76% a year) at +0.2882% a capital-day, with 2.6% of the account committed on average, and the profit came from coins listed after 2021.
+>
+> **Limits.** Paper evidence is operational only. It is not a forward confirmation and cannot show profitability. Live trading stays prohibited: §6.7 gives no route to `live` without a passed final check on unseen months under a later spec.
+
+**What changed:** `app/strategies/catalogue.json`, STRAT-004's `authorisation`, from `research` to `paper`. The tests that pinned the old state now pin the new one, and the refusal at `research` is still tested with the catalogue patched in memory.
+
+**What did not change:** the version (1.0.0), the defaults, the bounds, `timeframes_permitted`, the research tick, STRAT-005, OVL-REGIME and every other entry. No setting was changed. Selecting STRAT-004 stays the owner's own step in Settings > Strategy.
+
+**Still open before an observation segment starts** (readiness section 14): the coins, the paper balance, the fee source, the code freeze, the duration, the reserved months, the forward months and the thresholds. D2, D3, D6 and D7 are unchanged.
+
 ## Backlog (non-critical)
 
 FDS-SR-001 §13, and:

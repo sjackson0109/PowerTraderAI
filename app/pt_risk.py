@@ -346,9 +346,11 @@ class RiskManager:
 
     def emergency_stop(self):
         """
-        Execute emergency stop procedures
+        Halt buying, and keep a snapshot of the risk state.
 
-        STOP ALL TRADING IMMEDIATELY and preserve system state
+        Only what is done here is logged. Nothing is closed, cancelled or
+        disconnected: the trader keeps managing what is held (exits, stops and the
+        trailing margin still sell) and refuses every buy until the halt is reset.
         """
         if self.emergency_stop_triggered:
             return  # Already triggered
@@ -356,49 +358,13 @@ class RiskManager:
         self.emergency_stop_triggered = True
         self.is_trading_halted = True
 
-        self.logger.critical("EMERGENCY STOP ACTIVATED")
-
+        self.logger.critical(
+            "EMERGENCY STOP: buying halted; held positions are still managed"
+        )
         try:
-            # 1. Stop all trading strategies
-            self._halt_all_strategies()
-
-            # 2. Cancel all pending orders
-            self._cancel_all_pending_orders()
-
-            # 3. Close all positions at market price
-            self._close_all_positions()
-
-            # 4. Disconnect from APIs
-            self._disconnect_apis()
-
-            # 5. Save system state
             self._save_emergency_snapshot()
-
-            # 6. Send emergency notifications
-            self._send_emergency_notifications()
-
-        except Exception as e:
-            self.logger.critical(f"Emergency stop procedure failed: {e}")
-
-    def _halt_all_strategies(self):
-        """Stop all trading strategies"""
-        self.logger.info("Halting all trading strategies")
-        # Implementation would interact with strategy manager
-
-    def _cancel_all_pending_orders(self):
-        """Cancel all pending orders"""
-        self.logger.info("Cancelling all pending orders")
-        # Implementation would interact with order management system
-
-    def _close_all_positions(self):
-        """Close all open positions"""
-        self.logger.info("Closing all positions")
-        # Implementation would interact with position management system
-
-    def _disconnect_apis(self):
-        """Disconnect from all trading APIs"""
-        self.logger.info("Disconnecting from all APIs")
-        # Implementation would disconnect API connections
+        except Exception as e:  # the halt stands without its snapshot
+            self.logger.error(f"Failed to save emergency snapshot: {e}")
 
     def _save_emergency_snapshot(self):
         """Save current system state for analysis"""
@@ -420,11 +386,6 @@ class RiskManager:
             self.logger.info("Emergency snapshot saved")
         except Exception as e:
             self.logger.error(f"Failed to save emergency snapshot: {e}")
-
-    def _send_emergency_notifications(self):
-        """Send emergency notifications to administrators"""
-        self.logger.critical("Emergency notifications sent")
-        # Implementation would send SMS/email/Slack notifications
 
     def _alert_to_dict(self, alert: RiskAlert) -> Dict:
         """Convert alert to dictionary for serialization"""

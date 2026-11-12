@@ -146,7 +146,7 @@ def test_a_research_strategy_is_not_offered_and_a_saved_one_is_reported(
     with mock.patch.dict(
         cat.CATALOGUE, entry_with("STRAT-002", authorisation="research")
     ):
-        assert ui.offered_strategies() == ["STRAT-000", "STRAT-001"]
+        assert ui.offered_strategies() == ["STRAT-000", "STRAT-001", "STRAT-004"]
         win = open_window(root, folder, saved={"active_id": "STRAT-002"})
         assert (
             win.status_var.get()

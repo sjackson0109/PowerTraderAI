@@ -64,6 +64,14 @@ TERMINAL_ORDER_STATES = frozenset(
 PREVIEW_REPEAT_SECONDS = 15 * 60
 # How long a coin's minimum order is kept for telling dust from a position
 DUST_MINIMUM_SECONDS = 60 * 60
+# An order whose send raised (a timeout, a dropped connection) may have been made
+# all the same. Its intent stays in pnl_ledger.json (``order_intents``). Where the
+# exchange answers a repeated client order id with the order it already made, the
+# next order on that coin and side is the same order sent again, for this long:
+UNKNOWN_ORDER_RESEND_SECONDS = 15 * 60
+# Elsewhere no order is sent on that coin and side for this long, so the holdings
+# can show whether it was made (an entry is never made in a coin already held):
+UNKNOWN_ORDER_WAIT_SECONDS = 60
 
 
 # Initialize colorama
@@ -600,6 +608,7 @@ class CryptoAPITrading:
         self._trade_ended: Dict[str, bool] = self._ended_trades()
         self._pnl_ledger = self._load_pnl_ledger()
         self._reconcile_pending_orders()
+        self._report_unknown_orders()
 
         # Initialize Risk and Cost Management
         self.risk_manager = _TraderRiskAdapter(
@@ -652,6 +661,8 @@ class CryptoAPITrading:
                     "open_positions", {}
                 )  # { "BTC": {"usd_cost": float, "qty": float} }
                 data.setdefault("pending_orders", {})  # { "<order_id>": {...} }
+                # { "<symbol>|<side>": {...} }: sends whose outcome is unknown
+                data.setdefault("order_intents", {})
                 return data
         except Exception:
             pass
@@ -660,14 +671,85 @@ class CryptoAPITrading:
             "last_updated_ts": time.time(),
             "open_positions": {},
             "pending_orders": {},
+            "order_intents": {},
         }
 
-    def _save_pnl_ledger(self) -> None:
+    def _save_pnl_ledger(self) -> bool:
+        """Write the ledger; False when it could not be written."""
         try:
             self._pnl_ledger["last_updated_ts"] = time.time()
             self._atomic_write_json(self.pnl_ledger_path, self._pnl_ledger)
         except Exception:
-            pass
+            return False
+        return True
+
+    # -- order intents: an order is on disk before it is sent (N5) ------------------
+
+    def _order_intents(self) -> dict:
+        intents = self._pnl_ledger.setdefault("order_intents", {})
+        if not isinstance(intents, dict):
+            intents = self._pnl_ledger["order_intents"] = {}
+        return intents
+
+    def _order_intent(self, symbol: str, side: str) -> Optional[dict]:
+        intent = self._order_intents().get(f"{symbol}|{side}")
+        return intent if isinstance(intent, dict) else None
+
+    def _keep_order_intent(self, symbol: str, side: str, intent: dict) -> bool:
+        """Record ``intent`` on disk; False when it could not be (then the order must
+        not be sent)."""
+        self._order_intents()[f"{symbol}|{side}"] = intent
+        return self._save_pnl_ledger()
+
+    def _drop_order_intent(self, symbol: str, side: str) -> None:
+        if self._order_intents().pop(f"{symbol}|{side}", None) is not None:
+            self._save_pnl_ledger()
+
+    @staticmethod
+    def _resends_safely(target: OrderTarget) -> bool:
+        """Whether an order sent again with the same client order id cannot make a
+        second one: the exchange answers a repeated id with the order it made."""
+        return bool(
+            getattr(target.exchange, "REPEATED_CLIENT_ORDER_ID_RETURNS_ORDER", False)
+        )
+
+    def _unknown_order(self, target: OrderTarget, symbol: str, side: str):
+        """What to do about an earlier ``side`` order on ``symbol`` whose outcome is
+        unknown: ``("none", None)`` (there is none, or it is given up),
+        ``("resend", intent)`` (send that order again, same id and quantity) or
+        ``("wait", intent)`` (send nothing yet)."""
+        intent = self._order_intent(symbol, side)
+        if intent is None:
+            return "none", None
+        age = time.time() - float(intent.get("first_ts") or 0.0)
+        same_account = intent.get("account") == target.key
+        if same_account and self._resends_safely(target):
+            if age < UNKNOWN_ORDER_RESEND_SECONDS:
+                return "resend", intent
+        elif same_account and age < UNKNOWN_ORDER_WAIT_SECONDS:
+            return "wait", intent
+        message = (
+            f"Order {intent.get('client_order_id')} ({symbol} {side}, sent "
+            f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(intent.get('first_ts') or 0))}): "
+            "its outcome is still unknown. Check the exchange's order history; new "
+            "orders are sent again."
+        )
+        print(f"{Fore.RED}{message}{Style.RESET_ALL}")
+        logger.error(message)
+        self._drop_order_intent(symbol, side)
+        return "none", None
+
+    def _report_unknown_orders(self) -> None:
+        """At start: every kept order whose outcome is unknown."""
+        for key, intent in sorted(self._order_intents().items()):
+            if isinstance(intent, dict):
+                message = (
+                    f"Order {intent.get('client_order_id')} ({key.replace('|', ' ')}) "
+                    "was being sent when the trader last stopped or lost the "
+                    "connection: its outcome is unknown."
+                )
+                print(f"{Fore.YELLOW}{message}{Style.RESET_ALL}")
+                logger.warning(message)
 
     def _trade_history_has_order_id(self, order_id: str) -> bool:
         try:
@@ -1831,6 +1913,50 @@ class CryptoAPITrading:
                 return None
             self._previewed[(symbol, side)] = time.time()
 
+        # An earlier order here whose outcome is unknown is never sent again under a
+        # new id: it is sent again as it was, or nothing is sent yet (N5)
+        intent = None
+        if not target.preview:
+            how, intent = self._unknown_order(target, symbol, side)
+            if how == "wait":
+                self._warn_throttled(
+                    f"unknown-order:{symbol}|{side}",
+                    f"No {side} order for {symbol} yet: the outcome of order "
+                    f"{intent.get('client_order_id')} is unknown, and the holdings "
+                    "may still show it.",
+                    every=30.0,
+                )
+                return None
+            if how == "resend":
+                client_order_id = str(intent["client_order_id"])
+                asset_quantity = float(intent["quantity"])
+                intent["attempts"] = int(intent.get("attempts") or 1) + 1
+                print(
+                    f"  Sending order {client_order_id} ({symbol} {side}) again with "
+                    "the same id: the last send's outcome is unknown."
+                )
+            else:
+                client_order_id = client_order_id or str(uuid.uuid4())
+                intent = {
+                    "client_order_id": client_order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": float(asset_quantity),
+                    "tag": tag,
+                    "account": target.key,
+                    "first_ts": time.time(),
+                    "attempts": 1,
+                }
+            intent["last_ts"] = time.time()
+            if not self._keep_order_intent(symbol, side, intent):
+                message = (
+                    f"ORDER NOT SENT ({symbol} {side}): it could not be recorded "
+                    f"first in {self.pnl_ledger_path}"
+                )
+                print(f"{Fore.RED}{message}{Style.RESET_ALL}")
+                logger.error(message)
+                return None
+
         # --- exact profit tracking snapshot (BEFORE placing order) ---
         buying_power_before = self._get_buying_power()
 
@@ -1842,7 +1968,23 @@ class CryptoAPITrading:
             msg = self._describe_exchange_error(exc, "order placement", target.key)
             print(f"{Fore.RED}ORDER FAILED ({symbol} {side}): {msg}{Style.RESET_ALL}")
             logger.error(f"Order failed ({symbol} {side} via {target.key}): {msg}")
+            if intent is not None:
+                # it may have been made all the same: kept until the outcome is known
+                later = (
+                    "the next order here sends it again with the same id"
+                    if self._resends_safely(target)
+                    else f"no {side} order for {symbol} for "
+                    f"{UNKNOWN_ORDER_WAIT_SECONDS} s"
+                )
+                print(
+                    f"  Order {client_order_id} may have been made: its outcome is "
+                    f"unknown, so {later}."
+                )
             return None
+
+        # the exchange answered: the outcome is known (made, refused or previewed)
+        if intent is not None:
+            self._drop_order_intent(symbol, side)
 
         order_id = result.order_id
 

@@ -144,10 +144,19 @@ The lockbox is used only through O5.
 |---|---|---|---|
 | O1 | Change the emergency halt: entries refused, exits still run, and liquidation only if explicitly allowed | It changes live and paper behaviour. FDS-SR-001 left the halt out of scope | **Approved 2026-11-12** ("yes, sounds like a big flaw"): PR #270, exits only, no liquidation |
 | O2 | Persisted order intents with resend under the same client id | Live order behaviour | **Approved 2026-11-12**: PR #271 |
-| O3 | Adopt the stationary, marked-day bootstrap for long holdings (it replaces the draft amendment) | A change to research rules | **2026-11-12: measure a stricter variant first.** Done in PR #277: none of four variants met the declared 6.0% limit; the lowest worst case (studentised, 1.5x blocks, 6.2%) is the library default. A declared evaluation names its method in its registration |
-| O4 | Entry actionable only within a window after its bar (for example 15 minutes) | Changes when trades happen | Yes, for parity with backtests |
+| O3 | Adopt the stationary, marked-day bootstrap for long holdings (it replaces the draft amendment) | A change to research rules | **2026-11-12: measure a stricter variant first.** Done in PR #277: none of four variants met the declared 6.0% limit; the lowest worst case (studentised, 1.5x blocks, 6.2%) is the library default. A declared evaluation names its method in its registration. **Accepted as the default, 2026-11-12** |
+| O4 | Entry actionable only within a window after its bar (for example 15 minutes) | Changes when trades happen | Yes, for parity with backtests. **2026-11-12: the owner left the live defect fixes to me** ("You decide, I just don't know"); built as its own PR (N12), merged by the owner |
 | O5 | Any lockbox opening | Spends the only unseen months | Not before a declared M6 finalist exists |
 | O6 | Install scikit-learn in the app's `.venv` | Changes the owner's environment | **Done 2026-11-12** ("go ahead, add it to requirements.txt too"): installed, pinned to what was there; PR #267 |
 | O7 | Raise any candidate to `paper` (STRAT-004 first, once D1 is merged) | Authorisation | **Approved 2026-11-12** for STRAT-004: PR #268, after #260 merged |
 | O8 | Paid data sources | Cost | None proposed; B lists free sources |
 | O9 | A trading switch for any strategy in Settings > Strategy (the owner's request of 2026-11-12, e.g. STRAT-001 off now and on later) | Authorisation from the UI | Built: PR #269; switching on an entry its authorisation does not clear asks first |
+| O10 | Merge PRs #267 to #287 | Merges into the protected branch | **Approved 2026-11-12**: merged by me in stacked order, each brought up to date and green first. Later PRs are the owner's to merge |
+| O11 | N13: the live cooldown counts from the fill bar (#280) | Live behaviour | **Approved 2026-11-12** |
+| O12 | Drawdown in future registered evaluations (N18; F3 requirement 5 and E1's halt condition use daily closes) | A change to research rules | **2026-11-12: the trough at each bar's low, the peak at the highest high of the earlier bars.** E1 stays as registered. #284 reports the figures; the rule is a follow-up |
+| O13 | `pt_settings_manager.py` among an observation segment's frozen files (#286) | Ends running segments more often | **Approved 2026-11-12**: in #286 |
+| O14 | Paper fills: refuse when no fee rate is known (N27); round sells and apply minimums (N28) | Paper behaviour | **2026-11-12: N28 only.** Paper keeps its 0.10% last resort |
+| O15 | The live defect fixes N7, N10, N11, N12, N16, N17 (live part) | Live behaviour | **2026-11-12: left to me.** Built, each its own PR: N10, N12, N16, N7, N17. Held: N11, because measuring the halt on the trader's own equity loosens a protective limit; it needs a design for transfers first |
+| O16 | STRAT-006's default average (#285): 20 days, or the backlog's 50 to 200 | Research defaults | **2026-11-12: 20 days**, the published rule |
+
+**Next research work (owner, 2026-11-12):** 4.2 (volatility features and sizing), then 3.1 (the Zarattini ensemble).

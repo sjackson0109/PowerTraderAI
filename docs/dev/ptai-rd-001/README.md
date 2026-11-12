@@ -10,7 +10,7 @@ The owner's programme brief of 2026-11-11.
 
 **Still the owner's to decide:** live trading, raising a strategy's authorisation, opening the lockbox, and paid data (D §3).
 
-**The owner's decisions of 2026-11-12** are in D §3: O1, O2, O6 and O7 approved; O3 answered with "measure a stricter variant first"; and a new request, a trading switch for every strategy in Settings > Strategy.
+**The owner's decisions of 2026-11-12** are in D §3: O1, O2, O6 and O7 approved; O3 answered with "measure a stricter variant first"; and a new request, a trading switch for every strategy in Settings > Strategy. The owner's answers that evening (O3 accepted, O10 to O16) are in the same table.
 
 ## Deliverables
 
@@ -59,6 +59,7 @@ The owner's programme brief of 2026-11-11.
 | #284 | M1 | Replays measure drawdown and the halt within the bar as well (N18) |
 | #285 | M3 | STRAT-006, price above its average, research only (backlog 3.2) |
 | #286 | M1 | Observation: LLM signals, exchange order and program files frozen; fuller Reconcile; the frozen hash shown (D2, D3, D4, D6, D7) |
+| #287 | M4 | The feature library: 13 price, volatility and volume features, checked as of each bar (WP 4.1) |
 
 ## The headline findings
 

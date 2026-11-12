@@ -1,6 +1,6 @@
 # O3: calibrating the stationary-bootstrap test
 
-> **Synthetic data only.** No market data or network was used. This sets the default of a library function (`research_stats.resampling.rpcd_test`) that nothing in the app calls yet. Adopting the test for a declared evaluation is still the owner's decision O3.
+> **Synthetic data only.** No market data or network was used. This sets the default of a library function (`research_stats.resampling.rpcd_test`) that nothing in the app calls yet. The owner's answer to O3 (2026-11-12) was to measure a stricter variant first: this is that measurement. A declared evaluation that uses the test names its method and block scale in its registration, which the owner approves.
 
 **Prepared:** 2026-11-12, on `feat/research-stats-calibration`, cut from PR #266 (`c50b670`).
 **Why:** PR #266's test rejected slightly too often under dependence (7.4% at AR(0.4) in its first check, nominal 5%). The owner approved adopting a stricter variant.
@@ -14,7 +14,7 @@ Two things limit what that says. D's 6.2% and B's 6.6% are 0.4 points apart, les
 
 ## The rule, as declared before the run
 
-From the owner's brief (2026-11-12), written into the script before it ran:
+From the calibration brief (written by the programme on 2026-11-12, before the run), and into the script before it ran:
 
 1. Take each variant's worst pooled null size at nominal 5%, across all null scenarios and both lengths. Keep the variants whose worst is at most 6.0%.
 2. Among those, choose the highest pooled power, averaged over the power cells (the three power scenarios at both lengths, equal weights).

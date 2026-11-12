@@ -28,7 +28,7 @@ variant. Power and pilot: 10 x 30 = 300. Each test uses 999 bootstrap draws, so
 (B + 1) x 5% is a whole number. The four variants see the same data and the same
 bootstrap seed in each replication.
 
-**Decision rule, declared before the run** (the owner's brief, 2026-11-12): choose the
+**Decision rule, declared before the run** (the calibration brief, 2026-11-12): choose the
 variant whose worst pooled null size at nominal 5%, across all null scenarios and both
 lengths, is at most 6.0%. Among those, the one with the highest pooled power averaged
 over the power cells (the three power scenarios at both lengths, equal weights). A tie

@@ -27,7 +27,8 @@ its p-values carried no information.
 
 **The default (O3 calibration, 2026-11-12;
 ``docs/dev/ptai-rd-001/O3-bootstrap-calibration.md``)** is ``"studentised"`` with the
-chosen block length x1.5 (variant D). The owner's rule, declared before the run, was:
+chosen block length x1.5 (variant D). The rule, declared in the calibration brief
+before the run, was:
 worst null size at nominal 5% at most 6.0% across every null scenario and both lengths,
 then the most power. No variant met 6.0%; the rule then takes the lowest worst-case
 size, which was D's: 6.2% (AR(0.4) with Student-t(3) shocks, 750 days; 1000
@@ -35,8 +36,8 @@ replications, so about 0.75 points of Monte Carlo error). The percentile method 
 (PR #266's) reached 7.5% (AR(0.7), 750 days). D costs about 1.6 points of mean power.
 Synthetic series only.
 
-It is a library. Adopting it for a declared evaluation is the owner's decision
-(PTAI-RD-001 D, O3). Nothing existing calls it.
+It is a library, and nothing existing calls it. A declared evaluation that uses it names
+the method and block scale in its registration, which the owner approves.
 """
 
 from __future__ import annotations
@@ -225,7 +226,7 @@ def rpcd_test(
 
     The default is the O3 calibration's choice, ``method="studentised",
     block_scale=1.5``: its worst null size was 6.2% at nominal 5%, the lowest of the four
-    variants measured, though above the 6.0% the owner's rule asked for. PR #266's method
+    variants measured, though above the 6.0% the declared rule asked for. PR #266's method
     is ``method="percentile", block_scale=1.0`` (worst 7.5%).
 
     The mean block length is chosen from the marked daily profit or loss and multiplied

@@ -8,6 +8,9 @@ only). ``Simulation`` builds one ``TradeTable`` per coin from it, and replays th
 trades in one shared account per size (``signal_fusion.evaluation.replay``), marked at
 every close of the strategy's timeframe.
 
+**Gaps.** A series with a gap longer than a day (an exchange halt) is used from after its
+last such gap (``after_long_gaps``), so no trade or lookback spans months with no market.
+
 **Accounts in pounds.** The pairs are quoted in US dollars, so an account given in GBP is
 converted at one GBP-to-USD rate, which the caller states (``usd_accounts``) and every
 result records. Nothing reads a rate live.
@@ -22,10 +25,12 @@ import numpy as np
 import pandas as pd
 
 from market_data.candles import exchange_candles, to_utc
+from market_data.timeframes import candle_timeframe_seconds
 from signal_fusion.evaluation.replay import Account, Costs, Paths, replay
 from strategy_lab.candidates import RunnerSpec, Trade, TradeTable
 
 ACCOUNTS_GBP = (50.0, 500.0, 10_000.0)  # FDS-SR-001 section 5.10
+MAX_GAP_S = 24 * 3600  # a longer gap ends the earlier part of a series (model lab's)
 
 Loader = Callable[..., pd.DataFrame]
 
@@ -55,6 +60,47 @@ class Universe:
         return out
 
 
+def after_long_gaps(
+    frame: pd.DataFrame, bar_seconds: int
+) -> Tuple[pd.DataFrame, Optional[Dict[str, Any]]]:
+    """``frame`` from the first bar after its last gap longer than ``MAX_GAP_S``, and
+    the cut for the run's record (None when there is no such gap).
+
+    A gap of up to 24 hours is kept: there is no bar in it, so no entry is made there,
+    and an open trade carries on at the next bar. A longer gap (an exchange halt, a
+    delisting and relisting) ends the earlier part, as in the model lab
+    (``model_lab.series``): otherwise a trade, or an indicator's lookback, would run
+    straight across months with no market."""
+    if len(frame) < 2:
+        return frame, None
+    times = frame["open_time"]
+    missing_s = times.diff().dt.total_seconds().to_numpy() - float(bar_seconds)
+    long_gaps = np.flatnonzero(missing_s > MAX_GAP_S)
+    if not len(long_gaps):
+        return frame, None
+    k = int(long_gaps[-1])  # the first bar after the last long gap
+    kept = frame.iloc[k:].reset_index(drop=True)
+    kept.attrs = dict(frame.attrs)
+    cut = {
+        "earlier_last_bar": times.iloc[k - 1].isoformat(),
+        "kept_from": times.iloc[k].isoformat(),
+        "bars_dropped": k,
+    }
+    return kept, cut
+
+
+def _series(loader: Loader, symbol: str, tf: str, start, end, **kw):
+    """One series read through ``loader``, with ``after_long_gaps`` applied, and its
+    source record (the loader's attributes, plus the cut when there was one)."""
+    frame, cut = after_long_gaps(
+        loader(symbol, tf, start, end, **kw), candle_timeframe_seconds(tf)
+    )
+    source = dict(frame.attrs)
+    if cut is not None:
+        source["cut_at_long_gap"] = cut
+    return frame, source
+
+
 def load_universe(
     coins: Sequence[str],
     spec: RunnerSpec,
@@ -65,20 +111,16 @@ def load_universe(
     offline: bool = False,
     loader: Loader = exchange_candles,
 ) -> Universe:
-    """Each coin's candles, and each declared context series, read once."""
+    """Each coin's candles, and each declared context series, read once. A series with
+    a gap longer than a day is used from after its last such gap
+    (``after_long_gaps``), and the run's sources record the cut."""
     frames: Dict[str, pd.DataFrame] = {}
     sources: Dict[str, Any] = {}
+    kw = dict(cache_dir=cache_dir, offline=offline)
     for coin in coins:
-        frame = loader(
-            f"{coin}-USD",
-            spec.timeframe,
-            start,
-            end,
-            cache_dir=cache_dir,
-            offline=offline,
-        )
+        frame, source = _series(loader, f"{coin}-USD", spec.timeframe, start, end, **kw)
         frames[coin] = frame
-        sources[f"{coin}:{spec.timeframe}"] = dict(frame.attrs)
+        sources[f"{coin}:{spec.timeframe}"] = source
     universe = Universe(spec.timeframe, frames, sources=sources)
     needs = spec.build().context_needs()
     for reference, tf, bars in needs:
@@ -89,22 +131,15 @@ def load_universe(
                 if tf == spec.timeframe:
                     series = frames[coin]
                 else:
-                    series = loader(
-                        f"{coin}-USD",
-                        tf,
-                        begin,
-                        end,
-                        cache_dir=cache_dir,
-                        offline=offline,
+                    series, sources[f"{coin}:{tf}"] = _series(
+                        loader, f"{coin}-USD", tf, begin, end, **kw
                     )
-                    sources[f"{coin}:{tf}"] = dict(series.attrs)
                 universe.own.setdefault(coin, {})[("self", tf)] = series
         else:
-            series = loader(
-                f"{reference}-USD", tf, begin, end, cache_dir=cache_dir, offline=offline
+            series, sources[f"{reference}:{tf}"] = _series(
+                loader, f"{reference}-USD", tf, begin, end, **kw
             )
             universe.shared[(reference, tf)] = series
-            sources[f"{reference}:{tf}"] = dict(series.attrs)
     return universe
 
 

@@ -60,6 +60,25 @@ def default_candle_provider(
     )
 
 
+def _frame_key(
+    df: pd.DataFrame,
+    expected_last_open: pd.Timestamp,
+    step: pd.Timedelta,
+    now: pd.Timestamp,
+) -> Optional[pd.Timestamp]:
+    """The key a fetched frame is kept under. ``expected_last_open`` when the frame
+    holds that bar, so it is current until the next bar closes. Otherwise the open
+    of its last closed bar (None if it has none): the exchange has not published the
+    bar yet, so the frame is only a fallback, and the next call fetches again after
+    ``FETCH_RETRY_SECONDS``. A late bar is then decided within that interval,
+    instead of a bar later or never (STRAT-004 paper readiness, D1)."""
+    closed = df["open_time"][df["open_time"] + step <= now]
+    if closed.empty:
+        return None
+    last = closed.iloc[-1]
+    return expected_last_open if last >= expected_last_open else last
+
+
 def market_for(base: str) -> str:
     """Trader coin ``BTC`` -> its market ``BTC-USD`` (USD, USDT and USDC count as the
     same dollar)."""
@@ -83,11 +102,13 @@ class SignalEngine:
         # why the configured strategy could not be built (cleared when settings change)
         self._build_error: Optional[Tuple[tuple, str]] = None
         self._positions: Dict[str, PositionState] = {}
-        # per pair: (expected last-closed open_time, candles) and fetch bookkeeping
-        self._candles: Dict[str, Tuple[pd.Timestamp, pd.DataFrame]] = {}
+        # per pair: (the frame's key, ``_frame_key``; candles) and fetch bookkeeping
+        self._candles: Dict[str, Tuple[Optional[pd.Timestamp], pd.DataFrame]] = {}
         self._last_fetch_attempt: Dict[str, float] = {}
         # an entry gate's market context (FDS-SR-001 5.6), per (pair, timeframe)
-        self._context: Dict[Tuple[str, str], Tuple[pd.Timestamp, pd.DataFrame]] = {}
+        self._context: Dict[
+            Tuple[str, str], Tuple[Optional[pd.Timestamp], pd.DataFrame]
+        ] = {}
         self._context_attempt: Dict[Tuple[str, str], float] = {}
         self._logged: Dict[str, tuple] = {}
         self._warned: Dict[str, float] = {}
@@ -364,7 +385,8 @@ class SignalEngine:
             return cached[1] if cached is not None else None
         if df is None or df.empty:
             return cached[1] if cached is not None else None
-        self._candles[pair] = (expected_last_open, df)
+        step = pd.Timedelta(seconds=timeframe_seconds(tf))
+        self._candles[pair] = (_frame_key(df, expected_last_open, step, now), df)
         return df
 
     def _context_for(
@@ -406,7 +428,7 @@ class SignalEngine:
         if df is None or df.empty:
             return cached[1] if cached is not None else None
         df = df[df["open_time"] + step <= now].reset_index(drop=True)
-        self._context[key] = (expected_last_open, df)
+        self._context[key] = (_frame_key(df, expected_last_open, step, now), df)
         return df
 
     def _record(

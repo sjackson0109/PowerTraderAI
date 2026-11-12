@@ -164,6 +164,11 @@ An entry is acted on only within 15 minutes of its bar's close (`ENTRY_WINDOW_S`
 the next bar's open), and a refused one is retried within that time only. Later the engine returns `HOLD` with reason
 `ENTRY_MISSED:<the entry's reason>`, logged once per coin and bar, and no buy is made: a trader started after a
 close does not buy on that bar. Exits are never late.
+Entries are also held, `HOLD` with reason `LONG_GAP:<the entry's reason>`, while the bars a decision reads (the
+strategy's window and an entry gate's context series) contain a gap longer than a day, such as an exchange halt.
+The strategy lab ends a series at such a gap by the same rule (`market_data/gaps.py`). Exits still run. A strategy
+that finds its earlier bars by time rather than by counting back (STRAT-005) is not stretched by a gap, so its own
+window is not checked.
 
 **One interface everywhere.** `strategies/` holds the `Strategy` interface (`on_bar(candles) -> Signal` on closed
 bars only; pure; long-only), indicators (EMA, DEMA, TEMA, Wilder ATR/ADX), a JSON catalogue + registry that fail

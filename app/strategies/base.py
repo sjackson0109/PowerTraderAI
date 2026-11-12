@@ -63,6 +63,10 @@ class Strategy(ABC):
     # Seconds per bar of the run; set by StrategyRunner.set_timeframe (most strategies
     # do not need it).
     bar_seconds: Optional[int] = None
+    # True when it finds earlier bars by counting back, so a gap in its window
+    # stretches its lookbacks: the signal engine then holds its entries while the
+    # window has a gap longer than a day. False for one that finds them by time.
+    counts_bars: bool = True
 
     def __init__(self, **params: Any) -> None:
         # Imported here: the catalogue imports strategy modules to register them.

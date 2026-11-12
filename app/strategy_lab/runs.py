@@ -24,7 +24,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -227,6 +227,8 @@ def run(
         "curve": _curve(path),
     }
     if save:
+        run_id, folder = _claim_folder(run_id)
+        record["id"] = run_id
         experiment.log_trial(
             run_id,
             "run",
@@ -237,14 +239,29 @@ def run(
             {"net_usd": record["strategy_result"]["net_usd"]},
             now=now,
         )
-        folder = os.path.join(runs_dir(), run_id)
-        os.makedirs(folder, exist_ok=True)
         with open(
             os.path.join(folder, "run.json"), "w", encoding="utf-8", newline="\n"
         ) as f:
             json.dump(record, f, indent=2, sort_keys=True, default=str)
             f.write("\n")
     return record
+
+
+def _claim_folder(run_id: str) -> Tuple[str, str]:
+    """A new folder for a run: ``run_id``, or ``run_id-2``, ``-3``, ... when a run of
+    the same strategy was saved in the same second (parallel research jobs can). The
+    folder's creation is the claim, so two processes never get the same one."""
+    base = runs_dir()
+    os.makedirs(base, exist_ok=True)
+    n = 1
+    while True:
+        rid = run_id if n == 1 else f"{run_id}-{n}"
+        folder = os.path.join(base, rid)
+        try:
+            os.mkdir(folder)
+            return rid, folder
+        except FileExistsError:
+            n += 1
 
 
 def list_runs() -> List[Dict[str, Any]]:

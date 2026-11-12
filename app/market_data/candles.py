@@ -224,7 +224,12 @@ def _read_cache(path: str) -> pd.DataFrame:
 
 
 def _write_cache(path: str, df: pd.DataFrame) -> None:
-    """Cache format: ``open_time_ms`` (epoch ms, exact) + open, high, low, close, volume."""
+    """Cache format: ``open_time_ms`` (epoch ms, exact) + open, high, low, close, volume.
+
+    The temporary file is this process's own, so the hub, the trader and research
+    workers can refresh the same cache at once. A cache that cannot be replaced (on
+    Windows, while another process reads it) is left as it was: that only costs the
+    requests next time, and the caller still gets the bars it fetched."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     epoch = pd.Timestamp("1970-01-01", tz="UTC")
     out = df[_NUMERIC].copy()
@@ -233,9 +238,15 @@ def _write_cache(path: str, df: pd.DataFrame) -> None:
         "open_time_ms",
         ((df["open_time"] - epoch) // pd.Timedelta(milliseconds=1)).astype("int64"),
     )
-    tmp = f"{path}.tmp"
-    out.to_csv(tmp, index=False)
-    os.replace(tmp, path)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        out.to_csv(tmp, index=False)
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 def _closed_only(df: pd.DataFrame, tf: str, now: pd.Timestamp) -> pd.DataFrame:

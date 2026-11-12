@@ -4,13 +4,20 @@ Paper-trading observation segments and their reconciliation (FDS-SR-001 section 
 **A segment** starts when the owner presses "Start an observation" (Settings > Paper
 trading > Observation...). It freezes a snapshot of every setting that decides a paper
 trade (``snapshot``): the strategy, its parameters, overlays and timeframe; the coins
-and the paper-trading coins; sizing and risk; the entry checks; and the legacy engine's
-levels. Its SHA-256 is kept with it, under ``<hub>/paper/observations/<id>.json``.
+and the paper-trading coins; sizing and risk; the entry checks; the LLM signal mode and
+the LLM signals ticked for trading, which can confirm or veto an entry (``llm_gate``);
+the enabled exchanges in the order the exchange layer asks them, which decide the quote,
+fee, minimum and candles (``trading_config.json``); and the legacy engine's levels. Its
+SHA-256 is kept with it, and so is the SHA-256 of each file on the trading path
+(``code_hashes``), under ``<hub>/paper/observations/<id>.json``.
 
-**A changed setting ends it** (``check``): whenever the window opens or reconciles, the
-snapshot is compared with the settings files; if any deciding value changed, the segment
-ends at the time the changed file was last written, with the keys that changed. A new
-segment starts only when the owner presses the button again.
+**A changed setting or program file ends it** (``check``): whenever the window opens or
+reconciles, the snapshot is compared with the settings files and the program files with
+their SHA-256s; if any deciding value changed, the segment ends at the time the changed
+file was last written, with the keys or files that changed. Only what the segment froze
+is compared: a segment started before a value was frozen is not ended because its record
+lacks it, and its file is not rewritten to add it. A new segment starts only when the
+owner presses the button again.
 
 **Reconcile** (``reconcile``) replays the segment's closed candles through the same
 strategy (``strategy_lab.candidates``) and compares the trades it would make with the
@@ -44,6 +51,8 @@ from market_data.candles import exchange_candles
 from strategy_lab.candidates import RunnerSpec, TradeTable
 
 CONFIG_SECTIONS = ("strategy", "risk", "paper", "signal_fusion")
+# llm.signal_mode and llm.signal_use: an LLM signal can confirm or veto an entry
+LLM_KEYS = ("signal_mode", "signal_use")
 GUI_KEYS = (
     "coins",
     "paper_coins_mode",
@@ -61,6 +70,32 @@ GUI_KEYS = (
 )
 NEAR_BARS = 3
 
+# The trading path: the files a paper order's decision, size, quote, fee and placement
+# run through (pt_trader and what it imports for them). The owner's app runs from the
+# checkout, so a merge can change them mid-segment; any change ends it. The folders are
+# taken whole, their files of these kinds (not their sub-folders: signal_fusion's
+# evaluation is offline research).
+CODE_FILES = (
+    "pt_trader.py",  # the trader loop and its orders
+    "signal_engine.py",  # each bar's decision
+    "trading_mode.py",  # the paper book, its quotes and fees
+    "pt_paper_trading.py",
+    "paper_coins.py",
+    "position_sizing.py",
+    "pt_risk.py",
+    "risk_state.py",
+    "llm_gate.py",  # an LLM signal's confirm or veto
+    "pt_exchange_abstraction.py",  # the exchange layer
+    "pt_exchanges.py",
+    "pt_multi_exchange.py",
+)
+CODE_FOLDERS = (
+    ("strategies", (".py", ".json")),  # strategies, overlays, runner, the catalogue
+    ("market_data", (".py",)),  # candles and listings
+    ("signal_fusion", (".py",)),  # the entry assessment
+)
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 class ObservationError(RuntimeError):
     """A segment cannot be started, ended or reconciled."""
@@ -70,23 +105,60 @@ def folder(hub_dir: str) -> str:
     return os.path.join(hub_dir, "paper", "observations")
 
 
-def snapshot(config: Mapping[str, Any], gui: Mapping[str, Any]) -> Dict[str, Any]:
-    """The settings that decide a paper trade."""
-    trading = (
-        config.get("trading") if isinstance(config.get("trading"), Mapping) else {}
-    )
-    return {
+def _section(config: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+    value = config.get(name)
+    return value if isinstance(value, Mapping) else {}
+
+
+def snapshot(
+    config: Mapping[str, Any],
+    gui: Mapping[str, Any],
+    exchanges: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    """The settings that decide a paper trade. ``exchanges``: the enabled exchanges in
+    the order the exchange layer asks them, primary first; None leaves them out."""
+    llm = _section(config, "llm")
+    snap: Dict[str, Any] = {
         "config": {
-            "trading.mode": (trading or {}).get("mode"),
+            "trading.mode": _section(config, "trading").get("mode"),
+            **{f"llm.{k}": llm.get(k) for k in LLM_KEYS},
             **{k: config.get(k) for k in CONFIG_SECTIONS},
         },
         "gui": {k: gui.get(k) for k in GUI_KEYS},
     }
+    if exchanges is not None:
+        snap["exchanges"] = [str(e) for e in exchanges]
+    return snap
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def digest(snap: Mapping[str, Any]) -> str:
-    text = json.dumps(snap, sort_keys=True, separators=(",", ":"), default=str)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return hashlib.sha256(_canonical(snap).encode("utf-8")).hexdigest()
+
+
+def code_hashes(root: Optional[str] = None) -> Dict[str, Optional[str]]:
+    """The SHA-256 of each trading-path file under ``root`` (the program folder), with
+    LF line endings as model_lab's batches hash theirs; None for a file that is
+    missing."""
+    root = root or APP_DIR
+    names = set(CODE_FILES)
+    for sub, kinds in CODE_FOLDERS:
+        try:
+            listed = os.listdir(os.path.join(root, sub))
+        except OSError:
+            continue
+        names.update(f"{sub}/{n}" for n in listed if n.endswith(kinds))
+    out: Dict[str, Optional[str]] = {}
+    for name in sorted(names):
+        try:
+            with open(os.path.join(root, *name.split("/")), "rb") as f:
+                out[name] = hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
+        except OSError:
+            out[name] = None
+    return out
 
 
 def _iso(t: float) -> str:
@@ -130,18 +202,21 @@ def start(
     config: Mapping[str, Any],
     gui: Mapping[str, Any],
     now: Optional[float] = None,
+    exchanges: Optional[Sequence[str]] = None,
+    code_root: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Start a segment with today's deciding settings."""
+    """Start a segment with today's deciding settings and trading-path files."""
     if open_segment(hub_dir) is not None:
         raise ObservationError("an observation is already running")
     now = now or time.time()
-    snap = snapshot(config, gui)
+    snap = snapshot(config, gui, exchanges)
     segment = {
         "id": datetime.fromtimestamp(now, tz=timezone.utc).strftime("%Y%m%d-%H%M%S"),
         "started_at": _iso(now),
         "started_s": int(now),
         "snapshot": snap,
         "sha256": digest(snap),
+        "code": code_hashes(code_root),
         "ended_at": None,
         "end_reason": None,
     }
@@ -160,15 +235,30 @@ def end(hub_dir: str, reason: str, when: Optional[float] = None) -> Dict[str, An
 
 
 def _changed(old: Mapping[str, Any], new: Mapping[str, Any]) -> List[str]:
+    """The keys frozen in ``old`` whose values differ in ``new``. A key ``old`` lacks
+    (its segment started before that value was frozen) is not compared, nor are the
+    exchanges when either side lacks them."""
     out = []
     for part in ("config", "gui"):
         a, b = old.get(part) or {}, new.get(part) or {}
-        for key in sorted(set(a) | set(b)):
-            if json.dumps(a.get(key), sort_keys=True, default=str) != json.dumps(
-                b.get(key), sort_keys=True, default=str
-            ):
+        for key in sorted(a):
+            if _canonical(a.get(key)) != _canonical(b.get(key)):
                 out.append(key)
+    if "exchanges" in old and "exchanges" in new:
+        if _canonical(old["exchanges"]) != _canonical(new["exchanges"]):
+            out.append("exchanges")
     return out
+
+
+def _first_written(root: str, names: Sequence[str]) -> Optional[float]:
+    """When the first of these files was last written; None when none exists."""
+    times = []
+    for name in names:
+        try:
+            times.append(os.path.getmtime(os.path.join(root, *name.split("/"))))
+        except OSError:
+            continue
+    return min(times) if times else None
 
 
 def check(
@@ -176,18 +266,39 @@ def check(
     config: Mapping[str, Any],
     gui: Mapping[str, Any],
     changed_at: Optional[float] = None,
+    exchanges: Optional[Sequence[str]] = None,
+    code_root: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """End the running segment if a deciding setting changed; the ended segment, or
-    None. ``changed_at`` is when the settings file was last written."""
+    """End the running segment if a deciding setting or a trading-path file changed;
+    the ended segment, or None. ``changed_at`` is when the settings files were last
+    written; a changed program file is dated by its own time. ``exchanges=None`` (not
+    read) compares no exchanges; a segment that recorded no program files compares
+    none."""
     segment = open_segment(hub_dir)
     if segment is None:
         return None
-    snap = snapshot(config, gui)
-    if digest(snap) == segment["sha256"]:
+    keys = _changed(segment.get("snapshot") or {}, snapshot(config, gui, exchanges))
+    frozen_code = segment.get("code")
+    root = code_root or APP_DIR
+    files: List[str] = []
+    if isinstance(frozen_code, Mapping):
+        now_code = code_hashes(root)
+        files = sorted(
+            n
+            for n in set(frozen_code) | set(now_code)
+            if frozen_code.get(n) != now_code.get(n)
+        )
+    if not keys and not files:
         return None
-    keys = _changed(segment["snapshot"], snap)
-    when = max(float(changed_at or time.time()), float(segment["started_s"]))
-    return end(hub_dir, "settings changed: " + ", ".join(keys), when)
+    times, reasons = [], []
+    if keys:
+        times.append(float(changed_at or time.time()))
+        reasons.append("settings changed: " + ", ".join(keys))
+    if files:
+        times.append(_first_written(root, files) or time.time())
+        reasons.append("program files changed: " + ", ".join(files))
+    when = max(min(times), float(segment["started_s"]))
+    return end(hub_dir, "; ".join(reasons), when)
 
 
 # --- reconciliation ----------------------------------------------------------------------

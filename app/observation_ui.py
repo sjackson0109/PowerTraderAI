@@ -1,15 +1,18 @@
 """
 Settings > Paper trading, "Observation..." (FDS-SR-001 section 5.11).
 
-"Start an observation" freezes the settings that decide a paper trade; changing any of
-them ends the observation (checked whenever this window opens or reconciles). "End the
-observation" ends it by hand. "Reconcile..." replays the observation's closed candles
-through the same strategy and compares each trade with the paper trades: matched, timing
-(within 3 candles), missed or extra, with the paper fill against the replay's open and
-the fee paper charged. It runs off the Tk thread (``ui_jobs``).
+"Start an observation" freezes the settings that decide a paper trade and the SHA-256 of
+each trading-path program file; changing any of them ends the observation (checked
+whenever this window opens or reconciles). "End the observation" ends it by hand.
+"Reconcile..." replays the observation's closed candles through the same strategy and
+compares each trade with the paper trades: matched, timing (within 3 candles), missed or
+extra, with the paper fill against the replay's open and the fee paper charged. It runs
+off the Tk thread (``ui_jobs``).
 
-``read_current()`` gives ``(pt_config, gui_settings, last written)``; the hub gives the
-real files, tests give their own. The words state facts only.
+``read_current()`` gives ``(pt_config, gui_settings, last written, exchanges)``: the
+exchanges are the enabled ones in the order the exchange layer asks them. The hub gives
+the real files, tests give their own; a reader that gives only the first three freezes
+no exchanges. The words state facts only.
 """
 
 from __future__ import annotations
@@ -53,9 +56,12 @@ RESULTS = {
 }
 
 
-def read_current() -> Tuple[Dict[str, Any], Dict[str, Any], float]:
-    """The settings files as they are now, and when either was last written."""
+def read_current() -> Tuple[Dict[str, Any], Dict[str, Any], float, Optional[List[str]]]:
+    """The settings files as they are now, when any of them was last written, and the
+    enabled exchanges in the order the exchange layer asks them (None when they cannot
+    be read)."""
     import pt_paths
+    from exchange_check import settings_exchanges
     from trading_mode import settings_mapping
 
     config = settings_mapping(None) or {}
@@ -65,13 +71,17 @@ def read_current() -> Tuple[Dict[str, Any], Dict[str, Any], float]:
             gui = json.load(f)
     except (OSError, ValueError):
         gui = {}
+    try:
+        exchanges: Optional[List[str]] = list(settings_exchanges())
+    except (OSError, ValueError):
+        exchanges = None
     written = 0.0
-    for p in (pt_paths.settings_file(), path):
+    for p in (pt_paths.settings_file(), path, pt_paths.trading_config_file()):
         try:
             written = max(written, os.path.getmtime(p))
         except OSError:
             pass
-    return dict(config), gui if isinstance(gui, dict) else {}, written
+    return dict(config), gui if isinstance(gui, dict) else {}, written, exchanges
 
 
 def _when(s: Optional[int]) -> str:
@@ -120,7 +130,7 @@ class ObservationWindow(tk.Toplevel):
         self,
         master: tk.Misc,
         hub_dir: str,
-        read: Callable[[], Tuple[dict, dict, float]] = read_current,
+        read: Callable[[], tuple] = read_current,
         reconcile_fn: Optional[Callable[[str, dict], List[obs.Row]]] = None,
     ) -> None:
         super().__init__(master)
@@ -139,9 +149,10 @@ class ObservationWindow(tk.Toplevel):
             text=(
                 "An observation keeps the settings that decide a paper trade: the "
                 "strategy, its parameters, stops and candles, the coins, sizing and risk, "
-                "and the entry checks. Changing any of them ends it. Reconcile replays "
-                "its candles through the same strategy and compares each trade with the "
-                "paper trades."
+                "the entry checks, the LLM signal mode and the exchange order. It also "
+                "keeps the SHA-256 of each program file that decides, sizes or places a "
+                "paper order. Changing any of them ends it. Reconcile replays its candles "
+                "through the same strategy and compares each trade with the paper trades."
             ),
             wraplength=900,
             justify="left",
@@ -170,9 +181,13 @@ class ObservationWindow(tk.Toplevel):
         self.jobs = BackgroundJobs(self, name="observation")
         self.refresh()
 
+    def _current(self) -> Tuple[dict, dict, float, Optional[List[str]]]:
+        got = tuple(self._read())
+        return got[0], got[1], got[2], got[3] if len(got) > 3 else None
+
     def _segment(self) -> Optional[dict]:
-        config, gui, written = self._read()
-        obs.check(self.hub_dir, config, gui, written)
+        config, gui, written, exchanges = self._current()
+        obs.check(self.hub_dir, config, gui, written, exchanges)
         live = obs.open_segment(self.hub_dir)
         if live is not None:
             return live
@@ -196,9 +211,9 @@ class ObservationWindow(tk.Toplevel):
         self.reconcile_button.state(["!disabled"] if segment else ["disabled"])
 
     def start(self) -> None:
-        config, gui, _written = self._read()
+        config, gui, _written, exchanges = self._current()
         try:
-            obs.start(self.hub_dir, config, gui)
+            obs.start(self.hub_dir, config, gui, exchanges=exchanges)
         except obs.ObservationError as exc:
             self.status_var.set(str(exc))
             return

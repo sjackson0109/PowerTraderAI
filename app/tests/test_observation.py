@@ -12,6 +12,8 @@ Synthetic candles and trade rows only: no network."""
 
 from __future__ import annotations
 
+import json
+import os
 import time
 
 import pytest
@@ -63,6 +65,138 @@ class TestSegments:
         obs.start(hub, CONFIG, GUI, now=1_700_000_000)
         other = {**CONFIG, "llm": {"provider": "x"}, "display": {"theme": "dark"}}
         assert obs.check(hub, other, {**GUI, "chart_tf": "4h"}, 1_700_000_900) is None
+
+
+EXCHANGES = ["coinbase", "kraken", "kucoin"]
+
+
+class TestTheLlmSettingsAndExchanges:
+    """An LLM signal can confirm or veto an entry, and the exchange order decides the
+    quote, fee, minimum and candles: changing either ends the segment."""
+
+    def test_the_llm_signal_mode_or_use_ends_it(self, hub):
+        obs.start(hub, CONFIG, GUI, now=1_700_000_000, exchanges=EXCHANGES)
+        veto = {**CONFIG, "llm": {"signal_mode": "veto"}}
+        ended = obs.check(hub, veto, GUI, 1_700_000_500, EXCHANGES)
+        assert ended["end_reason"] == "settings changed: llm.signal_mode"
+        assert ended["ended_s"] == 1_700_000_500
+        obs.start(hub, CONFIG, GUI, now=1_700_001_000, exchanges=EXCHANGES)
+        used = {**CONFIG, "llm": {"signal_use": {"openai|gpt": True}}}
+        ended = obs.check(hub, used, GUI, 1_700_001_500, EXCHANGES)
+        assert ended["end_reason"] == "settings changed: llm.signal_use"
+
+    def test_the_exchange_order_ends_it(self, hub):
+        seg = obs.start(hub, CONFIG, GUI, now=1_700_000_000, exchanges=EXCHANGES)
+        assert seg["snapshot"]["exchanges"] == EXCHANGES
+        assert seg["sha256"] == obs.digest(obs.snapshot(CONFIG, GUI, EXCHANGES))
+        assert obs.check(hub, CONFIG, GUI, 1_700_000_100, list(EXCHANGES)) is None
+        reordered = ["kraken", "coinbase", "kucoin"]
+        ended = obs.check(hub, CONFIG, GUI, 1_700_000_500, reordered)
+        assert ended["end_reason"] == "settings changed: exchanges"
+        obs.start(hub, CONFIG, GUI, now=1_700_001_000, exchanges=EXCHANGES)
+        ended = obs.check(hub, CONFIG, GUI, 1_700_001_500, EXCHANGES[:2])
+        assert ended["end_reason"] == "settings changed: exchanges"
+
+
+@pytest.fixture
+def program(tmp_path):
+    """A program folder holding every trading-path file, with stand-in text."""
+    root = tmp_path / "program"
+    for name in obs.code_hashes():
+        path = root.joinpath(*name.split("/"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"# {name}\n".encode())
+    return str(root)
+
+
+class TestProgramFiles:
+    """The owner's app runs from the checkout: a change to a trading-path file ends
+    the segment, dated by the file."""
+
+    def test_the_trading_path_is_hashed(self):
+        code = obs.code_hashes()
+        for name in (
+            "pt_trader.py",
+            "signal_engine.py",
+            "trading_mode.py",
+            "pt_paper_trading.py",
+            "position_sizing.py",
+            "pt_risk.py",
+            "llm_gate.py",
+            "pt_exchanges.py",
+            "pt_multi_exchange.py",
+            "strategies/catalogue.json",
+            "strategies/breakout.py",
+            "strategies/overlays.py",
+            "strategies/runner.py",
+            "market_data/candles.py",
+            "signal_fusion/live.py",
+        ):
+            assert name in code, name
+        missing = [name for name, sha in code.items() if sha is None]
+        assert missing == []
+
+    def test_a_changed_file_ends_it_when_it_was_written(self, hub, program):
+        seg = obs.start(hub, CONFIG, GUI, now=1_700_000_000, code_root=program)
+        assert seg["code"] == obs.code_hashes(program)
+        assert obs.check(hub, CONFIG, GUI, 1_700_000_100, code_root=program) is None
+        trader = os.path.join(program, "pt_trader.py")
+        with open(trader, "wb") as f:  # the same text with CRLF line endings
+            f.write(b"# pt_trader.py\r\n")
+        assert obs.check(hub, CONFIG, GUI, 1_700_000_100, code_root=program) is None
+        with open(trader, "ab") as f:
+            f.write(b"x = 1\n")
+        os.utime(trader, (1_700_050_000, 1_700_050_000))
+        ended = obs.check(hub, CONFIG, GUI, 1_700_000_100, code_root=program)
+        assert ended["end_reason"] == "program files changed: pt_trader.py"
+        assert ended["ended_s"] == 1_700_050_000
+
+    def test_a_removed_file_ends_it(self, hub, program):
+        obs.start(hub, CONFIG, GUI, now=1_700_000_000, code_root=program)
+        os.remove(os.path.join(program, "strategies", "breakout.py"))
+        ended = obs.check(hub, CONFIG, GUI, 1_700_000_100, code_root=program)
+        assert ended["end_reason"] == "program files changed: strategies/breakout.py"
+
+
+def old_segment(hub, started_s=1_700_000_000):
+    """A segment saved before the LLM settings, the exchanges and the program files
+    were frozen, as that version wrote it; its path."""
+    snap = {
+        "config": {
+            "trading.mode": "paper",
+            **{k: CONFIG.get(k) for k in obs.CONFIG_SECTIONS},
+        },
+        "gui": {k: GUI.get(k) for k in obs.GUI_KEYS},
+    }
+    segment = {
+        "id": "20231114-221320",
+        "started_at": "2023-11-14T22:13:20+00:00",
+        "started_s": started_s,
+        "snapshot": snap,
+        "sha256": obs.digest(snap),
+        "ended_at": None,
+        "end_reason": None,
+    }
+    os.makedirs(obs.folder(hub), exist_ok=True)
+    path = os.path.join(obs.folder(hub), segment["id"] + ".json")
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(segment, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return path
+
+
+class TestOlderSegments:
+    def test_what_it_did_not_freeze_does_not_end_it(self, hub):
+        path = old_segment(hub)
+        with open(path, "rb") as f:
+            before = f.read()
+        veto = {**CONFIG, "llm": {"signal_mode": "veto", "signal_use": {"a|b": True}}}
+        assert obs.check(hub, veto, GUI, 1_700_000_500, ["kraken"]) is None
+        with open(path, "rb") as f:
+            assert f.read() == before  # never rewritten
+        coins = {**GUI, "coins": ["AAA", "BBB"]}
+        ended = obs.check(hub, veto, coins, 1_700_000_900, ["kraken"])
+        assert ended["end_reason"] == "settings changed: coins"
 
 
 def paper_row(side, tag, ts, price, qty=1.0, fee=None):

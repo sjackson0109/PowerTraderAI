@@ -91,10 +91,14 @@ PROPOSED_GUI = {
     "pm_start_pct_with_dca": 2.5,
     "trailing_gap_pct": 0.5,
 }
-SNAPSHOT_SHA256 = "b0e54cdfdd2a1615b0cf779d6f819101dd035a0b11ff2814830736a1efe1cc70"
+# Coinbase first, as E1; the shipped trading_config template's enabled exchanges
+PROPOSED_EXCHANGES = ["coinbase", "kraken", "kucoin", "binance"]
+# The snapshot froze the LLM signal mode and use and the exchanges from 2026-11-12;
+# before that, the same proposal hashed to b0e54cdf... (the readiness document, 6.2)
+SNAPSHOT_SHA256 = "b595d64e3189d7b92f50f6324cfd86b11f88b19f0a62e52a368984504e7a2d64"
 # the same, with the entry assessment's section saved by Settings > Strategy (all Off)
 SNAPSHOT_SHA256_FUSION_SAVED = (
-    "a446295996744388dc4379c5c481559452b62881cb94191636f237db404f344f"
+    "e5f4ca0bf3790f16da6e379dccdfc9e8cd223830f300fdc6c0c988e6e939694d"
 )
 PARAMS_SHA256 = "89579608ee854d67afce197674141a23848b1adb3bcca6b5096d72dcfd726265"
 FIELDS = {
@@ -159,19 +163,24 @@ class TodayTests(unittest.TestCase):
 
 class SnapshotTests(unittest.TestCase):
     def test_the_proposed_settings_hash(self):
-        snap = obs.snapshot(PROPOSED_CONFIG, PROPOSED_GUI)
+        snap = obs.snapshot(PROPOSED_CONFIG, PROPOSED_GUI, PROPOSED_EXCHANGES)
         self.assertEqual(obs.digest(snap), SNAPSHOT_SHA256)
         self.assertEqual(snap["config"]["strategy"], STRATEGY)
         self.assertIsNone(snap["config"]["signal_fusion"])
+        self.assertEqual(snap["config"]["llm.signal_mode"], "off")
+        self.assertEqual(snap["exchanges"], PROPOSED_EXCHANGES)
         from signal_fusion import settings as fs
 
         saved = {**PROPOSED_CONFIG, "signal_fusion": fs.normalise({})}
         self.assertEqual(
-            obs.digest(obs.snapshot(saved, PROPOSED_GUI)), SNAPSHOT_SHA256_FUSION_SAVED
+            obs.digest(obs.snapshot(saved, PROPOSED_GUI, PROPOSED_EXCHANGES)),
+            SNAPSHOT_SHA256_FUSION_SAVED,
         )
 
     def test_the_hash_assumes_todays_defaults(self):
         import pt_hub
+        from exchange_check import settings_exchanges
+        from pt_multi_exchange import ExchangeConfigManager
         from pt_settings_manager import DEFAULT_SETTINGS
 
         for section in ("risk", "paper"):
@@ -180,6 +189,10 @@ class SnapshotTests(unittest.TestCase):
         for key, value in PROPOSED_GUI.items():
             if key != "coins":
                 self.assertEqual(pt_hub.DEFAULT_SETTINGS[key], value, key)
+        # no trading_config.json in the test's own folder: the shipped template
+        manager = ExchangeConfigManager()
+        self.assertFalse(os.path.exists(manager.config_file))
+        self.assertEqual(settings_exchanges(manager), PROPOSED_EXCHANGES)
 
     def test_reconcile_replays_the_frozen_strategy_at_its_defaults(self):
         spec = obs.spec_of(obs.snapshot(PROPOSED_CONFIG, PROPOSED_GUI))

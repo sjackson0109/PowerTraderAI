@@ -328,3 +328,10 @@ def test_the_window_offers_the_ensemble_with_strat_007_only(root, lab):  # noqa:
     assert ui.ENSEMBLE_TEXT not in texts
     assert win.config().ensemble is False
     win.destroy()
+
+
+def test_the_book_reports_the_intrabar_drawdown_from_the_earlier_highs(ens):
+    book = ens.replay(FREE, 10_000.0)
+    assert book.intrabar_max_drawdown[0] >= book.max_drawdown[0]
+    hold = ens.hold(FREE, 10_000.0, None)
+    assert hold.intrabar_max_drawdown is not None

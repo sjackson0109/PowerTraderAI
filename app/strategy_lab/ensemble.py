@@ -22,7 +22,8 @@ account, and such an entry is skipped (``skipped_cash``), as it would be for a t
 holding the slices.
 
 **In the replay** each (coin, member) is its own book entry, ``<coin>~<days>``, marked
-at the coin's closes (and lows), with the coin's minimum and sell step. The figures
+at the coin's closes (and lows and highs, for the intrabar drawdown), with the
+coin's minimum and sell step. The figures
 are ``replay``'s, against each member alone (the coin's whole allocation) and an
 equal-weight buy-and-hold of the same coins.
 """
@@ -95,7 +96,8 @@ class Ensemble:
         return out
 
     def _series(self, method: str) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
-        """The coins' series (``prices`` or ``lows``) under every member's key."""
+        """The coins' series (``prices``, ``lows`` or ``highs``) under every member's
+        key."""
         first = next(iter(self.sims.values()))
         per_coin = getattr(first, method)()
         return {_key(coin, n): v for coin, v in per_coin.items() for n in self.sims}
@@ -159,6 +161,7 @@ class Ensemble:
             mark_s=DAY_S,
             end_s=first.end_s(),
             lows=self._series("lows"),
+            highs=self._series("highs"),
             detail=detail,
         )
 

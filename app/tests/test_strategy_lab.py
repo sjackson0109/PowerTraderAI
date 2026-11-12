@@ -31,6 +31,7 @@ from strategy_lab import baselines as bl
 from strategy_lab.candidates import RunnerSpec
 from strategy_lab.simulate import (
     ACCOUNTS_GBP,
+    after_long_gaps,
     Simulation,
     Universe,
     load_universe,
@@ -191,6 +192,97 @@ def test_an_entry_filling_at_its_coins_own_exit_is_not_taken():
     assert any(c.entry_s in exits for c in sim.candidates())
     want = run_backtest(frame, spec.build(), "X", "1d", cost=ZERO).trades
     assert [(t.entry_s, t.exit_s) for t, _, _ in got] == bt_times(want, "1d")
+
+
+class LongGapTests(unittest.TestCase):
+    """A series with a gap longer than a day is used from after its last such gap
+    (A2 N17: compare-9's XRP trades ran across Coinbase's 2.5-year halt)."""
+
+    SPEC = RunnerSpec("STRAT-004", {"entry_days": 20, "exit_days": 10}, (), "1d")
+
+    def loader_for(self, frames):
+        def loader(symbol, tf, start, end, **kw):
+            out = frames[symbol].copy()
+            out.attrs.update(exchange="fake", pair=symbol)
+            return out
+
+        return loader
+
+    def holed(self, frame, first, bars):
+        """``frame`` without ``bars`` daily bars from bar ``first`` on."""
+        keep = np.r_[0:first, first + bars : len(frame)]
+        return frame.iloc[keep].reset_index(drop=True)
+
+    def test_without_the_rule_a_trade_spans_the_hole_and_with_it_none_does(self):
+        full = frame_for("1d", 500, seed=11)
+        held = [
+            t
+            for t in Simulation(Universe("1d", {"X": full}), self.SPEC).candidates()
+            if t.exit_i - t.entry_i >= 6 and t.entry_i > 60
+        ]
+        first = held[0].entry_i + 2  # a hole opening inside a held trade
+        holed = self.holed(full, first, 30)
+        hole_from = int(full["open_time"].iloc[first - 1].timestamp())
+        hole_to = int(holed["open_time"].iloc[first].timestamp())
+
+        def spans(trades):
+            return [t for t in trades if t.entry_s <= hole_from and t.exit_s >= hole_to]
+
+        joined = Simulation(Universe("1d", {"X": holed}), self.SPEC).candidates()
+        self.assertTrue(spans(joined))  # the defect: a trade runs across 30 days
+        universe = load_universe(
+            ["X"],
+            self.SPEC,
+            "2023-01-02",
+            "2025-01-01",
+            loader=self.loader_for({"X-USD": holed}),
+        )
+        cut = Simulation(universe, self.SPEC).candidates()
+        self.assertEqual(spans(cut), [])
+        self.assertTrue(all(t.entry_s >= hole_to for t in cut))
+        record = universe.sources["X:1d"]["cut_at_long_gap"]
+        self.assertEqual(record["bars_dropped"], first)
+        self.assertEqual(
+            record["kept_from"], holed["open_time"].iloc[first].isoformat()
+        )
+        self.assertEqual(universe.sources["X:1d"]["exchange"], "fake")
+
+    def test_a_gap_of_up_to_a_day_is_kept(self):
+        frame = frame_for("1d", 300, seed=12)
+        one_missing = self.holed(frame, 100, 1)  # 2 days between bars: 1 day missing
+        two_missing = self.holed(frame, 100, 2)
+        loader = self.loader_for({"A-USD": one_missing, "B-USD": two_missing})
+        universe = load_universe(
+            ["A", "B"], self.SPEC, "2023-01-02", "2024-06-01", loader=loader
+        )
+        self.assertEqual(len(universe.frames["A"]), 299)
+        self.assertNotIn("cut_at_long_gap", universe.sources["A:1d"])
+        self.assertEqual(len(universe.frames["B"]), 298 - 100)
+        self.assertIn("cut_at_long_gap", universe.sources["B:1d"])
+
+    def test_hourly_bars_keep_a_gap_of_a_day_and_end_at_a_longer_one(self):
+        frame = frame_for("1h", 400, seed=13)
+        self.assertEqual(len(after_long_gaps(self.holed(frame, 50, 24), HOUR)[0]), 376)
+        kept, cut = after_long_gaps(self.holed(frame, 50, 25), HOUR)
+        self.assertEqual(len(kept), 400 - 25 - 50)
+        self.assertEqual(cut["bars_dropped"], 50)
+
+    def test_the_regime_gates_reference_series_is_cut_too(self):
+        spec = RunnerSpec(
+            "STRAT-004",
+            {"entry_days": 20, "exit_days": 10},
+            ({"id": "OVL-REGIME", "params": {"sma_days": 50}},),
+            "1d",
+        )
+        frames = {
+            "AAA-USD": frame_for("1d", 400, seed=1),
+            "BTC-USD": self.holed(frame_for("1d", 460, seed=3), 200, 10),
+        }
+        universe = load_universe(
+            ["AAA"], spec, "2023-01-02", "2024-02-06", loader=self.loader_for(frames)
+        )
+        self.assertEqual(len(universe.shared[("BTC", "1d")]), 460 - 10 - 200)
+        self.assertIn("cut_at_long_gap", universe.sources["BTC:1d"])
 
 
 class LoaderTests(unittest.TestCase):

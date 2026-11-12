@@ -7582,14 +7582,14 @@ Platform: {sys.platform}
             halted = risk_state.current(getattr(self, "_books_dir", None)).halted
         except Exception as e:
             return f"Could not read the risk settings: {e}"
-        return ("Trading is halted. " if halted else "") + (
-            f"Trading stops at a {levels.emergency_pct:g}% drawdown from the peak; "
+        return ("Buying is halted. " if halted else "") + (
+            f"Buying stops at a {levels.emergency_pct:g}% drawdown from the peak; "
             f"warnings at {levels.warning_pct:g}% and {levels.critical_pct:g}%"
         )
 
     def _refresh_halt_banner(self) -> None:
-        """TRADING HALTED across the top while an emergency stop has halted
-        trading for the books this hub shows; the files are read again only when
+        """BUYING HALTED across the top while an emergency stop has halted
+        buying for the books this hub shows; the files are read again only when
         one of them changes."""
         folder = getattr(self, "_books_dir", None)
         key = risk_state.files_signature(folder)

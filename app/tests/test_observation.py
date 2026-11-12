@@ -605,7 +605,7 @@ class TestWindow:
         assert win.hash_var.get() == json.loads(before)["sha256"]
         shown = self.frozen_shown(win)
         for name in ("llm.signal_mode", "llm.signal_use", "exchanges", "Program files"):
-            assert shown[name] == "Not recorded for this segment", name
+            assert shown[name] == "Not recorded for this observation", name
         assert shown["coins"] == "AAA" and shown["trading.mode"] == "paper"
         with open(path, "rb") as f:
             assert f.read() == before

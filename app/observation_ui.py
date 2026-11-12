@@ -6,6 +6,7 @@ each trading-path program file; changing any of them ends the observation (check
 whenever this window opens or reconciles). The window shows the observation's SHA-256
 and every frozen value; what an older observation did not record says so. "End the
 observation" ends it by hand.
+
 "Reconcile..." replays the observation's closed candles, for the paper trading coins,
 through the same strategy and compares each trade with the paper trades: matched,
 timing (within 3 candles), open, exit not placed, missed, extra, pending, a second entry,
@@ -86,7 +87,7 @@ FROZEN_HEADINGS = {
     "name": "Frozen setting or program file",
     "value": "Value or SHA-256",
 }
-NOT_RECORDED = "Not recorded for this segment"
+NOT_RECORDED = "Not recorded for this observation"
 # The summary's words for the results after the first four, shown when there are any
 MORE = (
     ("open", "open"),

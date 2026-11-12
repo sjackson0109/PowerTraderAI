@@ -219,12 +219,24 @@ lock); without a usable folder a process paces its own requests. `trading_config
 exchange (`requests_per_second`, from Configure Exchange APIs). Tests switch pacing off (`app/conftest.py`) except in
 `tests/test_rate_limits.py`, which also checks that every HTTP call in `pt_exchanges.py` waits.
 
-**Candle cache.** `get_candles` asks only for bars outside the cached range. A size the exchange does not serve
-(`market_data/resample.py`) is built in `ExchangeFetcher` from the smaller size read through the same cache, so the
-smaller bars are downloaded once, not once per size built from them. When a request that starts before the cached
-first bar finds no bars there, `<PAIR>_<TF>.start.json` records it, and that stretch is not asked for again until the
-record is 30 days old (`NO_BARS_BEFORE_MAX_AGE`) or the cache's first bar changes. Offline reads use the record too,
-so a pair listed after a window's start can be read offline once an online run has asked.
+**Candle cache.** `get_candles` asks only for bars outside the cached range, plus the last 3 cached bars
+(`REFETCH_TAIL_BARS`). Those ride along in the request for new bars, and one the exchange now gives differently is
+replaced and logged as revised. A bar counts as closed only 30 s after its close by the wall clock (`SETTLE_SECONDS`,
+`settled`). Before that it is neither cached nor decided on: the signal engine uses the same rule. A size the exchange
+does not serve (`market_data/resample.py`) is built in `ExchangeFetcher` from the smaller size read through the same
+cache, so the smaller bars are downloaded once, not once per size built from them. When a request that starts before
+the cached first bar finds no bars there, `<PAIR>_<TF>.start.json` records it, and that stretch is not asked for again
+until the record is 30 days old (`NO_BARS_BEFORE_MAX_AGE`) or the cache's first bar changes. Offline reads use the
+record too, so a pair listed after a window's start can be read offline once an online run has asked.
+
+A gap inside the cached series is asked for again only within these limits:
+- the part inside the range read;
+- once it is older than those 3 bars;
+- at most once per process.
+
+All such gaps in one read go in one request range, so the refill never costs more than reading that range once. A gap
+the exchange still has no bars in (a halt) is recorded in `<PAIR>_<TF>.gaps.json` and not asked for again for 30 days
+(`NO_BARS_IN_GAP_MAX_AGE`). A refill that fails is logged, and the read uses the cached bars.
 
 ### UI/UX Enhancement
 

@@ -15,9 +15,11 @@ Candle data layer (FDS-121 section 8): real candles + an on-disk cache.
   again: a bar the exchange revised after it was cached is replaced, and logged.
   When the exchange has no bars before a series' first one (a pair listed later),
   ``<PAIR>_<TF>.start.json`` says so, and that stretch is not asked for again for
-  ``NO_BARS_BEFORE_MAX_AGE``.
+  ``NO_BARS_BEFORE_MAX_AGE``. A gap inside the cached series is asked for again,
+  within limits (``_gaps_to_ask``); one the exchange has no bars in either (a halt)
+  is recorded in ``<PAIR>_<TF>.gaps.json``.
 * Validation: timestamps must be strictly increasing with no duplicates (raises);
-  gaps are *reported* in ``df.attrs["report"]``, never filled silently.
+  gaps are *reported* in ``df.attrs["report"]``, never filled with made-up bars.
 
 Candle frames have exactly the columns the strategy interface expects::
 
@@ -69,6 +71,10 @@ SETTLE_SECONDS = 30
 REFETCH_TAIL_BARS = 3
 # At most this many revised bars are logged one by one per read (then a count).
 _REVISIONS_LOGGED = 5
+
+# How long "the exchange has no bars in this gap inside the series" is trusted before
+# the gap is asked for again (as NO_BARS_BEFORE_MAX_AGE: an exchange can backfill).
+NO_BARS_IN_GAP_MAX_AGE = pd.Timedelta(days=30)
 
 
 class CandleDataError(RuntimeError):
@@ -162,6 +168,61 @@ def _record_empty_from(
         os.replace(tmp, target)
     except OSError:
         pass
+
+
+def gap_record_path(path: str) -> str:
+    """``BTC-USD_1h.csv`` -> ``BTC-USD_1h.gaps.json``: the gaps inside that series the
+    exchange was asked for again and had no bars in."""
+    return os.path.splitext(path)[0] + ".gaps.json"
+
+
+def _empty_gaps(path: str) -> List[Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]]:
+    """(first, last open time, checked_at) of each stretch inside the series that the
+    exchange had no bars in, when asked less than ``NO_BARS_IN_GAP_MAX_AGE`` ago."""
+    now = pd.Timestamp.now(tz="UTC")
+    try:
+        with open(gap_record_path(path), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        stretches = [
+            (to_utc(s["from"]), to_utc(s["to"]), to_utc(s["checked_at"]))
+            for s in data["empty"]
+        ]
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    return [s for s in stretches if now - s[2] <= NO_BARS_IN_GAP_MAX_AGE]
+
+
+def _record_empty_gaps(
+    path: str, stretches: List[Tuple[pd.Timestamp, pd.Timestamp]]
+) -> None:
+    """Record that the exchange, asked just now, has no bars in ``stretches`` (first,
+    last open time). A recorded stretch inside a new one is dropped. A record that
+    cannot be written only costs the requests next time."""
+    now = pd.Timestamp.now(tz="UTC")
+    new = [(a, b, now) for a, b in stretches]
+    kept = [
+        s
+        for s in _empty_gaps(path)
+        if not any(a <= s[0] and s[1] <= b for a, b, _ in new)
+    ]
+    record = {
+        "empty": [
+            {"from": a.isoformat(), "to": b.isoformat(), "checked_at": c.isoformat()}
+            for a, b, c in kept + new
+        ]
+    }
+    target = gap_record_path(path)
+    tmp = f"{target}.{os.getpid()}.tmp"
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(record, f)
+        os.replace(tmp, target)
+    except OSError:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 # --- validation ----------------------------------------------------------------
@@ -319,6 +380,56 @@ def _log_revisions(
         )
 
 
+# The gaps inside a cache already asked for again in this process, each as (cache
+# file, first missing open time, last missing open time).
+_gaps_asked: set = set()
+_gaps_lock = threading.Lock()
+
+
+def _gaps_to_ask(
+    path: str,
+    report: CandleReport,
+    start_ts: pd.Timestamp,
+    end_ts: pd.Timestamp,
+    tail_from: pd.Timestamp,
+) -> Tuple[List[Tuple[pd.Timestamp, pd.Timestamp]], List[tuple]]:
+    """The gaps inside the cached series (``report``) to ask the exchange for again,
+    as (first, last open time) within ``start_ts`` .. ``end_ts`` (end exclusive), with
+    their ``_gaps_asked`` keys. A gap that is real (a halt, such as Coinbase's
+    2.5-year XRP halt, or no trades in a bar) must not cost requests on every read, so
+    a gap is asked for only when:
+
+    * it is inside the range read (and only that part of it is asked for);
+    * it ends before the last ``REFETCH_TAIL_BARS`` cached bars (``tail_from``): those
+      are asked for again with each new bar anyway;
+    * it has not been asked for in this process, whatever the answer was (so a
+      failing exchange is not asked again and again);
+    * the exchange has not answered, in the last ``NO_BARS_IN_GAP_MAX_AGE``, that it
+      has no bars there (``<PAIR>_<TF>.gaps.json``, written by any process).
+    """
+    last_wanted = end_ts - pd.Timedelta(milliseconds=1)
+    known_empty = None
+    gaps: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
+    keys: List[tuple] = []
+    for first, last, _ in report.gaps:
+        if last >= tail_from:
+            continue
+        a, b = max(first, start_ts), min(last, last_wanted)
+        if a > b:
+            continue
+        key = (os.path.abspath(path), first, last)
+        with _gaps_lock:
+            if key in _gaps_asked:
+                continue
+        if known_empty is None:
+            known_empty = _empty_gaps(path)
+        if any(f <= a and b <= t for f, t, _ in known_empty):
+            continue
+        gaps.append((a, b))
+        keys.append(key)
+    return gaps, keys
+
+
 def get_candles(
     symbol: str,
     tf: str,
@@ -344,6 +455,10 @@ def get_candles(
     ``attrs["report"]`` is a ``CandleReport`` (gaps are reported, not filled).
     A request for new bars starts ``REFETCH_TAIL_BARS`` cached bars earlier: a cached
     bar the exchange now gives differently is replaced with the exchange's, and logged.
+    Gaps inside the cached series are asked for again within the limits of
+    ``_gaps_to_ask``, all in one request range (from the first gap to the last), so
+    refilling them never costs more requests than reading the range once. A refill
+    that fails is logged and the cached bars are returned.
 
     ``now`` decides which bars have closed: one that closes after it is not returned
     (with ``closed_only``) and never written to the cache. Default: the wall clock
@@ -362,9 +477,8 @@ def get_candles(
     )
     path = cache_path(symbol, tf, cache_dir, exchange)
     cached = _read_cache(path)
-    validate_candles(
-        cached, tf
-    )  # a corrupt cache is an error, not something to repair silently
+    # a corrupt cache is an error, not something to repair silently
+    cached_report = validate_candles(cached, tf)
 
     # Ranges are (first open_time, last open_time) INCLUSIVE; bars opening at or
     # after ``end`` (exclusive) or after ``now`` are not wanted.
@@ -396,8 +510,13 @@ def get_candles(
             f"(missing {[(str(a), str(b)) for a, b in want]})"
         )
 
-    if want:
-        if fetcher is None:
+    gaps: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
+    gap_keys: List[tuple] = []
+    if not offline and fetcher is not None and tail_from is not None:
+        gaps, gap_keys = _gaps_to_ask(path, cached_report, start_ts, end_ts, tail_from)
+
+    if want or gaps:
+        if want and fetcher is None:
             raise CandleDataError(
                 f"no fetcher for the missing {symbol} {tf} bars: read through "
                 "exchange_candles (the exchanges in Settings)"
@@ -410,6 +529,24 @@ def get_candles(
             fetched = _closed_only(_frame_from_klines(rows), tf, now_ts)
             _log_revisions(symbol, tf, exchange, cached, fetched)
             frames.append(fetched)
+        gaps_answered = None
+        if gaps:
+            span = (gaps[0][0], gaps[-1][1])
+            with _gaps_lock:
+                _gaps_asked.update(gap_keys)
+            try:
+                rows = fetcher.fetch(symbol, tf, _ms(span[0]), _ms(span[1]))
+            except Exception as exc:  # noqa: BLE001 - the gaps stay as they were
+                series = f"{exchange} {symbol} {tf}" if exchange else f"{symbol} {tf}"
+                logger.warning(
+                    f"{series}: the gaps in {span[0]} .. {span[1]} could not be asked "
+                    f"for again ({type(exc).__name__}: {exc}); using the cached bars"
+                )
+            else:
+                fetched = _closed_only(_frame_from_klines(rows), tf, now_ts)
+                _log_revisions(symbol, tf, exchange, cached, fetched)
+                frames.append(fetched)
+                gaps_answered = span
         merged = (
             pd.concat([f for f in frames if not f.empty], ignore_index=True)
             if any(not f.empty for f in frames)
@@ -429,6 +566,16 @@ def get_candles(
             asked_from = [a for a, _ in want if a < first_now]
             if asked_from:
                 _record_empty_from(path, min(asked_from), first_now)
+        if gaps_answered is not None:
+            # what is still missing in the range asked for: the exchange has no bars
+            lo, hi = gaps_answered
+            empty = [
+                (max(a, lo), min(b, hi))
+                for a, b, _ in validate_candles(merged, tf).gaps
+                if a <= hi and b >= lo
+            ]
+            if empty:
+                _record_empty_gaps(path, empty)
         cached = merged
 
     df = cached[(cached["open_time"] >= start_ts) & (cached["open_time"] < end_ts)]

@@ -9,10 +9,13 @@ Candle data layer (FDS-121 section 8): real candles + an on-disk cache.
   market, e.g. ``BTC-USD``). Files cached before FDS-MX-001 phase F sit directly in
   ``<cache>/candles`` and hold Binance bars; they move once into ``binance/``
   (``move_flat_cache``). CSV: parquet needs pyarrow, which is not a project
-  dependency. Only missing ranges are fetched, and a forming (not yet closed) bar
-  is never written to the cache. When the exchange has no bars before a series'
-  first one (a pair listed later), ``<PAIR>_<TF>.start.json`` says so, and that
-  stretch is not asked for again for ``NO_BARS_BEFORE_MAX_AGE``.
+  dependency. Only missing ranges are fetched, and a bar that has not settled (closed
+  less than ``SETTLE_SECONDS`` ago, or still forming) is never written to the cache.
+  Each request for new bars also asks for the last ``REFETCH_TAIL_BARS`` cached ones
+  again: a bar the exchange revised after it was cached is replaced, and logged.
+  When the exchange has no bars before a series' first one (a pair listed later),
+  ``<PAIR>_<TF>.start.json`` says so, and that stretch is not asked for again for
+  ``NO_BARS_BEFORE_MAX_AGE``.
 * Validation: timestamps must be strictly increasing with no duplicates (raises);
   gaps are *reported* in ``df.attrs["report"]``, never filled silently.
 
@@ -24,6 +27,7 @@ Candle frames have exactly the columns the strategy interface expects::
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import threading
@@ -35,6 +39,8 @@ import pandas as pd
 
 from market_data.timeframes import candle_timeframe_seconds
 
+logger = logging.getLogger("market_data.candles")
+
 # Every bar cached before FDS-MX-001 phase F came from Binance spot klines.
 FLAT_CACHE_EXCHANGE = "binance"
 CANDLE_COLUMNS = ["open_time", "open", "high", "low", "close", "volume"]
@@ -44,6 +50,25 @@ _NUMERIC = ["open", "high", "low", "close", "volume"]
 # How long "the exchange has no bars before the cached first one" is trusted before
 # that stretch is asked for again (an exchange can add older history).
 NO_BARS_BEFORE_MAX_AGE = pd.Timedelta(days=30)
+
+# A bar counts as closed only this many seconds after its close time, by the wall
+# clock: before that it is neither cached nor decided on (the signal engine uses the
+# same rule, through ``settled``). Two things can make a bar read at its close wrong:
+# this computer's clock running a few seconds fast (a PC clock drifts between its
+# corrections from a time server), and the exchange still adding the last trades to
+# the bar. 30 s covers both with room to spare, matches the signal engine's 30 s
+# retry for a bar the exchange publishes late, and delays a 1h decision by under 1%
+# of the bar. A bar the exchange changes later than that is caught by the refetched
+# tail (``REFETCH_TAIL_BARS``).
+SETTLE_SECONDS = 30
+
+# Each request for new bars starts this many cached bars earlier, so the last cached
+# bars are compared with the exchange's current ones and replaced when they differ.
+# Three bars: a bar is read again with each of the next two bars (for 1h, up to two
+# hours after it was first cached), in the request made for them anyway.
+REFETCH_TAIL_BARS = 3
+# At most this many revised bars are logged one by one per read (then a count).
+_REVISIONS_LOGGED = 5
 
 
 class CandleDataError(RuntimeError):
@@ -65,6 +90,12 @@ def to_utc(value) -> pd.Timestamp:
 
 def _ms(ts: pd.Timestamp) -> int:
     return int(ts.timestamp() * 1000)
+
+
+def settled(now) -> pd.Timestamp:
+    """The latest close time that counts as closed at wall-clock time ``now``: a bar
+    is closed only ``SETTLE_SECONDS`` after its close."""
+    return to_utc(now) - pd.Timedelta(seconds=SETTLE_SECONDS)
 
 
 def cache_dir_default() -> str:
@@ -256,6 +287,38 @@ def _closed_only(df: pd.DataFrame, tf: str, now: pd.Timestamp) -> pd.DataFrame:
     return df[close_time <= now].reset_index(drop=True)
 
 
+def _log_revisions(
+    symbol: str,
+    tf: str,
+    exchange: Optional[str],
+    cached: pd.DataFrame,
+    fetched: pd.DataFrame,
+) -> None:
+    """Log the cached bars that the exchange's ``fetched`` bars change: it revised them
+    after they were cached (each is replaced by the exchange's). Once per revision: the
+    cache holds the exchange's bar afterwards."""
+    if cached.empty or fetched.empty:
+        return
+    both = cached.merge(fetched, on="open_time", suffixes=("_old", "_new"))
+    changed = pd.Series(False, index=both.index)
+    for column in _NUMERIC:
+        old, new = both[f"{column}_old"], both[f"{column}_new"]
+        changed |= (old != new) & ~(old.isna() & new.isna())
+    revised = both[changed]
+    series = f"{exchange} {symbol} {tf}" if exchange else f"{symbol} {tf}"
+    for bar in revised.head(_REVISIONS_LOGGED).itertuples(index=False):
+        logger.warning(
+            f"{series} bar {bar.open_time} revised by the exchange after it was "
+            f"cached: close {bar.close_old} -> {bar.close_new}, volume "
+            f"{bar.volume_old} -> {bar.volume_new}; the cache now holds the new bar"
+        )
+    if len(revised) > _REVISIONS_LOGGED:
+        logger.warning(
+            f"{series}: {len(revised) - _REVISIONS_LOGGED} more bars revised by the "
+            "exchange after they were cached"
+        )
+
+
 def get_candles(
     symbol: str,
     tf: str,
@@ -279,15 +342,24 @@ def get_candles(
     ``CandleDataError``.
     ``closed_only`` (default) never returns the still-forming bar. The result's
     ``attrs["report"]`` is a ``CandleReport`` (gaps are reported, not filled).
+    A request for new bars starts ``REFETCH_TAIL_BARS`` cached bars earlier: a cached
+    bar the exchange now gives differently is replaced with the exchange's, and logged.
 
-    ``now`` (default: the wall clock) also decides which fetched bars are closed enough
-    to be written to the cache. A past ``now`` with ``offline=False`` drops the fetched
+    ``now`` decides which bars have closed: one that closes after it is not returned
+    (with ``closed_only``) and never written to the cache. Default: the wall clock
+    less ``SETTLE_SECONDS`` (``settled``), so a bar counts as closed only once it has
+    settled. An explicit ``now`` is used as it is (a research cut, such as the
+    trainer's ``train_end``). A past ``now`` with ``offline=False`` drops the fetched
     bars that close after it, which can leave a hole the cache never refills; pass a
     past ``now`` only with ``offline=True``.
     """
     step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
     start_ts, end_ts = to_utc(start), to_utc(end)
-    now_ts = to_utc(now) if now is not None else pd.Timestamp.now(tz="UTC")
+    now_ts = (
+        to_utc(now)
+        if now is not None
+        else settled(pd.Timestamp(time.time(), unit="s", tz="UTC"))
+    )
     path = cache_path(symbol, tf, cache_dir, exchange)
     cached = _read_cache(path)
     validate_candles(
@@ -298,10 +370,13 @@ def get_candles(
     # after ``end`` (exclusive) or after ``now`` are not wanted.
     last_wanted = min(end_ts, now_ts) - pd.Timedelta(milliseconds=1)
     want: List[Tuple[pd.Timestamp, pd.Timestamp]] = []
+    extend_from: Optional[pd.Timestamp] = None  # the first new bar after the cache
+    tail_from: Optional[pd.Timestamp] = None  # the first of the last cached bars
     if cached.empty:
         want.append((start_ts, last_wanted))
     else:
         first_c, last_c = cached["open_time"].iloc[0], cached["open_time"].iloc[-1]
+        tail_from = max(first_c, last_c - (REFETCH_TAIL_BARS - 1) * step)
         if start_ts < first_c:
             # a stretch the exchange was asked for and had no bars in is not asked
             # for again
@@ -311,7 +386,8 @@ def get_candles(
             elif start_ts < empty_from:
                 want.append((start_ts, empty_from - step))
         if last_wanted >= last_c + step:
-            want.append((last_c + step, last_wanted))
+            extend_from = last_c + step
+            want.append((extend_from, last_wanted))
     want = [(a, b) for a, b in want if b >= a]
 
     if want and offline:
@@ -328,8 +404,12 @@ def get_candles(
             )
         frames = [cached]
         for a, b in want:
-            rows = fetcher.fetch(symbol, tf, _ms(a), _ms(b))
-            frames.append(_closed_only(_frame_from_klines(rows), tf, now_ts))
+            # the request for new bars asks for the last cached bars again too
+            ask_from = tail_from if extend_from is not None and a == extend_from else a
+            rows = fetcher.fetch(symbol, tf, _ms(ask_from), _ms(b))
+            fetched = _closed_only(_frame_from_klines(rows), tf, now_ts)
+            _log_revisions(symbol, tf, exchange, cached, fetched)
+            frames.append(fetched)
         merged = (
             pd.concat([f for f in frames if not f.empty], ignore_index=True)
             if any(not f.empty for f in frames)

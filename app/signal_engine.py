@@ -3,8 +3,9 @@ SignalEngine (FDS-121 section 7): the trader's source of rule-based decisions.
 
 Each call to ``decide(base)`` returns the decision for the latest *closed* bar of
 the active strategy (plus overlays), using the same ``StrategyRunner`` the
-backtester uses. Candles are fetched only when a new bar should have closed, not
-on every trader cycle.
+backtester uses. A bar counts as closed only ``SETTLE_SECONDS`` after its close
+(``market_data.candles.settled``, the candle cache's rule). Candles are fetched only
+when a new bar should have closed, not on every trader cycle.
 
 Fail closed:
 
@@ -44,7 +45,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 import pandas as pd
 
-from market_data.candles import CandleDataError, exchange_candles
+from market_data.candles import CandleDataError, exchange_candles, settled
 from market_data.gaps import MAX_GAP_S, after_long_gaps
 from market_data.timeframes import candle_timeframe_seconds, timeframe_seconds
 from pt_exchange_abstraction import MarketNotFound
@@ -73,9 +74,10 @@ FETCH_RETRY_SECONDS = 30.0
 def default_candle_provider(
     symbol: str, tf: str, n_bars: int, now: pd.Timestamp
 ) -> pd.DataFrame:
-    """The ``n_bars`` most recent closed bars of a coin's market, from the exchanges
-    in Settings, primary first, through the per-exchange candle cache
-    (``exchange_candles``; FDS-MX-001 phase E)."""
+    """The ``n_bars`` most recent bars of a coin's market closed by ``now`` (the engine
+    passes the settled clock, ``settled``), from the exchanges in Settings, primary
+    first, through the per-exchange candle cache (``exchange_candles``; FDS-MX-001
+    phase E)."""
     step = pd.Timedelta(seconds=timeframe_seconds(tf))
     forming_open = now.floor(step)  # the bar that is still forming opens here
     return exchange_candles(
@@ -369,14 +371,19 @@ class SignalEngine:
         if runner is None:
             return None  # cannot be built: no signals (ERROR logged in _runner_for)
         now = pd.Timestamp(self._clock(), unit="s", tz="UTC")
+        # bars closing after this have not settled: they are neither fetched for nor
+        # decided (the candle cache's rule)
+        closed_by = settled(now)
         tf_s = timeframe_seconds(s.timeframe)
         step = pd.Timedelta(seconds=tf_s)
-        expected_last_open = now.floor(step) - step
+        expected_last_open = closed_by.floor(step) - step
 
-        candles = self._get_candles(pair, s.timeframe, runner, now, expected_last_open)
+        candles = self._get_candles(
+            pair, s.timeframe, runner, closed_by, expected_last_open
+        )
         if candles is not None and not candles.empty:
             # never evaluate a bar that has not closed, whatever the provider returned
-            candles = candles[candles["open_time"] + step <= now]
+            candles = candles[candles["open_time"] + step <= closed_by]
         if candles is None or candles.empty:
             return self._record(
                 base,
@@ -410,7 +417,9 @@ class SignalEngine:
         needs = runner.context_needs()
         context: Dict[Tuple[str, str], pd.DataFrame] = {}
         if needs:  # an entry gate's context; other runners are called as before
-            context = self._context_for(str(base).upper(), needs, last_open + step, now)
+            context = self._context_for(
+                str(base).upper(), needs, last_open + step, closed_by
+            )
             decision = runner.evaluate(window, pos, str(base).upper(), context)
         else:
             decision = runner.evaluate(window, pos, str(base).upper())
@@ -501,8 +510,9 @@ class SignalEngine:
     def _context_candles(
         self, pair: str, tf: str, bars: int, now: pd.Timestamp
     ) -> Optional[pd.DataFrame]:
-        """``pair``'s closed ``tf`` bars, fetched once per new bar through the same
-        provider and retry rule as the decision's own candles."""
+        """``pair``'s ``tf`` bars closed by ``now`` (the settled clock, ``settled``),
+        fetched once per new bar through the same provider and retry rule as the
+        decision's own candles."""
         key = (pair, tf)
         step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
         expected_last_open = now.floor(step) - step

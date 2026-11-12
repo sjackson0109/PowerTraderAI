@@ -16,6 +16,7 @@ from test_strategy_breakout import DailyFeed, daily
 
 import signal_engine as se
 import trading_mode as tm
+from market_data import candles
 from market_data.candles import CandleDataError
 from pt_settings_manager import SettingsManager
 from signal_engine import SignalEngine
@@ -169,7 +170,9 @@ class SettingsManagerTests(unittest.TestCase):
 
 class LateFeed(Feed):
     """``Feed`` whose exchange publishes each bar in ``late`` only ``delay`` seconds
-    after it closes (every bar when ``late`` is None)."""
+    after it closes (every bar when ``late`` is None). The engine gives the provider
+    the settled clock; the exchange publishes by the wall clock, ``SETTLE_SECONDS``
+    later."""
 
     def __init__(self, frame, delay, late=None):
         super().__init__(frame)
@@ -185,7 +188,8 @@ class LateFeed(Feed):
             else self.frame.index.to_series().isin(self.late)
         )
         published = close.where(~is_late, close + self.delay)
-        return self.frame[published <= now].tail(n).reset_index(drop=True)
+        wall = now + pd.Timedelta(seconds=candles.SETTLE_SECONDS)
+        return self.frame[published <= wall].tail(n).reset_index(drop=True)
 
 
 class LateBarTests(unittest.TestCase):
@@ -196,14 +200,17 @@ class LateBarTests(unittest.TestCase):
 
     def setUp(self):
         self.frame = make_candles(trend_series())
+        # published 20 s after the bar settles: the engine's first fetch, 10 s after
+        # it settles (``Feed.set_after_bar``), comes too early
+        self.late_by = candles.SETTLE_SECONDS + 20
 
     def index_of(self, bar_time):
         return int(self.frame.index[self.frame["open_time"] == bar_time][0])
 
     def test_a_late_bar_is_decided_within_the_retry_interval(self):
-        feed = LateFeed(self.frame, delay=20)
+        feed = LateFeed(self.frame, delay=self.late_by)
         engine = SignalEngine(PAPER, feed.provider, feed.clock)
-        feed.set_after_bar(200)  # 10 s after the close: bar 200 is not published yet
+        feed.set_after_bar(200)  # 10 s after it settled: bar 200 is not published yet
         self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 199)
         feed.now += se.FETCH_RETRY_SECONDS + 1
         self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 200)
@@ -229,7 +236,7 @@ class LateBarTests(unittest.TestCase):
     def test_a_bar_late_once_is_still_decided_as_the_backtester_would(self):
         want = expected_actions(self.frame)
         enter = want[0][0]
-        feed = LateFeed(self.frame, delay=20, late=[enter])
+        feed = LateFeed(self.frame, delay=self.late_by, late=[enter])
         engine = SignalEngine(PAPER, feed.provider, feed.clock)
         seen, pos = [], None
         for k in range(len(self.frame)):
@@ -251,15 +258,17 @@ class LateBarTests(unittest.TestCase):
         self.assertEqual(seen, want)
 
     def test_an_entry_gates_late_context_bar_is_fetched_again(self):
-        feed = LateFeed(self.frame, delay=20)
+        feed = LateFeed(self.frame, delay=self.late_by)
         engine = SignalEngine(PAPER, feed.provider, feed.clock)
+
+        def closed_by():  # the settled clock, as decide() passes it
+            return candles.settled(pd.Timestamp(feed.now, unit="s", tz="UTC"))
+
         feed.set_after_bar(200)
-        now = pd.Timestamp(feed.now, unit="s", tz="UTC")
-        first = engine._context_candles("BTC-USD", "1h", 50, now)
+        first = engine._context_candles("BTC-USD", "1h", 50, closed_by())
         self.assertEqual(self.index_of(first["open_time"].iloc[-1]), 199)
-        later = now + pd.Timedelta(seconds=se.FETCH_RETRY_SECONDS + 1)
-        feed.now = later.timestamp()
-        second = engine._context_candles("BTC-USD", "1h", 50, later)
+        feed.now += se.FETCH_RETRY_SECONDS + 1
+        second = engine._context_candles("BTC-USD", "1h", 50, closed_by())
         self.assertEqual(self.index_of(second["open_time"].iloc[-1]), 200)
         self.assertEqual(feed.calls, 2)
 
@@ -300,6 +309,24 @@ class EngineTests(unittest.TestCase):
         self.feed.set_after_bar(209)  # bars up to 209 are closed; 210 is still forming
         d = engine.decide("BTC")
         self.assertEqual(d.bar_time, self.frame["open_time"].iloc[209])
+
+    def test_a_bar_inside_the_settling_delay_is_not_decided(self):
+        """A bar counts as closed only a short delay after its close (A2 N16): one
+        that closed 5 s ago is not decided, even if the provider returns it."""
+
+        def greedy(symbol, tf, n, now):
+            return self.frame.iloc[:211]  # bar 210 as well, whatever the clock
+
+        engine = SignalEngine(PAPER, greedy, self.feed.clock)
+        self.feed.set_after_bar(210, seconds_after_close=5)
+        self.assertEqual(
+            engine.decide("BTC").bar_time, self.frame["open_time"].iloc[209]
+        )
+        later = SignalEngine(PAPER, greedy, self.feed.clock)
+        self.feed.set_after_bar(210, seconds_after_close=candles.SETTLE_SECONDS)
+        self.assertEqual(
+            later.decide("BTC").bar_time, self.frame["open_time"].iloc[210]
+        )
 
     def stuck_engine(self, hours_behind):
         """A feed that stopped updating at bar 200 while the clock moved on."""

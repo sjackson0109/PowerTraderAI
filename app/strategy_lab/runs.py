@@ -12,6 +12,10 @@ section 5.8). An exploratory run is never evidence: it is logged as a trial of k
    the chosen size, with today's venue minimums and sell steps, against buy-and-hold,
    cash and random entries replayed through the strategy's own exits, with its
    daily, weekly, monthly and annual returns (``research_stats.periods``);
+   then the same trades and buy-and-hold at each of ``ACCOUNTS_GBP`` (``accounts``):
+   each account's results, its drawdowns and recovery (``research_stats.drawdowns``),
+   its period returns, and whether it took the same trades as the largest account
+   (an account too small for the venue's minimum orders, or short of cash, does not);
 4. logs the trial and saves the run under ``<data dir>/strategy_lab/runs/<id>/run.json``.
 
 ``stop`` (a threading.Event) is checked between the stages; a stopped run saves nothing.
@@ -31,7 +35,7 @@ import numpy as np
 import pandas as pd
 
 from market_data.candles import exchange_candles
-from research_stats import periods
+from research_stats import drawdowns, periods
 from signal_fusion.evaluation.replay import Account, Costs, Paths
 from strategy_lab import baselines as bl
 from strategy_lab import experiment
@@ -41,6 +45,9 @@ from strategy_lab.venue import VenueRules, venue_rules
 from strategy_lab.windows import HISTORY_START, development_only
 
 CURVE_POINTS = 400
+# the programme's account sizes, each reported separately (PTAI-RD-001 WP 2.6), smallest
+# first; the largest is the one the others' trades are compared with
+ACCOUNTS_GBP = (50.0, 200.0, 500.0, 10_000.0)
 
 
 class Stopped(Exception):
@@ -121,6 +128,56 @@ def _figures(paths: Paths, p: int = 0) -> Dict[str, Any]:
     }
 
 
+def _period_summaries(curve) -> Optional[Dict[str, Any]]:
+    """Each period's summary, the annual growth and the 10% objective, without the
+    rows (the run's own account keeps those)."""
+    if curve is None:
+        return None
+    full = periods.report(*curve)
+    out: Dict[str, Any] = {p: full[p]["summary"] for p in periods.PERIODS}
+    out["annual_growth"] = full["annual_growth"]
+    out["target_annual"] = full["target_annual"]
+    return out
+
+
+def _accounts(
+    sim: Simulation,
+    trades: Sequence[Trade],
+    hold: Sequence[Trade],
+    costs: Costs,
+    gbp_usd: float,
+) -> List[Dict[str, Any]]:
+    """``trades`` and buy-and-hold at each of ``ACCOUNTS_GBP`` (module docstring)."""
+    usd = {g: round(g * float(gbp_usd), 2) for g in ACCOUNTS_GBP}
+    paths = sim.accounts(usd, costs, trades, detail=True)
+    holds = sim.accounts(usd, costs, hold)
+    largest = sorted(i for i, *_ in paths[ACCOUNTS_GBP[-1]].detail)
+    out = []
+    for g in ACCOUNTS_GBP:
+        path = paths[g]
+        taken = sorted(i for i, *_ in path.detail)
+        figures = _figures(path)
+        out.append(
+            {
+                "account_gbp": g,
+                "account_usd": usd[g],
+                "strategy_result": figures,
+                "return": figures["net_usd"] / usd[g],
+                "buy_and_hold": {
+                    "net_usd": float(holds[g].net[0]),
+                    "return": float(holds[g].net[0]) / usd[g],
+                },
+                "trades_taken": len(taken),
+                "same_trades_as_largest": taken == largest,
+                "drawdowns": (
+                    drawdowns.report(*path.curve) if path.curve is not None else None
+                ),
+                "periods": _period_summaries(path.curve),
+            }
+        )
+    return out
+
+
 def _curve(paths: Paths) -> List[List[float]]:
     if paths.curve is None:
         return []
@@ -180,7 +237,11 @@ def run(
     path = sim.replay(trades, costs, account, detail=True)
     taken: List[Trade] = [trades[i] for i, *_ in path.detail]
     check()
-    hold = sim.replay(bl.hold_trades(sim, start_s), costs, account)
+    hold_trades = bl.hold_trades(sim, start_s)
+    hold = sim.replay(hold_trades, costs, account)
+    progress("Replaying each account size")
+    accounts = _accounts(sim, trades, hold_trades, costs, config.gbp_usd)
+    check()
     progress(f"Replaying {config.draws} random-entry draws")
     draws = bl.random_draws(sim, taken, config.seed, int(config.draws), start_s)
     rand = bl.replay_draws(sim, draws.draws, costs, account) if config.draws else None
@@ -229,6 +290,11 @@ def run(
         "curve": _curve(path),
         # daily, weekly, monthly and annual returns from the whole curve (WP 2.6)
         "periods": (periods.report(*path.curve) if path.curve is not None else None),
+        "drawdowns": (
+            drawdowns.report(*path.curve) if path.curve is not None else None
+        ),
+        # the same trades at each of the programme's account sizes (WP 2.6)
+        "accounts": accounts,
     }
     if save:
         experiment.log_trial(

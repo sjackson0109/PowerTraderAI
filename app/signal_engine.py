@@ -16,6 +16,12 @@ Fail closed:
   ``STALE_CANDLES`` (and a WARNING);
 * no candles at all -> ``HOLD`` with reason ``CANDLES_UNAVAILABLE``.
 
+An entry is acted on only within ``ENTRY_WINDOW_S`` (15 minutes) of its bar's close, the
+moment the backtester fills it (at the next bar's open), so a refused entry is retried
+within that time only. Later, the ``ENTER_LONG`` becomes ``HOLD`` with reason
+``ENTRY_MISSED:<the entry's reason>``, logged once per coin and bar with how late it
+was: a trader started after a close does not buy on that bar. Exits are never late.
+
 Every decision is logged once per bar with strategy_id, reason, indicators and
 the bar time.
 """
@@ -45,6 +51,10 @@ logger = get_logger("signal_engine")
 CandleProvider = Callable[[str, str, int, pd.Timestamp], pd.DataFrame]
 
 STALE_FACTOR = 2  # last closed bar may be at most this many timeframes old
+# an entry is acted on at most this long after its bar's close, where the backtester
+# fills it (the next bar's open); later it is missed (N12)
+ENTRY_WINDOW_S = 15 * 60
+ENTRY_MISSED = "ENTRY_MISSED"
 FETCH_RETRY_SECONDS = 30.0
 
 
@@ -371,12 +381,31 @@ class SignalEngine:
             decision = runner.evaluate(window, pos, str(base).upper())
         if pos is not None:
             self._persist()  # the stop / overlay state may have moved
+        missed = decision.action is Action.ENTER_LONG and age > ENTRY_WINDOW_S
+        if missed:  # too long after the close to fill as a backtest does: no buy
+            decision = Decision(
+                Action.HOLD,
+                f"{ENTRY_MISSED}:{decision.reason}",
+                decision.indicators,
+                decision.bar_time,
+                decision.strategy_id,
+            )
         return self._record(
             base,
             decision,
             position=pos,
-            log_key=(decision.bar_time, pos is None, decision.action),
+            log_key=(
+                decision.bar_time,
+                pos is None,
+                ENTRY_MISSED if missed else decision.action,
+            ),
             exchange=exchange,
+            note=(
+                f" missed={age / 60:.0f} min after the bar's close "
+                f"(entries within {ENTRY_WINDOW_S // 60} min)"
+                if missed
+                else ""
+            ),
         )
 
     # -- internals --------------------------------------------------------------------------------
@@ -463,9 +492,11 @@ class SignalEngine:
         position,
         log_key: tuple,
         exchange: Optional[str] = None,
+        note: str = "",
     ) -> Decision:
         """Keep ``decision`` as ``base``'s last, with ``exchange``, the exchange whose
-        bars decided it (None when there were none), and log it when it is new."""
+        bars decided it (None when there were none), and log it, with ``note`` at the
+        end, when it is new."""
         base = str(base).upper()
         self.last_decisions[base] = decision
         self.last_exchanges[base] = exchange
@@ -486,6 +517,7 @@ class SignalEngine:
                     if position is not None and position.overlay_state
                     else ""
                 )
+                + note
             )
         return decision
 

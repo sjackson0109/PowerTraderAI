@@ -2230,6 +2230,10 @@ class CryptoAPITrading:
                     "reason": d.reason,
                     "bar_time": str(d.bar_time),
                     "stop": d.stop_price,
+                    # whose bars decided it (N15)
+                    "exchange": getattr(self.signal_engine, "last_exchanges", {}).get(
+                        base
+                    ),
                 }
                 for base, d in self.signal_engine.last_decisions.items()
             },

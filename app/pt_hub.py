@@ -5087,6 +5087,22 @@ Platform: {sys.platform}
         self._compare_models_window = CompareModelsWindow(self, coins)
         return self._compare_models_window
 
+    def open_research_engine(self, parent=None):
+        """Settings > Training, "Research engine...": research_engine_ui's window
+        (raises the open one). It belongs to the hub, so its jobs keep running when
+        Settings closes."""
+        from research_engine_ui import ResearchEngineWindow
+
+        win = getattr(self, "_research_engine_window", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                return win
+        except tk.TclError:
+            pass
+        self._research_engine_window = ResearchEngineWindow(self)
+        return self._research_engine_window
+
     def train_selected_coin(self) -> None:
         print(f"DEBUG: train_selected_coin() called")
         coin = (
@@ -7946,6 +7962,21 @@ Platform: {sys.platform}
             text=(
                 "Runs the model lab's models on the same coins and hours, each against "
                 "random entries, on the months before the held-back period."
+            ),
+            style="Muted.TLabel",
+            wraplength=560,
+        ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(0, 6))
+        r += 1
+        ttk.Button(
+            page,
+            text="Research engine...",
+            command=lambda: self.open_research_engine(win),
+        ).grid(row=r, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(
+            page,
+            text=(
+                "Runs research jobs on this computer, within limits that keep cores and "
+                "memory free for trading, and shows each job's time and memory."
             ),
             style="Muted.TLabel",
             wraplength=560,

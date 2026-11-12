@@ -298,7 +298,7 @@ def test_settings_opens_the_risk_window_next_to_strategy(hub):
         str(w.cget("text")) for w in widgets_of(win) if isinstance(w, ttk.Button)
     ]
     assert buttons.index("Risk...") == buttons.index("Strategy...") + 1
-    line = "Trading stops at a 8% drawdown from the peak; warnings at 3% and 5%"
+    line = "Buying stops at a 8% drawdown from the peak; warnings at 3% and 5%"
     assert line in label_texts(win)
     press(win, "Risk...")
     risk_win = hub._risk_settings_win
@@ -312,7 +312,7 @@ def test_settings_opens_the_risk_window_next_to_strategy(hub):
     risk_win.vars["emergency_drawdown_pct"].set("10")
     assert risk_win.save()
     assert (
-        "Trading stops at a 10% drawdown from the peak; warnings at 3% and 5%"
+        "Buying stops at a 10% drawdown from the peak; warnings at 3% and 5%"
         in label_texts(win)
     )
     assert tm.read_drawdown_levels().emergency_pct == 10.0  # pt_config.json
@@ -364,16 +364,16 @@ def test_resume_trading_clears_the_halt_after_asking(root, folder, books):
     win.withdraw()
     text = win.halt_var.get()
     assert text.startswith(
-        "Trading is halted: Account drawdown 9.0% reached the 8% emergency limit "
+        "Buying is halted: Account drawdown 9.0% reached the 8% emergency limit "
         "\u00b7 since "
     )
-    assert text.endswith(", account value $9,100.00.")
+    assert text.endswith(", account value $9,100.00. Sells still go through.")
     assert win.resume_button.instate(["!disabled"])
 
     assert not win.resume()  # "No": still halted
     assert risk_state.current(books).halted and changed == []
     title, message = box.asked[0]
-    assert title == "Resume trading?" and "trades again from its next start" in message
+    assert title == "Resume trading?" and "buys again from its next pass" in message
     assert "emergency stop" not in message.split("\n\n")[-1]  # 4% < 8%: no warning
 
     box.yes = True
@@ -381,7 +381,7 @@ def test_resume_trading_clears_the_halt_after_asking(root, folder, books):
     assert not risk_state.current(books).halted
     assert win.halt_var.get() == "Trading is not halted."
     assert win.resume_button.instate(["disabled"])
-    assert win.status_var.get().startswith("Trading resumes when the trader is next")
+    assert win.status_var.get().startswith("Buying resumes at the trader's next")
     assert changed == ["changed"]
     win.destroy()
 
@@ -393,8 +393,8 @@ def test_resume_says_when_the_drawdown_is_still_past_the_stop(root, folder, book
     win.resume()
     assert box.asked[0][1].endswith(
         "The account is 9.00% below its peak, at or above the 8% emergency stop: the "
-        "trader stops again at its first check, unless the peak is reset or the stop "
-        "is raised first."
+        "trader halts buying again at its first check, unless the peak is reset or the "
+        "stop is raised first."
     )
     win.destroy()
 
@@ -413,15 +413,15 @@ def test_the_hub_shows_a_halt_banner_until_trading_is_resumed(hub, monkeypatch):
         "Account drawdown 9.0% reached the 8% emergency limit \u00b7 since "
     )
     texts = [str(w.cget("text")) for w in banner.winfo_children() if "text" in w.keys()]
-    assert "TRADING HALTED" in texts and "Risk..." in texts
-    assert hub._risk_summary().startswith("Trading is halted. Trading stops at a 8%")
+    assert "BUYING HALTED" in texts and "Risk..." in texts
+    assert hub._risk_summary().startswith("Buying is halted. Buying stops at a 8%")
 
     win = hub.open_risk_settings()
     win.withdraw()
     monkeypatch.setattr(win, "_box", Box(yes=True))
     assert win.resume()
     assert hub._halt_banner is None  # gone at once, not at the next tick
-    assert not hub._risk_summary().startswith("Trading is halted")
+    assert not hub._risk_summary().startswith("Buying is halted")
     win.destroy()
 
 

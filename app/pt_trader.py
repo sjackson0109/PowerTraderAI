@@ -1411,6 +1411,23 @@ class CryptoAPITrading:
         )
         self._last_price_summary_ts = time.time()
 
+    def _decide(self, base: str, position: Any) -> Any:
+        """The strategy's decision for ``base`` (``SignalEngine.decide``), or None, a
+        HOLD, when deciding raised: one coin's error never ends the pass, so the other
+        coins are still decided and managed and the status is still written (N8)."""
+        try:
+            return self.signal_engine.decide(base, position)
+        except Exception as exc:
+            message = (
+                f"No decision for {base} this pass ({type(exc).__name__}: {exc}); "
+                "it holds, and the other coins go on"
+            )
+            if time.time() - self._warn_ts.get(f"decide:{base}", 0.0) >= 300.0:
+                self._warn_ts[f"decide:{base}"] = time.time()
+                print(f"{Fore.YELLOW}{message}{Style.RESET_ALL}")
+                logger.exception(message)
+            return None
+
     def _warn_throttled(self, key: str, message: str, every: float = 60.0) -> None:
         """WARNING at most once per ``every`` seconds per key (the loop runs 2x/s)."""
         now = time.time()
@@ -2779,7 +2796,7 @@ class CryptoAPITrading:
                 exit_qty = self._catalogue_exit_quantity(symbol, quantity)
                 if avg_cost_basis > 0 and exit_qty > 0:
                     pos = self.signal_engine.ensure_position(symbol, avg_cost_basis)
-                    decision = self.signal_engine.decide(symbol, pos)
+                    decision = self._decide(symbol, pos)
                     if decision is not None:
                         self._report_position_stops(symbol, pos, decision, positions)
                     if decision is not None and decision.action is Action.EXIT_LONG:
@@ -3128,7 +3145,7 @@ class CryptoAPITrading:
             if catalogue_mode:
                 # Not held -> the strategy's record of a position (if any) is stale.
                 self.signal_engine.forget(base_symbol)
-                entry_decision = self.signal_engine.decide(base_symbol, None)
+                entry_decision = self._decide(base_symbol, None)
                 if (
                     entry_decision is None
                     or entry_decision.action is not Action.ENTER_LONG

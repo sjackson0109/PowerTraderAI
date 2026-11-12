@@ -52,6 +52,34 @@ without them replays exactly as before:
 * Each path reports the value of its positions open when the halt level was first
   reached (``halt_exposure``) and their largest further fall in the next 30 days
   (``halt_further_loss``): a halted trader manages nothing.
+
+**Within the bar** (``lows``, off unless given). The marks above are closes, but the
+trader checks its value, at the bid, on every pass, so it can halt on a fall that has
+recovered by the close. With ``lows`` (each coin's close times and lows, as ``prices``
+gives its closes) each path also reports the intrabar figures, beside the close-based
+ones and never in their place:
+
+* in each marking interval, the account is valued with every position held through it
+  (those held before the fills at the interval's end) at the lowest price its coin
+  reached there: the lowest low of the coin's bars that close in the interval, or the
+  close at its end if that is lower; cash is unchanged. Positions are valued as the
+  marks value them, at the raw price with no fee, and an unsold remainder with them;
+* the fall is taken from the peak at the previous mark (the close-marked peak, as
+  ``max_drawdown``'s): a low comes before the close that ends its interval;
+* ``intrabar_max_drawdown`` (and ``_usd``) is the largest of those falls and of the
+  close-based ones, so it is never below ``max_drawdown``; ``intrabar_halt_s`` is the
+  end of the first interval in which it reached the halt level (the level was reached
+  at some time within that interval), or -1. The level is ``Account.halt_pct``, as for
+  ``halt_s``: the trader's emergency stop (``risk.emergency_drawdown_pct``, 8% by
+  default), reached at a fall of at least that share of the peak. When ``halt_s`` is
+  set, ``intrabar_halt_s`` is set too and is never after it.
+
+For a long-only book, valuing each position at its interval's low gives a lower bound
+on the account's worst value in the interval. With several coins, whose lows can come
+at different times, the sum is a conservative bound, not the path the account took. The
+bound concerns the trough only: the peak is the close-marked one, and a trader that
+checks on every pass can see a higher peak between closes. These figures are reported
+and decide nothing: no entry, exit or end of a path depends on them.
 """
 
 from __future__ import annotations
@@ -159,6 +187,10 @@ class Paths:
     dust_usd: Optional[np.ndarray] = None
     halt_exposure: Optional[np.ndarray] = None
     halt_further_loss: Optional[np.ndarray] = None
+    # within the bar, with ``lows`` (None without them; see the module docstring)
+    intrabar_max_drawdown: Optional[np.ndarray] = None  # never below max_drawdown
+    intrabar_max_drawdown_usd: Optional[np.ndarray] = None
+    intrabar_halt_s: Optional[np.ndarray] = None  # the interval's end, or -1
 
     def eligible(self) -> List[int]:
         """Path 0's eligible opportunities: flat, with the cash there (taken or vetoed)."""
@@ -184,6 +216,32 @@ def _prices(prices: Mapping[str, Tuple[Sequence[int], Sequence[float]]], coins, 
     return out
 
 
+def _lows(
+    lows: Mapping[str, Tuple[Sequence[int], Sequence[float]]],
+    coins,
+    hours: np.ndarray,
+    mark_s: int,
+) -> np.ndarray:
+    """Each coin's lowest low among its bars that close in each marking interval,
+    (hours[h] - mark_s, hours[h]]: (hours, coins); NaN where none closes in it, or for
+    a coin with no lows."""
+    out = np.full((len(hours), len(coins)), np.nan)
+    for j, c in enumerate(coins):
+        if c not in lows:
+            continue
+        t, p = lows[c]
+        t = np.asarray(t, dtype=np.int64)
+        p = np.asarray(p, dtype=float)
+        upto = np.searchsorted(t, hours, side="right")  # bars closed by each mark
+        since = np.searchsorted(t, hours - mark_s, side="right")  # by the one before
+        some = upto > since
+        if some.any():
+            # the intervals follow one another (the marks are mark_s apart), so each
+            # one's bars end where the next one's begin
+            out[some, j] = np.fmin.reduceat(p[: upto[some][-1]], since[some])
+    return out
+
+
 def replay(
     opps: Sequence[Opportunity],
     prices: Mapping[str, Tuple[Sequence[int], Sequence[float]]],
@@ -198,11 +256,13 @@ def replay(
     end_s: Optional[int] = None,
     mark_s: int = HOUR_S,
     cooldown: Optional[Cooldown] = None,
+    lows: Optional[Mapping[str, Tuple[Sequence[int], Sequence[float]]]] = None,
 ) -> Paths:
     """Replay the opportunities on ``paths`` paths. ``veto`` (paths, n) is True where a
     path vetoes an opportunity; ``scale`` (paths, n) is its scale (at most 1). ``prices``
     gives each coin's hourly (close times, closes) for marking. ``end_s`` ends the curve
-    (default: the last exit)."""
+    (default: the last exit). ``lows`` gives each coin's (close times, lows) for the
+    intrabar figures; without it they are None."""
     n = len(opps)
     if veto is not None:
         paths = veto.shape[0]
@@ -225,6 +285,8 @@ def replay(
     else:
         hours = np.zeros(0, dtype=np.int64)
     marks = _prices(prices, coins, hours) if n else np.zeros((0, 0))
+    intrabar = lows is not None
+    low_marks = _lows(lows, coins, hours, mark_s) if (intrabar and n) else None
 
     cash = np.full(paths, float(account.start))
     qty = np.zeros((paths, len(coins)))
@@ -257,6 +319,9 @@ def replay(
     halt_qty = np.zeros((paths, len(coins)))
     halt_value = np.zeros(paths)
     halt_low = np.zeros(paths)
+    in_mdd = np.zeros(paths)  # within the bar (with ``lows``)
+    in_mdd_usd = np.zeros(paths)
+    in_halt_s = np.full(paths, -1, dtype=np.int64)
 
     # events: (time, 0 = exit, 1 = entry, opportunity)
     events = sorted(
@@ -274,6 +339,15 @@ def replay(
         if len(coins):
             row = marks[h]
             last_close = np.where(np.isfinite(row), row, last_close)
+        if low_marks is not None:
+            # the positions held through the interval (before this mark's fills), each
+            # at its coin's lowest price in it, from the peak at the previous mark
+            worst = np.fmin(low_marks[h], last_close)
+            low_value = cash + np.nan_to_num(
+                (qty + dust) * worst[None, :], nan=0.0
+            ).sum(axis=1)
+            low_fall = np.where(peak > 0, (peak - low_value) / peak, 0.0)
+            low_fall_usd = peak - low_value
         while ev < len(events) and events[ev][0] <= t:
             when, kind, i = events[ev]
             ev += 1
@@ -385,6 +459,17 @@ def replay(
         fall_usd = peak - value
         mdd = np.where(live, np.maximum(mdd, fall), mdd)
         mdd_usd = np.where(live, np.maximum(mdd_usd, fall_usd), mdd_usd)
+        if low_marks is not None:  # reported only: nothing below depends on it
+            worst_fall = np.maximum(fall, low_fall)
+            in_mdd = np.where(live, np.maximum(in_mdd, worst_fall), in_mdd)
+            in_mdd_usd = np.where(
+                live,
+                np.maximum(in_mdd_usd, np.maximum(fall_usd, low_fall_usd)),
+                in_mdd_usd,
+            )
+            in_halt_s[
+                live & (in_halt_s < 0) & (worst_fall >= account.halt_pct / 100.0)
+            ] = t
         first_halt = live & (halt_s < 0) & (fall >= account.halt_pct / 100.0)
         halt_s[first_halt] = t
         if first_halt.any():  # what was open, and what it was worth, at the halt
@@ -446,4 +531,7 @@ def replay(
         ),
         halt_exposure=halt_value,
         halt_further_loss=np.maximum(halt_value - halt_low, 0.0),
+        intrabar_max_drawdown=in_mdd if intrabar else None,
+        intrabar_max_drawdown_usd=in_mdd_usd if intrabar else None,
+        intrabar_halt_s=in_halt_s if intrabar else None,
     )

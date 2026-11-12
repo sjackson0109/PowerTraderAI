@@ -1000,6 +1000,17 @@ def figures(
         "annualised": (1 + roe) ** (365.0 / window) - 1 if roe > -1 else float("nan"),
         "max_drawdown": float(path.max_drawdown[0]),
         "max_drawdown_usd": float(path.max_drawdown_usd[0]),
+        # within the bar: positions at their bar's low (replay's ``lows``); shown only
+        "intrabar_max_drawdown": (
+            float(path.intrabar_max_drawdown[0])
+            if path.intrabar_max_drawdown is not None
+            else None
+        ),
+        "intrabar_max_drawdown_usd": (
+            float(path.intrabar_max_drawdown_usd[0])
+            if path.intrabar_max_drawdown_usd is not None
+            else None
+        ),
         "drawdown": dd,
         "recovery_days": recovery,
         "trades_by_half": [int(np.sum(~second)), int(np.sum(second))],
@@ -1030,6 +1041,11 @@ def figures(
                 float(path.halt_further_loss[0])
                 if path.halt_further_loss is not None
                 else 0.0
+            ),
+            "intrabar_reached_s": (
+                int(path.intrabar_halt_s[0])
+                if path.intrabar_halt_s is not None
+                else None
             ),
         },
     }

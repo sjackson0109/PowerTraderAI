@@ -121,6 +121,24 @@ class TestRun:
         with pytest.raises(ValueError, match="coin"):
             runs.run(config(coins=[]), loader=loader, venue=venue)
 
+    def test_the_drawdown_at_the_lows_is_recorded_and_shown(self, lab):
+        record = runs.run(config(), loader=loader, venue=venue, save=False)
+        for part in ("strategy_result", "buy_and_hold"):
+            s = record[part]
+            assert s["intrabar_max_drawdown"] >= s["max_drawdown"]
+            if s["halt_reached"]:
+                assert s["intrabar_halt_reached"] <= s["halt_reached"]
+        assert "valued at each bar's low" in ui.notes(record)
+        # a run saved before these figures were recorded still shows its notes
+        old = dict(record)
+        old["strategy_result"] = {
+            k: v
+            for k, v in record["strategy_result"].items()
+            if not k.startswith("intrabar_")
+        }
+        assert "each bar's low" not in ui.notes(old)
+        assert "Logged as an exploratory run." in ui.notes(old)
+
 
 def research(*ids):
     return {"strategy": {"research_enabled": list(ids)}}

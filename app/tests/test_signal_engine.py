@@ -165,6 +165,103 @@ class SettingsManagerTests(unittest.TestCase):
             )
 
 
+class LateFeed(Feed):
+    """``Feed`` whose exchange publishes each bar in ``late`` only ``delay`` seconds
+    after it closes (every bar when ``late`` is None)."""
+
+    def __init__(self, frame, delay, late=None):
+        super().__init__(frame)
+        self.delay = pd.Timedelta(seconds=delay)
+        self.late = late
+
+    def provider(self, symbol, tf, n, now):
+        self.calls += 1
+        close = self.frame["open_time"] + HOUR
+        is_late = (
+            pd.Series(True, index=self.frame.index)
+            if self.late is None
+            else self.frame.index.to_series().isin(self.late)
+        )
+        published = close.where(~is_late, close + self.delay)
+        return self.frame[published <= now].tail(n).reset_index(drop=True)
+
+
+class LateBarTests(unittest.TestCase):
+    """An exchange that publishes the bar that just closed a few seconds late
+    (STRAT-004 paper readiness, D1): the engine fetches again after
+    ``FETCH_RETRY_SECONDS`` and decides that bar, instead of keeping the frame
+    without it as current until the next bar closes."""
+
+    def setUp(self):
+        self.frame = make_candles(trend_series())
+
+    def index_of(self, bar_time):
+        return int(self.frame.index[self.frame["open_time"] == bar_time][0])
+
+    def test_a_late_bar_is_decided_within_the_retry_interval(self):
+        feed = LateFeed(self.frame, delay=20)
+        engine = SignalEngine(PAPER, feed.provider, feed.clock)
+        feed.set_after_bar(200)  # 10 s after the close: bar 200 is not published yet
+        self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 199)
+        feed.now += se.FETCH_RETRY_SECONDS + 1
+        self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 200)
+        self.assertEqual(feed.calls, 2)
+        for _ in range(5):  # current now: no more fetches until bar 201 closes
+            engine.decide("BTC")
+        self.assertEqual(feed.calls, 2)
+
+    def test_an_exchange_that_never_publishes_is_asked_at_most_every_interval(self):
+        feed = LateFeed(self.frame, delay=10**9, late=[200])
+        engine = SignalEngine(PAPER, feed.provider, feed.clock)
+        feed.set_after_bar(200)
+        for _ in range(5):
+            engine.decide("BTC")
+        self.assertEqual(feed.calls, 1)
+        feed.now += se.FETCH_RETRY_SECONDS - 1
+        engine.decide("BTC")
+        self.assertEqual(feed.calls, 1)
+        feed.now += 2
+        self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 199)
+        self.assertEqual(feed.calls, 2)
+
+    def test_a_bar_late_once_is_still_decided_as_the_backtester_would(self):
+        want = expected_actions(self.frame)
+        enter = want[0][0]
+        feed = LateFeed(self.frame, delay=20, late=[enter])
+        engine = SignalEngine(PAPER, feed.provider, feed.clock)
+        seen, pos = [], None
+        for k in range(len(self.frame)):
+            feed.set_after_bar(k)
+            for wait in (0, se.FETCH_RETRY_SECONDS + 1):
+                feed.now += wait
+                d = engine.decide("BTC", pos)
+                if d.action is Action.ENTER_LONG and pos is None:
+                    i = self.index_of(d.bar_time)
+                    pos = engine.record_entry(
+                        "BTC", self.frame["close"].iloc[i], d.bar_time
+                    )
+                    seen.append((i, "ENTER"))
+                elif d.action is Action.EXIT_LONG and pos is not None:
+                    i = self.index_of(d.bar_time)
+                    engine.record_exit("BTC", self.frame["close"].iloc[i], d.bar_time)
+                    pos = None
+                    seen.append((i, "EXIT"))
+        self.assertEqual(seen, want)
+
+    def test_an_entry_gates_late_context_bar_is_fetched_again(self):
+        feed = LateFeed(self.frame, delay=20)
+        engine = SignalEngine(PAPER, feed.provider, feed.clock)
+        feed.set_after_bar(200)
+        now = pd.Timestamp(feed.now, unit="s", tz="UTC")
+        first = engine._context_candles("BTC-USD", "1h", 50, now)
+        self.assertEqual(self.index_of(first["open_time"].iloc[-1]), 199)
+        later = now + pd.Timedelta(seconds=se.FETCH_RETRY_SECONDS + 1)
+        feed.now = later.timestamp()
+        second = engine._context_candles("BTC-USD", "1h", 50, later)
+        self.assertEqual(self.index_of(second["open_time"].iloc[-1]), 200)
+        self.assertEqual(feed.calls, 2)
+
+
 class EngineTests(unittest.TestCase):
     def setUp(self):
         self.frame = make_candles(trend_series())

@@ -28,7 +28,7 @@ import ui_table
 from strategies import descriptions as words
 from strategies.catalogue import CATALOGUE, ParamError, resolve_params
 from strategies.settings import read_research_enabled
-from strategy_lab import runs, sizing
+from strategy_lab import ensemble, runs, sizing
 from strategy_lab.runs import ACCOUNTS_GBP
 from strategy_lab.windows import DEVELOPMENT, ReservedPeriod, development_only
 from ui_jobs import BackgroundJobs
@@ -76,6 +76,11 @@ PERIOD_HEADINGS = {
 PERIOD_NAMES = {"day": "Days", "week": "Weeks", "month": "Months", "year": "Years"}
 SIZING_OWN = "The account's own"
 SIZING_TARGET = "Volatility target"
+ENSEMBLE_TEXT = (
+    "Also replay it as an ensemble of "
+    + ", ".join(str(n) for n in ensemble.LOOKBACKS[:-1])
+    + f" and {ensemble.LOOKBACKS[-1]} channel days, each with its midline stop"
+)
 ESTIMATOR_NAMES = {
     "volatility.ewma": "exponentially weighted returns, λ 0.94",
     "volatility.realised": "returns over 20 bars",
@@ -160,6 +165,22 @@ def summary_rows(record: Dict[str, Any]) -> List[tuple]:
         ),
         ("Cash", _money(0.0), _pct(0.0, 3), _pct(0.0), 0, _pct(0.0, 1)),
     ]
+    group = record.get("ensemble")
+    if group:
+        for label, f in (
+            (f"Ensemble of {len(group['lookbacks'])} channels", group["ensemble"]),
+            ("Buy and hold, equal weights", group["equal_weight_hold"]),
+        ):
+            rows.append(
+                (
+                    label,
+                    _money(f["net_usd"]),
+                    _pct(f["return_per_capital_day"], 3),
+                    _pct(f["max_drawdown"]),
+                    f["trades"],
+                    _pct(f["time_in_market"], 1),
+                )
+            )
     r = record.get("random_entries")
     if r:
         rows.append(
@@ -283,6 +304,7 @@ def notes(record: Dict[str, Any]) -> str:
             f"{target['years_at_or_above']} of {target['whole_years']}."
         )
     lines.extend(sizing_lines(record.get("sizing")))
+    lines.extend(ensemble_lines(record.get("ensemble")))
     unknown = record.get("venue", {}).get("unknown") or {}
     if unknown:
         lines.append(
@@ -292,6 +314,26 @@ def notes(record: Dict[str, Any]) -> str:
         )
     lines.append("Logged as an exploratory run.")
     return "\n".join(lines)
+
+
+def ensemble_lines(group: Optional[Dict[str, Any]]) -> List[str]:
+    """The ensemble's members alone (none without an ensemble)."""
+    if not group:
+        return []
+    e = group["ensemble"]
+    lines = [
+        f"The ensemble holds 1/{len(group['lookbacks'])} of each coin's share in each "
+        f"channel. Entries skipped for cash: {e['skipped_cash']}; below the minimum: "
+        f"{e['skipped_minimum']}."
+    ]
+    for days, m in group["members"].items():
+        rate = m.get("trades_per_coin_year")
+        lines.append(
+            f"{days} channel days alone: net ${_money(m['net_usd'])}, largest "
+            f"drawdown {_pct(m['max_drawdown'])}"
+            + ("." if rate is None else f", {rate:.1f} trades a coin a year.")
+        )
+    return lines
 
 
 def sizing_lines(part: Optional[Dict[str, Any]]) -> List[str]:
@@ -391,6 +433,7 @@ class BacktestWindow(tk.Toplevel):
         self.slippage_var = tk.StringVar(master=self, value="0.05")
         self.draws_var = tk.StringVar(master=self, value="200")
         self.sizing_var = tk.StringVar(master=self, value=SIZING_OWN)
+        self.ensemble_on = tk.BooleanVar(master=self, value=False)
         self.target_var = tk.StringVar(master=self, value="25")
         self.estimator_var = tk.StringVar(
             master=self, value=ESTIMATOR_NAMES["volatility.ewma"]
@@ -490,6 +533,7 @@ class BacktestWindow(tk.Toplevel):
             raise ValueError("The random draws must be from 0 to 10,000.")
         return runs.RunConfig(
             sizing=self.sizing_record(),
+            ensemble=bool(self.ensemble_on.get()) and sid == runs.ENSEMBLE_STRATEGY,
             strategy_id=sid,
             params=params,
             overlays=[{"id": o} for o in self.overlays if self.overlay_on[o].get()],
@@ -794,6 +838,10 @@ class BacktestWindow(tk.Toplevel):
             ttk.Label(self.params_frame, text=hint, style="Muted.TLabel").grid(
                 row=i, column=2, sticky="w", padx=(6, 0)
             )
+        if sid == runs.ENSEMBLE_STRATEGY:
+            ttk.Checkbutton(
+                self.params_frame, text=ENSEMBLE_TEXT, variable=self.ensemble_on
+            ).grid(row=len(entry["param_bounds"]), column=0, columnspan=3, sticky="w")
         self.timeframe_var.set(words.timeframe_name(entry["timeframe_primary"]))
 
     def _draw_curve(self, points: List[List[float]]) -> None:

@@ -19,7 +19,9 @@ section 5.8). An exploratory run is never evidence: it is logged as a trial of k
    with a sizing policy (``RunConfig.sizing``, ``strategy_lab.sizing``) each of the
    strategy's trades, and each random entry, is scaled at its decision, and the run
    records the same trades at the account's own size and the same scales replayed in
-   random orders;
+   random orders; for STRAT-007, with ``RunConfig.ensemble``, the ensemble of its
+   lookbacks too (``strategy_lab.ensemble``), each member alone and an equal-weight
+   buy-and-hold;
 4. logs the trial and saves the run under ``<data dir>/strategy_lab/runs/<id>/run.json``.
 
 ``stop`` (a threading.Event) is checked between the stages; a stopped run saves nothing.
@@ -42,6 +44,7 @@ from market_data.candles import exchange_candles
 from research_stats import drawdowns, periods
 from signal_fusion.evaluation.replay import Account, Costs, Paths
 from strategy_lab import baselines as bl
+from strategy_lab import ensemble as ens_mod
 from strategy_lab import experiment, sizing
 from strategy_lab.candidates import RunnerSpec, Trade
 from strategy_lab.simulate import Simulation, load_universe
@@ -52,6 +55,7 @@ CURVE_POINTS = 400
 # the programme's account sizes, each reported separately (PTAI-RD-001 WP 2.6), smallest
 # first; the largest is the one the others' trades are compared with
 ACCOUNTS_GBP = (50.0, 200.0, 500.0, 10_000.0)
+ENSEMBLE_STRATEGY = "STRAT-007"
 
 
 class Stopped(Exception):
@@ -75,6 +79,8 @@ class RunConfig:
     seed: int = 700_000
     # the sizing policy's record (``strategy_lab.sizing``); None: the account's own
     sizing: Optional[Mapping[str, Any]] = None
+    # STRAT-007 only: also replay its ensemble of lookbacks (``strategy_lab.ensemble``)
+    ensemble: bool = False
 
     def spec(self) -> RunnerSpec:
         return RunnerSpec(
@@ -268,10 +274,14 @@ def run(
     if not config.coins:
         raise ValueError("choose at least one coin")
     spec = config.spec()
+    if config.ensemble and config.strategy_id != ENSEMBLE_STRATEGY:
+        raise ValueError(f"the ensemble is of {ENSEMBLE_STRATEGY}'s members")
+    first = _warmup_start(spec, a)
+    if config.ensemble:  # the longest member's channel
+        back = pd.Timedelta(days=ens_mod.warmup_days())
+        first = max(HISTORY_START, min(first, a - back))
     progress("Reading candles")
-    universe = load_universe(
-        list(config.coins), spec, _warmup_start(spec, a), b, loader=loader
-    )
+    universe = load_universe(list(config.coins), spec, first, b, loader=loader)
     check()
     progress("Finding the strategy's trades")
     sim = Simulation(universe, spec)
@@ -311,6 +321,12 @@ def run(
         else None
     )
     check()
+    ensemble_part = None
+    if config.ensemble:
+        progress("Replaying the ensemble")
+        group = ens_mod.Ensemble(universe)
+        ensemble_part = ens_mod.report(group, costs, usd, policy, start_s)
+        check()
     sizing_part: Dict[str, Any] = {"policy": policy.record()}
     if not fixed:
         progress("Replaying the sizes in random orders")
@@ -370,6 +386,8 @@ def run(
         # how each trade was sized (WP 4.2), against the account's own sizing and the
         # same sizes in random orders
         "sizing": sizing_part,
+        # STRAT-007's ensemble of lookbacks, when asked for (backlog 3.1)
+        "ensemble": ensemble_part,
     }
     if save:
         run_id, folder = _claim_folder(run_id)

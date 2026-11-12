@@ -180,5 +180,18 @@ def test_posix_modes_are_private(home):
     assert stat.S_IMODE(os.stat(pt_paths.config_dir()).st_mode) == 0o700
 
 
+def test_file_in_needs_an_absolute_folder_and_a_bare_name(tmp_path):
+    folder = str(tmp_path)
+    assert pt_paths.file_in(folder, "jobs.sqlite") == os.path.join(
+        folder, "jobs.sqlite"
+    )
+    for bad_folder in ("research_engine", os.path.join(".", "x")):
+        with pytest.raises(ValueError, match="absolute folder"):
+            pt_paths.file_in(bad_folder, "jobs.sqlite")
+    for bad_name in ("", "..", os.path.join("sub", "jobs.sqlite")):
+        with pytest.raises(ValueError, match="bare file name"):
+            pt_paths.file_in(folder, bad_name)
+
+
 if __name__ == "__main__":
     unittest.main()

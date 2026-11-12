@@ -410,15 +410,19 @@ class _TraderRiskAdapter:
     def validate_order(
         self, order: dict, portfolio_value: float, max_buy_usd: float
     ) -> dict:
-        """A halt refuses every order. A buy may be worth at most ``max_buy_usd`` (the
-        trader passes the coin's budget). A sell is never refused for its size: it only
-        reduces a holding, and a cap there would leave a position that cannot be sold.
+        """A halt refuses every buy; a sell still goes through, so exits and stops keep
+        working. A buy may be worth at most ``max_buy_usd`` (the trader passes the
+        coin's budget). A sell is never refused for its size: it only reduces a
+        holding, and a cap there would leave a position that cannot be sold.
 
         RiskManager.validate_trade is not used for size: it caps every order, sells
         included, at 1% of the account, below the trader's own sizing rules."""
         self.manager.portfolio_value = float(portfolio_value)
-        if self.is_trading_halted():
-            return {"approved": False, "reason": "Trading is halted by risk controls"}
+        if self.is_trading_halted() and order.get("side") != "sell":
+            return {
+                "approved": False,
+                "reason": "Buying is halted by risk controls (sells still go through)",
+            }
         value = float(order["quantity"]) * float(order["price"])
         # half a cent: the quantity is rounded to 8 decimals, so value can pass the
         # limit by a fraction of a cent
@@ -1830,10 +1834,13 @@ class CryptoAPITrading:
         price: float,
         minimum_entry_usd: Optional[float] = None,
     ):
-        """Shared pre-order risk gate. Returns True when the order may proceed."""
-        if self.risk_manager.is_trading_halted():
+        """Shared pre-order risk gate. Returns True when the order may proceed. A halt
+        refuses buys only: a sell (an exit, a stop, the trailing margin) goes through.
+        """
+        if side != "sell" and self.risk_manager.is_trading_halted():
             print(
-                f"{Fore.RED}RISK HALT: Trading is currently halted by risk management system{Style.RESET_ALL}"
+                f"{Fore.RED}RISK HALT: buying is halted by the emergency stop; sells "
+                f"still go through{Style.RESET_ALL}"
             )
             return False
 
@@ -2967,6 +2974,8 @@ class CryptoAPITrading:
 
             if (hard_hit or neural_hit) and self._market_not_trading(symbol):
                 pass  # its market is not trading: no DCA buy (reason printed once)
+            elif (hard_hit or neural_hit) and self.risk_manager.is_trading_halted():
+                pass  # buying is halted: no DCA buy (run() says why)
             elif hard_hit or neural_hit:
                 if neural_hit and hard_hit:
                     reason = f"NEURAL L{neural_level_now}>=L{neural_level_needed} OR HARD {hard_level:.2f}%"
@@ -3091,6 +3100,10 @@ class CryptoAPITrading:
 
         entry_coins = set(self._entry_coins())
         start_index = 0
+        # buying is halted (an emergency stop): no new trade is looked for, so no
+        # entry decision, LLM check or entry assessment is made either
+        if self.risk_manager.is_trading_halted():
+            start_index = len(crypto_symbols)
         while start_index < len(crypto_symbols):
             base_symbol = crypto_symbols[start_index].upper().strip()
             full_symbol = f"{base_symbol}-USD"
@@ -3256,27 +3269,36 @@ class CryptoAPITrading:
         except Exception:
             pass
 
+    def _say_halted(self, force: bool = False) -> None:
+        """While buying is halted: why, and what still runs (every 5 minutes)."""
+        now = time.time()
+        if not force and now - getattr(self, "_halt_said_ts", 0.0) < 300.0:
+            return
+        self._halt_said_ts = now
+        reason = self.risk_manager.halt_reason or "risk controls"
+        print(f"{Fore.RED}BUYING HALTED: {reason}{Style.RESET_ALL}")
+        print(
+            f"{Fore.RED}No new trades or DCA buys until Resume trading in Settings > "
+            f"Risk. Exits, stops and the trailing margin still sell.{Style.RESET_ALL}"
+        )
+        logger.warning(f"Buying halted ({reason}); held positions are still managed")
+
     def run(self):
         while True:
             try:
-                # A halt ends the run before anything trades: an emergency stop, also
-                # one from before this start. Only Resume trading clears it.
-                if self.risk_manager.is_trading_halted():
-                    reason = self.risk_manager.halt_reason or "risk controls"
-                    print(f"{Fore.RED}TRADING HALTED: {reason}{Style.RESET_ALL}")
-                    print(
-                        f"{Fore.RED}Press Resume trading in Settings > Risk to trade "
-                        f"again{Style.RESET_ALL}"
-                    )
-                    break
-
                 # Risk monitoring at start of each cycle (needs a complete account
-                # snapshot, so it starts after the first manage_trades() pass)
+                # snapshot, so it starts after the first manage_trades() pass). This
+                # also applies Resume trading from Settings > Risk.
                 current_portfolio_value = self._get_account_value()
                 if current_portfolio_value is not None:
                     self.risk_manager.update_portfolio_value(current_portfolio_value)
 
-                    # Check for emergency conditions
+                # An emergency stop halts buying: no new trade and no DCA buy, also
+                # after a restart, until Resume trading. What is held is still
+                # managed: exits, stops and the trailing margin still sell.
+                if self.risk_manager.is_trading_halted():
+                    self._say_halted()
+                elif current_portfolio_value is not None:
                     risk_status = self.risk_manager.check_emergency_conditions(
                         current_portfolio_value
                     )
@@ -3284,21 +3306,14 @@ class CryptoAPITrading:
                         print(
                             f"{Fore.RED}EMERGENCY STOP: {risk_status['reason']}{Style.RESET_ALL}"
                         )
-                        print(
-                            f"{Fore.RED}Trading halted until Resume trading is "
-                            f"pressed in Settings > Risk{Style.RESET_ALL}"
-                        )
                         self.risk_manager.emergency_stop(
                             risk_status["reason"], current_portfolio_value
                         )
-                        break
+                        self._say_halted(force=True)
 
                     # Log risk warnings
-                    if risk_status["warnings"]:
-                        for warning in risk_status["warnings"]:
-                            print(
-                                f"{Fore.YELLOW}RISK WARNING: {warning}{Style.RESET_ALL}"
-                            )
+                    for warning in risk_status["warnings"]:
+                        print(f"{Fore.YELLOW}RISK WARNING: {warning}{Style.RESET_ALL}")
 
                 self.manage_trades()
                 time.sleep(0.5)

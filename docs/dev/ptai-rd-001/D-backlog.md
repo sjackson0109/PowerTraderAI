@@ -31,25 +31,25 @@ Work packages (WP) by milestone, with what they depend on, the tests they need a
 | 1.4 | `MarketNotFound` is a HOLD, and each coin is handled in its own `try` | N8 | Yes (fix) | first coin raises; second still decided; status written | Review | **PR #272** |
 | 1.5 | The decision log names the exchange whose bars were used | N15 | No | primary fails; log names the fallback | Review | **PR #273** |
 | 1.6 | Refetch the last cached bars; refill interior gaps | N16 | Yes (data) | provisional close revised; the cache holds the revision | Review | Planned |
-| 1.7 | Cooldown counted from the fill bar | N13 | Yes (parity fix, live overlay) | replay and engine agree on the first allowed bar | Review | Planned |
+| 1.7 | Cooldown counted from the fill bar | N13 | Yes (parity fix, live overlay) | replay and engine agree on the first allowed bar | Review | **PR #280** |
 | 1.8 | Entry actionable only within a window after its bar | N12 | Yes | ENTER at close + 6 h is recorded as missed | **Owner (O4)** | Proposed |
 | 1.9 | Risk states: entries refused / exits only / liquidate-if-authorised; remove false stub logs | N1 to N4 | Yes | a halt with held positions: exits still sell (after O1) | **Owner (O1): approved 2026-11-12** | **PR #270** |
 | 1.10 | Persisted order intents, resent with the same client id | N5, N6 | Yes (live) | a network error after acceptance: one order, not two | **Owner (O2): approved 2026-11-12** | **PR #271** |
 | 1.11 | Stationary bootstrap on marked days; calibration on null and known-skill fixtures | N19, N22 | No | size near 5% on null series; power reported on skill fixtures | **Owner (O3)**: measure a stricter variant first | **PR #266** (library) and **PR #277** (calibration; the default is the studentised test with 1.5x blocks) |
-| 1.12 | Observation fixes: freeze LLM mode and exchange order; code hash; Reconcile completeness | D2 to D7 | No | the readiness tests listed in A2 | Review | Planned |
+| 1.12 | Observation fixes: freeze LLM mode and exchange order; code hash; Reconcile completeness | D2 to D7 | No | the readiness tests listed in A2 | Review | **PR #279** (D5) and **PR #286** (D2, D3, D4, D6, D7) |
 | 1.13 | Fee defaults from the exchange layer, or a refusal; paper applies sell steps and minimums | N27, N28 | Yes (paper) | fee feed fails: paper refuses; DOGE sell rounds to 0.1 | Review | Planned |
-| 1.14 | Intrabar drawdown for the halt check in replays | N18 | No | 9% intraday dip, 7% on closes: halt reported | Review | Planned |
+| 1.14 | Intrabar drawdown for the halt check in replays | N18 | No | 9% intraday dip, 7% on closes: halt reported | Review | **PR #284** |
 
 ### M2: unified research framework
 
 | WP | What | Depends | Test required |
 |---|---|---|---|
 | 2.1 | Programme trial ledger (C §5) + adapters from strategy-lab and model-lab trials. **PR #274** | — | old ledgers unchanged byte for byte; every engine job appends one line |
-| 2.2 | Dataset snapshots + one bar hash (replaces three) | 2.1 | the same bars give the same id; a revised bar gives a new id |
-| 2.3 | One statistics module (bootstrap, Holm, Romano-Wolf, deflated Sharpe, PBO, power) | 1.11 | each method on null and skill fixtures |
+| 2.2 | Dataset snapshots + one bar hash (replaces three). **PR #283** | 2.1 | the same bars give the same id; a revised bar gives a new id |
+| 2.3 | One statistics module (bootstrap, Holm, Romano-Wolf, deflated Sharpe, PBO, power). **PR #282** (the bootstrap is #266 and #277) | 1.11 | each method on null and skill fixtures |
 | 2.4 | One baseline library (random with the strategy's exits, matched holding, hold, cash, unfiltered) | — | each baseline's trade count and holding match their definition |
 | 2.5 | One cost model from `trading_fees` (retire 3 others) | 1.13 | every caller reads the same rate for the same exchange |
-| 2.6 | Report: daily/weekly/monthly/annual returns; £50/£200/£500/£10,000 accounts; capital use; return per capital-day; recovery time. **PR #276**: the period returns (accounts still to do) | 2.3 | hand-computed fixtures |
+| 2.6 | Report: daily/weekly/monthly/annual returns; £50/£200/£500/£10,000 accounts; capital use; return per capital-day; recovery time. **PR #276**: the period returns; **PR #281**: the account sizes, capital use and recovery time | 2.3 | hand-computed fixtures |
 | 2.7 | Code hashes cover every file on the path (strategies, exchange layer) | — | changing a strategy file breaks the seal |
 
 ### M3: strategy catalogue expansion
@@ -67,7 +67,7 @@ The order follows B §20. OHLCV-only candidates come first, because no other dat
 | WP | Candidate (B id) | Kind of work | Notes |
 |---|---|---|---|
 | 3.1 | `breakout.zarattini-ensemble` | New catalogue entry | An ensemble of Donchian lookbacks of 20 days or more, with the midline ratchet; daily, long-only, sized at most 100% |
-| 3.2 | `trend.price-above-ma` | New catalogue entry | Daily close above its 50-200-day average, else cash. Declared as a member of the TSMOM family |
+| 3.2 | `trend.price-above-ma` | New catalogue entry | Daily close above its 50-200-day average, else cash. Declared as a member of the TSMOM family **PR #285**: STRAT-006, default 20 days (the published crypto rule), bounds 5 to 200; a declared evaluation names its grid |
 | 3.3 | `portfolio.equal-weight-1n`, `portfolio.dca-periodic` | Baselines (M2 2.4) | Every multi-coin result is compared with 1/N and periodic buying, as well as with random entries |
 | 3.4 | `risk.ratchet-stop`, `risk.atr-trailing-stop`, `regime.ma-trend-gate` | Evaluation only (M6) | Already built: evaluated as STRAT-004's exits and gate, against no stop and random stops. No new code |
 | 3.5 | `volatility.vol-targeting-sizing` + `volatility.ewma-riskmetrics` | SizingPolicy (M4 4.2) | Sized once at entry, at most 100%; re-tested, since the repo's earlier test found no drawdown gain |

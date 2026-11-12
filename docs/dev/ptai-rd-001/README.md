@@ -50,6 +50,15 @@ The owner's programme brief of 2026-11-11.
 | #275 | M5 | Model-lab batches as engine jobs (WP 5.4) |
 | #276 | M2 | Daily, weekly, monthly and annual returns (WP 2.6, first part) |
 | #277 | M1 (O3) | The bootstrap's calibration: four variants; the default is the studentised test with 1.5x blocks (worst null size 6.2%) |
+| #278 | Docs | These decisions and PR tables |
+| #279 | M1 | The trader's status shows a strategy not cleared for its trading mode as blocked (D5) |
+| #280 | M1 | The live cooldown counts from the bar the sale filled in, as the backtester does (N13; changes live behaviour) |
+| #281 | M2 | Each account size, £50 to £10,000, reported separately; drawdown recovery; the run window's tabs (WP 2.6, second part; stacked on #276) |
+| #282 | M2 | One statistics module: Romano-Wolf, deflated Sharpe, PBO, power and the three verdicts (WP 2.3) |
+| #283 | M2 | Dataset snapshots and one canonical bar hash (WP 2.2) |
+| #284 | M1 | Replays measure drawdown and the halt within the bar as well (N18) |
+| #285 | M3 | STRAT-006, price above its average, research only (backlog 3.2) |
+| #286 | M1 | Observation: LLM signals, exchange order and program files frozen; fuller Reconcile; the frozen hash shown (D2, D3, D4, D6, D7) |
 
 ## The headline findings
 

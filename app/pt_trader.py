@@ -2046,7 +2046,9 @@ class CryptoAPITrading:
         )
 
     def _signals_status(self) -> dict:
-        s = read_strategy_settings(self._settings_source)
+        # with the trading mode, as the order gate reads them: an entry not cleared
+        # for this mode is blocked here too
+        s = read_strategy_settings(self._settings_source, mode=self._target.mode)
         # settings problems, or a strategy whose model the engine cannot use
         blocked = s.problem or (
             self.signal_engine.block_reason() if s.is_catalogue else None

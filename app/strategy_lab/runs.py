@@ -126,7 +126,8 @@ def _figures(paths: Paths, p: int = 0) -> Dict[str, Any]:
         "halt_exposure_usd": (
             float(paths.halt_exposure[p]) if paths.halt_exposure is not None else 0.0
         ),
-        # within the bar: open positions at their bar's low (shown only)
+        # within the bar: open positions at their bar's low, from a peak at the earlier
+        # bars' highs (shown only)
         "intrabar_max_drawdown": None if low_dd is None else float(low_dd[p]),
         "intrabar_halt_reached": (
             None

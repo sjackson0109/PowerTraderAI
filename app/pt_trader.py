@@ -28,6 +28,7 @@ from signal_engine import SignalEngine
 from strategies.base import Action
 from strategies.settings import read_strategy_settings
 from trading_mode import (
+    BELOW_MINIMUM,
     LiveTradingRefused,
     OrderTarget,
     TradingModeError,
@@ -64,6 +65,9 @@ TERMINAL_ORDER_STATES = frozenset(
 PREVIEW_REPEAT_SECONDS = 15 * 60
 # How long a coin's minimum order is kept for telling dust from a position
 DUST_MINIMUM_SECONDS = 60 * 60
+# An order the exchange refuses for its size is tried again every cycle (an exit
+# can be worth the minimum again later); the refusal is reported once in this long
+BELOW_MINIMUM_REPORT_SECONDS = 60 * 60
 # An order whose send raised (a timeout, a dropped connection) may have been made
 # all the same. Its intent stays in pnl_ledger.json (``order_intents``). Where the
 # exchange answers a repeated client order id with the order it already made, the
@@ -2025,8 +2029,17 @@ class CryptoAPITrading:
 
         if str(result.status).lower().strip() == "rejected" and result.reason:
             # e.g. PRICE_UNAVAILABLE: nothing was filled, nothing is pending; the
-            # next cycle simply tries again.
-            self._note_price_event("unavailable")
+            # next cycle simply tries again. An order too small for the exchange
+            # (BELOW_MINIMUM) is not a missing price.
+            if not str(result.reason).startswith(BELOW_MINIMUM):
+                self._note_price_event("unavailable")
+            else:
+                key = f"below-minimum:{symbol}|{side}"
+                if time.time() - self._warn_ts.get(key, 0.0) < (
+                    BELOW_MINIMUM_REPORT_SECONDS
+                ):
+                    return None  # already reported
+                self._warn_ts[key] = time.time()
             print(
                 f"{Fore.YELLOW}ORDER REJECTED ({symbol} {side}): {result.reason}{Style.RESET_ALL}"
             )

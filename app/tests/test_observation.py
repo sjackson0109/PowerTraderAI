@@ -565,6 +565,52 @@ class TestWindow:
         assert win.start_button.instate(["!disabled"])
         win.destroy()
 
+    @staticmethod
+    def frozen_shown(win):
+        tree = win.frozen_table.tree
+        return dict(tree.item(i, "values") for i in tree.get_children())
+
+    def test_it_shows_the_hash_and_the_frozen_values(self, root, hub):  # noqa: F811
+        config = {**CONFIG, "llm": {"signal_mode": "off"}}
+        win = ui.ObservationWindow(
+            root, hub, lambda: (config, GUI, 1_700_000_000.0, EXCHANGES)
+        )
+        win.withdraw()
+        assert win.hash_var.get() == "" and self.frozen_shown(win) == {}
+        win.start()
+        segment = obs.open_segment(hub)
+        assert win.hash_var.get() == segment["sha256"]
+        shown = self.frozen_shown(win)
+        assert shown["llm.signal_mode"] == "off"
+        assert shown["llm.signal_use"] == "Not set"
+        assert shown["exchanges"] == "coinbase, kraken, kucoin"
+        assert shown["coins"] == "AAA"
+        assert shown["strategy"] == json.dumps(CONFIG["strategy"], sort_keys=True)
+        assert shown["pt_trader.py"] == obs.code_hashes()["pt_trader.py"]
+        assert ui.NOT_RECORDED not in shown.values()
+        win.destroy()
+
+    def test_an_older_segment_shows_what_it_did_not_record(
+        self, root, hub
+    ):  # noqa: F811
+        path = old_segment(hub)
+        with open(path, "rb") as f:
+            before = f.read()
+        config = {**CONFIG, "llm": {"signal_mode": "veto"}}
+        win = ui.ObservationWindow(
+            root, hub, lambda: (config, GUI, 1_700_000_500.0, EXCHANGES)
+        )
+        win.withdraw()
+        assert win.status_var.get().startswith("Observing since")
+        assert win.hash_var.get() == json.loads(before)["sha256"]
+        shown = self.frozen_shown(win)
+        for name in ("llm.signal_mode", "llm.signal_use", "exchanges", "Program files"):
+            assert shown[name] == "Not recorded for this segment", name
+        assert shown["coins"] == "AAA" and shown["trading.mode"] == "paper"
+        with open(path, "rb") as f:
+            assert f.read() == before
+        win.destroy()
+
 
 @pytest.fixture
 def real_hub(monkeypatch):

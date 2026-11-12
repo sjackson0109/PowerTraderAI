@@ -3,7 +3,9 @@ Settings > Paper trading, "Observation..." (FDS-SR-001 section 5.11).
 
 "Start an observation" freezes the settings that decide a paper trade and the SHA-256 of
 each trading-path program file; changing any of them ends the observation (checked
-whenever this window opens or reconciles). "End the observation" ends it by hand.
+whenever this window opens or reconciles). The window shows the observation's SHA-256
+and every frozen value; what an older observation did not record says so. "End the
+observation" ends it by hand.
 "Reconcile..." replays the observation's closed candles, for the paper trading coins,
 through the same strategy and compares each trade with the paper trades: matched,
 timing (within 3 candles), open, exit not placed, missed, extra, pending, a second entry,
@@ -79,6 +81,12 @@ FIELDS = {
     "strategy_timeframe": "timeframe",
     "strategy_overlays": "stops and gates",
 }
+FROZEN_COLUMNS = ("name", "value")
+FROZEN_HEADINGS = {
+    "name": "Frozen setting or program file",
+    "value": "Value or SHA-256",
+}
+NOT_RECORDED = "Not recorded for this segment"
 # The summary's words for the results after the first four, shown when there are any
 MORE = (
     ("open", "open"),
@@ -182,6 +190,44 @@ def summary_text(rows: List[obs.Row]) -> str:
     return text
 
 
+def shown_value(value: Any) -> str:
+    """A frozen value as the window shows it."""
+    if value is None:
+        return "Not set"
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)) and all(
+        isinstance(v, (str, int, float)) and not isinstance(v, bool) for v in value
+    ):
+        return ", ".join(str(v) for v in value) if value else "Empty"
+    return json.dumps(value, sort_keys=True)
+
+
+def frozen_rows(segment: dict) -> List[Tuple[str, str]]:
+    """The segment's frozen settings, then its program files with their SHA-256s, as
+    (name, value). What it did not record (it started before that was frozen) says
+    so."""
+    snap = segment.get("snapshot") or {}
+    scheme = obs.snapshot({}, {}, [])
+    out = []
+    for part in ("config", "gui"):
+        frozen = snap.get(part) or {}
+        for key in scheme[part]:
+            out.append(
+                (key, shown_value(frozen[key]) if key in frozen else NOT_RECORDED)
+            )
+    if "exchanges" in snap:
+        out.append(("exchanges", shown_value(snap["exchanges"])))
+    else:
+        out.append(("exchanges", NOT_RECORDED))
+    code = segment.get("code")
+    if isinstance(code, dict):
+        out += [(name, sha or "Missing") for name, sha in sorted(code.items())]
+    else:
+        out.append(("Program files", NOT_RECORDED))
+    return out
+
+
 def paper_rows(hub_dir: str) -> List[dict]:
     path = os.path.join(hub_dir, "paper", "trade_history.jsonl")
     if not os.path.exists(path):
@@ -214,11 +260,12 @@ class ObservationWindow(tk.Toplevel):
     ) -> None:
         super().__init__(master)
         self.title("Observation")
-        self.geometry("1200x480")
+        self.geometry("1200x680")
         self.hub_dir = hub_dir
         self._read = read
         self._reconcile = reconcile_fn or default_reconcile
         self.status_var = tk.StringVar(master=self, value="")
+        self.hash_var = tk.StringVar(master=self, value="")
         self.summary_var = tk.StringVar(master=self, value="")
         self.rows: List[obs.Row] = []
         body = ttk.Frame(self, padding=12)
@@ -239,8 +286,14 @@ class ObservationWindow(tk.Toplevel):
             style="Muted.TLabel",
         ).pack(anchor="w")
         ttk.Label(
-            body, textvariable=self.status_var, wraplength=900, justify="left"
+            body, textvariable=self.status_var, wraplength=1100, justify="left"
         ).pack(anchor="w", pady=(8, 0))
+        sha = ttk.Frame(body)
+        sha.pack(anchor="w", fill="x", pady=(6, 0))
+        ttk.Label(sha, text="SHA-256 of the frozen settings:").pack(side="left")
+        ttk.Entry(sha, textvariable=self.hash_var, state="readonly", width=70).pack(
+            side="left", padx=(6, 0)
+        )
         bar = ttk.Frame(body)
         bar.pack(anchor="w", pady=(8, 0))
         self.start_button = ttk.Button(
@@ -253,6 +306,15 @@ class ObservationWindow(tk.Toplevel):
             bar, text="Reconcile...", command=self.reconcile
         )
         self.reconcile_button.pack(side="left")
+        self.frozen_table = ui_table.DataTable(
+            body,
+            FROZEN_COLUMNS,
+            FROZEN_HEADINGS,
+            empty_text="No observation yet",
+            sortable=False,
+            height=7,
+        )
+        self.frozen_table.pack(fill="both", expand=True, pady=(8, 0))
         self.table = ui_table.DataTable(
             body, COLUMNS, HEADINGS, empty_text="Not reconciled yet", height=10
         )
@@ -288,6 +350,11 @@ class ObservationWindow(tk.Toplevel):
                 f"The last observation ran from {_when(segment['started_s'])} to "
                 f"{_when(segment.get('ended_s'))} UTC; it ended: {segment['end_reason']}."
             )
+        self.hash_var.set((segment or {}).get("sha256") or "")
+        tree = self.frozen_table.tree
+        tree.delete(*tree.get_children())
+        for name, value in frozen_rows(segment) if segment else []:
+            tree.insert("", "end", values=(name, value))
         self.start_button.state(["disabled"] if live else ["!disabled"])
         self.end_button.state(["!disabled"] if live else ["disabled"])
         self.reconcile_button.state(["!disabled"] if segment else ["disabled"])

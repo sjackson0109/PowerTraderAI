@@ -314,13 +314,16 @@ class PaperSessionTests(PaperTraderCase):
         }
         end_s = int(self.frame["open_time"].iloc[-1].timestamp()) + DAY
         out = obs.reconcile(segment, rows, {"BTC": self.frame}, end_s)
+        # no row is flagged: the trader's strategy fields are the frozen strategy's
         self.assertEqual(
             obs.summary(out),
-            {"matched": len(expected), "timing": 0, "missed": 0, "extra": 0},
+            {**dict.fromkeys(obs.RESULT_KINDS, 0), "matched": len(expected)},
         )
         for row in out:
             self.assertAlmostEqual(row.fill_vs_open, self.HALF_SPREAD, places=9)
             self.assertAlmostEqual(row.fee_rate_paid, self.TAKER, places=9)
+            self.assertAlmostEqual(row.exit_fee_rate_paid, self.TAKER, places=9)
+            self.assertEqual(row.differs, ())
 
     def test_with_paper_authorisation_a_research_overlay_is_still_refused(self):
         settings = self.settings()

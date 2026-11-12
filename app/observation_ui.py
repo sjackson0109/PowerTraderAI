@@ -4,10 +4,12 @@ Settings > Paper trading, "Observation..." (FDS-SR-001 section 5.11).
 "Start an observation" freezes the settings that decide a paper trade and the SHA-256 of
 each trading-path program file; changing any of them ends the observation (checked
 whenever this window opens or reconciles). "End the observation" ends it by hand.
-"Reconcile..." replays the observation's closed candles through the same strategy and
-compares each trade with the paper trades: matched, timing (within 3 candles), missed or
-extra, with the paper fill against the replay's open and the fee paper charged. It runs
-off the Tk thread (``ui_jobs``).
+"Reconcile..." replays the observation's closed candles, for the paper trading coins,
+through the same strategy and compares each trade with the paper trades: matched,
+timing (within 3 candles), open, exit not placed, missed, extra, pending, a second entry,
+or a row from other strategy settings (``strategy_lab.observation``), with each side's
+paper fill against the replay's open, its delay and the fee paper charged. It runs off
+the Tk thread (``ui_jobs``).
 
 ``read_current()`` gives ``(pt_config, gui_settings, last written, exchanges)``: the
 exchanges are the enabled ones in the order the exchange layer asks them. The hub gives
@@ -33,27 +35,58 @@ COLUMNS = (
     "result",
     "replay_entry",
     "paper_entry",
-    "replay_exit",
-    "paper_exit",
+    "entry_delay",
     "fill",
     "fee",
+    "replay_exit",
+    "paper_exit",
+    "exit_delay",
+    "exit_fill",
+    "exit_fee",
+    "differs",
 )
 HEADINGS = {
     "coin": "Coin",
     "result": "Result",
     "replay_entry": "Replay entry",
     "paper_entry": "Paper entry",
+    "entry_delay": "Entry delay",
+    "fill": "Paper entry fill vs replay open",
+    "fee": "Paper entry fee",
     "replay_exit": "Replay exit",
     "paper_exit": "Paper exit",
-    "fill": "Paper fill vs replay open",
-    "fee": "Paper fee a side",
+    "exit_delay": "Exit delay",
+    "exit_fill": "Paper exit fill vs replay open",
+    "exit_fee": "Paper exit fee",
+    "differs": "Strategy fields that differ",
 }
 RESULTS = {
     "matched": "Matched",
     "timing": "Different candle",
     "missed": "Not placed",
     "extra": "Extra",
+    "open": "Open",
+    "exit_missed": "Exit not placed",
+    "pending": "Pending",
+    "duplicate": "Second entry",
+    "different": "Other strategy settings",
 }
+# The trade rows' strategy fields, as Settings > Strategy names them
+FIELDS = {
+    "strategy_id": "strategy",
+    "strategy_version": "version",
+    "strategy_params_sha256": "parameters",
+    "strategy_timeframe": "timeframe",
+    "strategy_overlays": "stops and gates",
+}
+# The summary's words for the results after the first four, shown when there are any
+MORE = (
+    ("open", "open"),
+    ("exit_missed", "exit not placed"),
+    ("pending", "pending"),
+    ("duplicate", "second entries"),
+    ("different", "other strategy settings"),
+)
 
 
 def read_current() -> Tuple[Dict[str, Any], Dict[str, Any], float, Optional[List[str]]]:
@@ -90,17 +123,63 @@ def _when(s: Optional[int]) -> str:
     return datetime.fromtimestamp(int(s), tz=timezone.utc).strftime("%Y-%m-%d %H:%M")
 
 
+def delay_text(s: Optional[int]) -> str:
+    """A fill's delay after the replay's: seconds under a minute, else hours and
+    minutes."""
+    if s is None:
+        return ""
+    sign = "-" if s < 0 else "+"
+    if abs(s) < 60:
+        return f"{sign}{abs(s)} s"
+    hours, minutes = divmod(int(round(abs(s) / 60)), 60)
+    return f"{sign}{hours} h {minutes:02d} min" if hours else f"{sign}{minutes} min"
+
+
+def _pct(x: Optional[float], signed: bool = False) -> str:
+    if x is None:
+        return ""
+    return f"{x * 100:+.3f}%" if signed else f"{x * 100:.3f}%"
+
+
 def row_values(row: obs.Row) -> tuple:
     return (
         row.coin,
         RESULTS.get(row.result, row.result),
         _when(row.replay_entry_s),
         _when(row.paper_entry_s),
+        delay_text(row.entry_delay_s),
+        _pct(row.fill_vs_open, signed=True),
+        _pct(row.fee_rate_paid),
         _when(row.replay_exit_s),
         _when(row.paper_exit_s),
-        "" if row.fill_vs_open is None else f"{row.fill_vs_open * 100:+.3f}%",
-        "" if row.fee_rate_paid is None else f"{row.fee_rate_paid * 100:.3f}%",
+        delay_text(row.exit_delay_s),
+        _pct(row.exit_fill_vs_open, signed=True),
+        _pct(row.exit_fee_rate_paid),
+        ", ".join(FIELDS.get(f, f) for f in row.differs),
     )
+
+
+def summary_text(rows: List[obs.Row]) -> str:
+    """The counts by result, and the largest delays of the matched trades."""
+    counts = obs.summary(rows)
+    text = (
+        f"Matched {counts['matched']}, on a different candle {counts['timing']}, "
+        f"not placed {counts['missed']}, extra {counts['extra']}"
+    )
+    for kind, words in MORE:
+        if counts.get(kind):
+            text += f", {words} {counts[kind]}"
+    text += "."
+    matched = [r for r in rows if r.result == "matched"]
+    if matched:
+        entry = max(r.entry_delay_s or 0 for r in matched)
+        exit_ = max(r.exit_delay_s or 0 for r in matched)
+        text += (
+            " The matched trades filled in the replay's candles: entries up to "
+            f"{delay_text(entry)} and exits up to {delay_text(exit_)} after the "
+            "replay's fills."
+        )
+    return text
 
 
 def paper_rows(hub_dir: str) -> List[dict]:
@@ -119,7 +198,7 @@ def paper_rows(hub_dir: str) -> List[dict]:
 
 def default_reconcile(hub_dir: str, segment: dict) -> List[obs.Row]:
     spec = obs.spec_of(segment["snapshot"])
-    coins = list((segment["snapshot"].get("gui") or {}).get("coins") or [])
+    coins = obs.replay_coins(segment["snapshot"])
     end_s = int(segment.get("ended_s") or datetime.now(tz=timezone.utc).timestamp())
     candles, context = obs.load_candles(spec, coins, int(segment["started_s"]), end_s)
     return obs.reconcile(segment, paper_rows(hub_dir), candles, end_s, context)
@@ -135,7 +214,7 @@ class ObservationWindow(tk.Toplevel):
     ) -> None:
         super().__init__(master)
         self.title("Observation")
-        self.geometry("1000x480")
+        self.geometry("1200x480")
         self.hub_dir = hub_dir
         self._read = read
         self._reconcile = reconcile_fn or default_reconcile
@@ -152,7 +231,8 @@ class ObservationWindow(tk.Toplevel):
                 "the entry checks, the LLM signal mode and the exchange order. It also "
                 "keeps the SHA-256 of each program file that decides, sizes or places a "
                 "paper order. Changing any of them ends it. Reconcile replays its candles "
-                "through the same strategy and compares each trade with the paper trades."
+                "for the paper trading coins through the same strategy and compares each "
+                "trade with the paper trades."
             ),
             wraplength=900,
             justify="left",
@@ -177,7 +257,9 @@ class ObservationWindow(tk.Toplevel):
             body, COLUMNS, HEADINGS, empty_text="Not reconciled yet", height=10
         )
         self.table.pack(fill="both", expand=True, pady=(8, 0))
-        ttk.Label(body, textvariable=self.summary_var).pack(anchor="w", pady=(6, 0))
+        ttk.Label(
+            body, textvariable=self.summary_var, wraplength=1100, justify="left"
+        ).pack(anchor="w", pady=(6, 0))
         self.jobs = BackgroundJobs(self, name="observation")
         self.refresh()
 
@@ -249,8 +331,4 @@ class ObservationWindow(tk.Toplevel):
         tree.delete(*tree.get_children())
         for row in self.rows:
             tree.insert("", "end", values=row_values(row))
-        counts = obs.summary(self.rows)
-        self.summary_var.set(
-            f"Matched {counts['matched']}, on a different candle {counts['timing']}, "
-            f"not placed {counts['missed']}, extra {counts['extra']}."
-        )
+        self.summary_var.set(summary_text(self.rows))

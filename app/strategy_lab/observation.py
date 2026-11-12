@@ -108,6 +108,7 @@ CODE_FILES = (
     "pt_trader.py",  # the trader loop and its orders
     "signal_engine.py",  # each bar's decision
     "trading_mode.py",  # the paper book, its quotes and fees
+    "pt_settings_manager.py",  # the paper quote-age and price-fallback defaults
     "pt_paper_trading.py",
     "paper_coins.py",
     "position_sizing.py",

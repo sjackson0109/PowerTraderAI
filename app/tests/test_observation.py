@@ -122,6 +122,7 @@ class TestProgramFiles:
             "pt_trader.py",
             "signal_engine.py",
             "trading_mode.py",
+            "pt_settings_manager.py",
             "pt_paper_trading.py",
             "position_sizing.py",
             "pt_risk.py",

@@ -284,6 +284,16 @@ def cache_file(*parts: str) -> str:
     return _under(cache_dir(), parts)
 
 
+def file_in(folder: str, name: str) -> str:
+    """Full path of file ``name`` (a bare file name) in ``folder``, which must be an
+    absolute path: a folder the caller chose, such as the research engine's, which
+    tests replace with a temporary one. A relative folder is refused, so the file can
+    never resolve against the working directory."""
+    if not os.path.isabs(folder):
+        raise ValueError(f"expected an absolute folder, got {folder!r}")
+    return os.path.join(folder, _bare(name))
+
+
 def settings_file() -> str:
     return config_file(SETTINGS_FILE)
 

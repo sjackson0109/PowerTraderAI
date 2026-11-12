@@ -12,7 +12,9 @@ It is the single chokepoint that decides where an order may go:
   with ``ExchangeFactory.get_exchange(ExchangeType(active_broker))``.
 
 The gate fails closed: a missing, unreadable or malformed settings file, or a
-mode value it does not recognise, resolves to paper - never to live.
+mode value it does not recognise, resolves to paper - never to live. A file that
+exists but cannot be read is a problem in the strategy settings as well
+(``settings_problem``), so the trader places no orders at all until it can be.
 
 ``PaperExchange`` adapts ``PaperTradingAccount`` to the ``AbstractExchange``
 call shape so the trader talks to one interface whichever target it gets.
@@ -149,14 +151,34 @@ def _lookup(settings: Any, dotted_key: str, default: Any = None) -> Any:
     return default
 
 
+class UnreadableSettings(dict):
+    """No settings, for a settings file that exists but cannot be read: every setting
+    reads as its default (the mode as paper), and ``problem`` says why. The strategy
+    settings report it as a problem, so no orders are placed while it lasts."""
+
+    def __init__(self, problem: str = ""):
+        super().__init__()
+        self.problem = problem
+
+
 def _read_settings_file(path: str) -> Dict[str, Any]:
-    """Raw read of the settings file. Any problem yields {} (=> paper)."""
+    """Raw read of the settings file. A missing file (a fresh install) yields {}
+    (=> paper, every setting its default). One that exists but cannot be read, or
+    is not a JSON object, yields an UnreadableSettings: the same, with why."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {}
-    return data if isinstance(data, dict) else {}
+    except (OSError, ValueError) as exc:
+        return UnreadableSettings(
+            f"the settings file {path} cannot be read ({type(exc).__name__}: {exc})"
+        )
+    if not isinstance(data, dict):
+        return UnreadableSettings(
+            f"the settings file {path} cannot be read (it is not a JSON object)"
+        )
+    return data
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -304,6 +326,14 @@ def _settings_mapping(settings: Any) -> Any:
     if isinstance(settings, (str, os.PathLike)):
         return _read_settings_file(os.fspath(settings))
     return settings
+
+
+def settings_problem(settings: Any = None) -> Optional[str]:
+    """Why the settings file behind ``settings`` (anything ``settings_mapping``
+    takes) cannot be read, or None: None too for a missing file, and for settings
+    that are not a file."""
+    mapping = _settings_mapping(settings)
+    return mapping.problem if isinstance(mapping, UnreadableSettings) else None
 
 
 # Public names for other modules that read the same settings source.

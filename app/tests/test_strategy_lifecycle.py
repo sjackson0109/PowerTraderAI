@@ -305,6 +305,20 @@ class TraderTests(PaperTraderCase):
         ):
             self.assertEqual(self.session(copy.deepcopy(PAPER)), before)
 
+    def test_a_strategy_switched_off_places_no_orders(self):
+        settings = copy.deepcopy(PAPER)
+        settings["strategy"]["trading_allowed"] = {"STRAT-000": {"paper": False}}
+        self.assertEqual(self.session(settings), [])
+
+    def test_a_research_strategy_switched_on_trades_as_before(self):
+        before = self.session(copy.deepcopy(PAPER))
+        settings = copy.deepcopy(PAPER)
+        settings["strategy"]["trading_allowed"] = {"STRAT-000": {"paper": True}}
+        with mock.patch.dict(
+            cat.CATALOGUE, entry_with("STRAT-000", authorisation="research")
+        ):
+            self.assertEqual(self.session(settings), before)
+
 
 if __name__ == "__main__":
     unittest.main()

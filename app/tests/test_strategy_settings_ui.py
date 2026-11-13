@@ -52,6 +52,7 @@ def test_the_window_offers_every_strategy_but_one_that_needs_a_model():
         "OVL-PLOCK",
         "OVL-COOLDOWN",
         "OVL-REGIME",  # listed; research only, so its tick is disabled
+        "OVL-MIDLINE",  # research only too
     ]
 
 

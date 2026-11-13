@@ -641,6 +641,23 @@ class TraderIntegrationTests(PaperTraderCase):
         self.assertEqual(signals["note"], "SIGNALS: BLOCKED")
         self.assertEqual(self.orders(), [])
 
+    def test_status_shows_a_strategy_not_cleared_for_the_trading_mode(self):
+        """A research-only strategy in paper: every order is refused, and the status
+        says so instead of reporting nothing blocked."""
+        settings = copy.deepcopy(PAPER)
+        settings["strategy"]["active_id"] = "STRAT-005"
+        settings["strategy"]["timeframe"] = "1d"  # its own: only the mode is wrong
+        trader = self.catalogue_trader(settings)
+        self.feed.set_after_bar(200)
+        trader.manage_trades()
+        with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
+            signals = json.load(f)["signals"]
+        self.assertIsNotNone(signals["blocked"])
+        self.assertIn("STRAT-005", signals["blocked"])
+        self.assertIn("paper", signals["blocked"])
+        self.assertEqual(signals["note"], "SIGNALS: BLOCKED")
+        self.assertEqual(self.orders(), [])
+
     def test_the_strategy_config_is_rechecked_on_every_order(self):
         settings = copy.deepcopy(PAPER)
         trader = self.catalogue_trader(settings)

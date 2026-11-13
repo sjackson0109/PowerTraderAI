@@ -6,7 +6,8 @@
   ``trading_fees()`` gives, and its fill is in the trade history with its fee.
 * An OCO or Bracket order is cancelled with all its legs; one leg filling cancels
   the other.
-* Nothing is created or carried out while trading is halted (Settings > Risk).
+* No buy is created or carried out while buying is halted (Settings > Risk); a sell
+  still is, so exits keep working.
 * The orders PowerTrader manages are kept in the database: a new executor (the app
   started again) carries on with them.
 * Live: a kind the broker's connector places as its own order goes to the exchange
@@ -426,13 +427,20 @@ def test_cancelling_a_bracket_cancels_its_waiting_exits(world):
     }
 
 
-# ---- a halt stops trading ----
+# ---- a halt stops buying ----
 
 
-def test_no_order_is_created_while_trading_is_halted(world):
+def test_no_buy_order_is_created_while_buying_is_halted(world):
     world.halted = "Account drawdown 25%"
-    with pytest.raises(ValueError, match="Trading is halted.*drawdown 25%"):
+    with pytest.raises(ValueError, match="Buying is halted.*drawdown 25%"):
         world.place(ome.MARKET, qty="0.1")
+
+
+def test_a_sell_is_still_made_and_filled_while_buying_is_halted(world):
+    world.halted = "Account drawdown 25%"
+    oid = world.place(ome.MARKET, coin="ETH", side="sell", qty="0.1")
+    world.executor.check()
+    assert world.item(oid).status == "filled"
 
 
 def test_an_open_order_waits_while_trading_is_halted(world):

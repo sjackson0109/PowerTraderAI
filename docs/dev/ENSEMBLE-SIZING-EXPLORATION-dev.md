@@ -24,7 +24,7 @@ PTAI-RD-001 backlog 3.1 and work package 4.2, run on 2026-11-13. **Exploration o
 | **Ensemble sizing** | Each coin gets 1/9 of the account, and each of the 7 members 1/7 of that, sized once at entry. The book never holds more than the account |
 | **Random parts** | 10 seeded runs (seeds 700000 to 709000): 200 random entries per seed, through the strategy's own exits, and 200 random orders of the sizes |
 | **Trials** | 4 explorations logged in the sandbox's trial log, which now holds 80 lines, 34 of them explorations (`compare-ensemble/trials.jsonl`) |
-| **Code** | `main` with #267 to #287, the drawdown, sizing and ensemble branches, and tonight's fixes, merged locally |
+| **Code** | #267 to #287 (since merged to `main`), with the drawdown, sizing and ensemble branches (#288, #289, #290) and the ledger fix, merged locally |
 
 ## 1. The ensemble against an equal-weight hold
 

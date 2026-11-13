@@ -106,6 +106,7 @@ class TestRecords:
             "signal_fusion/evaluation/replay.py",
             "backtest/engine.py",
             "position_sizing.py",
+            "market_data/gaps.py",
         ):
             assert name in names
 

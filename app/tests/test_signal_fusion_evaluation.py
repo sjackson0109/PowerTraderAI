@@ -383,6 +383,55 @@ def test_several_coins_are_valued_at_their_lows_together():
     assert one.intrabar_halt_s[0] == -1
 
 
+def _peak_case(highs_at, lows_at):
+    """The whole account in one coin at 100 from day 0 to day 6, every close 100;
+    ``highs_at`` and ``lows_at`` map a day to that bar's high or low (otherwise the
+    close)."""
+    times = [T0 + k * DAY for k in range(9)]
+    closes = [100.0] * 9
+    highs = [highs_at.get(k, 100.0) for k in range(9)]
+    lows = [lows_at.get(k, 100.0) for k in range(9)]
+    opps = [Opportunity("BTC", T0, T0 + 6 * DAY, 100.0, 100.0)]
+    args = (opps, {"BTC": (times, closes)}, Costs(fee=0.0, allowance=0.0))
+    kw = dict(size_fraction=1.0, mark_s=DAY, lows={"BTC": (times, lows)})
+    return args, kw, {"BTC": (times, highs)}
+
+
+def test_the_peak_takes_the_highs_of_the_earlier_bars():
+    # day 2's bar reaches 110 and closes at 100; day 4's low is 101. The owner's rule
+    # (2026-11-12): the trough at the low, the peak at the highest earlier high
+    args, kw, highs = _peak_case({2: 110.0}, {4: 101.0})
+    acct = Account(start=10_000.0)
+    lows_only = replay(*args, acct, **kw)
+    out = replay(*args, acct, highs=highs, **kw)
+    # from the close-marked peak, nothing fell: every close is 100, every low above it
+    assert lows_only.intrabar_max_drawdown[0] == 0.0
+    # from the high: 11,000 to the close of day 2 (10,000), 1/11, and the halt (8%)
+    # is reported at the end of that day; day 4's low (10,100) falls less
+    assert out.intrabar_max_drawdown[0] == pytest.approx(1 / 11)
+    assert out.intrabar_max_drawdown_usd[0] == pytest.approx(1_000.0)
+    assert out.intrabar_halt_s[0] == T0 + 2 * DAY
+    # the close-based figures are untouched
+    assert out.max_drawdown[0] == lows_only.max_drawdown[0] == 0.0
+    assert out.halt_s[0] == -1
+    with pytest.raises(ValueError, match="give lows"):
+        replay(*args, acct, size_fraction=1.0, mark_s=DAY, highs=highs)
+
+
+def test_a_bars_low_is_not_measured_from_its_own_high():
+    # one bar reaches 110 and 90 and closes at 100: which came first is unknown, so its
+    # low falls from the peak before it (10,000: 10%), not from its own high (18.2%);
+    # its close falls from its high (1/11), which came before the close
+    args, kw, highs = _peak_case({3: 110.0}, {3: 90.0})
+    out = replay(*args, Account(start=10_000.0), highs=highs, **kw)
+    assert out.intrabar_max_drawdown[0] == pytest.approx(0.10)
+    assert out.intrabar_max_drawdown_usd[0] == pytest.approx(1_000.0)
+    # a later low falls from that bar's high
+    args, kw, highs = _peak_case({3: 110.0}, {3: 90.0, 5: 95.0})
+    out = replay(*args, Account(start=10_000.0), highs=highs, **kw)
+    assert out.intrabar_max_drawdown[0] == pytest.approx(1_500.0 / 11_000.0)
+
+
 def _paths_fields(p):
     names = [f for f in p.__dataclass_fields__ if not f.startswith("intrabar_")]
     return {name: getattr(p, name) for name in names}
@@ -442,6 +491,20 @@ def test_the_lows_change_no_other_figure(halt_ends):
     assert halted.any() and (low.intrabar_max_drawdown > low.max_drawdown).any()
     assert np.all(low.intrabar_halt_s[halted] >= 0)
     assert np.all(low.intrabar_halt_s[halted] <= low.halt_s[halted])
+    # the highs change only the intrabar figures, and only upwards: a higher peak
+    peaks = {
+        coin: (t, (np.asarray(p) * 1.004).tolist()) for coin, (t, p) in prices.items()
+    }
+    high = replay(opps, prices, costs, acct, lows=lows, highs=peaks, **kw)
+    c = _paths_fields(high)
+    for name in a:
+        if isinstance(a[name], np.ndarray):
+            np.testing.assert_array_equal(a[name], c[name], err_msg=name)
+    assert np.all(high.intrabar_max_drawdown >= low.intrabar_max_drawdown)
+    assert (high.intrabar_max_drawdown > low.intrabar_max_drawdown).any()
+    reached = low.intrabar_halt_s >= 0
+    assert np.all(high.intrabar_halt_s[reached] >= 0)
+    assert np.all(high.intrabar_halt_s[reached] <= low.intrabar_halt_s[reached])
 
 
 # --- F1 and Q2 on constructed forecasts --------------------------------------------------------

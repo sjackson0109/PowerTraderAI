@@ -409,10 +409,20 @@ class IntrabarTests(unittest.TestCase):
         # at the closes, as before: 7%, below the 8% halt level
         self.assertAlmostEqual(float(paths.max_drawdown[0]), 0.07, places=9)
         self.assertEqual(int(paths.halt_s[0]), -1)
-        # within the bar: 9%, and the halt is reported at the end of day 62
-        self.assertAlmostEqual(float(paths.intrabar_max_drawdown[0]), 0.09, places=9)
+        # within the bar, from the peak at day 61's high (120.12, its 0.1% wick): 9.09%,
+        # and the halt is reported at the end of day 62
+        self.assertAlmostEqual(
+            float(paths.intrabar_max_drawdown[0]), 1 - 109.2 / 120.12, places=9
+        )
         day_62_ends = int(self.frame["open_time"].iloc[62].timestamp()) + DAY
         self.assertEqual(int(paths.intrabar_halt_s[0]), day_62_ends)
+        # from the close-marked peak (no highs): 9%
+        closes_peak = self.sim.replay(
+            trades, FREE, Account(start=10_000.0), size_fraction=1.0, highs=None
+        )
+        self.assertAlmostEqual(
+            float(closes_peak.intrabar_max_drawdown[0]), 0.09, places=9
+        )
 
     def test_the_close_based_figures_are_the_same_with_or_without_the_lows(self):
         trades = self.sim.candidates()

@@ -38,6 +38,7 @@ from test_strategy_breakout import DailyFeed, daily
 
 import trading_mode as tm
 from backtest.engine import CostModel, run_backtest
+from market_data.candles import SETTLE_SECONDS
 from signal_engine import SignalEngine
 from strategies import catalogue as cat
 from strategies import settings as ss
@@ -222,7 +223,7 @@ def two_breakouts():
 
 class PaperSessionTests(PaperTraderCase):
     """A replayed daily paper session (the FDS-SIG-004 phase E method), the trader
-    seeing each bar 10 s after it closes. Paper fills at a quote 0.05% either side
+    seeing each bar 10 s after it settles. Paper fills at a quote 0.05% either side
     of the next bar's open, paying a 0.50% taker fee."""
 
     HALF_SPREAD = 0.0005
@@ -285,14 +286,15 @@ class PaperSessionTests(PaperTraderCase):
         sells = [r for r in rows if r["side"] == "sell"]
         self.assertEqual([r["tag"] for r in buys], ["ENTRY"] * len(expected))
         self.assertEqual([r["tag"] for r in sells], ["EXIT:strategy"] * len(expected))
-        # each fill is the first pass after the decision bar closed: the backtest's
-        # next open, 10 s later
+        # each fill is the first pass after the decision bar settled: the backtest's
+        # next open, SETTLE_SECONDS + 10 s later
+        after = SETTLE_SECONDS + 10
         self.assertEqual(
-            [r["ts"] - 10 for r in buys],
+            [r["ts"] - after for r in buys],
             [t.entry_time.timestamp() for t in expected],
         )
         self.assertEqual(
-            [r["ts"] - 10 for r in sells],
+            [r["ts"] - after for r in sells],
             [t.exit_time.timestamp() for t in expected],
         )
         for row in rows:

@@ -7,8 +7,9 @@ Settings > Strategy, "Run a backtest..." and "Compare results..." (FDS-SR-001 se
 timeframe, coins from Settings, a period inside the development period (to 2025-05-06),
 an account in pounds with the GBP-to-USD rate, the fee and the slippage. It runs off the
 Tk thread (``ui_jobs``), can be stopped, and shows the strategy against buy-and-hold,
-cash and random entries, per coin, with its equity line. Each run is logged as an
-exploratory run and saved (``strategy_lab.runs``).
+cash and random entries, at each account size, by day, week, month and year, per coin,
+with its equity line. Each run is logged as an exploratory run and saved
+(``strategy_lab.runs``).
 
 **Compare results...** Every saved run in one table, with a search box.
 
@@ -27,7 +28,7 @@ from strategies import descriptions as words
 from strategies.catalogue import CATALOGUE, ParamError, resolve_params
 from strategies.settings import read_research_enabled
 from strategy_lab import runs
-from strategy_lab.simulate import ACCOUNTS_GBP
+from strategy_lab.runs import ACCOUNTS_GBP
 from strategy_lab.windows import DEVELOPMENT, ReservedPeriod, development_only
 from ui_jobs import BackgroundJobs
 
@@ -41,6 +42,37 @@ SUMMARY_HEADINGS = {
     "trades": "Trades",
     "in_market": "Time in market",
 }
+ACCOUNT_COLUMNS = (
+    "account",
+    "net",
+    "return",
+    "hold",
+    "trades",
+    "same",
+    "drawdown",
+    "under_water",
+)
+ACCOUNT_HEADINGS = {
+    "account": "Account",
+    "net": "Net ($)",
+    "return": "Return",
+    "hold": "Buy and hold",
+    "trades": "Trades taken",
+    "same": f"Same trades as £{ACCOUNTS_GBP[-1]:,.0f}",
+    "drawdown": "Max drawdown",
+    "under_water": "Longest below a high (days)",
+}
+PERIOD_COLUMNS = ("period", "whole", "mean", "median", "above_zero", "best", "worst")
+PERIOD_HEADINGS = {
+    "period": "",
+    "whole": "Whole periods",
+    "mean": "Mean",
+    "median": "Median",
+    "above_zero": "Above zero",
+    "best": "Best",
+    "worst": "Worst",
+}
+PERIOD_NAMES = {"day": "Days", "week": "Weeks", "month": "Months", "year": "Years"}
 COMPARE_COLUMNS = (
     "when",
     "strategy",
@@ -134,6 +166,55 @@ def summary_rows(record: Dict[str, Any]) -> List[tuple]:
     return rows
 
 
+def _days(x: Optional[float]) -> str:
+    return "" if x is None else f"{x:,.0f}"
+
+
+def account_rows(record: Dict[str, Any]) -> List[tuple]:
+    """The same trades at each account size (none for a run saved before sizes were
+    reported)."""
+    rows = []
+    for a in record.get("accounts") or []:
+        s, dd = a["strategy_result"], a.get("drawdowns") or {}
+        longest = dd.get("longest") or {}
+        rows.append(
+            (
+                f"£{a['account_gbp']:,.0f}",
+                _money(s["net_usd"]),
+                _pct(a["return"]),
+                _pct(a["buy_and_hold"]["return"]),
+                a["trades_taken"],
+                "Yes" if a["same_trades_as_largest"] else "No",
+                _pct(s["max_drawdown"]),
+                _days(longest.get("days_under_water")),
+            )
+        )
+    return rows
+
+
+def period_rows(record: Dict[str, Any]) -> List[tuple]:
+    """The run's own account: its returns by day, week, month and year, over whole
+    periods only."""
+    found = record.get("periods") or {}
+    rows = []
+    for key, name in PERIOD_NAMES.items():
+        s = (found.get(key) or {}).get("summary")
+        if not s:
+            continue
+        rows.append(
+            (
+                name,
+                s["whole_periods"],
+                _pct(s["mean"]),
+                _pct(s["median"]),
+                _pct(s["share_above_zero"], 0),
+                _pct(s["best"]),
+                _pct(s["worst"]),
+            )
+        )
+    return rows
+
+
 def notes(record: Dict[str, Any]) -> str:
     """The facts under the table."""
     s = record["strategy_result"]
@@ -154,11 +235,42 @@ def notes(record: Dict[str, Any]) -> str:
             f"with ${s['halt_exposure_usd']:,.2f} in open positions. A halted trader "
             "manages nothing."
         )
+    low = s.get("intrabar_max_drawdown")  # runs saved before it was recorded: absent
+    if low is not None:
+        lines.append(
+            f"With open positions valued at each bar's low, the largest drawdown was "
+            f"{_pct(low)} ({_pct(s['max_drawdown'])} at the closes)."
+        )
+    if s.get("intrabar_halt_reached"):
+        lines.append(
+            "At the lows, the drawdown halt level was first reached within the bar "
+            f"ending {s['intrabar_halt_reached'][:16].replace('T', ' ')} UTC. The "
+            "trader checks its value on every pass, so a fall within a bar can halt it."
+        )
     r = record.get("random_entries")
     if r:
         lines.append(
             f"Random draws with a return per capital-day at or above this strategy's: "
             f"{_pct(r['share_at_or_above'], 1)}."
+        )
+    longest = (record.get("drawdowns") or {}).get("longest")
+    if longest:
+        back = longest["recovered_at"]
+        lines.append(
+            f"Longest time below a previous high: "
+            f"{longest['days_under_water']:,.0f} days, "
+            + (f"back to it on {back[:10]}." if back else "not back to it by the end.")
+        )
+    found = record.get("periods") or {}
+    if found.get("annual_growth") is not None:
+        lines.append(
+            f"Compound annual growth over the period: {_pct(found['annual_growth'])}."
+        )
+    target = found.get("target_annual") or {}
+    if target.get("whole_years"):
+        lines.append(
+            f"Whole calendar years at or above {target['target']:.0%}: "
+            f"{target['years_at_or_above']} of {target['whole_years']}."
         )
     unknown = record.get("venue", {}).get("unknown") or {}
     if unknown:
@@ -398,6 +510,13 @@ class BacktestWindow(tk.Toplevel):
         tree.delete(*tree.get_children())
         for row in summary_rows(record):
             tree.insert("", "end", values=row)
+        for table, rows in (
+            (self.accounts, account_rows(record)),
+            (self.period_table, period_rows(record)),
+        ):
+            table.tree.delete(*table.tree.get_children())
+            for row in rows:
+                table.tree.insert("", "end", values=row)
         tree = self.per_coin.tree
         tree.delete(*tree.get_children())
         for coin, row in sorted(record["per_coin"].items()):
@@ -495,26 +614,45 @@ class BacktestWindow(tk.Toplevel):
             row=r, column=0, columnspan=2, sticky="w"
         )
         r += 1
+        self.results = ttk.Notebook(body)
+        self.results.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        r += 1
         self.summary = ui_table.DataTable(
-            body,
+            self.results,
             SUMMARY_COLUMNS,
             SUMMARY_HEADINGS,
             empty_text="No result yet",
             sortable=False,
             height=4,
         )
-        self.summary.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        r += 1
+        self.results.add(self.summary, text="Result")
+        self.accounts = ui_table.DataTable(
+            self.results,
+            ACCOUNT_COLUMNS,
+            ACCOUNT_HEADINGS,
+            empty_text="No result yet",
+            sortable=False,
+            height=4,
+        )
+        self.results.add(self.accounts, text="Account sizes")
+        self.period_table = ui_table.DataTable(
+            self.results,
+            PERIOD_COLUMNS,
+            PERIOD_HEADINGS,
+            empty_text="No whole period yet",
+            sortable=False,
+            height=4,
+        )
+        self.results.add(self.period_table, text="Returns by period")
         self.per_coin = ui_table.DataTable(
-            body,
+            self.results,
             ("coin", "trades", "net"),
             {"coin": "Coin", "trades": "Trades", "net": "Net ($)"},
             empty_text="No result yet",
             numeric=("trades", "net"),
             height=4,
         )
-        self.per_coin.grid(row=r, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        r += 1
+        self.results.add(self.per_coin, text="Per coin")
         ttk.Label(
             body, textvariable=self.notes_var, wraplength=WRAP, justify="left"
         ).grid(row=r, column=0, columnspan=2, sticky="w", pady=(6, 0))

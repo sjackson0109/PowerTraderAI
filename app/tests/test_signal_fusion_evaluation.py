@@ -8,6 +8,9 @@
   R3s gives the same scales in a random order.
 * The portfolio replay reproduces ``run_backtest``'s trades for one coin at 100%, and keeps
   one trade per coin, free cash, the minimum check and the halt report.
+* Within the bar: with the lows, the drawdown and the halt are also measured at each
+  interval's lowest low (several coins summed, a coin without lows at its close), and
+  no other figure changes; F3 shows them beside requirement 5, which they never decide.
 * F3 and the wording rules on constructed paths (section 12, item 10).
 
 No candles are read: every input is built here."""
@@ -286,6 +289,161 @@ def test_the_halt_level_is_reported_and_can_end_a_path():
     )  # marked at the halt, before the rest of the fall
 
 
+# --- within the bar (A2 N18) -------------------------------------------------------------------
+
+
+def _dip(closes=(100, 100, 93, 97, 100, 103, 105, 105, 105, 105, 105, 105)):
+    """One coin bought with the whole account at 100 on day 0 and sold at 105 on day 10,
+    on daily bars closing at T0 + k days. The closes fall 7% from the peak on day 2;
+    that day's low is 91, 9% below it. Every other low is 0.5% under its close."""
+    times = [T0 + k * DAY for k in range(len(closes))]
+    lows = [c * 0.995 for c in closes]
+    lows[2] = 91.0
+    opps = [Opportunity("BTC", T0, T0 + 10 * DAY, 100.0, 105.0)]
+    return opps, {"BTC": (times, list(closes))}, {"BTC": (times, lows)}
+
+
+def test_a_dip_within_the_bar_reaches_the_halt_that_the_closes_do_not():
+    opps, prices, lows = _dip()
+    free = Costs(fee=0.0, allowance=0.0)
+    kw = dict(size_fraction=1.0, mark_s=DAY)
+    closes_only = replay(opps, prices, free, Account(start=10_000.0), **kw)
+    out = replay(opps, prices, free, Account(start=10_000.0), lows=lows, **kw)
+    # at the closes: a 7% drawdown, below the 8% halt level
+    assert out.max_drawdown[0] == pytest.approx(0.07)
+    assert out.halt_s[0] == -1
+    # within the bar: 9%, so the halt is reported, at the end of the day of the dip
+    assert out.intrabar_max_drawdown[0] == pytest.approx(0.09)
+    assert out.intrabar_max_drawdown_usd[0] == pytest.approx(900.0)
+    assert out.intrabar_halt_s[0] == T0 + 2 * DAY
+    # without lows the figures are absent, and nothing else differs
+    assert closes_only.intrabar_max_drawdown is None
+    assert closes_only.intrabar_halt_s is None
+    assert closes_only.max_drawdown[0] == out.max_drawdown[0]
+    assert closes_only.net[0] == out.net[0] == pytest.approx(500.0)
+    # a halt level above the dip is not reached either way
+    high = replay(
+        opps, prices, free, Account(start=10_000.0, halt_pct=10.0), lows=lows, **kw
+    )
+    assert high.intrabar_halt_s[0] == -1
+
+
+def test_the_lows_of_every_bar_in_a_marking_interval_count():
+    # hourly bars, daily marks: the day's lowest hourly low is the one used
+    hours = list(range(T0, T0 + 6 * DAY + HOUR, HOUR))
+    closes = [100.0] * len(hours)
+    lows = [99.9] * len(hours)
+    lows[24 + 30] = 90.0  # 06:00 on day 2: an hour, not a close
+    opps = [Opportunity("BTC", T0, T0 + 5 * DAY, 100.0, 100.0)]
+    out = replay(
+        opps,
+        {"BTC": (hours, closes)},
+        Costs(fee=0.0, allowance=0.0),
+        Account(start=10_000.0),
+        size_fraction=1.0,
+        mark_s=DAY,
+        lows={"BTC": (hours, lows)},
+    )
+    assert out.max_drawdown[0] == 0.0 and out.halt_s[0] == -1
+    assert out.intrabar_max_drawdown[0] == pytest.approx(0.10)
+    assert out.intrabar_halt_s[0] == T0 + 3 * DAY  # the day from T0 + 2 days
+
+
+def test_several_coins_are_valued_at_their_lows_together():
+    # half the account in each coin; each dips 10% within the same daily bar. The two
+    # lows may have come at different hours, so the summed 10% is a bound, not a path
+    times = [T0 + k * DAY for k in range(8)]
+    closes = [100.0] * 8
+    lows = [100.0] * 8
+    lows[3] = 90.0
+    opps = [
+        Opportunity("BTC", T0, T0 + 6 * DAY, 100.0, 100.0),
+        Opportunity("ETH", T0, T0 + 6 * DAY, 100.0, 100.0),
+    ]
+    out = replay(
+        opps,
+        {c: (times, closes) for c in ("BTC", "ETH")},
+        Costs(fee=0.0, allowance=0.0),
+        Account(start=10_000.0, start_pct=50.0, max_coin_pct=50.0),
+        mark_s=DAY,
+        lows={c: (times, lows) for c in ("BTC", "ETH")},
+    )
+    assert out.trades[0] == 2 and out.max_drawdown[0] == 0.0
+    assert out.intrabar_max_drawdown[0] == pytest.approx(0.10)
+    # a coin given no lows is valued at its close
+    one = replay(
+        opps,
+        {c: (times, closes) for c in ("BTC", "ETH")},
+        Costs(fee=0.0, allowance=0.0),
+        Account(start=10_000.0, start_pct=50.0, max_coin_pct=50.0),
+        mark_s=DAY,
+        lows={"BTC": (times, lows)},
+    )
+    assert one.intrabar_max_drawdown[0] == pytest.approx(0.05)
+    assert one.intrabar_halt_s[0] == -1
+
+
+def _paths_fields(p):
+    names = [f for f in p.__dataclass_fields__ if not f.startswith("intrabar_")]
+    return {name: getattr(p, name) for name in names}
+
+
+@pytest.mark.parametrize("halt_ends", [False, True])
+def test_the_lows_change_no_other_figure(halt_ends):
+    from signal_fusion.evaluation.replay import Cooldown
+
+    rng = np.random.default_rng(21)
+    coins = ("BTC", "ETH", "SOL")
+    prices, lows = {}, {}
+    for k, coin in enumerate(coins):
+        c = _candles(n=24 * 120, seed=30 + k)
+        t = [int(x.timestamp()) + HOUR for x in c["open_time"]]
+        prices[coin] = (t, c["close"].tolist())
+        lows[coin] = (t, c["low"].tolist())
+    opps = []
+    for _ in range(60):
+        coin = coins[int(rng.integers(len(coins)))]
+        t, p = prices[coin]
+        a = int(rng.integers(0, len(t) - 200))
+        b = a + int(rng.integers(5, 150))
+        opps.append(Opportunity(coin, t[a], t[b], p[a], p[b]))
+    veto = rng.uniform(size=(6, len(opps))) < 0.3
+    scale = np.where(rng.uniform(size=(6, len(opps))) < 0.5, 1.0, 0.6)
+    costs = Costs(
+        fee=0.005,
+        allowance=0.0005,
+        minimum_usd={c: 5.0 for c in coins},
+        base_increment={"BTC": 0.001},
+    )
+    acct = Account(start=2_000.0, start_pct=25.0, max_coin_pct=60.0, halt_pct=3.0)
+    kw = dict(
+        veto=veto,
+        scale=scale,
+        detail=True,
+        halt_ends=halt_ends,
+        cooldown=Cooldown(3, 6, False, HOUR),
+    )
+    plain = replay(opps, prices, costs, acct, **kw)
+    low = replay(opps, prices, costs, acct, lows=lows, **kw)
+    a, b = _paths_fields(plain), _paths_fields(low)
+    assert a.keys() == b.keys()
+    for name in a:
+        if isinstance(a[name], np.ndarray):
+            np.testing.assert_array_equal(a[name], b[name], err_msg=name)
+        elif name == "curve":
+            np.testing.assert_array_equal(a[name][0], b[name][0])
+            np.testing.assert_array_equal(a[name][1], b[name][1])
+        else:
+            assert a[name] == b[name], name
+    # the intrabar figures are never below the close-based ones, and never later
+    assert np.all(low.intrabar_max_drawdown >= low.max_drawdown)
+    assert np.all(low.intrabar_max_drawdown_usd >= low.max_drawdown_usd)
+    halted = low.halt_s >= 0
+    assert halted.any() and (low.intrabar_max_drawdown > low.max_drawdown).any()
+    assert np.all(low.intrabar_halt_s[halted] >= 0)
+    assert np.all(low.intrabar_halt_s[halted] <= low.halt_s[halted])
+
+
 # --- F1 and Q2 on constructed forecasts --------------------------------------------------------
 
 
@@ -394,6 +552,32 @@ def test_f3_on_constructed_paths():
     assert "exceeded the permitted 8% maximum drawdown" in fd.f3_line(
         r, False, fd.f3_failed(r, True)
     )
+
+
+def test_f3_shows_the_intrabar_drawdown_beside_requirement_5_and_decides_nothing():
+    opps, prices, lows = _dip()
+    free = Costs(fee=0.0, allowance=0.0)
+    kw = dict(size_fraction=1.0, mark_s=DAY, detail=True)
+    first, last = T0, T0 + 11 * DAY
+    entries, coins = [o.entry_s for o in opps], [o.coin for o in opps]
+    with_lows = fd.f3(
+        replay(opps, prices, free, lows=lows, **kw), entries, coins, first, last, 1
+    )
+    closes_only = fd.f3(
+        replay(opps, prices, free, **kw), entries, coins, first, last, 1
+    )
+    # requirement 5 is measured at the closes, as declared: 7% is within the 8% level
+    assert with_lows["requirements"] == closes_only["requirements"]
+    assert with_lows["requirements"]["within_halt"]
+    assert fd.f3_failures(with_lows, True) == fd.f3_failures(closes_only, True)
+    rep = with_lows["report"]
+    assert rep["max_drawdown"] == pytest.approx(0.07) and rep["halt_reached_s"] == -1
+    assert rep["intrabar_max_drawdown"] == pytest.approx(0.09)
+    assert rep["intrabar_halt_reached_s"] == T0 + 2 * DAY
+    assert rep["intrabar_within_halt"] is False
+    for key in ("intrabar_max_drawdown", "intrabar_halt_reached_s"):
+        assert closes_only["report"][key] is None
+    assert closes_only["report"]["intrabar_within_halt"] is None
 
 
 def test_losing_less_is_reducing_losses_and_never_profitable():

@@ -215,7 +215,13 @@ def f3(
     block: int = bs.BLOCK_DAYS,
 ) -> Dict[str, Any]:
     """F3 for one path (path 0 of a ``replay(..., detail=True)``). ``entries_s`` and
-    ``coins`` give each opportunity's entry time and coin."""
+    ``coins`` give each opportunity's entry time and coin.
+
+    The drawdown requirement is measured at the replay's marks (closes), as declared.
+    When the path has the intrabar figures (a replay given ``lows``), the report shows
+    them beside it: the largest drawdown with positions at their lows, when the halt
+    level was first reached that way, and whether it stayed below it. They decide
+    nothing; without them they are None."""
     rows = path.detail  # (opportunity, amount, net, capital-days)
     t = np.array([entries_s[i] for i, *_ in rows], dtype=np.int64)
     net = np.array([r[2] for r in rows], dtype=float)
@@ -259,6 +265,14 @@ def f3(
         "within_halt": float(path.max_drawdown[0]) < halt_pct / 100.0,
     }
     returns = net / amount if n else np.zeros(0)
+    low_dd = (
+        float(path.intrabar_max_drawdown[0])
+        if path.intrabar_max_drawdown is not None
+        else None
+    )
+    low_halt = (
+        int(path.intrabar_halt_s[0]) if path.intrabar_halt_s is not None else None
+    )
     return {
         "requirements": req,
         "test": test,
@@ -282,6 +296,12 @@ def f3(
             "largest_loss_usd": float(net.min()) if n else float("nan"),
             "halt_reached_s": int(path.halt_s[0]),
             "halt_pct": float(halt_pct),
+            # within the bar: shown beside requirement 5, never deciding it
+            "intrabar_max_drawdown": low_dd,
+            "intrabar_halt_reached_s": low_halt,
+            "intrabar_within_halt": (
+                None if low_dd is None else low_dd < halt_pct / 100.0
+            ),
             **dd,
         },
     }

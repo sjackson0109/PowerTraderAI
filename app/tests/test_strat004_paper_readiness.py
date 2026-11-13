@@ -1,20 +1,22 @@
 """STRAT-004 paper-observation readiness (docs/dev/STRAT-004-paper-readiness.md).
 
 These tests pin existing behaviour that the readiness assessment relies on. They change
-no setting and nothing on disk. Where a test needs the proposed ``paper``
-authorisation, it patches the loaded catalogue in memory for that test only, as
-``test_strategy_lifecycle.py`` does. STRAT-004 stays ``research`` in ``catalogue.json``.
+no setting and nothing on disk. STRAT-004 is ``paper`` in ``catalogue.json`` since the
+owner's decision of 2026-11-12 (``docs/dev/RUN-LOG-sr-1.md``). Where a test needs it
+back at ``research``, it patches the loaded catalogue in memory for that test only, as
+``test_strategy_lifecycle.py`` does.
 
-* Today STRAT-004 is research-only. It is refused in paper and live by the settings
-  check and by the trader's order gate, and a replayed paper session places no orders.
+* STRAT-004 is allowed in paper and refused in live, by the settings check and by the
+  trader's order gate. At ``research`` (in memory only), a replayed paper session
+  places no orders.
 * An authorisation or a trading mode the catalogue does not know is refused.
 * At its defaults (55/20), STRAT-004's parameters hash to ``PARAMS_SHA256``. Each trade
   record carries that hash.
 * The proposed observation's frozen settings hash to ``SNAPSHOT_SHA256`` with
   ``strategy_lab.observation``'s own snapshot. The settings defaults the hash assumes
   are pinned too.
-* With ``paper`` authorisation (in memory only), a replayed daily paper session places
-  its orders on the bars where the backtester trades. Each order is 1% of the account,
+* A replayed daily paper session places its orders on the bars where the backtester
+  trades. Each order is 1% of the account,
   and each sell is the whole quantity bought. Reconcile matches every trade. The same
   settings are refused in live mode.
 
@@ -110,27 +112,38 @@ FIELDS = {
 }
 
 
-def paper_authorised():
-    """The proposed change, in memory for one test: STRAT-004 at ``paper``."""
+def research_only():
+    """STRAT-004 as it was before 2026-11-12, in memory for one test: ``research``."""
     return mock.patch.dict(
         cat.CATALOGUE,
-        {"STRAT-004": dict(cat.CATALOGUE["STRAT-004"], authorisation="paper")},
+        {"STRAT-004": dict(cat.CATALOGUE["STRAT-004"], authorisation="research")},
     )
 
 
-class TodayTests(unittest.TestCase):
-    def test_it_is_research_only_in_the_catalogue_file(self):
+class AuthorisationTests(unittest.TestCase):
+    def test_it_is_paper_in_the_catalogue_file(self):
         raw = {e["strategy_id"]: e for e in cat.load_entries()}
-        self.assertEqual(raw["STRAT-004"]["authorisation"], "research")
-        self.assertEqual(cat.CATALOGUE["STRAT-004"]["authorisation"], "research")
+        self.assertEqual(raw["STRAT-004"]["authorisation"], "paper")
+        self.assertEqual(cat.CATALOGUE["STRAT-004"]["authorisation"], "paper")
 
-    def test_the_proposed_settings_are_refused_in_every_mode(self):
+    def test_the_proposed_settings_are_allowed_in_paper_and_refused_in_live(self):
         settings = {"strategy": dict(STRATEGY)}
         self.assertIsNone(ss.read_strategy_settings(settings).problem)  # research
-        for mode in ("paper", "live", tm.TradingMode.PAPER, tm.TradingMode.LIVE):
+        for mode in ("paper", tm.TradingMode.PAPER):
+            with self.subTest(mode=mode):
+                self.assertIsNone(ss.read_strategy_settings(settings, mode).problem)
+        for mode in ("live", tm.TradingMode.LIVE):
             with self.subTest(mode=mode):
                 problem = ss.read_strategy_settings(settings, mode).problem
-                self.assertIn("STRAT-004 can be used for research only", problem)
+                self.assertIn("paper trading, not live trading", problem)
+
+    def test_at_research_it_is_refused_in_every_mode(self):
+        settings = {"strategy": dict(STRATEGY)}
+        with research_only():
+            for mode in ("paper", "live", tm.TradingMode.PAPER, tm.TradingMode.LIVE):
+                with self.subTest(mode=mode):
+                    problem = ss.read_strategy_settings(settings, mode).problem
+                    self.assertIn("STRAT-004 can be used for research only", problem)
 
     def test_an_unknown_authorisation_or_mode_is_refused(self):
         settings = {"strategy": dict(STRATEGY)}
@@ -139,20 +152,10 @@ class TodayTests(unittest.TestCase):
             for mode in ("paper", "live"):
                 self.assertFalse(cat.allowed_in_mode("STRAT-004", mode))
                 self.assertIsNotNone(ss.read_strategy_settings(settings, mode).problem)
-        with paper_authorised():
-            for mode in ("demo", "Paper", ""):
-                with self.subTest(mode=mode):
-                    self.assertFalse(cat.allowed_in_mode("STRAT-004", mode))
-                    self.assertIsNotNone(
-                        ss.read_strategy_settings(settings, mode).problem
-                    )
-
-    def test_with_paper_authorisation_it_is_still_refused_in_live(self):
-        settings = {"strategy": dict(STRATEGY)}
-        with paper_authorised():
-            self.assertIsNone(ss.read_strategy_settings(settings, "paper").problem)
-            problem = ss.read_strategy_settings(settings, "live").problem
-            self.assertIn("paper trading, not live trading", problem)
+        for mode in ("demo", "Paper", ""):
+            with self.subTest(mode=mode):
+                self.assertFalse(cat.allowed_in_mode("STRAT-004", mode))
+                self.assertIsNotNone(ss.read_strategy_settings(settings, mode).problem)
 
     def test_its_default_parameters_hash(self):
         params = dict(cat.create("STRAT-004").params)
@@ -268,16 +271,16 @@ class PaperSessionTests(PaperTraderCase):
         last = self.frame["open_time"].iloc[-1]
         return [t for t in result.trades if t.exit_time < last]
 
-    def test_today_a_paper_session_places_no_orders(self):
-        orders, rows, _ = self.session(self.settings())
+    def test_at_research_a_paper_session_places_no_orders(self):
+        with research_only():
+            orders, rows, _ = self.session(self.settings())
         self.assertEqual(orders, [])
         self.assertEqual(rows, [])
 
-    def test_with_paper_authorisation_paper_trades_where_the_backtest_does(self):
+    def test_a_paper_session_trades_where_the_backtest_does(self):
         expected = self.backtest()
         self.assertGreaterEqual(len(expected), 2)
-        with paper_authorised():
-            orders, rows, trader = self.session(self.settings())
+        orders, rows, trader = self.session(self.settings())
         buys = [r for r in rows if r["side"] == "buy"]
         sells = [r for r in rows if r["side"] == "sell"]
         self.assertEqual([r["tag"] for r in buys], ["ENTRY"] * len(expected))
@@ -306,8 +309,7 @@ class PaperSessionTests(PaperTraderCase):
 
     def test_reconcile_matches_every_trade_with_its_fill_and_fee(self):
         expected = self.backtest()
-        with paper_authorised():
-            _, rows, _ = self.session(self.settings())
+        _, rows, _ = self.session(self.settings())
         segment = {
             "started_s": int(self.frame["open_time"].iloc[55].timestamp()),
             "snapshot": obs.snapshot(self.settings(), {"coins": ["BTC"]}),
@@ -325,13 +327,12 @@ class PaperSessionTests(PaperTraderCase):
             self.assertAlmostEqual(row.exit_fee_rate_paid, self.TAKER, places=9)
             self.assertEqual(row.differs, ())
 
-    def test_with_paper_authorisation_a_research_overlay_is_still_refused(self):
+    def test_a_research_overlay_is_still_refused(self):
         settings = self.settings()
         settings["strategy"]["overlays"] = [{"id": "OVL-REGIME"}]
-        with paper_authorised():
-            problem = ss.read_strategy_settings(settings, "paper").problem
-            self.assertIn("OVL-REGIME can be used for research only", problem)
-            orders, rows, _ = self.session(settings)
+        problem = ss.read_strategy_settings(settings, "paper").problem
+        self.assertIn("OVL-REGIME can be used for research only", problem)
+        orders, rows, _ = self.session(settings)
         self.assertEqual((orders, rows), ([], []))
 
 

@@ -8,6 +8,8 @@
   whatever the number of accounts, and the candidate trades are the same for each.
 * Small accounts: entries are raised to the minimum entry; a sell is rounded down to the
   coin's step, and the remainder is reported; the halt's exposure is reported.
+* Within the bar: a daily dip of 9% whose closes fall 7% reports the halt at the lows,
+  and the close-based figures are the same with or without the lows.
 * The baselines: buy-and-hold per coin; random entries replayed through the strategy's
   own exits, matched to its entries and waits, reproducible for a seed, and the same
   whether replayed alone or in a batch.
@@ -381,6 +383,59 @@ class HaltTests(unittest.TestCase):
         self.assertGreater(float(paths.halt_further_loss[0]), 0.0)
 
 
+class IntrabarTests(unittest.TestCase):
+    """A2 N18: the trader checks its value on every pass, so a replay marked only at
+    daily closes can miss a halt that a fall within the day would have triggered."""
+
+    def setUp(self):
+        # a breakout at 120 on day 60 (bought at day 61's open, 120); day 62 closes
+        # at 111.6, 7% down, but trades at 109.2 within the day, 9% down; then it rises
+        closes = [100.0] * 60 + [120.0, 120.0, 111.6] + list(np.linspace(115, 140, 30))
+        self.frame = make_candles(closes, start="2023-01-02", tf_seconds=DAY)
+        self.frame.loc[62, "low"] = 109.2
+        self.sim = one_coin(
+            self.frame,
+            RunnerSpec("STRAT-004", {"entry_days": 20, "exit_days": 10}, (), "1d"),
+        )
+
+    def test_a_daily_dip_of_9_percent_whose_closes_fall_7_reports_the_halt(self):
+        trades = self.sim.candidates()
+        paths = self.sim.replay(
+            trades, FREE, Account(start=10_000.0), size_fraction=1.0, detail=True
+        )
+        # one trade, bought at day 61's open and held to the last close
+        self.assertEqual([i for i, *_ in paths.detail], [0])
+        self.assertEqual((trades[0].entry_i, trades[0].forced), (61, True))
+        # at the closes, as before: 7%, below the 8% halt level
+        self.assertAlmostEqual(float(paths.max_drawdown[0]), 0.07, places=9)
+        self.assertEqual(int(paths.halt_s[0]), -1)
+        # within the bar: 9%, and the halt is reported at the end of day 62
+        self.assertAlmostEqual(float(paths.intrabar_max_drawdown[0]), 0.09, places=9)
+        day_62_ends = int(self.frame["open_time"].iloc[62].timestamp()) + DAY
+        self.assertEqual(int(paths.intrabar_halt_s[0]), day_62_ends)
+
+    def test_the_close_based_figures_are_the_same_with_or_without_the_lows(self):
+        trades = self.sim.candidates()
+        acct = Account(start=10_000.0)
+        with_lows = self.sim.replay(trades, FREE, acct, size_fraction=1.0, detail=True)
+        without = self.sim.replay(
+            trades, FREE, acct, size_fraction=1.0, detail=True, lows=None
+        )
+        self.assertIsNone(without.intrabar_max_drawdown)
+        for name in (
+            "net",
+            "max_drawdown",
+            "max_drawdown_usd",
+            "halt_s",
+            "final_equity",
+        ):
+            np.testing.assert_array_equal(
+                getattr(with_lows, name), getattr(without, name)
+            )
+        self.assertEqual(with_lows.detail, without.detail)
+        np.testing.assert_array_equal(with_lows.curve[1], without.curve[1])
+
+
 class BaselineTests(unittest.TestCase):
     def setUp(self):
         self.frames = {
@@ -443,6 +498,23 @@ class BaselineTests(unittest.TestCase):
             self.assertAlmostEqual(float(batch.net[p]), float(alone.net[0]), places=9)
             self.assertAlmostEqual(
                 float(batch.capital_days[p]), float(alone.capital_days[0]), places=9
+            )
+
+    def test_a_batch_of_draws_keeps_the_intrabar_figures(self):
+        draws = bl.random_draws(self.sim, self.taken, seed=300_000, count=7).draws
+        costs = Costs(fee=0.005, allowance=0.0005)
+        batch = bl.replay_draws(self.sim, draws, costs, Account(), chunk=3)
+        self.assertEqual(len(batch.intrabar_max_drawdown), 7)
+        self.assertTrue(np.all(batch.intrabar_max_drawdown >= batch.max_drawdown))
+        for p, trades in enumerate(draws):
+            alone = self.sim.replay(trades, costs, Account())
+            self.assertAlmostEqual(
+                float(batch.intrabar_max_drawdown[p]),
+                float(alone.intrabar_max_drawdown[0]),
+                places=9,
+            )
+            self.assertEqual(
+                int(batch.intrabar_halt_s[p]), int(alone.intrabar_halt_s[0])
             )
 
 

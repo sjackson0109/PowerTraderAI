@@ -194,9 +194,9 @@ class ParityTests(unittest.TestCase):
 
 
 class CatalogueTests(unittest.TestCase):
-    def test_it_is_research_only_and_daily(self):
+    def test_it_is_paper_and_daily(self):
         e = CATALOGUE["STRAT-004"]
-        self.assertEqual(e["authorisation"], "research")
+        self.assertEqual(e["authorisation"], "paper")  # the owner, 2026-11-12
         self.assertEqual(e["family"], "breakout")
         self.assertEqual(
             (e["timeframe_primary"], e["timeframes_permitted"]), ("1d", ["1d"])
@@ -206,12 +206,12 @@ class CatalogueTests(unittest.TestCase):
     def test_it_is_not_enabled_for_research_by_default(self):
         self.assertNotIn("STRAT-004", read_research_enabled({}))
 
-    def test_it_is_refused_for_trading_in_both_modes(self):
+    def test_it_is_allowed_in_paper_and_refused_in_live(self):
         settings = {"strategy": {"active_id": "STRAT-004", "timeframe": "1d"}}
         self.assertIsNone(read_strategy_settings(settings).problem)  # research use
-        for mode in ("paper", "live"):
-            problem = read_strategy_settings(settings, mode).problem
-            self.assertIn("STRAT-004 can be used for research only", problem)
+        self.assertIsNone(read_strategy_settings(settings, "paper").problem)
+        problem = read_strategy_settings(settings, "live").problem
+        self.assertIn("STRAT-004 can be used for paper trading, not live", problem)
 
     def test_it_is_described_for_the_strategy_list(self):
         d = words.DESCRIPTIONS["STRAT-004"]

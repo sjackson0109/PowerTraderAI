@@ -137,6 +137,23 @@
     "research_refs": ["FDS-SR-001 5.4.3", "strategy-research/A-research-report.md 3"]
   },
   {
+    "strategy_id": "STRAT-006",
+    "strategy_name": "Price Above Its Average (daily)",
+    "family": "momentum",
+    "class_type": "main",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1d",
+    "timeframes_permitted": ["1d"],
+    "entry_logic_summary": "The daily close is above the simple average of the last average_days closes (that close included).",
+    "exit_logic_summary": "The daily close is below that average; or a risk overlay exits.",
+    "dependencies_indicators": ["SMA"],
+    "default_params": {"average_days": 20},
+    "param_bounds": {"average_days": {"min": 5, "max": 200}},
+    "version": "1.0.0",
+    "authorisation": "research",
+    "research_refs": ["PTAI-RD-001 B trend.price-above-ma", "Grobys, Ahmed and Sapkota (2020)", "Detzel et al. (2021)"]
+  },
+  {
     "strategy_id": "OVL-RATCHET",
     "strategy_name": "Ratchet Stop",
     "family": "risk_overlay",

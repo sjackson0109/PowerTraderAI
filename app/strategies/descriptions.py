@@ -263,6 +263,21 @@ DESCRIPTIONS: Dict[str, Described] = {
             ),
         ),
     ),
+    "STRAT-006": Described(
+        name="Price above its average",
+        summary=(
+            "Buys when a daily close is above the simple average of the last "
+            "average days of closes, that close included. Sells when a close is "
+            "below it. A close equal to the average changes nothing."
+        ),
+        params={
+            "average_days": Param(
+                "Average days",
+                "How many days of closes the average takes. A coin needs this many "
+                "days of candles before its first decision.",
+            ),
+        },
+    ),
     "OVL-RATCHET": Described(
         name="Ratchet stop",
         summary=(

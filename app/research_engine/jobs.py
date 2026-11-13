@@ -73,7 +73,21 @@ def job_kind(name: str, version: int = 1) -> Callable:
     return deco
 
 
+# The modules that define the engine's job kinds: imported when a kind is not known yet,
+# so a scheduler in any process knows every kind.
+KIND_MODULES = (
+    "research_engine.selftest",
+    "research_engine.strategy_runs",
+    "research_engine.model_batches",
+)
+
+
 def kind(name: str) -> Kind:
+    if name not in _KINDS:
+        import importlib
+
+        for module in KIND_MODULES:
+            importlib.import_module(module)
     try:
         return _KINDS[name]
     except KeyError:

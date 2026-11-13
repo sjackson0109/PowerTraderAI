@@ -253,3 +253,11 @@ class TradeTable:
         """(close times in seconds, closes), to mark positions at each close."""
         closes_at = (self._times + self._step).map(_seconds).to_numpy(dtype=np.int64)
         return closes_at, self._close.copy()
+
+    def lows(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """(close times in seconds, lows), for the replay's intrabar figures; None
+        when the candles have no lows."""
+        if "low" not in self.candles:
+            return None
+        closes_at = (self._times + self._step).map(_seconds).to_numpy(dtype=np.int64)
+        return closes_at, self.candles["low"].to_numpy(dtype=float, copy=True)

@@ -104,7 +104,7 @@
       "exit_days": {"min": 5, "max": 120}
     },
     "version": "1.0.0",
-    "authorisation": "research",
+    "authorisation": "paper",
     "research_refs": ["FDS-SR-001 5.4.3", "strategy-research/A-research-report.md 4"]
   },
   {

@@ -9,7 +9,8 @@
 * The rules: the block length (L = 28 x 2^k); the gate as a veto on the strategy's own
   trades, which keeps every trade it allows unchanged and replays like the gated runner;
   REF-RANDOM and R3 draws that repeat for a seed.
-* The figures: per coin and per half they add up; a small account's entries are raised.
+* The figures: per coin and per half they add up; a small account's entries are raised;
+  the drawdown at the bars' lows is shown beside the close-based one, unchanged.
 * The words: only an economic line says "profitable"; every line ends "Development only".
 
 Synthetic candles only: no network."""
@@ -254,6 +255,35 @@ class TestFigures:
         trend = f["by_regime"]["btc_trend"]
         assert set(trend) <= {"above", "below", "unknown"}
         assert sum(c["trades"] for c in trend.values()) == f["trades"]
+
+    def test_the_intrabar_drawdown_is_shown_beside_the_close_based_one(self):
+        u = daily_universe()
+        sim = Simulation(u, e1.STRATEGIES["STRAT-004"])
+        trades = e1.scored(sim)
+        acct = Account(start=13_476.0)
+        path = sim.replay(trades, COSTS, acct, detail=True)
+        f = e1.figures(trades, path, COSTS, acct, 1.3476)
+        assert f["max_drawdown"] == float(path.max_drawdown[0])
+        assert f["intrabar_max_drawdown"] == float(path.intrabar_max_drawdown[0])
+        assert f["intrabar_max_drawdown"] >= f["max_drawdown"]
+        assert f["intrabar_max_drawdown_usd"] >= f["max_drawdown_usd"]
+        assert f["halt"]["intrabar_reached_s"] == int(path.intrabar_halt_s[0])
+        # a path replayed without lows has none to show
+        plain = sim.replay(trades, COSTS, acct, detail=True, lows=None)
+        g = e1.figures(trades, plain, COSTS, acct, 1.3476)
+        assert (
+            g["intrabar_max_drawdown"] is None
+            and g["halt"]["intrabar_reached_s"] is None
+        )
+
+        def close_based(figures):
+            out = {k: v for k, v in figures.items() if not k.startswith("intrabar_")}
+            halt = figures["halt"]
+            out["halt"] = {k: v for k, v in halt.items() if k != "intrabar_reached_s"}
+            return out
+
+        # every other figure is the same, with the lows or without them
+        assert close_based(f) == close_based(g)
 
     def test_the_regime_tags(self):
         closes = [100.0] * 250 + [200.0] * 10

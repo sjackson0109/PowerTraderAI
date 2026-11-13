@@ -346,6 +346,21 @@ class SettingsValidator:
             lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v),
             "Strategies enabled for research must be a list of strategy ids",
         )
+        self.add_rule(
+            "strategy.trading_allowed",
+            lambda v: isinstance(v, dict)
+            and all(
+                isinstance(k, str)
+                and isinstance(m, dict)
+                and all(
+                    mode in ("paper", "live") and isinstance(on, bool)
+                    for mode, on in m.items()
+                )
+                for k, m in v.items()
+            ),
+            "Trading switches must be an object of "
+            '{strategy id: {"paper" or "live": true or false}}',
+        )
 
         # Neural config validation
         self.add_rule(

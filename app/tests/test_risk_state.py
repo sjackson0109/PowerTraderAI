@@ -287,7 +287,8 @@ class StopRun(BaseException):
 
 
 class HaltAcrossRestartTests(PaperTraderCase):
-    """Acceptance: after an emergency stop, a restart does not trade until Resume."""
+    """Acceptance: after an emergency stop, a restart buys nothing until Resume, and
+    still manages what is held (sells go through)."""
 
     def started(self, account_value=None):
         trader = self.trader()
@@ -295,7 +296,7 @@ class HaltAcrossRestartTests(PaperTraderCase):
         return trader
 
     def run_once(self, trader):
-        """run() until it ends by itself (a halt) or reaches manage_trades."""
+        """run() until it reaches manage_trades (which a halt no longer stops)."""
         with mock.patch.object(
             trader, "manage_trades", side_effect=StopRun
         ) as manage, mock.patch.object(self.pt_trader.time, "sleep"):
@@ -305,11 +306,12 @@ class HaltAcrossRestartTests(PaperTraderCase):
                 pass
         return manage.called
 
-    def test_a_restart_after_an_emergency_stop_does_not_trade_until_resume(self):
+    def test_a_restart_after_an_emergency_stop_buys_nothing_until_resume(self):
         books = os.path.join(self.tmp.name, "paper")
         first = self.started(account_value=900.0)
         first.risk_manager.update_portfolio_value(1000.0)  # the peak, kept
-        self.assertFalse(self.run_once(first))  # 10% drawdown: stopped, no trading
+        self.assertTrue(self.run_once(first))  # 10% drawdown: halted, still managing
+        self.assertTrue(first.risk_manager.is_trading_halted())
         view = risk_state.current(books)
         self.assertTrue(view.halted)
         self.assertEqual(
@@ -317,13 +319,15 @@ class HaltAcrossRestartTests(PaperTraderCase):
         )
         self.assertEqual(view.halt_value, 900.0)
 
-        # a restart, even with the account back above the peak, does not trade
+        # a restart, even with the account back above the peak, buys nothing;
+        # it still manages what is held, so a sell goes through
         restarted = self.started(account_value=1100.0)
         self.assertTrue(restarted.risk_manager.is_trading_halted())
         self.assertEqual(restarted.risk_manager.halt_reason, view.halt_reason)
-        self.assertFalse(self.run_once(restarted))
+        self.assertTrue(self.run_once(restarted))
         refused = restarted._risk_check("BTC-USD", "buy", 0.001, 100.0)
         self.assertFalse(refused)
+        self.assertTrue(restarted._risk_check("BTC-USD", "sell", 0.001, 100.0))
         self.assertTrue(risk_state.current(books).halted)  # still halted
 
         risk_state.request_resume(books)  # Resume trading in Settings > Risk
@@ -331,7 +335,8 @@ class HaltAcrossRestartTests(PaperTraderCase):
         self.assertFalse(resumed.risk_manager.is_trading_halted())
         self.assertTrue(self.run_once(resumed))  # it trades again
         self.assertFalse(risk_state.current(books).halted)
-        self.assertEqual(risk_state.current(books).peak_value, 1000.0)
+        # the halted restart still watched the account: 1100 was its new peak
+        self.assertEqual(risk_state.current(books).peak_value, 1100.0)
 
     def test_a_halt_that_cannot_be_saved_is_reported(self):
         trader = self.started(account_value=900.0)
@@ -339,6 +344,6 @@ class HaltAcrossRestartTests(PaperTraderCase):
         with mock.patch.object(
             risk_state, "write_state", side_effect=OSError("disk full")
         ), mock.patch("builtins.print") as said:
-            self.assertFalse(self.run_once(trader))
+            self.assertTrue(self.run_once(trader))
         self.assertTrue(trader.risk_manager.is_trading_halted())
         self.assertIn("The halt could not be saved", str(said.call_args_list))

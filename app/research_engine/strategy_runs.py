@@ -4,7 +4,8 @@ engine job, under the same rules as Settings > Strategy, "Run a backtest...":
 * the development period only: a period reaching the reserved months (from
   2025-05-06) is refused before any candle is read;
 * logged as an exploratory trial with its months, in the strategy lab's trial log,
-  and saved under ``strategy_lab/runs``;
+  and saved under ``strategy_lab/runs``; and in the programme trial ledger
+  (``research_engine.ledger``), with the job's key;
 * an exploration, never evidence.
 
 The parameters are ``strategy_lab.runs.RunConfig``'s fields except ``seed``: the job's
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import os
 import threading
 from typing import Any, Callable, Dict, Optional
 
@@ -113,7 +115,27 @@ def run_job(
     finally:
         done.set()
         watcher.join(timeout=5)
+    _ledger(record, ctx)
     return _summary(record)
+
+
+def _ledger(record: Dict[str, Any], ctx: JobContext) -> None:
+    """The run's entry in the programme trial ledger, under its strategy-lab trial's
+    id (so ``ledger.sync`` does not count it again), with the job's key."""
+    from research_engine import ledger
+
+    start, end = (str(x)[:10] for x in record["period"])
+    line = {
+        "trial": f"{record['id']}/run",
+        "kind": "exploration",
+        "start": start,
+        "end": end,
+        "coins": list((record.get("config") or {}).get("coins") or []),
+        "summary": {"net_usd": (record.get("strategy_result") or {}).get("net_usd")},
+        "logged_at": record.get("ran_at"),
+    }
+    job = ctx.store.get(ctx.job_id).key
+    ledger.append(ledger.from_strategy_lab(line, record, job=job), ctx.store.root)
 
 
 @job_kind("strategy_lab.run", version=1)

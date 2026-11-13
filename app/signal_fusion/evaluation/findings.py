@@ -218,8 +218,9 @@ def f3(
     ``coins`` give each opportunity's entry time and coin.
 
     The drawdown requirement is measured at the replay's marks (closes), as declared.
-    When the path has the intrabar figures (a replay given ``lows``), the report shows
-    them beside it: the largest drawdown with positions at their lows, when the halt
+    When the path has the intrabar figures (a replay given ``lows``, and ``highs`` for
+    the peak), the report shows them beside it: the largest drawdown with positions at
+    their lows, from a peak at the earlier bars' highs when given, when the halt
     level was first reached that way, and whether it stayed below it. They decide
     nothing; without them they are None."""
     rows = path.detail  # (opportunity, amount, net, capital-days)

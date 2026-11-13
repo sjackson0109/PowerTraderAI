@@ -21,6 +21,7 @@ import pandas as pd
 from helpers import make_candles
 
 from backtest.engine import CostModel, run_backtest
+from market_data.candles import SETTLE_SECONDS
 from signal_engine import SignalEngine
 from strategies import ParamError, StrategyError, create
 from strategies import descriptions as words
@@ -44,7 +45,7 @@ class DailyFeed:
         self.frame = frame
         self.now = 0.0
 
-    def set_after_bar(self, k, seconds_after_close=10):
+    def set_after_bar(self, k, seconds_after_close=SETTLE_SECONDS + 10):
         close = self.frame["open_time"].iloc[k] + pd.Timedelta(days=1)
         self.now = close.timestamp() + seconds_after_close
 

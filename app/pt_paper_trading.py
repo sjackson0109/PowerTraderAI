@@ -362,7 +362,9 @@ class PaperTradingAccount:
         % and Max per coin %) size its orders, and an order the cash cannot cover is
         refused by the funds check that follows. The book used to refuse any buy
         over 10% of the paper account, so paper and live differed (FDS-MX-001
-        decision D7, 2026-10-25)."""
+        decision D7, 2026-10-25). The exchange's sell step and minimum order are
+        applied before an order reaches the book, by the paper exchange
+        (``trading_mode.PaperExchange``), as a live connector applies them."""
         return True
 
     def _commission_rate(self, order: Order) -> Decimal:

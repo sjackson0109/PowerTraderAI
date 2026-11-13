@@ -28,6 +28,7 @@ from signal_engine import SignalEngine
 from strategies.base import Action
 from strategies.settings import read_strategy_settings
 from trading_mode import (
+    BELOW_MINIMUM,
     LiveTradingRefused,
     OrderTarget,
     TradingModeError,
@@ -38,6 +39,7 @@ from trading_mode import (
     read_paper_settings,
     read_trading_settings,
     resolve_order_target,
+    settings_problem,
 )
 
 # -----------------------------
@@ -64,6 +66,9 @@ TERMINAL_ORDER_STATES = frozenset(
 PREVIEW_REPEAT_SECONDS = 15 * 60
 # How long a coin's minimum order is kept for telling dust from a position
 DUST_MINIMUM_SECONDS = 60 * 60
+# An order the exchange refuses for its size is tried again every cycle (an exit
+# can be worth the minimum again later); the refusal is reported once in this long
+BELOW_MINIMUM_REPORT_SECONDS = 60 * 60
 # An order whose send raised (a timeout, a dropped connection) may have been made
 # all the same. Its intent stays in pnl_ledger.json (``order_intents``). Where the
 # exchange answers a repeated client order id with the order it already made, the
@@ -2025,8 +2030,17 @@ class CryptoAPITrading:
 
         if str(result.status).lower().strip() == "rejected" and result.reason:
             # e.g. PRICE_UNAVAILABLE: nothing was filled, nothing is pending; the
-            # next cycle simply tries again.
-            self._note_price_event("unavailable")
+            # next cycle simply tries again. An order too small for the exchange
+            # (BELOW_MINIMUM) is not a missing price.
+            if not str(result.reason).startswith(BELOW_MINIMUM):
+                self._note_price_event("unavailable")
+            else:
+                key = f"below-minimum:{symbol}|{side}"
+                if time.time() - self._warn_ts.get(key, 0.0) < (
+                    BELOW_MINIMUM_REPORT_SECONDS
+                ):
+                    return None  # already reported
+                self._warn_ts[key] = time.time()
             print(
                 f"{Fore.YELLOW}ORDER REJECTED ({symbol} {side}): {result.reason}{Style.RESET_ALL}"
             )
@@ -2143,7 +2157,9 @@ class CryptoAPITrading:
     def _fee_detail(order: OrderResult) -> dict:
         """Ledger columns for how a fill's fee was worked out, where the exchange (or
         the paper account) says: its currency, the rate charged (a fraction of the
-        filled value), "maker" or "taker", and whose rates and from where."""
+        filled value), "maker" or "taker", and whose rates and from where. A fee
+        charged in another asset than the quote currency (BNB on Binance) is in
+        ``other_fees``, asset -> amount as the exchange gave it."""
         detail = {
             "fee_currency": getattr(order, "fee_currency", ""),
             "fee_rate": getattr(order, "fee_rate", None),
@@ -2151,11 +2167,15 @@ class CryptoAPITrading:
             "fee_exchange": getattr(order, "fee_exchange", ""),
             "fee_source": getattr(order, "fee_source", ""),
         }
-        return {
+        detail = {
             k: v
             for k, v in detail.items()
             if isinstance(v, (str, int, float)) and v != ""
         }
+        other_fees = getattr(order, "other_fees", None)
+        if isinstance(other_fees, dict) and other_fees:
+            detail["other_fees"] = dict(other_fees)
+        return detail
 
     @staticmethod
     def _provenance(order: OrderResult, target: OrderTarget) -> dict:
@@ -2454,11 +2474,19 @@ class CryptoAPITrading:
         # The trader is pinned to the mode/broker it started in. If the setting
         # changed underneath it, stop touching the exchange until it is restarted.
         if not self._trading_mode_unchanged():
-            print(
-                f"{Fore.YELLOW}Trading mode changed since start-up (started as "
-                f"'{self._target.key}'). No orders will be placed; restart the "
-                f"trader to apply it.{Style.RESET_ALL}"
-            )
+            # a settings file that cannot be read reads as paper: say that instead
+            unreadable = settings_problem(self._settings_source)
+            if unreadable:
+                print(
+                    f"{Fore.YELLOW}No orders will be placed: {unreadable}."
+                    f"{Style.RESET_ALL}"
+                )
+            else:
+                print(
+                    f"{Fore.YELLOW}Trading mode changed since start-up (started as "
+                    f"'{self._target.key}'). No orders will be placed; restart the "
+                    f"trader to apply it.{Style.RESET_ALL}"
+                )
             time.sleep(5)
             return
 

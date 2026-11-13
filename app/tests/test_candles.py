@@ -4,6 +4,8 @@ the exchange layer (FDS-MX-001 phase F)."""
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import tempfile
 import unittest
@@ -120,21 +122,23 @@ class GetCandlesTests(unittest.TestCase):
         self.assertTrue(os.path.isfile(path))
 
     def test_only_missing_ranges_are_fetched(self):
+        """...and the last cached bars, in the same request as the new ones."""
         server = FakeKlines()
         self.get(server, at(100), at(200))
         server.calls.clear()
         df, f = self.get(server, at(50), at(250))  # extend both sides
         self.assertEqual(len(df), 200)
         starts = sorted(int(c["startTime"]) for c in server.calls)
+        tail = at(200 - cd.REFETCH_TAIL_BARS)
         self.assertEqual(
-            starts, [int(at(50).timestamp() * 1000), int(at(200).timestamp() * 1000)]
+            starts, [int(at(50).timestamp() * 1000), int(tail.timestamp() * 1000)]
         )
         # nothing in the middle was re-requested
         for c in server.calls:
             self.assertFalse(
                 at(100).timestamp() * 1000
                 <= int(c["startTime"])
-                < at(200).timestamp() * 1000
+                < tail.timestamp() * 1000
             )
 
     def test_forming_bar_is_never_returned_or_cached(self):
@@ -219,6 +223,162 @@ class GetCandlesTests(unittest.TestCase):
         path = cd.cache_path("BTCUSDT", "1h", self.tmp.name)
         self.assertEqual(cd.file_sha256(path), cd.file_sha256(path))
         self.assertEqual(len(cd.file_sha256(path)), 64)
+
+
+class RevisingKlines(FakeKlines):
+    """``FakeKlines`` whose exchange can change a bar's close after it was served."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.closes = {}  # bar index -> the close the exchange gives for it now
+
+    def row(self, i):
+        r = super().row(i)
+        if i in self.closes:
+            r[4] = f"{self.closes[i]}"
+        return r
+
+
+def starts_in(calls, first, last):
+    """The requests that start in ``first`` .. ``last`` (inclusive)."""
+    lo, hi = int(first.timestamp() * 1000), int(last.timestamp() * 1000)
+    return [c for c in calls if lo <= int(c["startTime"]) <= hi]
+
+
+class SettledBarsTests(unittest.TestCase):
+    """What the exchange changes after the first fetch reaches the cache (A2 N16): bars
+    count as closed only a short delay after their close, the last cached bars are
+    asked for again with every extension, and gaps inside the cache are asked for
+    again, but not on every update."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = cd.cache_path("BTCUSDT", "1h", self.tmp.name)
+        # the candle layer's own log (it may not have one yet on unfixed code)
+        self.log = logging.getLogger("market_data.candles")
+
+    def get(self, server, start, end, now):
+        return cd.get_candles(
+            "BTCUSDT",
+            "1h",
+            start,
+            end,
+            cache_dir=self.tmp.name,
+            fetcher=server,
+            now=now,
+        )
+
+    def close_of(self, df, hour):
+        return float(df.loc[df["open_time"] == at(hour), "close"].iloc[0])
+
+    def test_a_bar_the_exchange_revises_is_replaced_in_the_cache_and_logged_once(self):
+        server = RevisingKlines()
+        server.closes[9] = 50.0  # provisional: the bar as first served
+        self.get(server, at(0), at(10), now=at(10))
+        server.closes[9] = 109.25  # the exchange's final bar
+        server.calls.clear()
+        with mock.patch.object(self.log, "warning") as warn:
+            df = self.get(server, at(0), at(11), now=at(11))
+            self.get(server, at(0), at(12), now=at(12))
+        self.assertEqual(self.close_of(df, 9), 109.25)
+        self.assertEqual(self.close_of(cd._read_cache(self.path), 9), 109.25)
+        # the last cached bars ride along in the request made for the new bar
+        self.assertEqual(len(server.calls), 2)
+        revised = [str(c) for c in warn.call_args_list if "revised" in str(c)]
+        self.assertEqual(len(revised), 1, revised)
+        for part in ("BTCUSDT", "1h", str(at(9)), "50.0", "109.25"):
+            self.assertIn(part, revised[0])
+
+    def test_a_bar_inside_the_settling_delay_is_not_closed_yet(self):
+        """By the wall clock (no ``now`` given): a bar that closed 5 s ago is neither
+        returned nor cached; once the delay has passed it is."""
+        server = FakeKlines()
+        closed_at = at(10)  # bar 9's close
+
+        def wall(seconds_after_close):
+            return (closed_at + pd.Timedelta(seconds=seconds_after_close)).timestamp()
+
+        with mock.patch.object(cd.time, "time", return_value=wall(5)):
+            df = self.get(server, at(0), at(10), now=None)
+        self.assertEqual(df["open_time"].iloc[-1], at(8))
+        self.assertEqual(cd._read_cache(self.path)["open_time"].iloc[-1], at(8))
+        with mock.patch.object(cd.time, "time", return_value=wall(cd.SETTLE_SECONDS)):
+            df = self.get(server, at(0), at(10), now=None)
+        self.assertEqual(df["open_time"].iloc[-1], at(9))
+
+    def test_an_interior_gap_is_refilled_when_the_exchange_has_the_bars(self):
+        server = FakeKlines(skip={20, 21})  # missing when the cache was filled
+        first = self.get(server, at(0), at(48), now=at(48))
+        self.assertEqual(first.attrs["report"].missing_bars, 2)
+        server.skip.clear()  # the exchange has them now
+        server.calls.clear()
+        df = self.get(server, at(0), at(48), now=at(48))
+        self.assertEqual(len(df), 48)
+        self.assertEqual(df.attrs["report"].missing_bars, 0)
+        self.assertIn(at(20), list(cd._read_cache(self.path)["open_time"]))
+        self.assertEqual(len(server.calls), 1)  # the gap only, in one request
+        self.assertEqual(
+            int(server.calls[0]["startTime"]), int(at(20).timestamp() * 1000)
+        )
+
+    def test_a_gap_the_exchange_confirms_empty_is_not_asked_for_on_every_update(self):
+        """A halt (as Coinbase's XRP halt): the gap is asked for again once; the empty
+        answer is recorded, so neither the next updates nor another process ask again.
+        """
+        halt = set(range(100, 400))
+        server = FakeKlines(skip=halt)
+        self.get(server, at(0), at(500), now=at(500))
+        for hour in range(501, 506):  # the trader's hourly updates
+            df = self.get(server, at(0), at(hour), now=at(hour))
+        self.assertEqual(len(starts_in(server.calls, at(100), at(399))), 1)
+        self.assertEqual(df.attrs["report"].missing_bars, 300)  # still reported
+        cd._gaps_asked.clear()  # as in a new process
+        self.get(server, at(0), at(506), now=at(506))
+        self.assertEqual(len(starts_in(server.calls, at(100), at(399))), 1)
+        self.assertTrue(os.path.isfile(cd.gap_record_path(self.path)))
+
+    def test_an_old_empty_gap_record_is_checked_again(self):
+        server = FakeKlines(skip={20, 21})
+        for _ in range(2):  # filled, then the gap asked for once and recorded empty
+            self.get(server, at(0), at(48), now=at(48))
+        self.assertEqual(len(starts_in(server.calls, at(20), at(21))), 1)
+        record_path = cd.gap_record_path(self.path)
+        with open(record_path, encoding="utf-8") as f:
+            record = json.load(f)
+        old = (
+            pd.Timestamp.now(tz="UTC")
+            - cd.NO_BARS_IN_GAP_MAX_AGE
+            - pd.Timedelta(hours=1)
+        )
+        for stretch in record["empty"]:
+            stretch["checked_at"] = old.isoformat()
+        with open(record_path, "w", encoding="utf-8") as f:
+            json.dump(record, f)
+        cd._gaps_asked.clear()  # a new process
+        self.get(server, at(0), at(48), now=at(48))
+        self.assertEqual(len(starts_in(server.calls, at(20), at(21))), 2)
+
+    def test_a_gap_refill_that_fails_is_logged_and_the_cached_bars_are_used(self):
+        server = FakeKlines(skip={20, 21})
+        cached = self.get(server, at(0), at(48), now=at(48))
+        original = server.fetch
+
+        def failing(symbol, tf, start_ms, end_ms=None):
+            server.calls.append({"startTime": int(start_ms), "endTime": end_ms})
+            raise cd.CandleFetchError("exchange down")
+
+        server.fetch = failing
+        with mock.patch.object(self.log, "warning") as warn:
+            df = self.get(server, at(0), at(48), now=at(48))
+            again = self.get(server, at(0), at(48), now=at(48))
+        pd.testing.assert_frame_equal(df, cached)
+        pd.testing.assert_frame_equal(again, cached)
+        # asked once in this process, and the failure logged
+        self.assertEqual(len(starts_in(server.calls, at(20), at(21))), 1)
+        self.assertIn("exchange down", str(warn.call_args_list))
+        server.fetch = original
+        self.assertFalse(os.path.exists(cd.gap_record_path(self.path)))
 
 
 class ValidationTests(unittest.TestCase):

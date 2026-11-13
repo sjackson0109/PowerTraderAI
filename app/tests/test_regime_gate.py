@@ -24,6 +24,7 @@ from helpers import make_candles
 
 from backtest import cli
 from backtest.engine import CostModel, run_backtest
+from market_data.candles import SETTLE_SECONDS
 from signal_engine import SignalEngine
 from strategies import create
 from strategies import descriptions as words
@@ -268,7 +269,7 @@ class BacktestAndEngineTests(unittest.TestCase):
         reasons = set()
         for k in range(24 * 52, len(hourly)):
             close = hourly["open_time"].iloc[k] + pd.Timedelta(hours=1)
-            state["now"] = close.timestamp() + 10
+            state["now"] = close.timestamp() + SETTLE_SECONDS + 10  # once settled
             got = engine.decide("ETH", None)
             want = replay.evaluate(
                 replay.window(hourly, k),

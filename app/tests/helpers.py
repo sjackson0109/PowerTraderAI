@@ -2,7 +2,8 @@
 paper-trader harness.
 
 Nothing here (or in any test using it) touches the network: the exchange layer's
-quotes (``trading_mode._layer_quote``) and the trader's exchanges in Settings
+quotes (``trading_mode._layer_quote``), the paper account's sell step and minimum
+order (``trading_mode._layer_venue_rules``) and the trader's exchanges in Settings
 (``pt_trader._market_exchanges``) are replaced for the duration of every test.
 """
 
@@ -24,6 +25,7 @@ if APP_DIR not in sys.path:
 import pandas as pd  # noqa: E402
 
 import trading_mode as tm  # noqa: E402
+from market_data.candles import SETTLE_SECONDS  # noqa: E402
 from pt_exchange_abstraction import PriceQuote, Sourced, TradingFees  # noqa: E402
 
 
@@ -65,7 +67,11 @@ class Feed:
         self.calls = 0
         self.fail = None
 
-    def set_after_bar(self, k, seconds_after_close=10):
+    def set_after_bar(self, k, seconds_after_close=None):
+        """The clock ``seconds_after_close`` after bar ``k`` closes (default: 10 s
+        after it has settled, ``SETTLE_SECONDS``, so the engine decides it)."""
+        if seconds_after_close is None:
+            seconds_after_close = SETTLE_SECONDS + 10
         close = self.frame["open_time"].iloc[k] + HOUR
         self.now = close.timestamp() + seconds_after_close
 
@@ -140,15 +146,22 @@ class FakeFees:
 class FakeMarkets:
     """Stands in for the trader's exchanges in Settings (pt_trader._market_exchanges),
     so no trader test reaches a real exchange. States no minimum order unless a test
-    sets ``minimum``; records the symbols it was asked about."""
+    sets ``minimum``, and no sell step unless it sets ``step``; records the symbols
+    the trader asked it for a minimum order."""
 
     def __init__(self) -> None:
         self.minimum: Optional[float] = None
+        self.step: Optional[float] = None
         self.asked: List[str] = []
 
     def min_order_usd(self, symbol: str) -> Optional[float]:
         self.asked.append(symbol)
         return self.minimum
+
+    def venue_rules(self, base: str) -> tm.VenueRules:
+        """What the paper account's fills follow (``trading_mode._layer_venue_rules``):
+        the same exchanges in Settings, so the same minimum order."""
+        return tm.VenueRules(sell_step=self.step, minimum_usd=self.minimum)
 
 
 class PaperTraderCase(unittest.TestCase):
@@ -178,6 +191,7 @@ class PaperTraderCase(unittest.TestCase):
             mock.patch.object(self.pt_trader, "HUB_DATA_DIR", self.tmp.name),
             mock.patch.object(tm, "_layer_quote", self.quotes.layer_quote),
             mock.patch.object(tm, "_layer_fees", self.fees.layer_fees),
+            mock.patch.object(tm, "_layer_venue_rules", self.markets.venue_rules),
             mock.patch.object(
                 self.pt_trader, "_market_exchanges", lambda: self.markets
             ),

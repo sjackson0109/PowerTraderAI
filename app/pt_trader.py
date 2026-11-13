@@ -64,6 +64,14 @@ TERMINAL_ORDER_STATES = frozenset(
 PREVIEW_REPEAT_SECONDS = 15 * 60
 # How long a coin's minimum order is kept for telling dust from a position
 DUST_MINIMUM_SECONDS = 60 * 60
+# An order whose send raised (a timeout, a dropped connection) may have been made
+# all the same. Its intent stays in pnl_ledger.json (``order_intents``). Where the
+# exchange answers a repeated client order id with the order it already made, the
+# next order on that coin and side is the same order sent again, for this long:
+UNKNOWN_ORDER_RESEND_SECONDS = 15 * 60
+# Elsewhere no order is sent on that coin and side for this long, so the holdings
+# can show whether it was made (an entry is never made in a coin already held):
+UNKNOWN_ORDER_WAIT_SECONDS = 60
 
 
 # Initialize colorama
@@ -402,15 +410,19 @@ class _TraderRiskAdapter:
     def validate_order(
         self, order: dict, portfolio_value: float, max_buy_usd: float
     ) -> dict:
-        """A halt refuses every order. A buy may be worth at most ``max_buy_usd`` (the
-        trader passes the coin's budget). A sell is never refused for its size: it only
-        reduces a holding, and a cap there would leave a position that cannot be sold.
+        """A halt refuses every buy; a sell still goes through, so exits and stops keep
+        working. A buy may be worth at most ``max_buy_usd`` (the trader passes the
+        coin's budget). A sell is never refused for its size: it only reduces a
+        holding, and a cap there would leave a position that cannot be sold.
 
         RiskManager.validate_trade is not used for size: it caps every order, sells
         included, at 1% of the account, below the trader's own sizing rules."""
         self.manager.portfolio_value = float(portfolio_value)
-        if self.is_trading_halted():
-            return {"approved": False, "reason": "Trading is halted by risk controls"}
+        if self.is_trading_halted() and order.get("side") != "sell":
+            return {
+                "approved": False,
+                "reason": "Buying is halted by risk controls (sells still go through)",
+            }
         value = float(order["quantity"]) * float(order["price"])
         # half a cent: the quantity is rounded to 8 decimals, so value can pass the
         # limit by a fraction of a cent
@@ -600,6 +612,7 @@ class CryptoAPITrading:
         self._trade_ended: Dict[str, bool] = self._ended_trades()
         self._pnl_ledger = self._load_pnl_ledger()
         self._reconcile_pending_orders()
+        self._report_unknown_orders()
 
         # Initialize Risk and Cost Management
         self.risk_manager = _TraderRiskAdapter(
@@ -652,6 +665,8 @@ class CryptoAPITrading:
                     "open_positions", {}
                 )  # { "BTC": {"usd_cost": float, "qty": float} }
                 data.setdefault("pending_orders", {})  # { "<order_id>": {...} }
+                # { "<symbol>|<side>": {...} }: sends whose outcome is unknown
+                data.setdefault("order_intents", {})
                 return data
         except Exception:
             pass
@@ -660,14 +675,85 @@ class CryptoAPITrading:
             "last_updated_ts": time.time(),
             "open_positions": {},
             "pending_orders": {},
+            "order_intents": {},
         }
 
-    def _save_pnl_ledger(self) -> None:
+    def _save_pnl_ledger(self) -> bool:
+        """Write the ledger; False when it could not be written."""
         try:
             self._pnl_ledger["last_updated_ts"] = time.time()
             self._atomic_write_json(self.pnl_ledger_path, self._pnl_ledger)
         except Exception:
-            pass
+            return False
+        return True
+
+    # -- order intents: an order is on disk before it is sent (N5) ------------------
+
+    def _order_intents(self) -> dict:
+        intents = self._pnl_ledger.setdefault("order_intents", {})
+        if not isinstance(intents, dict):
+            intents = self._pnl_ledger["order_intents"] = {}
+        return intents
+
+    def _order_intent(self, symbol: str, side: str) -> Optional[dict]:
+        intent = self._order_intents().get(f"{symbol}|{side}")
+        return intent if isinstance(intent, dict) else None
+
+    def _keep_order_intent(self, symbol: str, side: str, intent: dict) -> bool:
+        """Record ``intent`` on disk; False when it could not be (then the order must
+        not be sent)."""
+        self._order_intents()[f"{symbol}|{side}"] = intent
+        return self._save_pnl_ledger()
+
+    def _drop_order_intent(self, symbol: str, side: str) -> None:
+        if self._order_intents().pop(f"{symbol}|{side}", None) is not None:
+            self._save_pnl_ledger()
+
+    @staticmethod
+    def _resends_safely(target: OrderTarget) -> bool:
+        """Whether an order sent again with the same client order id cannot make a
+        second one: the exchange answers a repeated id with the order it made."""
+        return bool(
+            getattr(target.exchange, "REPEATED_CLIENT_ORDER_ID_RETURNS_ORDER", False)
+        )
+
+    def _unknown_order(self, target: OrderTarget, symbol: str, side: str):
+        """What to do about an earlier ``side`` order on ``symbol`` whose outcome is
+        unknown: ``("none", None)`` (there is none, or it is given up),
+        ``("resend", intent)`` (send that order again, same id and quantity) or
+        ``("wait", intent)`` (send nothing yet)."""
+        intent = self._order_intent(symbol, side)
+        if intent is None:
+            return "none", None
+        age = time.time() - float(intent.get("first_ts") or 0.0)
+        same_account = intent.get("account") == target.key
+        if same_account and self._resends_safely(target):
+            if age < UNKNOWN_ORDER_RESEND_SECONDS:
+                return "resend", intent
+        elif same_account and age < UNKNOWN_ORDER_WAIT_SECONDS:
+            return "wait", intent
+        message = (
+            f"Order {intent.get('client_order_id')} ({symbol} {side}, sent "
+            f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(intent.get('first_ts') or 0))}): "
+            "its outcome is still unknown. Check the exchange's order history; new "
+            "orders are sent again."
+        )
+        print(f"{Fore.RED}{message}{Style.RESET_ALL}")
+        logger.error(message)
+        self._drop_order_intent(symbol, side)
+        return "none", None
+
+    def _report_unknown_orders(self) -> None:
+        """At start: every kept order whose outcome is unknown."""
+        for key, intent in sorted(self._order_intents().items()):
+            if isinstance(intent, dict):
+                message = (
+                    f"Order {intent.get('client_order_id')} ({key.replace('|', ' ')}) "
+                    "was being sent when the trader last stopped or lost the "
+                    "connection: its outcome is unknown."
+                )
+                print(f"{Fore.YELLOW}{message}{Style.RESET_ALL}")
+                logger.warning(message)
 
     def _trade_history_has_order_id(self, order_id: str) -> bool:
         try:
@@ -1325,6 +1411,23 @@ class CryptoAPITrading:
         )
         self._last_price_summary_ts = time.time()
 
+    def _decide(self, base: str, position: Any) -> Any:
+        """The strategy's decision for ``base`` (``SignalEngine.decide``), or None, a
+        HOLD, when deciding raised: one coin's error never ends the pass, so the other
+        coins are still decided and managed and the status is still written (N8)."""
+        try:
+            return self.signal_engine.decide(base, position)
+        except Exception as exc:
+            message = (
+                f"No decision for {base} this pass ({type(exc).__name__}: {exc}); "
+                "it holds, and the other coins go on"
+            )
+            if time.time() - self._warn_ts.get(f"decide:{base}", 0.0) >= 300.0:
+                self._warn_ts[f"decide:{base}"] = time.time()
+                print(f"{Fore.YELLOW}{message}{Style.RESET_ALL}")
+                logger.exception(message)
+            return None
+
     def _warn_throttled(self, key: str, message: str, every: float = 60.0) -> None:
         """WARNING at most once per ``every`` seconds per key (the loop runs 2x/s)."""
         now = time.time()
@@ -1748,10 +1851,13 @@ class CryptoAPITrading:
         price: float,
         minimum_entry_usd: Optional[float] = None,
     ):
-        """Shared pre-order risk gate. Returns True when the order may proceed."""
-        if self.risk_manager.is_trading_halted():
+        """Shared pre-order risk gate. Returns True when the order may proceed. A halt
+        refuses buys only: a sell (an exit, a stop, the trailing margin) goes through.
+        """
+        if side != "sell" and self.risk_manager.is_trading_halted():
             print(
-                f"{Fore.RED}RISK HALT: Trading is currently halted by risk management system{Style.RESET_ALL}"
+                f"{Fore.RED}RISK HALT: buying is halted by the emergency stop; sells "
+                f"still go through{Style.RESET_ALL}"
             )
             return False
 
@@ -1831,6 +1937,50 @@ class CryptoAPITrading:
                 return None
             self._previewed[(symbol, side)] = time.time()
 
+        # An earlier order here whose outcome is unknown is never sent again under a
+        # new id: it is sent again as it was, or nothing is sent yet (N5)
+        intent = None
+        if not target.preview:
+            how, intent = self._unknown_order(target, symbol, side)
+            if how == "wait":
+                self._warn_throttled(
+                    f"unknown-order:{symbol}|{side}",
+                    f"No {side} order for {symbol} yet: the outcome of order "
+                    f"{intent.get('client_order_id')} is unknown, and the holdings "
+                    "may still show it.",
+                    every=30.0,
+                )
+                return None
+            if how == "resend":
+                client_order_id = str(intent["client_order_id"])
+                asset_quantity = float(intent["quantity"])
+                intent["attempts"] = int(intent.get("attempts") or 1) + 1
+                print(
+                    f"  Sending order {client_order_id} ({symbol} {side}) again with "
+                    "the same id: the last send's outcome is unknown."
+                )
+            else:
+                client_order_id = client_order_id or str(uuid.uuid4())
+                intent = {
+                    "client_order_id": client_order_id,
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": float(asset_quantity),
+                    "tag": tag,
+                    "account": target.key,
+                    "first_ts": time.time(),
+                    "attempts": 1,
+                }
+            intent["last_ts"] = time.time()
+            if not self._keep_order_intent(symbol, side, intent):
+                message = (
+                    f"ORDER NOT SENT ({symbol} {side}): it could not be recorded "
+                    f"first in {self.pnl_ledger_path}"
+                )
+                print(f"{Fore.RED}{message}{Style.RESET_ALL}")
+                logger.error(message)
+                return None
+
         # --- exact profit tracking snapshot (BEFORE placing order) ---
         buying_power_before = self._get_buying_power()
 
@@ -1842,7 +1992,23 @@ class CryptoAPITrading:
             msg = self._describe_exchange_error(exc, "order placement", target.key)
             print(f"{Fore.RED}ORDER FAILED ({symbol} {side}): {msg}{Style.RESET_ALL}")
             logger.error(f"Order failed ({symbol} {side} via {target.key}): {msg}")
+            if intent is not None:
+                # it may have been made all the same: kept until the outcome is known
+                later = (
+                    "the next order here sends it again with the same id"
+                    if self._resends_safely(target)
+                    else f"no {side} order for {symbol} for "
+                    f"{UNKNOWN_ORDER_WAIT_SECONDS} s"
+                )
+                print(
+                    f"  Order {client_order_id} may have been made: its outcome is "
+                    f"unknown, so {later}."
+                )
             return None
+
+        # the exchange answered: the outcome is known (made, refused or previewed)
+        if intent is not None:
+            self._drop_order_intent(symbol, side)
 
         order_id = result.order_id
 
@@ -2066,6 +2232,10 @@ class CryptoAPITrading:
                     "reason": d.reason,
                     "bar_time": str(d.bar_time),
                     "stop": d.stop_price,
+                    # whose bars decided it (N15)
+                    "exchange": getattr(self.signal_engine, "last_exchanges", {}).get(
+                        base
+                    ),
                 }
                 for base, d in self.signal_engine.last_decisions.items()
             },
@@ -2632,7 +2802,7 @@ class CryptoAPITrading:
                 exit_qty = self._catalogue_exit_quantity(symbol, quantity)
                 if avg_cost_basis > 0 and exit_qty > 0:
                     pos = self.signal_engine.ensure_position(symbol, avg_cost_basis)
-                    decision = self.signal_engine.decide(symbol, pos)
+                    decision = self._decide(symbol, pos)
                     if decision is not None:
                         self._report_position_stops(symbol, pos, decision, positions)
                     if decision is not None and decision.action is Action.EXIT_LONG:
@@ -2827,6 +2997,8 @@ class CryptoAPITrading:
 
             if (hard_hit or neural_hit) and self._market_not_trading(symbol):
                 pass  # its market is not trading: no DCA buy (reason printed once)
+            elif (hard_hit or neural_hit) and self.risk_manager.is_trading_halted():
+                pass  # buying is halted: no DCA buy (run() says why)
             elif hard_hit or neural_hit:
                 if neural_hit and hard_hit:
                     reason = f"NEURAL L{neural_level_now}>=L{neural_level_needed} OR HARD {hard_level:.2f}%"
@@ -2951,6 +3123,10 @@ class CryptoAPITrading:
 
         entry_coins = set(self._entry_coins())
         start_index = 0
+        # buying is halted (an emergency stop): no new trade is looked for, so no
+        # entry decision, LLM check or entry assessment is made either
+        if self.risk_manager.is_trading_halted():
+            start_index = len(crypto_symbols)
         while start_index < len(crypto_symbols):
             base_symbol = crypto_symbols[start_index].upper().strip()
             full_symbol = f"{base_symbol}-USD"
@@ -2975,7 +3151,7 @@ class CryptoAPITrading:
             if catalogue_mode:
                 # Not held -> the strategy's record of a position (if any) is stale.
                 self.signal_engine.forget(base_symbol)
-                entry_decision = self.signal_engine.decide(base_symbol, None)
+                entry_decision = self._decide(base_symbol, None)
                 if (
                     entry_decision is None
                     or entry_decision.action is not Action.ENTER_LONG
@@ -3116,27 +3292,36 @@ class CryptoAPITrading:
         except Exception:
             pass
 
+    def _say_halted(self, force: bool = False) -> None:
+        """While buying is halted: why, and what still runs (every 5 minutes)."""
+        now = time.time()
+        if not force and now - getattr(self, "_halt_said_ts", 0.0) < 300.0:
+            return
+        self._halt_said_ts = now
+        reason = self.risk_manager.halt_reason or "risk controls"
+        print(f"{Fore.RED}BUYING HALTED: {reason}{Style.RESET_ALL}")
+        print(
+            f"{Fore.RED}No new trades or DCA buys until Resume trading in Settings > "
+            f"Risk. Exits, stops and the trailing margin still sell.{Style.RESET_ALL}"
+        )
+        logger.warning(f"Buying halted ({reason}); held positions are still managed")
+
     def run(self):
         while True:
             try:
-                # A halt ends the run before anything trades: an emergency stop, also
-                # one from before this start. Only Resume trading clears it.
-                if self.risk_manager.is_trading_halted():
-                    reason = self.risk_manager.halt_reason or "risk controls"
-                    print(f"{Fore.RED}TRADING HALTED: {reason}{Style.RESET_ALL}")
-                    print(
-                        f"{Fore.RED}Press Resume trading in Settings > Risk to trade "
-                        f"again{Style.RESET_ALL}"
-                    )
-                    break
-
                 # Risk monitoring at start of each cycle (needs a complete account
-                # snapshot, so it starts after the first manage_trades() pass)
+                # snapshot, so it starts after the first manage_trades() pass). This
+                # also applies Resume trading from Settings > Risk.
                 current_portfolio_value = self._get_account_value()
                 if current_portfolio_value is not None:
                     self.risk_manager.update_portfolio_value(current_portfolio_value)
 
-                    # Check for emergency conditions
+                # An emergency stop halts buying: no new trade and no DCA buy, also
+                # after a restart, until Resume trading. What is held is still
+                # managed: exits, stops and the trailing margin still sell.
+                if self.risk_manager.is_trading_halted():
+                    self._say_halted()
+                elif current_portfolio_value is not None:
                     risk_status = self.risk_manager.check_emergency_conditions(
                         current_portfolio_value
                     )
@@ -3144,21 +3329,14 @@ class CryptoAPITrading:
                         print(
                             f"{Fore.RED}EMERGENCY STOP: {risk_status['reason']}{Style.RESET_ALL}"
                         )
-                        print(
-                            f"{Fore.RED}Trading halted until Resume trading is "
-                            f"pressed in Settings > Risk{Style.RESET_ALL}"
-                        )
                         self.risk_manager.emergency_stop(
                             risk_status["reason"], current_portfolio_value
                         )
-                        break
+                        self._say_halted(force=True)
 
                     # Log risk warnings
-                    if risk_status["warnings"]:
-                        for warning in risk_status["warnings"]:
-                            print(
-                                f"{Fore.YELLOW}RISK WARNING: {warning}{Style.RESET_ALL}"
-                            )
+                    for warning in risk_status["warnings"]:
+                        print(f"{Fore.YELLOW}RISK WARNING: {warning}{Style.RESET_ALL}")
 
                 self.manage_trades()
                 time.sleep(0.5)

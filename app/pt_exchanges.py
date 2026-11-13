@@ -2226,6 +2226,10 @@ class CoinbaseExchange(AbstractExchange):
     # The connector can show what an order would do without placing it (POST
     # /orders/preview, which needs only the View permission)
     SUPPORTS_ORDER_PREVIEW = True
+    # Coinbase answers an order sent with a client_order_id it has seen with the
+    # order it already made, not a second one (``place_order``): an order whose send
+    # raised can be sent again with the same id (the trader's order intents)
+    REPEATED_CLIENT_ORDER_ID_RETURNS_ORDER = True
 
     def _market_order(self, symbol: str, side: str, amount: float):
         """The body of a market (IOC) order for ``amount`` coins, or ``(None,

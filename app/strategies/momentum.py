@@ -42,6 +42,8 @@ LOOKBACKS = ("lookback_1", "lookback_2", "lookback_3")
 class TimeSeriesMomentum(Strategy):
     """At least ``min_agree`` of three past returns positive: long; else cash."""
 
+    counts_bars = False  # each earlier close is found by its open time
+
     def __init__(self, **params):
         super().__init__(**params)
         days = [self.params[k] for k in LOOKBACKS]

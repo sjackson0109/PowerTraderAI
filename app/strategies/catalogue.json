@@ -154,6 +154,23 @@
     "research_refs": ["PTAI-RD-001 B trend.price-above-ma", "Grobys, Ahmed and Sapkota (2020)", "Detzel et al. (2021)"]
   },
   {
+    "strategy_id": "STRAT-007",
+    "strategy_name": "Donchian Breakout, Midline Exit (daily)",
+    "family": "breakout",
+    "class_type": "main",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1d",
+    "timeframes_permitted": ["1d"],
+    "entry_logic_summary": "The closed bar's close is above every close of the previous channel_days days (a new closing high).",
+    "exit_logic_summary": "The closed bar's close is below the midline of the previous channel_days closes (halfway between their highest and lowest); with OVL-MIDLINE the stop never moves down; or a risk overlay exits.",
+    "dependencies_indicators": ["DONCHIAN"],
+    "default_params": {"channel_days": 20},
+    "param_bounds": {"channel_days": {"min": 20, "max": 365}},
+    "version": "1.0.0",
+    "authorisation": "research",
+    "research_refs": ["PTAI-RD-001 B breakout.zarattini-ensemble", "Zarattini, Pagani and Barbon (2025)"]
+  },
+  {
     "strategy_id": "OVL-RATCHET",
     "strategy_name": "Ratchet Stop",
     "family": "risk_overlay",
@@ -243,4 +260,20 @@
     "authorisation": "research",
     "data_requirements": {"coins": "own+reference"},
     "research_refs": ["FDS-SR-001 5.4.3", "strategy-research/A-research-report.md 6"]
+  },
+  {
+    "strategy_id": "OVL-MIDLINE",
+    "strategy_name": "Midline Stop",
+    "family": "risk_overlay",
+    "class_type": "risk_overlay",
+    "long_short_mode": "long_only",
+    "timeframe_primary": "1d",
+    "entry_logic_summary": "No entry logic; does not gate entries.",
+    "exit_logic_summary": "The stop is the midline of the previous days closes (halfway between their highest and lowest), set on every bar while long; it never moves down. A close below it exits.",
+    "dependencies_indicators": ["DONCHIAN"],
+    "default_params": {"days": 20},
+    "param_bounds": {"days": {"min": 20, "max": 365}},
+    "version": "1.0.0",
+    "authorisation": "research",
+    "research_refs": ["PTAI-RD-001 B breakout.zarattini-ensemble", "Zarattini, Pagani and Barbon (2025)"]
   }]

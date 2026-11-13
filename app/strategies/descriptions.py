@@ -373,6 +373,33 @@ DESCRIPTIONS: Dict[str, Described] = {
             ),
         },
     ),
+    "STRAT-007": Described(
+        name="Breakout with a midline exit",
+        summary=(
+            "Buys when a daily close is above every close of the previous channel "
+            "days. Sells when a close is below the midline of those closes, halfway "
+            "between the highest and the lowest. With the midline stop ticked, the "
+            "stop never moves down."
+        ),
+        params={
+            "channel_days": Param(
+                "Channel days",
+                "How many days of closes the channel takes. A coin needs this many "
+                "days of candles before its first decision.",
+            ),
+        },
+    ),
+    "OVL-MIDLINE": Described(
+        name="Midline stop",
+        summary=(
+            "While a coin is held, sets the stop at the midline of the previous "
+            "days' closes, halfway between the highest and the lowest. The stop "
+            "never moves down. A close below it sells."
+        ),
+        params={
+            "days": Param("Days", "How many days of closes the midline is taken from."),
+        },
+    ),
 }
 
 

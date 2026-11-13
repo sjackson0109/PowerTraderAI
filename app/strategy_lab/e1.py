@@ -1000,7 +1000,8 @@ def figures(
         "annualised": (1 + roe) ** (365.0 / window) - 1 if roe > -1 else float("nan"),
         "max_drawdown": float(path.max_drawdown[0]),
         "max_drawdown_usd": float(path.max_drawdown_usd[0]),
-        # within the bar: positions at their bar's low (replay's ``lows``); shown only
+        # within the bar: positions at their bar's low (replay's ``lows``), from a peak
+        # at the earlier bars' highs; shown only
         "intrabar_max_drawdown": (
             float(path.intrabar_max_drawdown[0])
             if path.intrabar_max_drawdown is not None

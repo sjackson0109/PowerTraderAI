@@ -12,9 +12,11 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 from helpers import Feed, PaperTraderCase, make_candles
+from test_strategy_breakout import DailyFeed, daily
 
 import signal_engine as se
 import trading_mode as tm
+from market_data import candles
 from market_data.candles import CandleDataError
 from pt_settings_manager import SettingsManager
 from signal_engine import SignalEngine
@@ -23,6 +25,7 @@ from strategies.factory import build_runner
 from strategies.settings import ENGINES, read_strategy_settings
 
 HOUR = pd.Timedelta(hours=1)
+DAY = pd.Timedelta(days=1)
 PAPER = {
     "trading": {"mode": "paper"},
     "strategy": {"active_id": "STRAT-000"},
@@ -167,7 +170,9 @@ class SettingsManagerTests(unittest.TestCase):
 
 class LateFeed(Feed):
     """``Feed`` whose exchange publishes each bar in ``late`` only ``delay`` seconds
-    after it closes (every bar when ``late`` is None)."""
+    after it closes (every bar when ``late`` is None). The engine gives the provider
+    the settled clock; the exchange publishes by the wall clock, ``SETTLE_SECONDS``
+    later."""
 
     def __init__(self, frame, delay, late=None):
         super().__init__(frame)
@@ -183,7 +188,8 @@ class LateFeed(Feed):
             else self.frame.index.to_series().isin(self.late)
         )
         published = close.where(~is_late, close + self.delay)
-        return self.frame[published <= now].tail(n).reset_index(drop=True)
+        wall = now + pd.Timedelta(seconds=candles.SETTLE_SECONDS)
+        return self.frame[published <= wall].tail(n).reset_index(drop=True)
 
 
 class LateBarTests(unittest.TestCase):
@@ -194,14 +200,17 @@ class LateBarTests(unittest.TestCase):
 
     def setUp(self):
         self.frame = make_candles(trend_series())
+        # published 20 s after the bar settles: the engine's first fetch, 10 s after
+        # it settles (``Feed.set_after_bar``), comes too early
+        self.late_by = candles.SETTLE_SECONDS + 20
 
     def index_of(self, bar_time):
         return int(self.frame.index[self.frame["open_time"] == bar_time][0])
 
     def test_a_late_bar_is_decided_within_the_retry_interval(self):
-        feed = LateFeed(self.frame, delay=20)
+        feed = LateFeed(self.frame, delay=self.late_by)
         engine = SignalEngine(PAPER, feed.provider, feed.clock)
-        feed.set_after_bar(200)  # 10 s after the close: bar 200 is not published yet
+        feed.set_after_bar(200)  # 10 s after it settled: bar 200 is not published yet
         self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 199)
         feed.now += se.FETCH_RETRY_SECONDS + 1
         self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 200)
@@ -227,7 +236,7 @@ class LateBarTests(unittest.TestCase):
     def test_a_bar_late_once_is_still_decided_as_the_backtester_would(self):
         want = expected_actions(self.frame)
         enter = want[0][0]
-        feed = LateFeed(self.frame, delay=20, late=[enter])
+        feed = LateFeed(self.frame, delay=self.late_by, late=[enter])
         engine = SignalEngine(PAPER, feed.provider, feed.clock)
         seen, pos = [], None
         for k in range(len(self.frame)):
@@ -249,15 +258,17 @@ class LateBarTests(unittest.TestCase):
         self.assertEqual(seen, want)
 
     def test_an_entry_gates_late_context_bar_is_fetched_again(self):
-        feed = LateFeed(self.frame, delay=20)
+        feed = LateFeed(self.frame, delay=self.late_by)
         engine = SignalEngine(PAPER, feed.provider, feed.clock)
+
+        def closed_by():  # the settled clock, as decide() passes it
+            return candles.settled(pd.Timestamp(feed.now, unit="s", tz="UTC"))
+
         feed.set_after_bar(200)
-        now = pd.Timestamp(feed.now, unit="s", tz="UTC")
-        first = engine._context_candles("BTC-USD", "1h", 50, now)
+        first = engine._context_candles("BTC-USD", "1h", 50, closed_by())
         self.assertEqual(self.index_of(first["open_time"].iloc[-1]), 199)
-        later = now + pd.Timedelta(seconds=se.FETCH_RETRY_SECONDS + 1)
-        feed.now = later.timestamp()
-        second = engine._context_candles("BTC-USD", "1h", 50, later)
+        feed.now += se.FETCH_RETRY_SECONDS + 1
+        second = engine._context_candles("BTC-USD", "1h", 50, closed_by())
         self.assertEqual(self.index_of(second["open_time"].iloc[-1]), 200)
         self.assertEqual(feed.calls, 2)
 
@@ -298,6 +309,24 @@ class EngineTests(unittest.TestCase):
         self.feed.set_after_bar(209)  # bars up to 209 are closed; 210 is still forming
         d = engine.decide("BTC")
         self.assertEqual(d.bar_time, self.frame["open_time"].iloc[209])
+
+    def test_a_bar_inside_the_settling_delay_is_not_decided(self):
+        """A bar counts as closed only a short delay after its close (A2 N16): one
+        that closed 5 s ago is not decided, even if the provider returns it."""
+
+        def greedy(symbol, tf, n, now):
+            return self.frame.iloc[:211]  # bar 210 as well, whatever the clock
+
+        engine = SignalEngine(PAPER, greedy, self.feed.clock)
+        self.feed.set_after_bar(210, seconds_after_close=5)
+        self.assertEqual(
+            engine.decide("BTC").bar_time, self.frame["open_time"].iloc[209]
+        )
+        later = SignalEngine(PAPER, greedy, self.feed.clock)
+        self.feed.set_after_bar(210, seconds_after_close=candles.SETTLE_SECONDS)
+        self.assertEqual(
+            later.decide("BTC").bar_time, self.frame["open_time"].iloc[210]
+        )
 
     def stuck_engine(self, hours_behind):
         """A feed that stopped updating at bar 200 while the clock moved on."""
@@ -669,6 +698,198 @@ class TraderIntegrationTests(PaperTraderCase):
             trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
         )
         self.assertEqual(len(self.orders()), 1)
+
+
+class DailyTraderCase(PaperTraderCase):
+    """STRAT-004 on the daily bars ``bars()`` gives, through the trader into paper,
+    for one coin. It enters on a new 55-day closing high and exits on a new 20-day
+    low."""
+
+    SETTINGS = {
+        "trading": {"mode": "paper"},
+        "strategy": {"active_id": "STRAT-004", "timeframe": "1d"},
+    }
+
+    def bars(self):
+        raise NotImplementedError
+
+    def setUp(self):
+        super().setUp()
+        self.frame = self.bars()
+        self.feed = DailyFeed(self.frame)
+        self.one_coin("BTC")
+        sleep = mock.patch.object(self.pt_trader.time, "sleep")
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    def trader(self):
+        settings = copy.deepcopy(self.SETTINGS)
+        engine = SignalEngine(settings, self.feed.provider, self.feed.clock)
+        trader = self.pt_trader.CryptoAPITrading(
+            settings_source=settings, signal_engine=engine
+        )
+        trader._order_poll_seconds = 0.0
+        return trader
+
+    def sides(self):
+        orders = tm.get_paper_exchange().account.orders.values()
+        return [o.side.value for o in orders]
+
+    def passes(self, trader, k, seconds_after_close, n=3):
+        """``n`` trader passes at ``seconds_after_close`` after bar ``k`` closed; the
+        decision log lines written meanwhile."""
+        self.feed.set_after_bar(k, seconds_after_close)
+        with mock.patch.object(se.logger, "info") as info:
+            for _ in range(n):
+                tm._quote_cache.clear()
+                trader.manage_trades()
+        return [str(c) for c in info.call_args_list if "Decision BTC" in str(c)]
+
+
+class EntryWindowTests(DailyTraderCase):
+    """An entry is acted on only within 15 minutes of its bar's close, the moment the
+    backtester fills it (at the next bar's open). Later it is missed: one HOLD
+    ``ENTRY_MISSED`` decision logged, no buy. An exit is never late. STRAT-004
+    enters on bars 55 to 57 here and exits on bar 58."""
+
+    WINDOW_S = 15 * 60
+
+    def bars(self):
+        return daily([100.0] * 55 + [110.0, 111.0, 112.0] + [90.0] * 25)
+
+    def test_an_entry_is_acted_on_only_within_the_window_and_an_exit_always(self):
+        trader = self.trader()
+        bar_55 = str(self.frame["open_time"].iloc[55])
+        # a trader started 6 h after the breakout bar closed: missed, logged once
+        logged = self.passes(trader, 55, 6 * 3600)
+        self.assertEqual(self.sides(), [])
+        missed = [line for line in logged if "ENTRY_MISSED" in line]
+        self.assertEqual(len(missed), 1, logged)
+        self.assertIn(f"bar={bar_55}", missed[0])
+        self.assertIn("action=HOLD", missed[0])
+        with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
+            last = json.load(f)["signals"]["last_decisions"]["BTC"]
+        self.assertEqual((last["action"], last["bar_time"]), ("HOLD", bar_55))
+        self.assertTrue(last["reason"].startswith("ENTRY_MISSED"), last)
+        # the next breakout bar, a minute after its close: bought
+        self.passes(trader, 56, 60)
+        self.assertEqual(self.sides(), ["buy"])
+        # the exit, 6 h after its bar closed: still sold
+        self.passes(trader, 58, 6 * 3600)
+        self.assertEqual(self.sides(), ["buy", "sell"])
+
+    def test_a_refused_entry_is_retried_within_the_window_and_not_after_it(self):
+        trader = self.trader()
+        tries = mock.patch.object(
+            trader, "place_buy_order", wraps=trader.place_buy_order
+        )
+        buy = tries.start()
+        self.addCleanup(tries.stop)
+        self.quotes.age_s = 90.0  # stale quotes: paper refuses every order
+        self.passes(trader, 55, 60)
+        self.passes(trader, 55, 10 * 60)
+        self.assertEqual((buy.call_count, self.sides()), (6, []))  # every pass
+        self.quotes.age_s = 0.0
+        logged = self.passes(trader, 55, self.WINDOW_S + 60)
+        # past the window: not tried again, and missed once
+        self.assertEqual((buy.call_count, self.sides()), (6, []))
+        self.assertEqual(len([s for s in logged if "ENTRY_MISSED" in s]), 1)
+        # the next breakout bar: refused a minute after its close, then bought
+        self.quotes.age_s = 90.0
+        self.passes(trader, 56, 60)
+        self.assertEqual((buy.call_count, self.sides()), (9, []))
+        self.quotes.age_s = 0.0
+        self.passes(trader, 56, self.WINDOW_S - 60)
+        self.assertEqual((buy.call_count, self.sides()), (10, ["buy"]))
+
+
+def holed(frame, first, days):
+    """``frame`` with no bars for ``days`` days before bar ``first``: the bars from
+    ``first`` on open ``days`` days later."""
+    out = frame.copy()
+    out.loc[first:, "open_time"] = out.loc[first:, "open_time"] + pd.Timedelta(
+        days=days
+    )
+    return out
+
+
+class LongGapTests(DailyTraderCase):
+    """Entries are held while the bars a decision reads have a gap longer than a day
+    (the strategy lab ends a series there, ``after_long_gaps``): HOLD ``LONG_GAP``,
+    logged once per coin and bar. Exits still run. Here 30 days are missing before
+    bar 60, so STRAT-004's 56 bars include that gap up to bar 114's decision."""
+
+    def bars(self):
+        closes = (
+            [100.0] * 56
+            + [110.0, 111.0, 112.0, 113.0]  # bar 56: a new high, entered
+            + [90.0] * 20  # bar 60, after the gap: a new low, exited
+            + [120.0]  # bar 80: a new high, held
+            + [90.0] * 33
+            + [125.0, 126.0]  # bar 114: held; bar 115: the gap has left, entered
+            + [126.0] * 5
+        )
+        return holed(daily(closes), 60, 30)
+
+    def test_entries_wait_until_the_gap_leaves_the_bars_read_and_exits_do_not(self):
+        trader = self.trader()
+        acted, held = {}, {}
+        for k in range(55, len(self.frame)):
+            before = len(self.sides())
+            logged = self.passes(trader, k, candles.SETTLE_SECONDS + 10, n=2)
+            if len(self.sides()) > before:
+                acted[k] = self.sides()[-1]
+            gap = [line for line in logged if "LONG_GAP" in line]
+            if gap:
+                held[k] = gap
+        self.assertEqual(acted, {56: "buy", 60: "sell", 115: "buy"})
+        self.assertEqual(sorted(held), [80, 114])
+        times = self.frame["open_time"]
+        for k, lines in held.items():
+            self.assertEqual(len(lines), 1, lines)  # once per bar
+            self.assertIn("action=HOLD", lines[0])
+            self.assertIn("reason=LONG_GAP:NEW_CLOSING_HIGH", lines[0])
+            self.assertIn(f"bar={times.iloc[k]}", lines[0])
+            self.assertIn(str(times.iloc[59]), lines[0])  # the gap's two ends
+            self.assertIn(str(times.iloc[60]), lines[0])
+
+    def test_a_gap_in_an_entry_gates_reference_bars_holds_too(self):
+        """OVL-REGIME reads BTC's last 50 daily closes; with 30 of BTC's days missing
+        among them, the entry is held, and without the gap the gate lets it in."""
+        coin = daily([100.0] * 55 + [110.0], start="2024-01-01")
+        btc = daily(np.linspace(100.0, 300.0, 270), start="2023-06-01")
+        last = coin["open_time"].iloc[-1]
+        btc = btc[btc["open_time"] <= last]
+        missing = btc["open_time"].between(last - 35 * DAY, last - 6 * DAY)
+        settings = {
+            "strategy": {
+                "active_id": "STRAT-004",
+                "timeframe": "1d",
+                "overlays": [
+                    {"id": "OVL-REGIME", "params": {"reference": "BTC", "sma_days": 50}}
+                ],
+            }
+        }
+
+        def clock():  # 10 s after the last bar settled
+            return (last + DAY).timestamp() + candles.SETTLE_SECONDS + 10
+
+        def decide(reference):
+            def provider(symbol, tf, n, now):
+                frame = reference if symbol.startswith("BTC") else coin
+                closed = frame[frame["open_time"] + DAY <= now]
+                return closed.tail(n).reset_index(drop=True)
+
+            return SignalEngine(settings, provider, clock).decide("ETH")
+
+        whole = decide(btc)
+        self.assertEqual(
+            (whole.action, whole.reason), (Action.ENTER_LONG, "NEW_CLOSING_HIGH")
+        )
+        gapped = decide(btc[~missing])
+        self.assertEqual(
+            (gapped.action, gapped.reason), (Action.HOLD, "LONG_GAP:NEW_CLOSING_HIGH")
+        )
 
 
 class HubNoteTests(unittest.TestCase):

@@ -257,7 +257,15 @@ class TradeTable:
     def lows(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         """(close times in seconds, lows), for the replay's intrabar figures; None
         when the candles have no lows."""
-        if "low" not in self.candles:
+        return self._column("low")
+
+    def highs(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        """(close times in seconds, highs), for the intrabar figures' peak; None when
+        the candles have no highs."""
+        return self._column("high")
+
+    def _column(self, name: str) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+        if name not in self.candles:
             return None
         closes_at = (self._times + self._step).map(_seconds).to_numpy(dtype=np.int64)
-        return closes_at, self.candles["low"].to_numpy(dtype=float, copy=True)
+        return closes_at, self.candles[name].to_numpy(dtype=float, copy=True)

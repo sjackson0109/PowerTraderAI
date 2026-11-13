@@ -19,6 +19,12 @@ are in bars, and every rolling window ends at, and includes, the bar it is for.
   returns, per bar, not annualised.
 * ``volatility.parkinson`` (n=20): sqrt(mean(ln(high / low)^2) / (4 ln 2)) over the
   last n bars (Parkinson 1980): the range estimator, per bar.
+* ``volatility.yang_zhang`` (n=20): Yang and Zhang (2000): the variance of the n
+  opening jumps ln(open / previous close), plus k times that of the n bodies
+  ln(close / open), plus 1 - k times Rogers and Satchell's mean of ln(high / close)
+  ln(high / open) + ln(low / close) ln(low / open), k = 0.34 / (1.34 + (n + 1) /
+  (n - 1)); the square root, per bar. It uses the open, high, low and close, and is
+  unbiased under drift and opening jumps.
 * ``volatility.ewma`` (lam=0.94, burn_in=30): RiskMetrics: s2_t = lam s2_{t-1} +
   (1 - lam) r_t^2, started at the first squared log return. Start-dependent; the burn-in
   bars carry no value.
@@ -180,6 +186,35 @@ register(
             * _PARKINSON
         ),
         lambda p: _n(p) - 1,
+        bounds={"n": (2, 1000)},
+    )
+)
+
+
+def _yang_zhang(c: pd.DataFrame, p) -> pd.Series:
+    n = _n(p)
+    o, h, lo, cl = c["open"], c["high"], c["low"], c["close"]
+    jump = np.log(o / cl.shift(1))
+    body = np.log(cl / o)
+    rs = np.log(h / cl) * np.log(h / o) + np.log(lo / cl) * np.log(lo / o)
+    k = 0.34 / (1.34 + (n + 1) / (n - 1))
+    var = (
+        jump.rolling(n, min_periods=n).var()
+        + k * body.rolling(n, min_periods=n).var()
+        + (1.0 - k) * rs.rolling(n, min_periods=n).mean()
+    )
+    return np.sqrt(var.clip(lower=0.0))
+
+
+register(
+    Feature(
+        "volatility.yang_zhang",
+        1,
+        "Yang and Zhang's open-high-low-close estimator over the last n bars, per bar.",
+        ("open", "high", "low", "close"),
+        {"n": 20},
+        _yang_zhang,
+        _n,
         bounds={"n": (2, 1000)},
     )
 )

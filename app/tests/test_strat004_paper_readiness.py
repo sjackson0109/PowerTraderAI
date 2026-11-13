@@ -1,20 +1,22 @@
 """STRAT-004 paper-observation readiness (docs/dev/STRAT-004-paper-readiness.md).
 
 These tests pin existing behaviour that the readiness assessment relies on. They change
-no setting and nothing on disk. Where a test needs the proposed ``paper``
-authorisation, it patches the loaded catalogue in memory for that test only, as
-``test_strategy_lifecycle.py`` does. STRAT-004 stays ``research`` in ``catalogue.json``.
+no setting and nothing on disk. STRAT-004 is ``paper`` in ``catalogue.json`` since the
+owner's decision of 2026-11-12 (``docs/dev/RUN-LOG-sr-1.md``). Where a test needs it
+back at ``research``, it patches the loaded catalogue in memory for that test only, as
+``test_strategy_lifecycle.py`` does.
 
-* Today STRAT-004 is research-only. It is refused in paper and live by the settings
-  check and by the trader's order gate, and a replayed paper session places no orders.
+* STRAT-004 is allowed in paper and refused in live, by the settings check and by the
+  trader's order gate. At ``research`` (in memory only), a replayed paper session
+  places no orders.
 * An authorisation or a trading mode the catalogue does not know is refused.
 * At its defaults (55/20), STRAT-004's parameters hash to ``PARAMS_SHA256``. Each trade
   record carries that hash.
 * The proposed observation's frozen settings hash to ``SNAPSHOT_SHA256`` with
   ``strategy_lab.observation``'s own snapshot. The settings defaults the hash assumes
   are pinned too.
-* With ``paper`` authorisation (in memory only), a replayed daily paper session places
-  its orders on the bars where the backtester trades. Each order is 1% of the account,
+* A replayed daily paper session places its orders on the bars where the backtester
+  trades. Each order is 1% of the account,
   and each sell is the whole quantity bought. Reconcile matches every trade. The same
   settings are refused in live mode.
 
@@ -91,10 +93,14 @@ PROPOSED_GUI = {
     "pm_start_pct_with_dca": 2.5,
     "trailing_gap_pct": 0.5,
 }
-SNAPSHOT_SHA256 = "b0e54cdfdd2a1615b0cf779d6f819101dd035a0b11ff2814830736a1efe1cc70"
+# Coinbase first, as E1; the shipped trading_config template's enabled exchanges
+PROPOSED_EXCHANGES = ["coinbase", "kraken", "kucoin", "binance"]
+# The snapshot froze the LLM signal mode and use and the exchanges from 2026-11-12;
+# before that, the same proposal hashed to b0e54cdf... (the readiness document, 6.2)
+SNAPSHOT_SHA256 = "b595d64e3189d7b92f50f6324cfd86b11f88b19f0a62e52a368984504e7a2d64"
 # the same, with the entry assessment's section saved by Settings > Strategy (all Off)
 SNAPSHOT_SHA256_FUSION_SAVED = (
-    "a446295996744388dc4379c5c481559452b62881cb94191636f237db404f344f"
+    "e5f4ca0bf3790f16da6e379dccdfc9e8cd223830f300fdc6c0c988e6e939694d"
 )
 PARAMS_SHA256 = "89579608ee854d67afce197674141a23848b1adb3bcca6b5096d72dcfd726265"
 FIELDS = {
@@ -106,27 +112,38 @@ FIELDS = {
 }
 
 
-def paper_authorised():
-    """The proposed change, in memory for one test: STRAT-004 at ``paper``."""
+def research_only():
+    """STRAT-004 as it was before 2026-11-12, in memory for one test: ``research``."""
     return mock.patch.dict(
         cat.CATALOGUE,
-        {"STRAT-004": dict(cat.CATALOGUE["STRAT-004"], authorisation="paper")},
+        {"STRAT-004": dict(cat.CATALOGUE["STRAT-004"], authorisation="research")},
     )
 
 
-class TodayTests(unittest.TestCase):
-    def test_it_is_research_only_in_the_catalogue_file(self):
+class AuthorisationTests(unittest.TestCase):
+    def test_it_is_paper_in_the_catalogue_file(self):
         raw = {e["strategy_id"]: e for e in cat.load_entries()}
-        self.assertEqual(raw["STRAT-004"]["authorisation"], "research")
-        self.assertEqual(cat.CATALOGUE["STRAT-004"]["authorisation"], "research")
+        self.assertEqual(raw["STRAT-004"]["authorisation"], "paper")
+        self.assertEqual(cat.CATALOGUE["STRAT-004"]["authorisation"], "paper")
 
-    def test_the_proposed_settings_are_refused_in_every_mode(self):
+    def test_the_proposed_settings_are_allowed_in_paper_and_refused_in_live(self):
         settings = {"strategy": dict(STRATEGY)}
         self.assertIsNone(ss.read_strategy_settings(settings).problem)  # research
-        for mode in ("paper", "live", tm.TradingMode.PAPER, tm.TradingMode.LIVE):
+        for mode in ("paper", tm.TradingMode.PAPER):
+            with self.subTest(mode=mode):
+                self.assertIsNone(ss.read_strategy_settings(settings, mode).problem)
+        for mode in ("live", tm.TradingMode.LIVE):
             with self.subTest(mode=mode):
                 problem = ss.read_strategy_settings(settings, mode).problem
-                self.assertIn("STRAT-004 can be used for research only", problem)
+                self.assertIn("paper trading, not live trading", problem)
+
+    def test_at_research_it_is_refused_in_every_mode(self):
+        settings = {"strategy": dict(STRATEGY)}
+        with research_only():
+            for mode in ("paper", "live", tm.TradingMode.PAPER, tm.TradingMode.LIVE):
+                with self.subTest(mode=mode):
+                    problem = ss.read_strategy_settings(settings, mode).problem
+                    self.assertIn("STRAT-004 can be used for research only", problem)
 
     def test_an_unknown_authorisation_or_mode_is_refused(self):
         settings = {"strategy": dict(STRATEGY)}
@@ -135,20 +152,10 @@ class TodayTests(unittest.TestCase):
             for mode in ("paper", "live"):
                 self.assertFalse(cat.allowed_in_mode("STRAT-004", mode))
                 self.assertIsNotNone(ss.read_strategy_settings(settings, mode).problem)
-        with paper_authorised():
-            for mode in ("demo", "Paper", ""):
-                with self.subTest(mode=mode):
-                    self.assertFalse(cat.allowed_in_mode("STRAT-004", mode))
-                    self.assertIsNotNone(
-                        ss.read_strategy_settings(settings, mode).problem
-                    )
-
-    def test_with_paper_authorisation_it_is_still_refused_in_live(self):
-        settings = {"strategy": dict(STRATEGY)}
-        with paper_authorised():
-            self.assertIsNone(ss.read_strategy_settings(settings, "paper").problem)
-            problem = ss.read_strategy_settings(settings, "live").problem
-            self.assertIn("paper trading, not live trading", problem)
+        for mode in ("demo", "Paper", ""):
+            with self.subTest(mode=mode):
+                self.assertFalse(cat.allowed_in_mode("STRAT-004", mode))
+                self.assertIsNotNone(ss.read_strategy_settings(settings, mode).problem)
 
     def test_its_default_parameters_hash(self):
         params = dict(cat.create("STRAT-004").params)
@@ -159,19 +166,24 @@ class TodayTests(unittest.TestCase):
 
 class SnapshotTests(unittest.TestCase):
     def test_the_proposed_settings_hash(self):
-        snap = obs.snapshot(PROPOSED_CONFIG, PROPOSED_GUI)
+        snap = obs.snapshot(PROPOSED_CONFIG, PROPOSED_GUI, PROPOSED_EXCHANGES)
         self.assertEqual(obs.digest(snap), SNAPSHOT_SHA256)
         self.assertEqual(snap["config"]["strategy"], STRATEGY)
         self.assertIsNone(snap["config"]["signal_fusion"])
+        self.assertEqual(snap["config"]["llm.signal_mode"], "off")
+        self.assertEqual(snap["exchanges"], PROPOSED_EXCHANGES)
         from signal_fusion import settings as fs
 
         saved = {**PROPOSED_CONFIG, "signal_fusion": fs.normalise({})}
         self.assertEqual(
-            obs.digest(obs.snapshot(saved, PROPOSED_GUI)), SNAPSHOT_SHA256_FUSION_SAVED
+            obs.digest(obs.snapshot(saved, PROPOSED_GUI, PROPOSED_EXCHANGES)),
+            SNAPSHOT_SHA256_FUSION_SAVED,
         )
 
     def test_the_hash_assumes_todays_defaults(self):
         import pt_hub
+        from exchange_check import settings_exchanges
+        from pt_multi_exchange import ExchangeConfigManager
         from pt_settings_manager import DEFAULT_SETTINGS
 
         for section in ("risk", "paper"):
@@ -180,6 +192,10 @@ class SnapshotTests(unittest.TestCase):
         for key, value in PROPOSED_GUI.items():
             if key != "coins":
                 self.assertEqual(pt_hub.DEFAULT_SETTINGS[key], value, key)
+        # no trading_config.json in the test's own folder: the shipped template
+        manager = ExchangeConfigManager()
+        self.assertFalse(os.path.exists(manager.config_file))
+        self.assertEqual(settings_exchanges(manager), PROPOSED_EXCHANGES)
 
     def test_reconcile_replays_the_frozen_strategy_at_its_defaults(self):
         spec = obs.spec_of(obs.snapshot(PROPOSED_CONFIG, PROPOSED_GUI))
@@ -255,16 +271,16 @@ class PaperSessionTests(PaperTraderCase):
         last = self.frame["open_time"].iloc[-1]
         return [t for t in result.trades if t.exit_time < last]
 
-    def test_today_a_paper_session_places_no_orders(self):
-        orders, rows, _ = self.session(self.settings())
+    def test_at_research_a_paper_session_places_no_orders(self):
+        with research_only():
+            orders, rows, _ = self.session(self.settings())
         self.assertEqual(orders, [])
         self.assertEqual(rows, [])
 
-    def test_with_paper_authorisation_paper_trades_where_the_backtest_does(self):
+    def test_a_paper_session_trades_where_the_backtest_does(self):
         expected = self.backtest()
         self.assertGreaterEqual(len(expected), 2)
-        with paper_authorised():
-            orders, rows, trader = self.session(self.settings())
+        orders, rows, trader = self.session(self.settings())
         buys = [r for r in rows if r["side"] == "buy"]
         sells = [r for r in rows if r["side"] == "sell"]
         self.assertEqual([r["tag"] for r in buys], ["ENTRY"] * len(expected))
@@ -293,29 +309,30 @@ class PaperSessionTests(PaperTraderCase):
 
     def test_reconcile_matches_every_trade_with_its_fill_and_fee(self):
         expected = self.backtest()
-        with paper_authorised():
-            _, rows, _ = self.session(self.settings())
+        _, rows, _ = self.session(self.settings())
         segment = {
             "started_s": int(self.frame["open_time"].iloc[55].timestamp()),
             "snapshot": obs.snapshot(self.settings(), {"coins": ["BTC"]}),
         }
         end_s = int(self.frame["open_time"].iloc[-1].timestamp()) + DAY
         out = obs.reconcile(segment, rows, {"BTC": self.frame}, end_s)
+        # no row is flagged: the trader's strategy fields are the frozen strategy's
         self.assertEqual(
             obs.summary(out),
-            {"matched": len(expected), "timing": 0, "missed": 0, "extra": 0},
+            {**dict.fromkeys(obs.RESULT_KINDS, 0), "matched": len(expected)},
         )
         for row in out:
             self.assertAlmostEqual(row.fill_vs_open, self.HALF_SPREAD, places=9)
             self.assertAlmostEqual(row.fee_rate_paid, self.TAKER, places=9)
+            self.assertAlmostEqual(row.exit_fee_rate_paid, self.TAKER, places=9)
+            self.assertEqual(row.differs, ())
 
-    def test_with_paper_authorisation_a_research_overlay_is_still_refused(self):
+    def test_a_research_overlay_is_still_refused(self):
         settings = self.settings()
         settings["strategy"]["overlays"] = [{"id": "OVL-REGIME"}]
-        with paper_authorised():
-            problem = ss.read_strategy_settings(settings, "paper").problem
-            self.assertIn("OVL-REGIME can be used for research only", problem)
-            orders, rows, _ = self.session(settings)
+        problem = ss.read_strategy_settings(settings, "paper").problem
+        self.assertIn("OVL-REGIME can be used for research only", problem)
+        orders, rows, _ = self.session(settings)
         self.assertEqual((orders, rows), ([], []))
 
 

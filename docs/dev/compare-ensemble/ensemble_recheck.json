@@ -1,0 +1,150 @@
+{
+  "own-sizing": {
+    "changed": {
+      "ensemble.intrabar_max_drawdown": {
+        "recomputed": 0.4726485937177972,
+        "saved": 0.4514656403955664
+      },
+      "members.150.intrabar_max_drawdown": {
+        "recomputed": 0.542057479252357,
+        "saved": 0.5311145150797896
+      },
+      "members.20.intrabar_max_drawdown": {
+        "recomputed": 0.40872697645353473,
+        "saved": 0.3634623928976261
+      },
+      "members.250.intrabar_max_drawdown": {
+        "recomputed": 0.5446136743734006,
+        "saved": 0.5337317928702956
+      },
+      "members.30.intrabar_max_drawdown": {
+        "recomputed": 0.347713250144576,
+        "saved": 0.3282382883707578
+      },
+      "members.360.intrabar_max_drawdown": {
+        "recomputed": 0.5377965825710258,
+        "saved": 0.5268952983711268
+      },
+      "members.60.intrabar_max_drawdown": {
+        "recomputed": 0.5482686188858662,
+        "saved": 0.5247532557704908
+      },
+      "members.90.intrabar_max_drawdown": {
+        "recomputed": 0.6595348490460882,
+        "saved": 0.6416644541806162
+      }
+    },
+    "ensemble": {
+      "final_equity": 51125.23320144719,
+      "halt_exposure_usd": 4488.903381646169,
+      "halt_reached": "2021-01-22T00:00:00+00:00",
+      "intrabar_halt_reached": "2021-01-12T00:00:00+00:00",
+      "intrabar_max_drawdown": 0.4726485937177972,
+      "max_drawdown": 0.42227048237174575,
+      "mean_committed": 0.18909506332037632,
+      "net_usd": 37648.24241758995,
+      "peak_committed": 0.6431165701292371,
+      "return_per_capital_day": 0.0037506707782859025,
+      "skipped_cash": 62,
+      "skipped_cooldown": 0,
+      "skipped_minimum": 0,
+      "time_in_market": 0.853182104599874,
+      "trades": 630,
+      "unsold_remainder_usd": 0.9907838572261396
+    },
+    "equal_weight_hold": {
+      "final_equity": 42571.26683470017,
+      "halt_exposure_usd": 9172.657029496051,
+      "halt_reached": "2021-01-22T00:00:00+00:00",
+      "intrabar_halt_reached": "2021-01-09T00:00:00+00:00",
+      "intrabar_max_drawdown": 0.7544967095800506,
+      "max_drawdown": 0.7217728268423306,
+      "mean_committed": 0.4036120620730801,
+      "net_usd": 29095.25052560711,
+      "peak_committed": 0.7847832704391631,
+      "return_per_capital_day": 0.001632670444220471,
+      "skipped_cash": 2,
+      "skipped_cooldown": 0,
+      "skipped_minimum": 0,
+      "time_in_market": 0.9993694829760403,
+      "trades": 7,
+      "unsold_remainder_usd": 0.01630909305713042
+    }
+  },
+  "vol-target": {
+    "changed": {
+      "ensemble.intrabar_halt_reached": {
+        "recomputed": "2021-02-21T00:00:00+00:00",
+        "saved": "2021-02-23T00:00:00+00:00"
+      },
+      "ensemble.intrabar_max_drawdown": {
+        "recomputed": 0.23874775346121524,
+        "saved": 0.22726810480800166
+      },
+      "members.150.intrabar_max_drawdown": {
+        "recomputed": 0.2967722515149287,
+        "saved": 0.28753467776036057
+      },
+      "members.20.intrabar_max_drawdown": {
+        "recomputed": 0.17230977075127046,
+        "saved": 0.15619952050658614
+      },
+      "members.250.intrabar_max_drawdown": {
+        "recomputed": 0.2996754676218804,
+        "saved": 0.2904760304069628
+      },
+      "members.30.intrabar_max_drawdown": {
+        "recomputed": 0.17869220848974907,
+        "saved": 0.1653898005386392
+      },
+      "members.360.intrabar_max_drawdown": {
+        "recomputed": 0.2985614399554315,
+        "saved": 0.2893822630045882
+      },
+      "members.60.intrabar_max_drawdown": {
+        "recomputed": 0.28083913292495344,
+        "saved": 0.2669761550768701
+      },
+      "members.90.intrabar_max_drawdown": {
+        "recomputed": 0.3493493769301113,
+        "saved": 0.33497284509428976
+      }
+    },
+    "ensemble": {
+      "final_equity": 22858.515866291153,
+      "halt_exposure_usd": 4224.002245405318,
+      "halt_reached": "2021-02-24T00:00:00+00:00",
+      "intrabar_halt_reached": "2021-02-21T00:00:00+00:00",
+      "intrabar_max_drawdown": 0.23874775346121524,
+      "max_drawdown": 0.22257417227636941,
+      "mean_committed": 0.0802218477279453,
+      "net_usd": 9381.403376865546,
+      "peak_committed": 0.34548418739044856,
+      "return_per_capital_day": 0.003880114833754436,
+      "skipped_cash": 0,
+      "skipped_cooldown": 0,
+      "skipped_minimum": 0,
+      "time_in_market": 0.853182104599874,
+      "trades": 647,
+      "unsold_remainder_usd": 1.1124894256382294
+    },
+    "equal_weight_hold": {
+      "final_equity": 42571.26683470017,
+      "halt_exposure_usd": 9172.657029496051,
+      "halt_reached": "2021-01-22T00:00:00+00:00",
+      "intrabar_halt_reached": "2021-01-09T00:00:00+00:00",
+      "intrabar_max_drawdown": 0.7544967095800506,
+      "max_drawdown": 0.7217728268423306,
+      "mean_committed": 0.4036120620730801,
+      "net_usd": 29095.25052560711,
+      "peak_committed": 0.7847832704391631,
+      "return_per_capital_day": 0.001632670444220471,
+      "skipped_cash": 2,
+      "skipped_cooldown": 0,
+      "skipped_minimum": 0,
+      "time_in_market": 0.9993694829760403,
+      "trades": 7,
+      "unsold_remainder_usd": 0.01630909305713042
+    }
+  }
+}

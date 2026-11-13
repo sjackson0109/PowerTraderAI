@@ -98,6 +98,7 @@ def _warmup_start(spec: RunnerSpec, start: pd.Timestamp) -> pd.Timestamp:
 
 def _figures(paths: Paths, p: int = 0) -> Dict[str, Any]:
     rpcd = paths.rpcd
+    low_dd, low_halt = paths.intrabar_max_drawdown, paths.intrabar_halt_s
     return {
         "net_usd": float(paths.net[p]),
         "return_per_capital_day": float(rpcd[p]),
@@ -124,6 +125,13 @@ def _figures(paths: Paths, p: int = 0) -> Dict[str, Any]:
         ),
         "halt_exposure_usd": (
             float(paths.halt_exposure[p]) if paths.halt_exposure is not None else 0.0
+        ),
+        # within the bar: open positions at their bar's low (shown only)
+        "intrabar_max_drawdown": None if low_dd is None else float(low_dd[p]),
+        "intrabar_halt_reached": (
+            None
+            if low_halt is None or int(low_halt[p]) < 0
+            else datetime.fromtimestamp(int(low_halt[p]), tz=timezone.utc).isoformat()
         ),
     }
 

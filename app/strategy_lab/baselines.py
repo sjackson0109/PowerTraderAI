@@ -174,4 +174,11 @@ def _concat(parts: List[Paths]) -> Paths:
         "halt_further_loss",
     ):
         arrays[name] = np.concatenate([getattr(p, name) for p in parts])
+    for name in (  # the intrabar figures: None unless every part has them
+        "intrabar_max_drawdown",
+        "intrabar_max_drawdown_usd",
+        "intrabar_halt_s",
+    ):
+        got = [getattr(p, name) for p in parts]
+        arrays[name] = None if any(g is None for g in got) else np.concatenate(got)
     return Paths(start=parts[0].start, **arrays)

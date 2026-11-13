@@ -235,6 +235,18 @@ def notes(record: Dict[str, Any]) -> str:
             f"with ${s['halt_exposure_usd']:,.2f} in open positions. A halted trader "
             "manages nothing."
         )
+    low = s.get("intrabar_max_drawdown")  # runs saved before it was recorded: absent
+    if low is not None:
+        lines.append(
+            f"With open positions valued at each bar's low, the largest drawdown was "
+            f"{_pct(low)} ({_pct(s['max_drawdown'])} at the closes)."
+        )
+    if s.get("intrabar_halt_reached"):
+        lines.append(
+            "At the lows, the drawdown halt level was first reached within the bar "
+            f"ending {s['intrabar_halt_reached'][:16].replace('T', ' ')} UTC. The "
+            "trader checks its value on every pass, so a fall within a bar can halt it."
+        )
     r = record.get("random_entries")
     if r:
         lines.append(

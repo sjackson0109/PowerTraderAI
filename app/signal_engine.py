@@ -220,7 +220,20 @@ class SignalEngine:
         self._positions.pop(base, None)
         return self.ensure_position(base, fill_price, bar_time)
 
+    def fill_bar(self, bar_time: pd.Timestamp) -> pd.Timestamp:
+        """The bar an order decided at the close of ``bar_time``'s bar fills in: the
+        next bar, as the backtester fills it at that bar's open. ``bar_time`` itself
+        when the timeframe cannot be read (the order has been placed by then)."""
+        try:
+            step = pd.Timedelta(seconds=timeframe_seconds(self.settings.timeframe))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"fill bar for {bar_time}: timeframe unknown ({exc})")
+            return pd.Timestamp(bar_time)
+        return pd.Timestamp(bar_time) + step
+
     def record_exit(self, base: str, fill_price: float, bar_time: pd.Timestamp) -> None:
+        """The position in ``base`` was sold; ``bar_time`` is the bar the sale filled
+        in (``fill_bar``), from which OVL-COOLDOWN counts."""
         base = str(base).upper()
         pos = self._positions.pop(base, None)
         if pos is not None and self._runner is not None:

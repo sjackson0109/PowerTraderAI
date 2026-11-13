@@ -2834,10 +2834,12 @@ class CryptoAPITrading:
                                     f"{symbol}; the rest is still held."
                                 )
                             else:
+                                # the cooldown counts from the bar the sale filled
+                                # in, as the backtester counts it
                                 self.signal_engine.record_exit(
                                     symbol,
                                     response.get("price") or current_sell_price,
-                                    decision.bar_time,
+                                    self.signal_engine.fill_bar(decision.bar_time),
                                 )
                                 self.trailing_pm.pop(symbol, None)
                                 self._reset_dca_window_for_trade(symbol, sold=True)

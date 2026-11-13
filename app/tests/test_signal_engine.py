@@ -165,6 +165,103 @@ class SettingsManagerTests(unittest.TestCase):
             )
 
 
+class LateFeed(Feed):
+    """``Feed`` whose exchange publishes each bar in ``late`` only ``delay`` seconds
+    after it closes (every bar when ``late`` is None)."""
+
+    def __init__(self, frame, delay, late=None):
+        super().__init__(frame)
+        self.delay = pd.Timedelta(seconds=delay)
+        self.late = late
+
+    def provider(self, symbol, tf, n, now):
+        self.calls += 1
+        close = self.frame["open_time"] + HOUR
+        is_late = (
+            pd.Series(True, index=self.frame.index)
+            if self.late is None
+            else self.frame.index.to_series().isin(self.late)
+        )
+        published = close.where(~is_late, close + self.delay)
+        return self.frame[published <= now].tail(n).reset_index(drop=True)
+
+
+class LateBarTests(unittest.TestCase):
+    """An exchange that publishes the bar that just closed a few seconds late
+    (STRAT-004 paper readiness, D1): the engine fetches again after
+    ``FETCH_RETRY_SECONDS`` and decides that bar, instead of keeping the frame
+    without it as current until the next bar closes."""
+
+    def setUp(self):
+        self.frame = make_candles(trend_series())
+
+    def index_of(self, bar_time):
+        return int(self.frame.index[self.frame["open_time"] == bar_time][0])
+
+    def test_a_late_bar_is_decided_within_the_retry_interval(self):
+        feed = LateFeed(self.frame, delay=20)
+        engine = SignalEngine(PAPER, feed.provider, feed.clock)
+        feed.set_after_bar(200)  # 10 s after the close: bar 200 is not published yet
+        self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 199)
+        feed.now += se.FETCH_RETRY_SECONDS + 1
+        self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 200)
+        self.assertEqual(feed.calls, 2)
+        for _ in range(5):  # current now: no more fetches until bar 201 closes
+            engine.decide("BTC")
+        self.assertEqual(feed.calls, 2)
+
+    def test_an_exchange_that_never_publishes_is_asked_at_most_every_interval(self):
+        feed = LateFeed(self.frame, delay=10**9, late=[200])
+        engine = SignalEngine(PAPER, feed.provider, feed.clock)
+        feed.set_after_bar(200)
+        for _ in range(5):
+            engine.decide("BTC")
+        self.assertEqual(feed.calls, 1)
+        feed.now += se.FETCH_RETRY_SECONDS - 1
+        engine.decide("BTC")
+        self.assertEqual(feed.calls, 1)
+        feed.now += 2
+        self.assertEqual(self.index_of(engine.decide("BTC").bar_time), 199)
+        self.assertEqual(feed.calls, 2)
+
+    def test_a_bar_late_once_is_still_decided_as_the_backtester_would(self):
+        want = expected_actions(self.frame)
+        enter = want[0][0]
+        feed = LateFeed(self.frame, delay=20, late=[enter])
+        engine = SignalEngine(PAPER, feed.provider, feed.clock)
+        seen, pos = [], None
+        for k in range(len(self.frame)):
+            feed.set_after_bar(k)
+            for wait in (0, se.FETCH_RETRY_SECONDS + 1):
+                feed.now += wait
+                d = engine.decide("BTC", pos)
+                if d.action is Action.ENTER_LONG and pos is None:
+                    i = self.index_of(d.bar_time)
+                    pos = engine.record_entry(
+                        "BTC", self.frame["close"].iloc[i], d.bar_time
+                    )
+                    seen.append((i, "ENTER"))
+                elif d.action is Action.EXIT_LONG and pos is not None:
+                    i = self.index_of(d.bar_time)
+                    engine.record_exit("BTC", self.frame["close"].iloc[i], d.bar_time)
+                    pos = None
+                    seen.append((i, "EXIT"))
+        self.assertEqual(seen, want)
+
+    def test_an_entry_gates_late_context_bar_is_fetched_again(self):
+        feed = LateFeed(self.frame, delay=20)
+        engine = SignalEngine(PAPER, feed.provider, feed.clock)
+        feed.set_after_bar(200)
+        now = pd.Timestamp(feed.now, unit="s", tz="UTC")
+        first = engine._context_candles("BTC-USD", "1h", 50, now)
+        self.assertEqual(self.index_of(first["open_time"].iloc[-1]), 199)
+        later = now + pd.Timedelta(seconds=se.FETCH_RETRY_SECONDS + 1)
+        feed.now = later.timestamp()
+        second = engine._context_candles("BTC-USD", "1h", 50, later)
+        self.assertEqual(self.index_of(second["open_time"].iloc[-1]), 200)
+        self.assertEqual(feed.calls, 2)
+
+
 class EngineTests(unittest.TestCase):
     def setUp(self):
         self.frame = make_candles(trend_series())
@@ -490,6 +587,33 @@ class TraderIntegrationTests(PaperTraderCase):
         self.assertEqual(trader._catalogue_exit_quantity("BTC", 0.25), 0.25)
         self.assertEqual(trader._catalogue_exit_quantity("ETH", 2.0), 0.0)
 
+    def test_the_cooldown_counts_from_the_bar_the_sale_filled_in(self):
+        """As the backtester counts it: a sale decided at bar k's close fills at bar
+        k + 1's open, so with 3 bars after an exit, decisions on bars k + 1 to k + 3
+        are blocked and bar k + 4's may enter (not bar k + 3's)."""
+        settings = copy.deepcopy(PAPER)
+        settings["strategy"]["overlays"] = [
+            {
+                "id": "OVL-COOLDOWN",
+                "params": {"bars_after_exit": 3, "bars_after_loss": 0},
+            }
+        ]
+        (_, _), (exit_bar, _) = expected_actions(self.frame)
+        trader = self.catalogue_trader(settings)
+        for k in range(150, exit_bar + 1):
+            self.feed.set_after_bar(k)
+            trader.manage_trades()
+        self.assertEqual([o.side.value for o in self.orders()], ["buy", "sell"])
+        (cooldown,) = [
+            o
+            for o in trader.signal_engine._runner.overlays
+            if o.overlay_id == "OVL-COOLDOWN"
+        ]
+        times = self.frame["open_time"]
+        self.assertEqual(cooldown._last["BTC"][0], times.iloc[exit_bar + 1])
+        self.assertFalse(cooldown.allow_entry("BTC", times.iloc[exit_bar + 3]).allowed)
+        self.assertTrue(cooldown.allow_entry("BTC", times.iloc[exit_bar + 4]).allowed)
+
     def test_status_reports_the_signal_source_and_last_decision(self):
         trader = self.catalogue_trader()
         self.feed.set_after_bar(200)
@@ -514,6 +638,23 @@ class TraderIntegrationTests(PaperTraderCase):
         with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
             signals = json.load(f)["signals"]
         self.assertIn("needs a trained model", signals["blocked"])
+        self.assertEqual(signals["note"], "SIGNALS: BLOCKED")
+        self.assertEqual(self.orders(), [])
+
+    def test_status_shows_a_strategy_not_cleared_for_the_trading_mode(self):
+        """A research-only strategy in paper: every order is refused, and the status
+        says so instead of reporting nothing blocked."""
+        settings = copy.deepcopy(PAPER)
+        settings["strategy"]["active_id"] = "STRAT-005"
+        settings["strategy"]["timeframe"] = "1d"  # its own: only the mode is wrong
+        trader = self.catalogue_trader(settings)
+        self.feed.set_after_bar(200)
+        trader.manage_trades()
+        with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
+            signals = json.load(f)["signals"]
+        self.assertIsNotNone(signals["blocked"])
+        self.assertIn("STRAT-005", signals["blocked"])
+        self.assertIn("paper", signals["blocked"])
         self.assertEqual(signals["note"], "SIGNALS: BLOCKED")
         self.assertEqual(self.orders(), [])
 

@@ -5087,6 +5087,22 @@ Platform: {sys.platform}
         self._compare_models_window = CompareModelsWindow(self, coins)
         return self._compare_models_window
 
+    def open_research_engine(self, parent=None):
+        """Settings > Training, "Research engine...": research_engine_ui's window
+        (raises the open one). It belongs to the hub, so its jobs keep running when
+        Settings closes."""
+        from research_engine_ui import ResearchEngineWindow
+
+        win = getattr(self, "_research_engine_window", None)
+        try:
+            if win is not None and win.winfo_exists():
+                win.lift()
+                return win
+        except tk.TclError:
+            pass
+        self._research_engine_window = ResearchEngineWindow(self)
+        return self._research_engine_window
+
     def train_selected_coin(self) -> None:
         print(f"DEBUG: train_selected_coin() called")
         coin = (
@@ -7582,14 +7598,14 @@ Platform: {sys.platform}
             halted = risk_state.current(getattr(self, "_books_dir", None)).halted
         except Exception as e:
             return f"Could not read the risk settings: {e}"
-        return ("Trading is halted. " if halted else "") + (
-            f"Trading stops at a {levels.emergency_pct:g}% drawdown from the peak; "
+        return ("Buying is halted. " if halted else "") + (
+            f"Buying stops at a {levels.emergency_pct:g}% drawdown from the peak; "
             f"warnings at {levels.warning_pct:g}% and {levels.critical_pct:g}%"
         )
 
     def _refresh_halt_banner(self) -> None:
-        """TRADING HALTED across the top while an emergency stop has halted
-        trading for the books this hub shows; the files are read again only when
+        """BUYING HALTED across the top while an emergency stop has halted
+        buying for the books this hub shows; the files are read again only when
         one of them changes."""
         folder = getattr(self, "_books_dir", None)
         key = risk_state.files_signature(folder)
@@ -7946,6 +7962,21 @@ Platform: {sys.platform}
             text=(
                 "Runs the model lab's models on the same coins and hours, each against "
                 "random entries, on the months before the held-back period."
+            ),
+            style="Muted.TLabel",
+            wraplength=560,
+        ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(10, 0), pady=(0, 6))
+        r += 1
+        ttk.Button(
+            page,
+            text="Research engine...",
+            command=lambda: self.open_research_engine(win),
+        ).grid(row=r, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(
+            page,
+            text=(
+                "Runs research jobs on this computer, within limits that keep cores and "
+                "memory free for trading, and shows each job's time and memory."
             ),
             style="Muted.TLabel",
             wraplength=560,

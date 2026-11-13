@@ -8,11 +8,13 @@ only). ``Simulation`` builds one ``TradeTable`` per coin from it, and replays th
 trades in one shared account per size (``signal_fusion.evaluation.replay``), marked at
 every close of the strategy's timeframe.
 
-**Within the bar.** Every replay is also given each coin's lows, so each result carries
-the intrabar figures beside the close-based ones: the drawdown and the first halt with
-every open position valued at its bar's low (``replay``'s module docstring says how,
-and what the bound means with several coins). The trader checks its value on every
-pass, so a fall that recovers by the close can halt it. These figures decide nothing.
+**Within the bar.** Every replay is also given each coin's lows and highs, so each
+result carries the intrabar figures beside the close-based ones: the drawdown and the
+first halt with every open position valued at its bar's low, from a peak that takes the
+earlier bars' highs (``replay``'s module docstring says how, and what the bound means
+with several coins). The trader checks its value on every pass, so a fall that recovers
+by the close can halt it. The owner chose this measure for future registered
+evaluations (2026-11-12); in a replay the figures decide nothing.
 
 **Gaps.** A series with a gap longer than a day (an exchange halt) is used from after its
 last such gap (``after_long_gaps``, in ``market_data.gaps``: the trader's signal engine
@@ -149,6 +151,12 @@ class Simulation:
         out = {coin: table.lows() for coin, table in self.tables.items()}
         return {coin: v for coin, v in out.items() if v is not None}
 
+    def highs(self) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+        """Each coin's (close times, highs), for the intrabar figures' peak; a coin
+        whose candles have no highs is left out (valued at its close)."""
+        out = {coin: table.highs() for coin, table in self.tables.items()}
+        return {coin: v for coin, v in out.items() if v is not None}
+
     def end_s(self) -> int:
         return max(int(table.prices()[0][-1]) for table in self.tables.values())
 
@@ -160,10 +168,12 @@ class Simulation:
         **kw,
     ) -> Paths:
         """``trades`` in one shared account, with the strategy's cooldown, marked at
-        every close of its timeframe, and within each bar at its low (the intrabar
-        figures)."""
+        every close of its timeframe, and within each bar at its low, from a peak that
+        takes the earlier bars' highs (the intrabar figures)."""
         if "lows" not in kw:
             kw["lows"] = self.lows()
+            if "highs" not in kw:
+                kw["highs"] = self.highs()
         return replay(
             [t.opportunity() for t in trades],
             self.prices(),

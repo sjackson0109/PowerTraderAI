@@ -31,6 +31,7 @@ import pandas as pd
 
 from market_data.candles import CandleDataError, exchange_candles
 from market_data.timeframes import candle_timeframe_seconds, timeframe_seconds
+from pt_exchange_abstraction import MarketNotFound
 from pt_logging import get_logger
 from model_store import ModelStoreError
 from strategies.base import Action, StrategyError
@@ -113,6 +114,10 @@ class SignalEngine:
         self._logged: Dict[str, tuple] = {}
         self._warned: Dict[str, float] = {}
         self.last_decisions: Dict[str, Decision] = {}
+        # <COIN> -> the exchange whose bars its last decision used (None: none)
+        self.last_exchanges: Dict[str, Optional[str]] = {}
+        # <pair> -> the exchange that served its cached bars (df.attrs)
+        self._sources: Dict[str, Optional[str]] = {}
         # persistence of open positions + overlay state (stops, cooldowns) across restarts
         self._state_path: Optional[str] = None
         self._last_state_json: Optional[str] = None
@@ -321,7 +326,9 @@ class SignalEngine:
                 Decision(Action.HOLD, "CANDLES_UNAVAILABLE", {}, now, s.active_id),
                 position=None,
                 log_key=("CANDLES_UNAVAILABLE",),
+                exchange=None,
             )
+        exchange = self._sources.get(pair)
 
         last_open = candles["open_time"].iloc[-1]
         age = (now - (last_open + step)).total_seconds()
@@ -336,6 +343,7 @@ class SignalEngine:
                 Decision(Action.HOLD, "STALE_CANDLES", {}, last_open, s.active_id),
                 position=None,
                 log_key=("STALE", last_open),
+                exchange=exchange,
             )
 
         pos = (
@@ -355,6 +363,7 @@ class SignalEngine:
             decision,
             position=pos,
             log_key=(decision.bar_time, pos is None, decision.action),
+            exchange=exchange,
         )
 
     # -- internals --------------------------------------------------------------------------------
@@ -378,7 +387,8 @@ class SignalEngine:
         self._last_fetch_attempt[pair] = mono
         try:
             df = self._provider(pair, tf, runner.lookback_bars + 5, now)
-        except (CandleDataError, OSError) as exc:
+        except (CandleDataError, OSError, MarketNotFound) as exc:
+            # MarketNotFound: no exchange in Settings lists the coin; it holds
             self._warn_once(
                 f"fetch:{pair}", f"Could not fetch {pair} {tf} candles: {exc}"
             )
@@ -387,6 +397,7 @@ class SignalEngine:
             return cached[1] if cached is not None else None
         step = pd.Timedelta(seconds=timeframe_seconds(tf))
         self._candles[pair] = (_frame_key(df, expected_last_open, step, now), df)
+        self._sources[pair] = df.attrs.get("exchange")
         return df
 
     def _context_for(
@@ -420,7 +431,8 @@ class SignalEngine:
         self._context_attempt[key] = mono
         try:
             df = self._provider(pair, tf, bars + 5, now)
-        except (CandleDataError, OSError) as exc:
+        except (CandleDataError, OSError, MarketNotFound) as exc:
+            # MarketNotFound: no exchange in Settings lists the coin; it holds
             self._warn_once(
                 f"fetch:{pair}:{tf}", f"Could not fetch {pair} {tf} candles: {exc}"
             )
@@ -432,15 +444,24 @@ class SignalEngine:
         return df
 
     def _record(
-        self, base: str, decision: Decision, position, log_key: tuple
+        self,
+        base: str,
+        decision: Decision,
+        position,
+        log_key: tuple,
+        exchange: Optional[str] = None,
     ) -> Decision:
+        """Keep ``decision`` as ``base``'s last, with ``exchange``, the exchange whose
+        bars decided it (None when there were none), and log it when it is new."""
         base = str(base).upper()
         self.last_decisions[base] = decision
+        self.last_exchanges[base] = exchange
         if self._logged.get(base) != log_key:
             self._logged[base] = log_key
             logger.info(
                 f"Decision {base}: strategy={decision.strategy_id} action={decision.action.value} "
                 f"reason={decision.reason} bar={decision.bar_time} "
+                f"exchange={exchange or 'none'} "
                 f"indicators={ {k: round(v, 6) for k, v in decision.indicators.items()} }"
                 + (
                     f" stop={decision.stop_price} stop_owner={decision.stop_owner}"

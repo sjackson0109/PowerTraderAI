@@ -2,11 +2,17 @@
 Settings > Strategy: what decides each buy and sale, and every value it uses.
 
 * **Strategies and stops** - every catalogue entry by its ID (STRAT-000, OVL-ATR: the
-  names the reports use) and name, with what it may be used for
+  names the reports use) and name, with what its authorisation clears it for
   (research only, paper, or paper and live), whether it is enabled for research,
-  and whether it is in use (FDS-SR-001 section 5.8). Highlighting one shows its
-  description, its research tick and "Use for trading", offered only where its
-  authorisation covers the trading mode.
+  whether it is switched on for this trading mode, and whether it is in use
+  (FDS-SR-001 section 5.8). Highlighting one shows its description, its research tick,
+  its trading tick and "Use for trading".
+* **The trading switch** - the owner turns any strategy or stop on or off for the
+  trading mode the settings name (not one that needs a trained model). Switching one
+  on that its authorisation does not clear for the mode asks first. "Use for
+  trading" switches the entry on (asking the same way) and chooses it. A strategy
+  switched off leaves the Strategy list, a stop switched off is unticked, and Save
+  refuses until a strategy that is switched on is chosen.
 * **Signals from** - a rule-based strategy, or the legacy neural levels with DCA and
   the trailing profit margin.
 * **Strategy** - the strategies this trading mode may use (not one that needs a
@@ -18,7 +24,10 @@ Settings > Strategy: what decides each buy and sale, and every value it uses.
 Save writes the ``strategy`` keys of ``pt_config.json``
 (``SettingsManager.set_strategy``); the trader reads them before every decision, so
 no restart is needed. ``research_enabled`` is written only when a research tick
-changed, so a settings file nobody changed stays as it was. Every value is checked first (bounds, whole numbers, the rules
+changed, and ``trading_allowed`` only when a trading tick changed (or the saved one
+could not be read), so a settings file nobody changed stays as it was.
+``trading_allowed`` keeps a switch only where it differs from the authorisation, and
+the other trading mode's switches as saved. Every value is checked first (bounds, whole numbers, the rules
 between two parameters): a refused save changes nothing. A strategy's parameters are
 saved only where they differ from its defaults, so "Reset to defaults" saves none.
 
@@ -42,23 +51,37 @@ from strategies.settings import (
     DEFAULT_ENGINE,
     DEFAULT_TIMEFRAME,
     ENGINES,
+    allowed_for_trading,
     params_problem,
+    parse_switches,
     read_research_enabled,
 )
 
 TITLE = "Strategy"
 HELP_WRAP = 520
+# what an entry is cleared for, in the question asked before switching it on
+CLEARED_FOR = {"research": "backtests only", "paper": "paper trading only"}
 
 
-def offered_strategies(mode: str = "paper") -> List[str]:
+def tradable(sid: str) -> bool:
+    """Whether ``sid`` can be chosen for trading at all: a stop, or a strategy that
+    does not need a trained model."""
+    entry = CATALOGUE[sid]
+    return entry["class_type"] != "main" or entry["family"] != "model"
+
+
+def offered_strategies(
+    mode: str = "paper", switches: Optional[Mapping[str, Mapping]] = None
+) -> List[str]:
     """The strategies the window offers for trading in ``mode``, in catalogue order:
-    every main strategy authorised for it, except one that needs a trained model."""
+    every main strategy that may trade in it (the owner's ``switches``, otherwise the
+    catalogue), except one that needs a trained model."""
     return [
         sid
         for sid, e in CATALOGUE.items()
         if e["class_type"] == "main"
-        and e["family"] != "model"
-        and allowed_in_mode(sid, mode)
+        and tradable(sid)
+        and allowed_for_trading(sid, mode, switches)
     ]
 
 
@@ -141,7 +164,7 @@ class StrategySettingsWindow(tk.Toplevel):
         super().__init__(parent)
         self._coins = coins_factory or settings_coins
         self.title(TITLE)
-        self.geometry("760x780")
+        self.geometry("900x780")  # every column of the strategy list shows
         self.minsize(640, 480)
         if manager_factory is None:
             from pt_settings_manager import SettingsManager
@@ -164,15 +187,29 @@ class StrategySettingsWindow(tk.Toplevel):
             else {}
         )
         notes: List[str] = []
+        # the owner's trading switches; unreadable ones allow nothing, and Save
+        # writes them again
+        self._switches, problem = parse_switches(self._saved.get("trading_allowed"))
+        self._switches_unreadable = problem is not None
+        if problem:
+            notes.append(
+                "The saved trading switches could not be read, so nothing trades "
+                "until they are saved again."
+            )
 
         engine = self._saved.get("engine", DEFAULT_ENGINE)
         if engine not in ENGINES:
             notes.append(f"The saved signal source {engine!r} is not one of these.")
             engine = DEFAULT_ENGINE
+        offered = offered_strategies(self._mode, self._switches)
         active = self._saved.get("active_id", DEFAULT_ACTIVE_ID)
-        if active not in offered_strategies(self._mode):
+        if active not in offered:
             notes.append(f"The saved strategy {active!r} is not one of these.")
-            active = DEFAULT_ACTIVE_ID
+            active = (
+                DEFAULT_ACTIVE_ID
+                if DEFAULT_ACTIVE_ID in offered
+                else (offered[0] if offered else None)
+            )
         timeframe = self._saved.get("timeframe", DEFAULT_TIMEFRAME)
         if timeframe not in TIMEFRAME_SECONDS:
             notes.append(f"The saved candles {timeframe!r} are not one of these.")
@@ -181,7 +218,7 @@ class StrategySettingsWindow(tk.Toplevel):
         raw_overlays = self._saved.get("overlays")
         for spec in raw_overlays if isinstance(raw_overlays, list) else ():
             if isinstance(spec, Mapping) and spec.get("id") in overlay_ids():
-                if not allowed_in_mode(spec["id"], self._mode):
+                if not allowed_for_trading(spec["id"], self._mode, self._switches):
                     notes.append(
                         f"The saved stop {words.name_of(spec['id'])} cannot be used "
                         f"for {self._mode} trading."
@@ -193,7 +230,9 @@ class StrategySettingsWindow(tk.Toplevel):
                 )
 
         self.engine_var = tk.StringVar(master=self, value=engine)
-        self.strategy_var = tk.StringVar(master=self, value=words.name_of(active))
+        self.strategy_var = tk.StringVar(
+            master=self, value=words.name_of(active) if active else ""
+        )
         self.timeframe_var = tk.StringVar(
             master=self, value=words.timeframe_name(timeframe)
         )
@@ -204,7 +243,18 @@ class StrategySettingsWindow(tk.Toplevel):
             sid: tk.BooleanVar(master=self, value=sid in self._research_saved)
             for sid in listed_ids()
         }
-        self.highlight_var = tk.StringVar(master=self, value=active)
+        # the trading switches, for this trading mode
+        self._trading_saved = {
+            sid: allowed_for_trading(sid, self._mode, self._switches)
+            for sid in listed_ids()
+        }
+        self.trading_on: Dict[str, tk.BooleanVar] = {
+            sid: tk.BooleanVar(master=self, value=on)
+            for sid, on in self._trading_saved.items()
+        }
+        self.highlight_var = tk.StringVar(
+            master=self, value=active or DEFAULT_ACTIVE_ID
+        )
         self.highlight_help_var = tk.StringVar(master=self)
         self.highlight_use_var = tk.StringVar(master=self)
         self.strategy_help_var = tk.StringVar(master=self)
@@ -236,6 +286,8 @@ class StrategySettingsWindow(tk.Toplevel):
         self.timeframe_var.trace_add("write", lambda *_: self._show_timeframe())
         for var in list(self.research_on.values()) + list(self.overlay_on.values()):
             var.trace_add("write", lambda *_: self._refresh_list())
+        for sid, var in self.trading_on.items():
+            var.trace_add("write", lambda *_, s=sid: self._trading_changed(s))
         self._show_engine()
         self._show_strategy()
         self._show_highlight()
@@ -243,28 +295,77 @@ class StrategySettingsWindow(tk.Toplevel):
 
     # -- values ----------------------------------------------------------------------
 
-    def selected_strategy(self) -> str:
+    def offered(self) -> List[str]:
+        """The strategies the Strategy list offers: those switched on for this
+        trading mode, except one that needs a trained model."""
+        return [
+            sid
+            for sid in listed_ids()
+            if CATALOGUE[sid]["class_type"] == "main"
+            and tradable(sid)
+            and self.trading_on[sid].get()
+        ]
+
+    def selected_strategy(self) -> Optional[str]:
+        """The strategy chosen in the Strategy list, or None when none is (the one
+        chosen was switched off, or none is switched on)."""
         name = self.strategy_var.get()
-        for sid in offered_strategies(self._mode):
+        for sid in self.offered():
             if words.name_of(sid) == name:
                 return sid
-        return DEFAULT_ACTIVE_ID
+        return None
 
     def research_enabled(self) -> List[str]:
         """The entries ticked for research, in the list's order."""
         return [sid for sid in listed_ids() if self.research_on[sid].get()]
 
+    def trading_switches(self) -> Dict[str, Dict[str, bool]]:
+        """What Save writes as ``trading_allowed``: the saved switches, with this
+        trading mode's set from the ticks, kept only where they differ from what the
+        entry is cleared for."""
+        switches = {k: dict(v) for k, v in self._switches.items()}
+        for sid in listed_ids():
+            modes = switches.setdefault(sid, {})
+            on = bool(self.trading_on[sid].get())
+            if on == allowed_in_mode(sid, self._mode):
+                modes.pop(self._mode, None)
+            else:
+                modes[self._mode] = on
+            if not modes:
+                del switches[sid]
+        return switches
+
     def can_use(self, sid: str) -> bool:
-        """Whether "Use for trading" is offered for ``sid`` in this trading mode."""
-        if CATALOGUE[sid]["class_type"] == "main":
-            return sid in offered_strategies(self._mode)
-        return allowed_in_mode(sid, self._mode)
+        """Whether ``sid`` is switched on for this trading mode and can be chosen."""
+        if not tradable(sid):
+            return False
+        return bool(self.trading_on[sid].get())
+
+    def switch_on(self, sid: str) -> bool:
+        """Switch ``sid`` on for this trading mode. Where it is not cleared for this
+        mode, only after the owner says yes. True when it is on afterwards."""
+        if not tradable(sid):
+            return False
+        if self.trading_on[sid].get():
+            return True
+        if not allowed_in_mode(sid, self._mode):
+            name = words.name_of(sid)
+            cleared = CLEARED_FOR.get(CATALOGUE[sid]["authorisation"], "")
+            question = f"{name} is cleared for {cleared}."
+            if self._mode == "live":
+                question += " Switched on for live trading, it can place real orders."
+            question += f" Switch it on for {self._mode} trading?"
+            if not self._box.askyesno(TITLE, question, parent=self):
+                return False
+        self.trading_on[sid].set(True)
+        return True
 
     def use_highlighted(self) -> None:
         """ "Use for trading": the highlighted strategy becomes the one Save trades,
-        or the highlighted stop is ticked. Nothing happens where it is not allowed."""
+        or the highlighted stop is ticked. One not switched on for this trading mode
+        is switched on first (``switch_on``); nothing happens if that is refused."""
         sid = self.highlight_var.get()
-        if sid not in CATALOGUE or not self.can_use(sid):
+        if sid not in CATALOGUE or not self.switch_on(sid):
             return
         if CATALOGUE[sid]["class_type"] == "main":
             self.engine_var.set("catalogue")
@@ -272,6 +373,42 @@ class StrategySettingsWindow(tk.Toplevel):
         else:
             self.overlay_on[sid].set(True)
             self._show_overlay(sid)
+
+    def _trading_ticked(self) -> None:
+        """The "Enabled for ... trading" tick was clicked: switching on asks first
+        where the entry is not cleared for this mode (``switch_on``)."""
+        sid = self.highlight_var.get()
+        if sid not in CATALOGUE or not self.trading_on[sid].get():
+            return
+        if allowed_in_mode(sid, self._mode):
+            return
+        self.trading_on[sid].set(False)  # back until the owner says yes
+        self.switch_on(sid)
+
+    def _trading_changed(self, sid: str) -> None:
+        """A trading switch changed: the Strategy list and the stops follow it."""
+        if not hasattr(self, "strategy_combo"):
+            return
+        on = bool(self.trading_on[sid].get())
+        if CATALOGUE[sid]["class_type"] == "main":
+            self.strategy_combo.configure(
+                values=[words.name_of(s) for s in self.offered()]
+            )
+            if not on and self.strategy_var.get() == words.name_of(sid):
+                self._switch_note = (
+                    f"{words.name_of(sid)} is switched off for {self._mode} "
+                    "trading: choose another strategy before saving."
+                )
+                self.strategy_var.set("")
+                self.status_var.set(self._switch_note)
+        else:
+            tick = self._overlay_ticks.get(sid)
+            if tick is not None:
+                tick.state(["!disabled"] if on else ["disabled"])
+            if not on and self.overlay_on[sid].get():
+                self.overlay_on[sid].set(False)
+                self._show_overlay(sid)
+        self._refresh_list()
 
     def selected_timeframe(self) -> str:
         name = self.timeframe_var.get()
@@ -308,6 +445,8 @@ class StrategySettingsWindow(tk.Toplevel):
     def reset_strategy_params(self) -> None:
         """Show the selected strategy's defaults (saved by Save)."""
         sid = self.selected_strategy()
+        if sid is None:
+            return
         self._make_vars(sid, {})
         self._show_strategy()
 
@@ -350,14 +489,21 @@ class StrategySettingsWindow(tk.Toplevel):
         only the signal source (the strategy's own values are kept as saved)."""
         engine = self.engine_var.get()
         research = self.research_enabled()
-        extra = (
+        extra: Dict[str, Any] = (
             {"research_enabled": research}
             if set(research) != self._research_saved
             else {}
         )
+        ticks = {sid: bool(var.get()) for sid, var in self.trading_on.items()}
+        if self._switches_unreadable or ticks != self._trading_saved:
+            extra["trading_allowed"] = self.trading_switches()
         if engine != "catalogue":
             return {"engine": engine, **extra}
         sid = self.selected_strategy()
+        if sid is None:
+            raise ValueError(
+                f"Choose a strategy that is switched on for {self._mode} trading."
+            )
         params = dict(self._saved_params)
         changed = _changed(sid, self._parse(sid))
         if changed:
@@ -516,6 +662,7 @@ class StrategySettingsWindow(tk.Toplevel):
             "candles",
             "use",
             "research",
+            "trading",
             "in_use",
         )
         headings = {
@@ -524,8 +671,9 @@ class StrategySettingsWindow(tk.Toplevel):
             "kind": "Kind",
             "family": "Family",
             "candles": "Candles",
-            "use": "Use",
+            "use": "Cleared for",
             "research": "Research",
+            "trading": "Trading",
             "in_use": "In use",
         }
         self.list_table = ui_table.DataTable(
@@ -563,18 +711,26 @@ class StrategySettingsWindow(tk.Toplevel):
         actions.grid(row=2, column=0, sticky="w", pady=(4, 0))
         self.research_tick = ttk.Checkbutton(actions, text="Enabled for research")
         self.research_tick.pack(side="left")
+        self.trading_tick = ttk.Checkbutton(
+            actions,
+            text=f"Enabled for {self._mode} trading",
+            command=self._trading_ticked,
+        )
+        self.trading_tick.pack(side="left", padx=(12, 0))
         self.use_button = ttk.Button(
             actions, text="Use for trading", command=self.use_highlighted
         )
         self.use_button.pack(side="left", padx=(12, 0))
-        ttk.Button(actions, text="Run a backtest...", command=self.open_backtest).pack(
-            side="left", padx=(24, 0)
+        tools = ttk.Frame(detail)
+        tools.grid(row=3, column=0, sticky="w", pady=(4, 0))
+        ttk.Button(tools, text="Run a backtest...", command=self.open_backtest).pack(
+            side="left"
         )
-        ttk.Button(actions, text="Compare results...", command=self.open_compare).pack(
+        ttk.Button(tools, text="Compare results...", command=self.open_compare).pack(
             side="left", padx=(8, 0)
         )
         self.evidence_button = ttk.Button(
-            actions, text="Model evidence...", command=self.open_evidence
+            tools, text="Model evidence...", command=self.open_evidence
         )
         self.evidence_button.pack(side="left", padx=(8, 0))
 
@@ -617,6 +773,7 @@ class StrategySettingsWindow(tk.Toplevel):
             candles,
             words.USE_NAMES[entry["authorisation"]],
             "Yes" if self.research_on[sid].get() else "No",
+            "Yes" if self.can_use(sid) else "No",
             "Yes" if in_use else "",
         )
 
@@ -642,11 +799,20 @@ class StrategySettingsWindow(tk.Toplevel):
         summary = described.summary if described is not None else ""
         self.highlight_help_var.set(f"{words.name_of(sid)}: {summary}".strip())
         use = words.USE_HELP[CATALOGUE[sid]["authorisation"]]
-        if not self.can_use(sid) and allowed_in_mode(sid, "paper"):
+        on = bool(self.trading_on[sid].get())
+        cleared = allowed_in_mode(sid, self._mode)
+        if on and not cleared:
+            use += f" You switched it on for {self._mode} trading."
+        elif not on and cleared:
+            use += f" You switched it off for {self._mode} trading."
+        elif not on and allowed_in_mode(sid, "paper"):
             use += f" Trading is set to {self._mode}."
         self.highlight_use_var.set(use)
         self.research_tick.configure(variable=self.research_on[sid])
-        self.use_button.state(["!disabled"] if self.can_use(sid) else ["disabled"])
+        self.trading_tick.configure(variable=self.trading_on[sid])
+        usable = ["!disabled"] if tradable(sid) else ["disabled"]
+        self.trading_tick.state(usable)
+        self.use_button.state(usable)
         main = CATALOGUE[sid]["class_type"] == "main"
         if hasattr(self, "evidence_button"):
             self.evidence_button.state(["!disabled"] if main else ["disabled"])
@@ -659,7 +825,7 @@ class StrategySettingsWindow(tk.Toplevel):
         self.strategy_combo = ttk.Combobox(
             frm,
             textvariable=self.strategy_var,
-            values=[words.name_of(sid) for sid in offered_strategies(self._mode)],
+            values=[words.name_of(sid) for sid in self.offered()],
             state="readonly",
         )
         self.strategy_combo.grid(row=r, column=1, sticky="ew", pady=4)
@@ -721,6 +887,7 @@ class StrategySettingsWindow(tk.Toplevel):
         ).grid(row=r, column=0, columnspan=2, sticky="w", pady=(0, 4))
         r += 1
         self._overlay_frames: Dict[str, ttk.Frame] = {}
+        self._overlay_ticks: Dict[str, ttk.Checkbutton] = {}
         for oid in overlay_ids():
             described = words.DESCRIPTIONS[oid]
             tick = ttk.Checkbutton(
@@ -730,8 +897,9 @@ class StrategySettingsWindow(tk.Toplevel):
                 command=lambda o=oid: self._show_overlay(o),
             )
             tick.grid(row=r, column=0, columnspan=2, sticky="w", pady=(8, 0))
-            if not allowed_in_mode(oid, self._mode):
-                tick.state(["disabled"])  # this trading mode may not use it
+            self._overlay_ticks[oid] = tick
+            if not self.trading_on[oid].get():
+                tick.state(["disabled"])  # switched off for this trading mode
             r += 1
             ttk.Label(
                 frm,
@@ -826,6 +994,20 @@ class StrategySettingsWindow(tk.Toplevel):
 
     def _show_strategy(self) -> None:
         sid = self.selected_strategy()
+        note = getattr(self, "_switch_note", None)
+        if sid is not None and note and self.status_var.get() == note:
+            self.status_var.set("")  # a strategy is chosen again
+        if sid is None:
+            self.strategy_help_var.set(
+                f"Choose a strategy that is switched on for {self._mode} trading."
+                if self.offered()
+                else f"No strategy is switched on for {self._mode} trading."
+            )
+            for child in self._params_frame.winfo_children():
+                child.destroy()
+            self._show_timeframe()
+            self._refresh_list()
+            return
         self.strategy_help_var.set(words.DESCRIPTIONS[sid].summary)
         self._param_rows(self._params_frame, sid)
         permitted = CATALOGUE[sid]["timeframes_permitted"]
@@ -846,7 +1028,8 @@ class StrategySettingsWindow(tk.Toplevel):
             "The strategy decides when each candle closes: for each coin, once "
             f"every {words.timeframe_name(tf)}."
         )
-        primary = CATALOGUE[self.selected_strategy()]["timeframe_primary"]
+        sid = self.selected_strategy()
+        primary = CATALOGUE[sid]["timeframe_primary"] if sid else tf
         if primary != tf:
             text += f" Default for this strategy: {words.timeframe_name(primary)}."
         self.timeframe_help_var.set(text)

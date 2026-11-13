@@ -159,3 +159,27 @@ def test_appends_from_many_threads_are_whole_lines(tmp_path):
         lines = [json.loads(line) for line in f]
     assert sorted(e["trial_id"] for e in lines) == sorted(f"t-{i}" for i in range(20))
     assert not os.path.exists(ledger.path(root) + ".lock")
+
+
+def test_a_lock_being_deleted_is_waited_for_not_an_error(tmp_path, monkeypatch):
+    """On Windows, creating the lock file while its holder deletes it raises
+    PermissionError, not FileExistsError (seen on CI): the append waits and goes on."""
+    root = str(tmp_path)
+    real_open = os.open
+    refused = []
+
+    def open_once_refused(file, flags, *args):
+        if str(file).endswith(".lock") and not refused:
+            refused.append(file)
+            raise PermissionError(13, "Permission denied", file)
+        return real_open(file, flags, *args)
+
+    monkeypatch.setattr(ledger.os, "open", open_once_refused)
+    assert ledger.append(
+        ledger.entry(
+            trial_id="t-1", source="test", kind="exploration", counted_in="exploration"
+        ),
+        root,
+    )
+    assert refused and [e["trial_id"] for e in ledger.entries(root)] == ["t-1"]
+    assert not os.path.exists(ledger.path(root) + ".lock")

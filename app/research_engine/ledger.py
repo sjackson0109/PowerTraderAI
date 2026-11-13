@@ -128,15 +128,26 @@ class _Lock:
             try:
                 os.close(os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
                 return self
-            except FileExistsError:
+            except (FileExistsError, PermissionError):
+                # another append holds it; on Windows a lock file its holder is
+                # deleting refuses the create with PermissionError instead
                 try:
-                    if time.time() - os.path.getmtime(self.path) > LOCK_STALE_SECONDS:
-                        os.remove(self.path)
-                        continue
+                    stale = (
+                        time.time() - os.path.getmtime(self.path) > LOCK_STALE_SECONDS
+                    )
                 except OSError:
+                    stale = False  # gone, or going, since: try again
+                if stale:
+                    try:
+                        os.remove(self.path)
+                    except OSError:
+                        pass
                     continue
                 if time.monotonic() > deadline:
-                    raise LedgerError(f"the ledger is locked ({self.path})") from None
+                    raise LedgerError(
+                        f"the ledger is locked, or its folder cannot be written "
+                        f"({self.path})"
+                    ) from None
                 time.sleep(0.05)
 
     def __exit__(self, *exc: Any) -> None:

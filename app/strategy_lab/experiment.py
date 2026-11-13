@@ -126,6 +126,7 @@ def code_hashes(app: Optional[str] = None) -> Dict[str, str]:
     for extra in (
         "position_sizing.py",
         "market_data/candles.py",
+        "market_data/gaps.py",
         "market_data/timeframes.py",
     ):
         path = os.path.join(app, extra)

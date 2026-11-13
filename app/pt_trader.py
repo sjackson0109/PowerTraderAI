@@ -39,6 +39,7 @@ from trading_mode import (
     read_paper_settings,
     read_trading_settings,
     resolve_order_target,
+    settings_problem,
 )
 
 # -----------------------------
@@ -2156,7 +2157,9 @@ class CryptoAPITrading:
     def _fee_detail(order: OrderResult) -> dict:
         """Ledger columns for how a fill's fee was worked out, where the exchange (or
         the paper account) says: its currency, the rate charged (a fraction of the
-        filled value), "maker" or "taker", and whose rates and from where."""
+        filled value), "maker" or "taker", and whose rates and from where. A fee
+        charged in another asset than the quote currency (BNB on Binance) is in
+        ``other_fees``, asset -> amount as the exchange gave it."""
         detail = {
             "fee_currency": getattr(order, "fee_currency", ""),
             "fee_rate": getattr(order, "fee_rate", None),
@@ -2164,11 +2167,15 @@ class CryptoAPITrading:
             "fee_exchange": getattr(order, "fee_exchange", ""),
             "fee_source": getattr(order, "fee_source", ""),
         }
-        return {
+        detail = {
             k: v
             for k, v in detail.items()
             if isinstance(v, (str, int, float)) and v != ""
         }
+        other_fees = getattr(order, "other_fees", None)
+        if isinstance(other_fees, dict) and other_fees:
+            detail["other_fees"] = dict(other_fees)
+        return detail
 
     @staticmethod
     def _provenance(order: OrderResult, target: OrderTarget) -> dict:
@@ -2467,11 +2474,19 @@ class CryptoAPITrading:
         # The trader is pinned to the mode/broker it started in. If the setting
         # changed underneath it, stop touching the exchange until it is restarted.
         if not self._trading_mode_unchanged():
-            print(
-                f"{Fore.YELLOW}Trading mode changed since start-up (started as "
-                f"'{self._target.key}'). No orders will be placed; restart the "
-                f"trader to apply it.{Style.RESET_ALL}"
-            )
+            # a settings file that cannot be read reads as paper: say that instead
+            unreadable = settings_problem(self._settings_source)
+            if unreadable:
+                print(
+                    f"{Fore.YELLOW}No orders will be placed: {unreadable}."
+                    f"{Style.RESET_ALL}"
+                )
+            else:
+                print(
+                    f"{Fore.YELLOW}Trading mode changed since start-up (started as "
+                    f"'{self._target.key}'). No orders will be placed; restart the "
+                    f"trader to apply it.{Style.RESET_ALL}"
+                )
             time.sleep(5)
             return
 

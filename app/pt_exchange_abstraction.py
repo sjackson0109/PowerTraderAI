@@ -515,6 +515,10 @@ class OrderResult:
     fee_type: str = ""
     fee_exchange: str = ""
     fee_source: str = ""
+    # Fees charged in an asset other than the quote currency (Binance can charge BNB,
+    # or the coin bought): asset -> amount, as the exchange gave them. Not converted,
+    # and not in ``fee``.
+    other_fees: Dict[str, float] = field(default_factory=dict)
     # An OCO order's own orders on the exchange: "take_profit" and "stop" -> the
     # exchange's id for each (empty for any other order)
     legs: Dict[str, str] = field(default_factory=dict)

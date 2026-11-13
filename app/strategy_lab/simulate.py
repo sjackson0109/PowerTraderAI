@@ -8,14 +8,17 @@ only). ``Simulation`` builds one ``TradeTable`` per coin from it, and replays th
 trades in one shared account per size (``signal_fusion.evaluation.replay``), marked at
 every close of the strategy's timeframe.
 
-**Within the bar.** Every replay is also given each coin's lows, so each result carries
-the intrabar figures beside the close-based ones: the drawdown and the first halt with
-every open position valued at its bar's low (``replay``'s module docstring says how,
-and what the bound means with several coins). The trader checks its value on every
-pass, so a fall that recovers by the close can halt it. These figures decide nothing.
+**Within the bar.** Every replay is also given each coin's lows and highs, so each
+result carries the intrabar figures beside the close-based ones: the drawdown and the
+first halt with every open position valued at its bar's low, from a peak that takes the
+earlier bars' highs (``replay``'s module docstring says how, and what the bound means
+with several coins). The trader checks its value on every pass, so a fall that recovers
+by the close can halt it. The owner chose this measure for future registered
+evaluations (2026-11-12); in a replay the figures decide nothing.
 
 **Gaps.** A series with a gap longer than a day (an exchange halt) is used from after its
-last such gap (``after_long_gaps``), so no trade or lookback spans months with no market.
+last such gap (``after_long_gaps``, in ``market_data.gaps``: the trader's signal engine
+holds entries by the same rule), so no trade or lookback spans months with no market.
 
 **Accounts in pounds.** The pairs are quoted in US dollars, so an account given in GBP is
 converted at one GBP-to-USD rate, which the caller states (``usd_accounts``) and every
@@ -31,12 +34,12 @@ import numpy as np
 import pandas as pd
 
 from market_data.candles import exchange_candles, to_utc
+from market_data.gaps import MAX_GAP_S, after_long_gaps  # noqa: F401 (shared rule)
 from market_data.timeframes import candle_timeframe_seconds
 from signal_fusion.evaluation.replay import Account, Costs, Paths, replay
 from strategy_lab.candidates import RunnerSpec, Trade, TradeTable
 
 ACCOUNTS_GBP = (50.0, 500.0, 10_000.0)  # FDS-SR-001 section 5.10
-MAX_GAP_S = 24 * 3600  # a longer gap ends the earlier part of a series (model lab's)
 
 Loader = Callable[..., pd.DataFrame]
 
@@ -64,35 +67,6 @@ class Universe:
         out = dict(self.shared)
         out.update(self.own.get(coin, {}))
         return out
-
-
-def after_long_gaps(
-    frame: pd.DataFrame, bar_seconds: int
-) -> Tuple[pd.DataFrame, Optional[Dict[str, Any]]]:
-    """``frame`` from the first bar after its last gap longer than ``MAX_GAP_S``, and
-    the cut for the run's record (None when there is no such gap).
-
-    A gap of up to 24 hours is kept: there is no bar in it, so no entry is made there,
-    and an open trade carries on at the next bar. A longer gap (an exchange halt, a
-    delisting and relisting) ends the earlier part, as in the model lab
-    (``model_lab.series``): otherwise a trade, or an indicator's lookback, would run
-    straight across months with no market."""
-    if len(frame) < 2:
-        return frame, None
-    times = frame["open_time"]
-    missing_s = times.diff().dt.total_seconds().to_numpy() - float(bar_seconds)
-    long_gaps = np.flatnonzero(missing_s > MAX_GAP_S)
-    if not len(long_gaps):
-        return frame, None
-    k = int(long_gaps[-1])  # the first bar after the last long gap
-    kept = frame.iloc[k:].reset_index(drop=True)
-    kept.attrs = dict(frame.attrs)
-    cut = {
-        "earlier_last_bar": times.iloc[k - 1].isoformat(),
-        "kept_from": times.iloc[k].isoformat(),
-        "bars_dropped": k,
-    }
-    return kept, cut
 
 
 def _series(loader: Loader, symbol: str, tf: str, start, end, **kw):
@@ -177,6 +151,12 @@ class Simulation:
         out = {coin: table.lows() for coin, table in self.tables.items()}
         return {coin: v for coin, v in out.items() if v is not None}
 
+    def highs(self) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+        """Each coin's (close times, highs), for the intrabar figures' peak; a coin
+        whose candles have no highs is left out (valued at its close)."""
+        out = {coin: table.highs() for coin, table in self.tables.items()}
+        return {coin: v for coin, v in out.items() if v is not None}
+
     def end_s(self) -> int:
         return max(int(table.prices()[0][-1]) for table in self.tables.values())
 
@@ -188,10 +168,12 @@ class Simulation:
         **kw,
     ) -> Paths:
         """``trades`` in one shared account, with the strategy's cooldown, marked at
-        every close of its timeframe, and within each bar at its low (the intrabar
-        figures)."""
+        every close of its timeframe, and within each bar at its low, from a peak that
+        takes the earlier bars' highs (the intrabar figures)."""
         if "lows" not in kw:
             kw["lows"] = self.lows()
+            if "highs" not in kw:
+                kw["highs"] = self.highs()
         return replay(
             [t.opportunity() for t in trades],
             self.prices(),

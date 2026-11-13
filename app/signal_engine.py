@@ -3,8 +3,9 @@ SignalEngine (FDS-121 section 7): the trader's source of rule-based decisions.
 
 Each call to ``decide(base)`` returns the decision for the latest *closed* bar of
 the active strategy (plus overlays), using the same ``StrategyRunner`` the
-backtester uses. Candles are fetched only when a new bar should have closed, not
-on every trader cycle.
+backtester uses. A bar counts as closed only ``SETTLE_SECONDS`` after its close
+(``market_data.candles.settled``, the candle cache's rule). Candles are fetched only
+when a new bar should have closed, not on every trader cycle.
 
 Fail closed:
 
@@ -15,6 +16,21 @@ Fail closed:
 * last closed bar older than 2x the timeframe -> ``HOLD`` with reason
   ``STALE_CANDLES`` (and a WARNING);
 * no candles at all -> ``HOLD`` with reason ``CANDLES_UNAVAILABLE``.
+
+An entry is acted on only within ``ENTRY_WINDOW_S`` (15 minutes) of its bar's close, the
+moment the backtester fills it (at the next bar's open), so a refused entry is retried
+within that time only. Later, the ``ENTER_LONG`` becomes ``HOLD`` with reason
+``ENTRY_MISSED:<the entry's reason>``, logged once per coin and bar with how late it
+was: a trader started after a close does not buy on that bar. Exits are never late.
+
+Entries are also held while the bars a decision reads (the strategy's window, and an
+entry gate's context series) contain a gap longer than a day, an exchange halt for
+example: the strategy lab ends a series at such a gap (``market_data.gaps``), so no
+lookback there spans it. A strategy that finds its earlier bars by time, not by
+counting back (``counts_bars`` False: STRAT-005), is not stretched by a gap, so its
+own window is not checked. The ``ENTER_LONG`` becomes ``HOLD`` with reason
+``LONG_GAP:<the entry's reason>``, logged once per coin and bar with where the gap is,
+until the gap leaves those bars. Exits still run.
 
 Every decision is logged once per bar with strategy_id, reason, indicators and
 the bar time.
@@ -29,7 +45,8 @@ from typing import Callable, Dict, Optional, Tuple
 
 import pandas as pd
 
-from market_data.candles import CandleDataError, exchange_candles
+from market_data.candles import CandleDataError, exchange_candles, settled
+from market_data.gaps import MAX_GAP_S, after_long_gaps
 from market_data.timeframes import candle_timeframe_seconds, timeframe_seconds
 from pt_exchange_abstraction import MarketNotFound
 from pt_logging import get_logger
@@ -45,15 +62,22 @@ logger = get_logger("signal_engine")
 CandleProvider = Callable[[str, str, int, pd.Timestamp], pd.DataFrame]
 
 STALE_FACTOR = 2  # last closed bar may be at most this many timeframes old
+# an entry is acted on at most this long after its bar's close, where the backtester
+# fills it (the next bar's open); later it is missed (N12)
+ENTRY_WINDOW_S = 15 * 60
+ENTRY_MISSED = "ENTRY_MISSED"
+# entries are held while the bars a decision reads have a gap over MAX_GAP_S (N17)
+LONG_GAP = "LONG_GAP"
 FETCH_RETRY_SECONDS = 30.0
 
 
 def default_candle_provider(
     symbol: str, tf: str, n_bars: int, now: pd.Timestamp
 ) -> pd.DataFrame:
-    """The ``n_bars`` most recent closed bars of a coin's market, from the exchanges
-    in Settings, primary first, through the per-exchange candle cache
-    (``exchange_candles``; FDS-MX-001 phase E)."""
+    """The ``n_bars`` most recent bars of a coin's market closed by ``now`` (the engine
+    passes the settled clock, ``settled``), from the exchanges in Settings, primary
+    first, through the per-exchange candle cache (``exchange_candles``; FDS-MX-001
+    phase E)."""
     step = pd.Timedelta(seconds=timeframe_seconds(tf))
     forming_open = now.floor(step)  # the bar that is still forming opens here
     return exchange_candles(
@@ -78,6 +102,28 @@ def _frame_key(
         return None
     last = closed.iloc[-1]
     return expected_last_open if last >= expected_last_open else last
+
+
+def _long_gap(
+    window: Optional[pd.DataFrame],
+    bar_seconds: int,
+    context: Dict[Tuple[str, str], pd.DataFrame],
+) -> Optional[str]:
+    """A gap longer than ``MAX_GAP_S`` in the bars a decision read, its own window
+    (None: not checked) or an entry gate's context series, as "<last bar before> to
+    <first bar after>" (after the series' name for a context series); None when there
+    is none. The strategy lab's rule (``after_long_gaps``)."""
+    series = [("", window, bar_seconds)] if window is not None else []
+    series += [
+        (f"{reference} {tf} ", frame, candle_timeframe_seconds(tf))
+        for (reference, tf), frame in context.items()
+    ]
+    for name, frame, seconds in series:
+        _, cut = after_long_gaps(frame, seconds)
+        if cut is not None:
+            before, after = cut["earlier_last_bar"], cut["kept_from"]
+            return f"{name}{pd.Timestamp(before)} to {pd.Timestamp(after)}"
+    return None
 
 
 def market_for(base: str) -> str:
@@ -325,14 +371,19 @@ class SignalEngine:
         if runner is None:
             return None  # cannot be built: no signals (ERROR logged in _runner_for)
         now = pd.Timestamp(self._clock(), unit="s", tz="UTC")
+        # bars closing after this have not settled: they are neither fetched for nor
+        # decided (the candle cache's rule)
+        closed_by = settled(now)
         tf_s = timeframe_seconds(s.timeframe)
         step = pd.Timedelta(seconds=tf_s)
-        expected_last_open = now.floor(step) - step
+        expected_last_open = closed_by.floor(step) - step
 
-        candles = self._get_candles(pair, s.timeframe, runner, now, expected_last_open)
+        candles = self._get_candles(
+            pair, s.timeframe, runner, closed_by, expected_last_open
+        )
         if candles is not None and not candles.empty:
             # never evaluate a bar that has not closed, whatever the provider returned
-            candles = candles[candles["open_time"] + step <= now]
+            candles = candles[candles["open_time"] + step <= closed_by]
         if candles is None or candles.empty:
             return self._record(
                 base,
@@ -364,19 +415,49 @@ class SignalEngine:
         )
         window = runner.window(candles, len(candles) - 1)
         needs = runner.context_needs()
+        context: Dict[Tuple[str, str], pd.DataFrame] = {}
         if needs:  # an entry gate's context; other runners are called as before
-            context = self._context_for(str(base).upper(), needs, last_open + step, now)
+            context = self._context_for(
+                str(base).upper(), needs, last_open + step, closed_by
+            )
             decision = runner.evaluate(window, pos, str(base).upper(), context)
         else:
             decision = runner.evaluate(window, pos, str(base).upper())
         if pos is not None:
             self._persist()  # the stop / overlay state may have moved
+        held: Optional[str] = None  # why an entry is not acted on: no buy
+        note = ""
+        if decision.action is Action.ENTER_LONG:
+            # a strategy that finds earlier bars by time is not stretched by a gap
+            own = window if runner.strategy.counts_bars else None
+            gap = _long_gap(own, tf_s, context)
+            if gap is not None:  # the strategy lab ends a series at such a gap
+                held = LONG_GAP
+                note = (
+                    f" gap={gap} in the bars read, over {MAX_GAP_S // 3600} h "
+                    "(entries wait until it leaves them)"
+                )
+            elif age > ENTRY_WINDOW_S:  # too long after the close to fill as a backtest
+                held = ENTRY_MISSED
+                note = (
+                    f" missed={age / 60:.0f} min after the bar's close "
+                    f"(entries within {ENTRY_WINDOW_S // 60} min)"
+                )
+        if held is not None:
+            decision = Decision(
+                Action.HOLD,
+                f"{held}:{decision.reason}",
+                decision.indicators,
+                decision.bar_time,
+                decision.strategy_id,
+            )
         return self._record(
             base,
             decision,
             position=pos,
-            log_key=(decision.bar_time, pos is None, decision.action),
+            log_key=(decision.bar_time, pos is None, held or decision.action),
             exchange=exchange,
+            note=note,
         )
 
     # -- internals --------------------------------------------------------------------------------
@@ -429,8 +510,9 @@ class SignalEngine:
     def _context_candles(
         self, pair: str, tf: str, bars: int, now: pd.Timestamp
     ) -> Optional[pd.DataFrame]:
-        """``pair``'s closed ``tf`` bars, fetched once per new bar through the same
-        provider and retry rule as the decision's own candles."""
+        """``pair``'s ``tf`` bars closed by ``now`` (the settled clock, ``settled``),
+        fetched once per new bar through the same provider and retry rule as the
+        decision's own candles."""
         key = (pair, tf)
         step = pd.Timedelta(seconds=candle_timeframe_seconds(tf))
         expected_last_open = now.floor(step) - step
@@ -463,9 +545,11 @@ class SignalEngine:
         position,
         log_key: tuple,
         exchange: Optional[str] = None,
+        note: str = "",
     ) -> Decision:
         """Keep ``decision`` as ``base``'s last, with ``exchange``, the exchange whose
-        bars decided it (None when there were none), and log it when it is new."""
+        bars decided it (None when there were none), and log it, with ``note`` at the
+        end, when it is new."""
         base = str(base).upper()
         self.last_decisions[base] = decision
         self.last_exchanges[base] = exchange
@@ -486,6 +570,7 @@ class SignalEngine:
                     if position is not None and position.overlay_state
                     else ""
                 )
+                + note
             )
         return decision
 

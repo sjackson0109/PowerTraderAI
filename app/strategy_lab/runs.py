@@ -16,6 +16,12 @@ section 5.8). An exploratory run is never evidence: it is logged as a trial of k
    each account's results, its drawdowns and recovery (``research_stats.drawdowns``),
    its period returns, and whether it took the same trades as the largest account
    (an account too small for the venue's minimum orders, or short of cash, does not);
+   with a sizing policy (``RunConfig.sizing``, ``strategy_lab.sizing``) each of the
+   strategy's trades, and each random entry, is scaled at its decision, and the run
+   records the same trades at the account's own size and the same scales replayed in
+   random orders; for STRAT-007, with ``RunConfig.ensemble``, the ensemble of its
+   lookbacks too (``strategy_lab.ensemble``), each member alone and an equal-weight
+   buy-and-hold;
 4. logs the trial and saves the run under ``<data dir>/strategy_lab/runs/<id>/run.json``.
 
 ``stop`` (a threading.Event) is checked between the stages; a stopped run saves nothing.
@@ -38,7 +44,8 @@ from market_data.candles import exchange_candles
 from research_stats import drawdowns, periods
 from signal_fusion.evaluation.replay import Account, Costs, Paths
 from strategy_lab import baselines as bl
-from strategy_lab import experiment
+from strategy_lab import ensemble as ens_mod
+from strategy_lab import experiment, sizing
 from strategy_lab.candidates import RunnerSpec, Trade
 from strategy_lab.simulate import Simulation, load_universe
 from strategy_lab.venue import VenueRules, venue_rules
@@ -48,6 +55,7 @@ CURVE_POINTS = 400
 # the programme's account sizes, each reported separately (PTAI-RD-001 WP 2.6), smallest
 # first; the largest is the one the others' trades are compared with
 ACCOUNTS_GBP = (50.0, 200.0, 500.0, 10_000.0)
+ENSEMBLE_STRATEGY = "STRAT-007"
 
 
 class Stopped(Exception):
@@ -69,6 +77,10 @@ class RunConfig:
     allowance: float = 0.0005  # slippage a fill
     draws: int = 200  # random-entry draws
     seed: int = 700_000
+    # the sizing policy's record (``strategy_lab.sizing``); None: the account's own
+    sizing: Optional[Mapping[str, Any]] = None
+    # STRAT-007 only: also replay its ensemble of lookbacks (``strategy_lab.ensemble``)
+    ensemble: bool = False
 
     def spec(self) -> RunnerSpec:
         return RunnerSpec(
@@ -126,7 +138,8 @@ def _figures(paths: Paths, p: int = 0) -> Dict[str, Any]:
         "halt_exposure_usd": (
             float(paths.halt_exposure[p]) if paths.halt_exposure is not None else 0.0
         ),
-        # within the bar: open positions at their bar's low (shown only)
+        # within the bar: open positions at their bar's low, from a peak at the earlier
+        # bars' highs (shown only)
         "intrabar_max_drawdown": None if low_dd is None else float(low_dd[p]),
         "intrabar_halt_reached": (
             None
@@ -154,10 +167,12 @@ def _accounts(
     hold: Sequence[Trade],
     costs: Costs,
     gbp_usd: float,
+    **kw,
 ) -> List[Dict[str, Any]]:
-    """``trades`` and buy-and-hold at each of ``ACCOUNTS_GBP`` (module docstring)."""
+    """``trades`` and buy-and-hold at each of ``ACCOUNTS_GBP`` (module docstring);
+    ``kw`` (a sizing ``scale``) goes to the strategy's replays."""
     usd = {g: round(g * float(gbp_usd), 2) for g in ACCOUNTS_GBP}
-    paths = sim.accounts(usd, costs, trades, detail=True)
+    paths = sim.accounts(usd, costs, trades, detail=True, **kw)
     holds = sim.accounts(usd, costs, hold)
     largest = sorted(i for i, *_ in paths[ACCOUNTS_GBP[-1]].detail)
     out = []
@@ -183,6 +198,44 @@ def _accounts(
                 "periods": _period_summaries(path.curve),
             }
         )
+    return out
+
+
+def _sizing_checks(
+    sim: Simulation,
+    trades: Sequence[Trade],
+    costs: Costs,
+    account: Account,
+    sized: sizing.Sizing,
+    path: Paths,
+    config: RunConfig,
+) -> Dict[str, Any]:
+    """A sizing policy's scales, the same trades at the account's own size, and the
+    same scales in random orders (``sizing.random_orders``): the share of orders whose
+    largest drawdown, and whose net, were at or below the policy's."""
+    plain = sim.replay(trades, costs, account)
+    out: Dict[str, Any] = {
+        **sized.summary(),
+        "fixed_result": {
+            "net_usd": float(plain.net[0]),
+            "max_drawdown": float(plain.max_drawdown[0]),
+            "trades": int(plain.trades[0]),
+        },
+        "random_order": None,
+    }
+    draws = int(config.draws)
+    if draws and len(trades):
+        orders = sizing.random_orders(sized.scale, draws, config.seed + 1)
+        rand = sim.replay(trades, costs, account, scale=orders)
+        out["random_order"] = {
+            "draws": draws,
+            "median_max_drawdown": float(np.median(rand.max_drawdown)),
+            "share_drawdown_at_or_below": float(
+                np.mean(rand.max_drawdown <= path.max_drawdown[0] + 1e-12)
+            ),
+            "median_net_usd": float(np.median(rand.net)),
+            "share_net_at_or_above": float(np.mean(rand.net >= path.net[0] - 1e-9)),
+        }
     return out
 
 
@@ -221,10 +274,14 @@ def run(
     if not config.coins:
         raise ValueError("choose at least one coin")
     spec = config.spec()
+    if config.ensemble and config.strategy_id != ENSEMBLE_STRATEGY:
+        raise ValueError(f"the ensemble is of {ENSEMBLE_STRATEGY}'s members")
+    first = _warmup_start(spec, a)
+    if config.ensemble:  # the longest member's channel
+        back = pd.Timedelta(days=ens_mod.warmup_days())
+        first = max(HISTORY_START, min(first, a - back))
     progress("Reading candles")
-    universe = load_universe(
-        list(config.coins), spec, _warmup_start(spec, a), b, loader=loader
-    )
+    universe = load_universe(list(config.coins), spec, first, b, loader=loader)
     check()
     progress("Finding the strategy's trades")
     sim = Simulation(universe, spec)
@@ -241,19 +298,42 @@ def run(
     )
     usd = round(float(config.account_gbp) * float(config.gbp_usd), 2)
     account = Account(start=usd)
+    policy = sizing.from_record(config.sizing)
+    sized = policy.scales(sim, trades)
+    fixed = isinstance(policy, sizing.Fixed)
+    kw = {} if fixed else {"scale": sized.scale[None, :]}
     progress("Replaying the account")
-    path = sim.replay(trades, costs, account, detail=True)
+    path = sim.replay(trades, costs, account, detail=True, **kw)
     taken: List[Trade] = [trades[i] for i, *_ in path.detail]
     check()
     hold_trades = bl.hold_trades(sim, start_s)
     hold = sim.replay(hold_trades, costs, account)
     progress("Replaying each account size")
-    accounts = _accounts(sim, trades, hold_trades, costs, config.gbp_usd)
+    accounts = _accounts(sim, trades, hold_trades, costs, config.gbp_usd, **kw)
     check()
     progress(f"Replaying {config.draws} random-entry draws")
     draws = bl.random_draws(sim, taken, config.seed, int(config.draws), start_s)
-    rand = bl.replay_draws(sim, draws.draws, costs, account) if config.draws else None
+    rand = (
+        bl.replay_draws(
+            sim, draws.draws, costs, account, policy=None if fixed else policy
+        )
+        if config.draws
+        else None
+    )
     check()
+    ensemble_part = None
+    if config.ensemble:
+        progress("Replaying the ensemble")
+        group = ens_mod.Ensemble(universe)
+        ensemble_part = ens_mod.report(group, costs, usd, policy, start_s)
+        check()
+    sizing_part: Dict[str, Any] = {"policy": policy.record()}
+    if not fixed:
+        progress("Replaying the sizes in random orders")
+        sizing_part.update(
+            _sizing_checks(sim, trades, costs, account, sized, path, config)
+        )
+        check()
 
     per_coin: Dict[str, Dict[str, Any]] = {}
     for i, amount, net, days in path.detail:
@@ -303,6 +383,11 @@ def run(
         ),
         # the same trades at each of the programme's account sizes (WP 2.6)
         "accounts": accounts,
+        # how each trade was sized (WP 4.2), against the account's own sizing and the
+        # same sizes in random orders
+        "sizing": sizing_part,
+        # STRAT-007's ensemble of lookbacks, when asked for (backlog 3.1)
+        "ensemble": ensemble_part,
     }
     if save:
         run_id, folder = _claim_folder(run_id)

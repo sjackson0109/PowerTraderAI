@@ -1,5 +1,7 @@
 # STRAT-004 paper observation: readiness assessment
 
+> **Update, 2026-11-12.** The owner approved the authorisation change in section 13, and D1 is fixed (PR #260, merged `2709b99`). STRAT-004 is now `paper` in `catalogue.json`; the record is in `RUN-LOG-sr-1.md`. The rest of this document is as written on 2026-11-08: the other decisions in section 14 are still open, and no observation segment has started.
+
 > **Preparation only. Nothing is enabled.** STRAT-004 is `research` in `app/strategies/catalogue.json:107` at this commit, so the trader refuses it in paper and in live. The authorisation change in section 13 is proposed and has not been applied. No setting, authorisation or trading behaviour was changed to prepare this document.
 
 **Prepared:** 2026-11-08, on `docs/strat-004-paper-readiness`, cut from `main` at `cf858a7` (E1 merged, PR #249).

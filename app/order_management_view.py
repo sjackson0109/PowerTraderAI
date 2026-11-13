@@ -1073,7 +1073,9 @@ class OrderDialog(tk.Toplevel):
         if self._banner == "blocked":
             return "No live exchange is chosen"
         try:
-            return self.executor.refusal(self.trading) if self.executor else ""
+            if not self.executor:
+                return ""
+            return self.executor.refusal(self.trading, self.side_var.get().lower())
         except Exception as exc:
             return f"{type(exc).__name__}: {exc}"
 

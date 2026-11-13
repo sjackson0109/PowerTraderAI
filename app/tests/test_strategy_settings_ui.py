@@ -130,11 +130,17 @@ def root():
 
 
 class Box:
-    def __init__(self):
+    def __init__(self, answer=False):
         self.errors = []
+        self.questions = []
+        self.answer = answer  # what askyesno answers
 
     def showerror(self, title, message, **_):
         self.errors.append(message)
+
+    def askyesno(self, title, message, **_):
+        self.questions.append(message)
+        return self.answer
 
 
 @pytest.fixture

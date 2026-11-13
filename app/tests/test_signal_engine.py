@@ -587,6 +587,33 @@ class TraderIntegrationTests(PaperTraderCase):
         self.assertEqual(trader._catalogue_exit_quantity("BTC", 0.25), 0.25)
         self.assertEqual(trader._catalogue_exit_quantity("ETH", 2.0), 0.0)
 
+    def test_the_cooldown_counts_from_the_bar_the_sale_filled_in(self):
+        """As the backtester counts it: a sale decided at bar k's close fills at bar
+        k + 1's open, so with 3 bars after an exit, decisions on bars k + 1 to k + 3
+        are blocked and bar k + 4's may enter (not bar k + 3's)."""
+        settings = copy.deepcopy(PAPER)
+        settings["strategy"]["overlays"] = [
+            {
+                "id": "OVL-COOLDOWN",
+                "params": {"bars_after_exit": 3, "bars_after_loss": 0},
+            }
+        ]
+        (_, _), (exit_bar, _) = expected_actions(self.frame)
+        trader = self.catalogue_trader(settings)
+        for k in range(150, exit_bar + 1):
+            self.feed.set_after_bar(k)
+            trader.manage_trades()
+        self.assertEqual([o.side.value for o in self.orders()], ["buy", "sell"])
+        (cooldown,) = [
+            o
+            for o in trader.signal_engine._runner.overlays
+            if o.overlay_id == "OVL-COOLDOWN"
+        ]
+        times = self.frame["open_time"]
+        self.assertEqual(cooldown._last["BTC"][0], times.iloc[exit_bar + 1])
+        self.assertFalse(cooldown.allow_entry("BTC", times.iloc[exit_bar + 3]).allowed)
+        self.assertTrue(cooldown.allow_entry("BTC", times.iloc[exit_bar + 4]).allowed)
+
     def test_status_reports_the_signal_source_and_last_decision(self):
         trader = self.catalogue_trader()
         self.feed.set_after_bar(200)
@@ -611,6 +638,23 @@ class TraderIntegrationTests(PaperTraderCase):
         with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
             signals = json.load(f)["signals"]
         self.assertIn("needs a trained model", signals["blocked"])
+        self.assertEqual(signals["note"], "SIGNALS: BLOCKED")
+        self.assertEqual(self.orders(), [])
+
+    def test_status_shows_a_strategy_not_cleared_for_the_trading_mode(self):
+        """A research-only strategy in paper: every order is refused, and the status
+        says so instead of reporting nothing blocked."""
+        settings = copy.deepcopy(PAPER)
+        settings["strategy"]["active_id"] = "STRAT-005"
+        settings["strategy"]["timeframe"] = "1d"  # its own: only the mode is wrong
+        trader = self.catalogue_trader(settings)
+        self.feed.set_after_bar(200)
+        trader.manage_trades()
+        with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
+            signals = json.load(f)["signals"]
+        self.assertIsNotNone(signals["blocked"])
+        self.assertIn("STRAT-005", signals["blocked"])
+        self.assertIn("paper", signals["blocked"])
         self.assertEqual(signals["note"], "SIGNALS: BLOCKED")
         self.assertEqual(self.orders(), [])
 

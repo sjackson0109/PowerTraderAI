@@ -196,6 +196,16 @@ class TestWindow:
             "Random entries (median of 200)",
         ]
         assert win.per_coin.tree.get_children()
+        accounts = [
+            win.accounts.tree.item(i, "values")[0]
+            for i in win.accounts.tree.get_children()
+        ]
+        assert accounts == ["£50", "£200", "£500", "£10,000"]
+        periods = [
+            win.period_table.tree.item(i, "values")[0]
+            for i in win.period_table.tree.get_children()
+        ]
+        assert periods[:3] == ["Days", "Weeks", "Months"]
         assert "Logged as an exploratory run." in win.notes_var.get()
         assert win.status_var.get() == "Done."
         assert runs.list_runs()
@@ -234,7 +244,10 @@ class TestWindow:
         record = runs.run(config(), loader=loader, venue=venue, save=False)
         texts.append(ui.notes(record))
         texts += [str(v) for row in ui.summary_rows(record) for v in row]
+        texts += [str(v) for row in ui.account_rows(record) for v in row]
+        texts += [str(v) for row in ui.period_rows(record) for v in row]
         texts += list(ui.SUMMARY_HEADINGS.values()) + list(ui.COMPARE_HEADINGS.values())
+        texts += list(ui.ACCOUNT_HEADINGS.values()) + list(ui.PERIOD_HEADINGS.values())
         for text in texts:
             for banned in BANNED:
                 assert banned not in text, (banned, text)

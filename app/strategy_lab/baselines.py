@@ -128,9 +128,12 @@ def replay_draws(
     costs: Costs,
     account: Account,
     chunk: int = 200,
+    policy=None,
 ) -> Paths:
     """Every draw as one path of the replay. Draws are replayed ``chunk`` at a time over
-    the union of their trades, each vetoing the trades that are not its own."""
+    the union of their trades, each vetoing the trades that are not its own. With a
+    sizing ``policy`` (``strategy_lab.sizing``) each trade is sized as the strategy's
+    own trades are, at its own decision."""
     parts: List[Paths] = []
     for a in range(0, len(draws), chunk):
         group = draws[a : a + chunk]
@@ -146,7 +149,11 @@ def replay_draws(
         for p, trades in enumerate(group):
             for t in trades:
                 veto[p, union[(t.coin, t.decided)]] = False
-        parts.append(sim.replay(order, costs, account, veto=veto))
+        kw = {}
+        if policy is not None:
+            scale = policy.scales(sim, order).scale
+            kw["scale"] = np.tile(scale, (len(group), 1))
+        parts.append(sim.replay(order, costs, account, veto=veto, **kw))
     return _concat(parts)
 
 

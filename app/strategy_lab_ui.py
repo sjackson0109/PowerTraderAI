@@ -238,8 +238,9 @@ def notes(record: Dict[str, Any]) -> str:
     low = s.get("intrabar_max_drawdown")  # runs saved before it was recorded: absent
     if low is not None:
         lines.append(
-            f"With open positions valued at each bar's low, the largest drawdown was "
-            f"{_pct(low)} ({_pct(s['max_drawdown'])} at the closes)."
+            f"With open positions valued at each bar's low, from the highest value at "
+            f"earlier bars' highs, the largest drawdown was {_pct(low)} "
+            f"({_pct(s['max_drawdown'])} at the closes)."
         )
     if s.get("intrabar_halt_reached"):
         lines.append(

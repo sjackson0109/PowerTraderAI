@@ -66,6 +66,13 @@ ones and never in their place:
   marks value them, at the raw price with no fee, and an unsold remainder with them;
 * the fall is taken from the peak at the previous mark (the close-marked peak, as
   ``max_drawdown``'s): a low comes before the close that ends its interval;
+* with ``highs`` as well (each coin's close times and highs), that peak also takes the
+  account's best value in each earlier interval: every position held through it at the
+  highest price its coin reached there (the highest high, or the close at its end if
+  higher). The fall to an interval's low is taken from the peak before it, since the
+  high and the low of one interval may come in either order; the fall to its close is
+  taken from the peak including its own high, which came before that close. This is the
+  owner's rule of 2026-11-12 for future registered evaluations (D-backlog O12);
 * ``intrabar_max_drawdown`` (and ``_usd``) is the largest of those falls and of the
   close-based ones, so it is never below ``max_drawdown``; ``intrabar_halt_s`` is the
   end of the first interval in which it reached the halt level (the level was reached
@@ -76,10 +83,12 @@ ones and never in their place:
 
 For a long-only book, valuing each position at its interval's low gives a lower bound
 on the account's worst value in the interval. With several coins, whose lows can come
-at different times, the sum is a conservative bound, not the path the account took. The
-bound concerns the trough only: the peak is the close-marked one, and a trader that
-checks on every pass can see a higher peak between closes. These figures are reported
-and decide nothing: no entry, exit or end of a path depends on them.
+at different times, the sum is a conservative bound, not the path the account took.
+Without ``highs`` the bound concerns the trough only: the peak is the close-marked one,
+and a trader that checks on every pass can see a higher peak between closes. With them,
+the peak is the one such a trader could have seen, with several coins again a bound
+(their highs, too, can come at different times). These figures are reported and decide
+nothing in the replay: no entry, exit or end of a path depends on them.
 """
 
 from __future__ import annotations
@@ -216,20 +225,21 @@ def _prices(prices: Mapping[str, Tuple[Sequence[int], Sequence[float]]], coins, 
     return out
 
 
-def _lows(
-    lows: Mapping[str, Tuple[Sequence[int], Sequence[float]]],
+def _extremes(
+    series: Mapping[str, Tuple[Sequence[int], Sequence[float]]],
     coins,
     hours: np.ndarray,
     mark_s: int,
+    pick=np.fmin,
 ) -> np.ndarray:
-    """Each coin's lowest low among its bars that close in each marking interval,
-    (hours[h] - mark_s, hours[h]]: (hours, coins); NaN where none closes in it, or for
-    a coin with no lows."""
+    """Each coin's lowest low (``pick`` np.fmin; its highest high with np.fmax) among
+    its bars that close in each marking interval, (hours[h] - mark_s, hours[h]]:
+    (hours, coins); NaN where none closes in it, or for a coin not in ``series``."""
     out = np.full((len(hours), len(coins)), np.nan)
     for j, c in enumerate(coins):
-        if c not in lows:
+        if c not in series:
             continue
-        t, p = lows[c]
+        t, p = series[c]
         t = np.asarray(t, dtype=np.int64)
         p = np.asarray(p, dtype=float)
         upto = np.searchsorted(t, hours, side="right")  # bars closed by each mark
@@ -238,7 +248,7 @@ def _lows(
         if some.any():
             # the intervals follow one another (the marks are mark_s apart), so each
             # one's bars end where the next one's begin
-            out[some, j] = np.fmin.reduceat(p[: upto[some][-1]], since[some])
+            out[some, j] = pick.reduceat(p[: upto[some][-1]], since[some])
     return out
 
 
@@ -257,12 +267,16 @@ def replay(
     mark_s: int = HOUR_S,
     cooldown: Optional[Cooldown] = None,
     lows: Optional[Mapping[str, Tuple[Sequence[int], Sequence[float]]]] = None,
+    highs: Optional[Mapping[str, Tuple[Sequence[int], Sequence[float]]]] = None,
 ) -> Paths:
     """Replay the opportunities on ``paths`` paths. ``veto`` (paths, n) is True where a
     path vetoes an opportunity; ``scale`` (paths, n) is its scale (at most 1). ``prices``
     gives each coin's hourly (close times, closes) for marking. ``end_s`` ends the curve
     (default: the last exit). ``lows`` gives each coin's (close times, lows) for the
-    intrabar figures; without it they are None."""
+    intrabar figures; without it they are None. ``highs`` (with ``lows`` only) raises
+    their peak to the best value in each earlier interval."""
+    if highs is not None and lows is None:
+        raise ValueError("highs set the intrabar figures' peak: give lows with them")
     n = len(opps)
     if veto is not None:
         paths = veto.shape[0]
@@ -286,7 +300,12 @@ def replay(
         hours = np.zeros(0, dtype=np.int64)
     marks = _prices(prices, coins, hours) if n else np.zeros((0, 0))
     intrabar = lows is not None
-    low_marks = _lows(lows, coins, hours, mark_s) if (intrabar and n) else None
+    low_marks = _extremes(lows, coins, hours, mark_s) if (intrabar and n) else None
+    high_marks = (
+        _extremes(highs, coins, hours, mark_s, np.fmax)
+        if (highs is not None and n)
+        else None
+    )
 
     cash = np.full(paths, float(account.start))
     qty = np.zeros((paths, len(coins)))
@@ -321,6 +340,8 @@ def replay(
     halt_low = np.zeros(paths)
     in_mdd = np.zeros(paths)  # within the bar (with ``lows``)
     in_mdd_usd = np.zeros(paths)
+    # their peak: the close-marked one, raised by each earlier interval's highs
+    in_peak = np.full(paths, float(account.start))
     in_halt_s = np.full(paths, -1, dtype=np.int64)
 
     # events: (time, 0 = exit, 1 = entry, opportunity)
@@ -346,8 +367,13 @@ def replay(
             low_value = cash + np.nan_to_num(
                 (qty + dust) * worst[None, :], nan=0.0
             ).sum(axis=1)
-            low_fall = np.where(peak > 0, (peak - low_value) / peak, 0.0)
-            low_fall_usd = peak - low_value
+            low_fall = np.where(in_peak > 0, (in_peak - low_value) / in_peak, 0.0)
+            low_fall_usd = in_peak - low_value
+            if high_marks is not None:  # and at its highest, for the peak after it
+                best = np.fmax(high_marks[h], last_close)
+                high_value = cash + np.nan_to_num(
+                    (qty + dust) * best[None, :], nan=0.0
+                ).sum(axis=1)
         while ev < len(events) and events[ev][0] <= t:
             when, kind, i = events[ev]
             ev += 1
@@ -460,11 +486,14 @@ def replay(
         mdd = np.where(live, np.maximum(mdd, fall), mdd)
         mdd_usd = np.where(live, np.maximum(mdd_usd, fall_usd), mdd_usd)
         if low_marks is not None:  # reported only: nothing below depends on it
-            worst_fall = np.maximum(fall, low_fall)
+            top = value if high_marks is None else np.maximum(value, high_value)
+            in_peak = np.where(live, np.maximum(in_peak, top), in_peak)
+            close_fall = np.where(in_peak > 0, (in_peak - value) / in_peak, 0.0)
+            worst_fall = np.maximum(close_fall, low_fall)
             in_mdd = np.where(live, np.maximum(in_mdd, worst_fall), in_mdd)
             in_mdd_usd = np.where(
                 live,
-                np.maximum(in_mdd_usd, np.maximum(fall_usd, low_fall_usd)),
+                np.maximum(in_mdd_usd, np.maximum(in_peak - value, low_fall_usd)),
                 in_mdd_usd,
             )
             in_halt_s[

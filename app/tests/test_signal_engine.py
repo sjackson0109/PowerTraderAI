@@ -24,6 +24,7 @@ from strategies.factory import build_runner
 from strategies.settings import ENGINES, read_strategy_settings
 
 HOUR = pd.Timedelta(hours=1)
+DAY = pd.Timedelta(days=1)
 PAPER = {
     "trading": {"mode": "paper"},
     "strategy": {"active_id": "STRAT-000"},
@@ -672,22 +673,22 @@ class TraderIntegrationTests(PaperTraderCase):
         self.assertEqual(len(self.orders()), 1)
 
 
-class EntryWindowTests(PaperTraderCase):
-    """An entry is acted on only within 15 minutes of its bar's close, the moment the
-    backtester fills it (at the next bar's open). Later it is missed: one HOLD
-    ``ENTRY_MISSED`` decision logged, no buy. An exit is never late. STRAT-004 on
-    daily bars: it enters on a new 55-day closing high (bars 55 to 57 here) and exits
-    on a new 20-day low (bar 58)."""
+class DailyTraderCase(PaperTraderCase):
+    """STRAT-004 on the daily bars ``bars()`` gives, through the trader into paper,
+    for one coin. It enters on a new 55-day closing high and exits on a new 20-day
+    low."""
 
-    WINDOW_S = 15 * 60
     SETTINGS = {
         "trading": {"mode": "paper"},
         "strategy": {"active_id": "STRAT-004", "timeframe": "1d"},
     }
 
+    def bars(self):
+        raise NotImplementedError
+
     def setUp(self):
         super().setUp()
-        self.frame = daily([100.0] * 55 + [110.0, 111.0, 112.0] + [90.0] * 25)
+        self.frame = self.bars()
         self.feed = DailyFeed(self.frame)
         self.one_coin("BTC")
         sleep = mock.patch.object(self.pt_trader.time, "sleep")
@@ -716,6 +717,18 @@ class EntryWindowTests(PaperTraderCase):
                 tm._quote_cache.clear()
                 trader.manage_trades()
         return [str(c) for c in info.call_args_list if "Decision BTC" in str(c)]
+
+
+class EntryWindowTests(DailyTraderCase):
+    """An entry is acted on only within 15 minutes of its bar's close, the moment the
+    backtester fills it (at the next bar's open). Later it is missed: one HOLD
+    ``ENTRY_MISSED`` decision logged, no buy. An exit is never late. STRAT-004
+    enters on bars 55 to 57 here and exits on bar 58."""
+
+    WINDOW_S = 15 * 60
+
+    def bars(self):
+        return daily([100.0] * 55 + [110.0, 111.0, 112.0] + [90.0] * 25)
 
     def test_an_entry_is_acted_on_only_within_the_window_and_an_exit_always(self):
         trader = self.trader()
@@ -761,6 +774,95 @@ class EntryWindowTests(PaperTraderCase):
         self.quotes.age_s = 0.0
         self.passes(trader, 56, self.WINDOW_S - 60)
         self.assertEqual((buy.call_count, self.sides()), (10, ["buy"]))
+
+
+def holed(frame, first, days):
+    """``frame`` with no bars for ``days`` days before bar ``first``: the bars from
+    ``first`` on open ``days`` days later."""
+    out = frame.copy()
+    out.loc[first:, "open_time"] = out.loc[first:, "open_time"] + pd.Timedelta(
+        days=days
+    )
+    return out
+
+
+class LongGapTests(DailyTraderCase):
+    """Entries are held while the bars a decision reads have a gap longer than a day
+    (the strategy lab ends a series there, ``after_long_gaps``): HOLD ``LONG_GAP``,
+    logged once per coin and bar. Exits still run. Here 30 days are missing before
+    bar 60, so STRAT-004's 56 bars include that gap up to bar 114's decision."""
+
+    def bars(self):
+        closes = (
+            [100.0] * 56
+            + [110.0, 111.0, 112.0, 113.0]  # bar 56: a new high, entered
+            + [90.0] * 20  # bar 60, after the gap: a new low, exited
+            + [120.0]  # bar 80: a new high, held
+            + [90.0] * 33
+            + [125.0, 126.0]  # bar 114: held; bar 115: the gap has left, entered
+            + [126.0] * 5
+        )
+        return holed(daily(closes), 60, 30)
+
+    def test_entries_wait_until_the_gap_leaves_the_bars_read_and_exits_do_not(self):
+        trader = self.trader()
+        acted, held = {}, {}
+        for k in range(55, len(self.frame)):
+            before = len(self.sides())
+            logged = self.passes(trader, k, 10, n=2)
+            if len(self.sides()) > before:
+                acted[k] = self.sides()[-1]
+            gap = [line for line in logged if "LONG_GAP" in line]
+            if gap:
+                held[k] = gap
+        self.assertEqual(acted, {56: "buy", 60: "sell", 115: "buy"})
+        self.assertEqual(sorted(held), [80, 114])
+        times = self.frame["open_time"]
+        for k, lines in held.items():
+            self.assertEqual(len(lines), 1, lines)  # once per bar
+            self.assertIn("action=HOLD", lines[0])
+            self.assertIn("reason=LONG_GAP:NEW_CLOSING_HIGH", lines[0])
+            self.assertIn(f"bar={times.iloc[k]}", lines[0])
+            self.assertIn(str(times.iloc[59]), lines[0])  # the gap's two ends
+            self.assertIn(str(times.iloc[60]), lines[0])
+
+    def test_a_gap_in_an_entry_gates_reference_bars_holds_too(self):
+        """OVL-REGIME reads BTC's last 50 daily closes; with 30 of BTC's days missing
+        among them, the entry is held, and without the gap the gate lets it in."""
+        coin = daily([100.0] * 55 + [110.0], start="2024-01-01")
+        btc = daily(np.linspace(100.0, 300.0, 270), start="2023-06-01")
+        last = coin["open_time"].iloc[-1]
+        btc = btc[btc["open_time"] <= last]
+        missing = btc["open_time"].between(last - 35 * DAY, last - 6 * DAY)
+        settings = {
+            "strategy": {
+                "active_id": "STRAT-004",
+                "timeframe": "1d",
+                "overlays": [
+                    {"id": "OVL-REGIME", "params": {"reference": "BTC", "sma_days": 50}}
+                ],
+            }
+        }
+
+        def clock():
+            return (last + DAY).timestamp() + 10
+
+        def decide(reference):
+            def provider(symbol, tf, n, now):
+                frame = reference if symbol.startswith("BTC") else coin
+                closed = frame[frame["open_time"] + DAY <= now]
+                return closed.tail(n).reset_index(drop=True)
+
+            return SignalEngine(settings, provider, clock).decide("ETH")
+
+        whole = decide(btc)
+        self.assertEqual(
+            (whole.action, whole.reason), (Action.ENTER_LONG, "NEW_CLOSING_HIGH")
+        )
+        gapped = decide(btc[~missing])
+        self.assertEqual(
+            (gapped.action, gapped.reason), (Action.HOLD, "LONG_GAP:NEW_CLOSING_HIGH")
+        )
 
 
 class HubNoteTests(unittest.TestCase):

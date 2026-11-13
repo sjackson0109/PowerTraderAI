@@ -22,6 +22,15 @@ within that time only. Later, the ``ENTER_LONG`` becomes ``HOLD`` with reason
 ``ENTRY_MISSED:<the entry's reason>``, logged once per coin and bar with how late it
 was: a trader started after a close does not buy on that bar. Exits are never late.
 
+Entries are also held while the bars a decision reads (the strategy's window, and an
+entry gate's context series) contain a gap longer than a day, an exchange halt for
+example: the strategy lab ends a series at such a gap (``market_data.gaps``), so no
+lookback there spans it. A strategy that finds its earlier bars by time, not by
+counting back (``counts_bars`` False: STRAT-005), is not stretched by a gap, so its
+own window is not checked. The ``ENTER_LONG`` becomes ``HOLD`` with reason
+``LONG_GAP:<the entry's reason>``, logged once per coin and bar with where the gap is,
+until the gap leaves those bars. Exits still run.
+
 Every decision is logged once per bar with strategy_id, reason, indicators and
 the bar time.
 """
@@ -36,6 +45,7 @@ from typing import Callable, Dict, Optional, Tuple
 import pandas as pd
 
 from market_data.candles import CandleDataError, exchange_candles
+from market_data.gaps import MAX_GAP_S, after_long_gaps
 from market_data.timeframes import candle_timeframe_seconds, timeframe_seconds
 from pt_exchange_abstraction import MarketNotFound
 from pt_logging import get_logger
@@ -55,6 +65,8 @@ STALE_FACTOR = 2  # last closed bar may be at most this many timeframes old
 # fills it (the next bar's open); later it is missed (N12)
 ENTRY_WINDOW_S = 15 * 60
 ENTRY_MISSED = "ENTRY_MISSED"
+# entries are held while the bars a decision reads have a gap over MAX_GAP_S (N17)
+LONG_GAP = "LONG_GAP"
 FETCH_RETRY_SECONDS = 30.0
 
 
@@ -88,6 +100,28 @@ def _frame_key(
         return None
     last = closed.iloc[-1]
     return expected_last_open if last >= expected_last_open else last
+
+
+def _long_gap(
+    window: Optional[pd.DataFrame],
+    bar_seconds: int,
+    context: Dict[Tuple[str, str], pd.DataFrame],
+) -> Optional[str]:
+    """A gap longer than ``MAX_GAP_S`` in the bars a decision read, its own window
+    (None: not checked) or an entry gate's context series, as "<last bar before> to
+    <first bar after>" (after the series' name for a context series); None when there
+    is none. The strategy lab's rule (``after_long_gaps``)."""
+    series = [("", window, bar_seconds)] if window is not None else []
+    series += [
+        (f"{reference} {tf} ", frame, candle_timeframe_seconds(tf))
+        for (reference, tf), frame in context.items()
+    ]
+    for name, frame, seconds in series:
+        _, cut = after_long_gaps(frame, seconds)
+        if cut is not None:
+            before, after = cut["earlier_last_bar"], cut["kept_from"]
+            return f"{name}{pd.Timestamp(before)} to {pd.Timestamp(after)}"
+    return None
 
 
 def market_for(base: str) -> str:
@@ -374,6 +408,7 @@ class SignalEngine:
         )
         window = runner.window(candles, len(candles) - 1)
         needs = runner.context_needs()
+        context: Dict[Tuple[str, str], pd.DataFrame] = {}
         if needs:  # an entry gate's context; other runners are called as before
             context = self._context_for(str(base).upper(), needs, last_open + step, now)
             decision = runner.evaluate(window, pos, str(base).upper(), context)
@@ -381,11 +416,28 @@ class SignalEngine:
             decision = runner.evaluate(window, pos, str(base).upper())
         if pos is not None:
             self._persist()  # the stop / overlay state may have moved
-        missed = decision.action is Action.ENTER_LONG and age > ENTRY_WINDOW_S
-        if missed:  # too long after the close to fill as a backtest does: no buy
+        held: Optional[str] = None  # why an entry is not acted on: no buy
+        note = ""
+        if decision.action is Action.ENTER_LONG:
+            # a strategy that finds earlier bars by time is not stretched by a gap
+            own = window if runner.strategy.counts_bars else None
+            gap = _long_gap(own, tf_s, context)
+            if gap is not None:  # the strategy lab ends a series at such a gap
+                held = LONG_GAP
+                note = (
+                    f" gap={gap} in the bars read, over {MAX_GAP_S // 3600} h "
+                    "(entries wait until it leaves them)"
+                )
+            elif age > ENTRY_WINDOW_S:  # too long after the close to fill as a backtest
+                held = ENTRY_MISSED
+                note = (
+                    f" missed={age / 60:.0f} min after the bar's close "
+                    f"(entries within {ENTRY_WINDOW_S // 60} min)"
+                )
+        if held is not None:
             decision = Decision(
                 Action.HOLD,
-                f"{ENTRY_MISSED}:{decision.reason}",
+                f"{held}:{decision.reason}",
                 decision.indicators,
                 decision.bar_time,
                 decision.strategy_id,
@@ -394,18 +446,9 @@ class SignalEngine:
             base,
             decision,
             position=pos,
-            log_key=(
-                decision.bar_time,
-                pos is None,
-                ENTRY_MISSED if missed else decision.action,
-            ),
+            log_key=(decision.bar_time, pos is None, held or decision.action),
             exchange=exchange,
-            note=(
-                f" missed={age / 60:.0f} min after the bar's close "
-                f"(entries within {ENTRY_WINDOW_S // 60} min)"
-                if missed
-                else ""
-            ),
+            note=note,
         )
 
     # -- internals --------------------------------------------------------------------------------

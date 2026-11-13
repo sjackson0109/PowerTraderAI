@@ -111,6 +111,27 @@ def test_volatility_features():
     assert got == pytest.approx(math.sqrt(s2))
 
 
+def test_yang_zhang():
+    o = [100.0, 101.0, 99.5, 102.0, 103.0]
+    h = [102.0, 103.0, 101.0, 104.0, 105.0]
+    lo = [99.0, 100.0, 98.0, 101.0, 102.0]
+    cl = [101.0, 100.0, 101.5, 103.0, 102.5]
+    c = frame(open=o, high=h, low=lo, close=cl)
+    n = 3
+    jump = [math.log(o[i] / cl[i - 1]) for i in range(2, 5)]
+    body = [math.log(cl[i] / o[i]) for i in range(2, 5)]
+    rs = [
+        math.log(h[i] / cl[i]) * math.log(h[i] / o[i])
+        + math.log(lo[i] / cl[i]) * math.log(lo[i] / o[i])
+        for i in range(2, 5)
+    ]
+    k = 0.34 / (1.34 + (n + 1) / (n - 1))
+    var = np.var(jump, ddof=1) + k * np.var(body, ddof=1) + (1 - k) * np.mean(rs)
+    got = fl.compute("volatility.yang_zhang", c, n=n)
+    assert got.iloc[-1] == pytest.approx(math.sqrt(var))
+    assert got.iloc[:n].isna().all() and np.isfinite(got.iloc[n:]).all()
+
+
 def test_volume_features():
     c = frame(
         close=[10, 11, 10, 10, 12],

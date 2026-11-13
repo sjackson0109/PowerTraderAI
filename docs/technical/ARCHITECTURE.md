@@ -160,6 +160,10 @@ says. The old `strategy.symbols` (default BTC only) is ignored.
 Entry size is the trader's existing start allocation; a strategy exit sells only the quantity the trader's own
 ledger says it bought (never the user's other holdings), and a holding without a ledger cost basis is never sold.
 If the last closed candle is older than 2x the timeframe the engine returns `HOLD` with reason `STALE_CANDLES`.
+An entry is acted on only within 15 minutes of its bar's close (`ENTRY_WINDOW_S`), where the backtester fills it (at
+the next bar's open), and a refused one is retried within that time only. Later the engine returns `HOLD` with reason
+`ENTRY_MISSED:<the entry's reason>`, logged once per coin and bar, and no buy is made: a trader started after a
+close does not buy on that bar. Exits are never late.
 
 **One interface everywhere.** `strategies/` holds the `Strategy` interface (`on_bar(candles) -> Signal` on closed
 bars only; pure; long-only), indicators (EMA, DEMA, TEMA, Wilder ATR/ADX), a JSON catalogue + registry that fail

@@ -12,6 +12,7 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 from helpers import Feed, PaperTraderCase, make_candles
+from test_strategy_breakout import DailyFeed, daily
 
 import signal_engine as se
 import trading_mode as tm
@@ -669,6 +670,97 @@ class TraderIntegrationTests(PaperTraderCase):
             trader.place_buy_order("id", "buy", "market", "BTC-USD", 50.0)
         )
         self.assertEqual(len(self.orders()), 1)
+
+
+class EntryWindowTests(PaperTraderCase):
+    """An entry is acted on only within 15 minutes of its bar's close, the moment the
+    backtester fills it (at the next bar's open). Later it is missed: one HOLD
+    ``ENTRY_MISSED`` decision logged, no buy. An exit is never late. STRAT-004 on
+    daily bars: it enters on a new 55-day closing high (bars 55 to 57 here) and exits
+    on a new 20-day low (bar 58)."""
+
+    WINDOW_S = 15 * 60
+    SETTINGS = {
+        "trading": {"mode": "paper"},
+        "strategy": {"active_id": "STRAT-004", "timeframe": "1d"},
+    }
+
+    def setUp(self):
+        super().setUp()
+        self.frame = daily([100.0] * 55 + [110.0, 111.0, 112.0] + [90.0] * 25)
+        self.feed = DailyFeed(self.frame)
+        self.one_coin("BTC")
+        sleep = mock.patch.object(self.pt_trader.time, "sleep")
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    def trader(self):
+        settings = copy.deepcopy(self.SETTINGS)
+        engine = SignalEngine(settings, self.feed.provider, self.feed.clock)
+        trader = self.pt_trader.CryptoAPITrading(
+            settings_source=settings, signal_engine=engine
+        )
+        trader._order_poll_seconds = 0.0
+        return trader
+
+    def sides(self):
+        orders = tm.get_paper_exchange().account.orders.values()
+        return [o.side.value for o in orders]
+
+    def passes(self, trader, k, seconds_after_close, n=3):
+        """``n`` trader passes at ``seconds_after_close`` after bar ``k`` closed; the
+        decision log lines written meanwhile."""
+        self.feed.set_after_bar(k, seconds_after_close)
+        with mock.patch.object(se.logger, "info") as info:
+            for _ in range(n):
+                tm._quote_cache.clear()
+                trader.manage_trades()
+        return [str(c) for c in info.call_args_list if "Decision BTC" in str(c)]
+
+    def test_an_entry_is_acted_on_only_within_the_window_and_an_exit_always(self):
+        trader = self.trader()
+        bar_55 = str(self.frame["open_time"].iloc[55])
+        # a trader started 6 h after the breakout bar closed: missed, logged once
+        logged = self.passes(trader, 55, 6 * 3600)
+        self.assertEqual(self.sides(), [])
+        missed = [line for line in logged if "ENTRY_MISSED" in line]
+        self.assertEqual(len(missed), 1, logged)
+        self.assertIn(f"bar={bar_55}", missed[0])
+        self.assertIn("action=HOLD", missed[0])
+        with open(os.path.join(self.tmp.name, "paper", "trader_status.json")) as f:
+            last = json.load(f)["signals"]["last_decisions"]["BTC"]
+        self.assertEqual((last["action"], last["bar_time"]), ("HOLD", bar_55))
+        self.assertTrue(last["reason"].startswith("ENTRY_MISSED"), last)
+        # the next breakout bar, a minute after its close: bought
+        self.passes(trader, 56, 60)
+        self.assertEqual(self.sides(), ["buy"])
+        # the exit, 6 h after its bar closed: still sold
+        self.passes(trader, 58, 6 * 3600)
+        self.assertEqual(self.sides(), ["buy", "sell"])
+
+    def test_a_refused_entry_is_retried_within_the_window_and_not_after_it(self):
+        trader = self.trader()
+        tries = mock.patch.object(
+            trader, "place_buy_order", wraps=trader.place_buy_order
+        )
+        buy = tries.start()
+        self.addCleanup(tries.stop)
+        self.quotes.age_s = 90.0  # stale quotes: paper refuses every order
+        self.passes(trader, 55, 60)
+        self.passes(trader, 55, 10 * 60)
+        self.assertEqual((buy.call_count, self.sides()), (6, []))  # every pass
+        self.quotes.age_s = 0.0
+        logged = self.passes(trader, 55, self.WINDOW_S + 60)
+        # past the window: not tried again, and missed once
+        self.assertEqual((buy.call_count, self.sides()), (6, []))
+        self.assertEqual(len([s for s in logged if "ENTRY_MISSED" in s]), 1)
+        # the next breakout bar: refused a minute after its close, then bought
+        self.quotes.age_s = 90.0
+        self.passes(trader, 56, 60)
+        self.assertEqual((buy.call_count, self.sides()), (9, []))
+        self.quotes.age_s = 0.0
+        self.passes(trader, 56, self.WINDOW_S - 60)
+        self.assertEqual((buy.call_count, self.sides()), (10, ["buy"]))
 
 
 class HubNoteTests(unittest.TestCase):

@@ -38,6 +38,7 @@ from trading_mode import (
     read_paper_settings,
     read_trading_settings,
     resolve_order_target,
+    settings_problem,
 )
 
 # -----------------------------
@@ -2460,11 +2461,19 @@ class CryptoAPITrading:
         # The trader is pinned to the mode/broker it started in. If the setting
         # changed underneath it, stop touching the exchange until it is restarted.
         if not self._trading_mode_unchanged():
-            print(
-                f"{Fore.YELLOW}Trading mode changed since start-up (started as "
-                f"'{self._target.key}'). No orders will be placed; restart the "
-                f"trader to apply it.{Style.RESET_ALL}"
-            )
+            # a settings file that cannot be read reads as paper: say that instead
+            unreadable = settings_problem(self._settings_source)
+            if unreadable:
+                print(
+                    f"{Fore.YELLOW}No orders will be placed: {unreadable}."
+                    f"{Style.RESET_ALL}"
+                )
+            else:
+                print(
+                    f"{Fore.YELLOW}Trading mode changed since start-up (started as "
+                    f"'{self._target.key}'). No orders will be placed; restart the "
+                    f"trader to apply it.{Style.RESET_ALL}"
+                )
             time.sleep(5)
             return
 

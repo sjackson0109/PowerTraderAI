@@ -10,7 +10,7 @@ The owner's programme brief of 2026-11-11.
 
 **Still the owner's to decide:** live trading, raising a strategy's authorisation, opening the lockbox, and paid data (D §3).
 
-**The owner's decisions of 2026-11-12** are in D §3: O1, O2, O6 and O7 approved; O3 answered with "measure a stricter variant first"; and a new request, a trading switch for every strategy in Settings > Strategy. The owner's answers that evening (O3 accepted, O10 to O16) are in the same table. O17 to O19 (2026-11-13) are open: they follow from the ensemble and sizing exploration.
+**The owner's decisions of 2026-11-12** are in D §3: O1, O2, O6 and O7 approved; O3 answered with "measure a stricter variant first"; and a new request, a trading switch for every strategy in Settings > Strategy. The owner's answers that evening (O3 accepted, O10 to O16) are in the same table. The owner's answers of 2026-11-13 (O17 to O21) follow from the ensemble and sizing exploration, and cover the merge of #288 to #298 and the design for N11.
 
 ## Deliverables
 
@@ -21,7 +21,7 @@ The owner's programme brief of 2026-11-11.
 | A | `A3-hardware-inventory.md` | The workstation as measured, and what it means for research |
 | B | `B-strategy-catalogue.md` + `B-candidates.json` | 130 sourced candidates: strategies, signals, models, data sources, risk and portfolio rules. Each has evidence quality, crypto evidence, data needs, licences, turnover and fee sensitivity, and a priority set without looking at returns |
 | C | `C-architecture.md` | The integrated architecture: one implementation per job, its interfaces, the qualification path, the statistical method, and the programme trial ledger |
-| D | `D-backlog.md` | Work packages by milestone (M0-M8), the order of work, and the owner decisions O1-O19 |
+| D | `D-backlog.md` | Work packages by milestone (M0-M8), the order of work, and the owner decisions O1-O21 |
 | E | Pull requests | Below |
 
 ## First implementation (Deliverable E)
@@ -63,7 +63,7 @@ The owner's programme brief of 2026-11-11.
 
 #267 to #287 were merged on 2026-11-13 (O10), the last as `76534a1`.
 
-**Opened on 2026-11-13, for the owner to merge** (stacks merge bottom first):
+**Opened on 2026-11-13** (stacks merge bottom first; the owner approved their merge the same day, O20):
 
 | PR | Milestone | What |
 |---|---|---|

@@ -42,7 +42,7 @@ Work packages (WP) by milestone, with what they depend on, the tests they need a
 | 1.15 | Live and paper hold an entry while the bars it reads span a gap over a day; STRAT-005 finds its bars by time and is exempt | N17 (live part) | Yes | 30 days missing inside STRAT-004's window: the breakout is held as `LONG_GAP`; exits still run | **Owner (O15): left to me 2026-11-12** | **PR #293** (stacked on #292) |
 | 1.16 | Binance order results: partial fills, average price and fees | N7 | Yes (live, Binance) | an `EXPIRED` answer with `executedQty > 0` is recorded as a partial fill | **Owner (O15)** | **PR #295** |
 | 1.17 | An unreadable settings file blocks trading instead of reading as the defaults | N10 | Yes (paper) | a cut-short `pt_config.json` in paper mode: no orders | **Owner (O15)** | **PR #296** |
-| 1.18 | The drawdown halt on the trader's own equity, allowing for transfers | N11 | Yes (loosens a protective limit) | a 9% withdrawal does not trigger the halt | **Owner (O15)** | **Held**: needs a design for transfers first |
+| 1.18 | The drawdown halt on the trader's own equity, allowing for transfers | N11 | Yes (loosens a protective limit) | a 9% withdrawal does not trigger the halt | **Owner (O15, O21)** | **Held**: a design for transfers first (O21) |
 
 ### M2: unified research framework
 
@@ -51,7 +51,7 @@ Work packages (WP) by milestone, with what they depend on, the tests they need a
 | 2.1 | Programme trial ledger (C §5) + adapters from strategy-lab and model-lab trials. **PR #274** | — | old ledgers unchanged byte for byte; every engine job appends one line |
 | 2.2 | Dataset snapshots + one bar hash (replaces three). **PR #283** | 2.1 | the same bars give the same id; a revised bar gives a new id |
 | 2.3 | One statistics module (bootstrap, Holm, Romano-Wolf, deflated Sharpe, PBO, power). **PR #282** (the bootstrap is #266 and #277) | 1.11 | each method on null and skill fixtures |
-| 2.4 | One baseline library (random with the strategy's exits, matched holding, hold, cash, unfiltered). Matched holding awaits O19 | — | each baseline's trade count and holding match their definition |
+| 2.4 | One baseline library (random with the strategy's exits, matched holding, hold, cash, unfiltered). Matched holding: beside the current baseline, reported only (O19) | — | each baseline's trade count and holding match their definition |
 | 2.5 | One cost model from `trading_fees` (retire 3 others) | 1.13 | every caller reads the same rate for the same exchange |
 | 2.6 | Report: daily/weekly/monthly/annual returns; £50/£200/£500/£10,000 accounts; capital use; return per capital-day; recovery time. **PR #276**: the period returns; **PR #281**: the account sizes, capital use and recovery time | 2.3 | hand-computed fixtures |
 | 2.7 | Code hashes cover every file on the path (strategies, exchange layer) | — | changing a strategy file breaks the seal |
@@ -162,8 +162,10 @@ The lockbox is used only through O5.
 | O14 | Paper fills: refuse when no fee rate is known (N27); round sells and apply minimums (N28) | Paper behaviour | **2026-11-12: N28 only** (**PR #297**). Paper keeps its 0.10% last resort |
 | O15 | The live defect fixes N7, N10, N11, N12, N16, N17 (live part) | Live behaviour | **2026-11-12: left to me.** Built, each its own PR: N12 **#292**, N17 **#293** (STRAT-005 exempt, owner's choice), N16 **#294**, N7 **#295**, N10 **#296**. Held: N11, because measuring the halt on the trader's own equity loosens a protective limit; it needs a design for transfers first |
 | O16 | STRAT-006's default average (#285): 20 days, or the backlog's 50 to 200 | Research defaults | **2026-11-12: 20 days**, the published rule |
-| O17 | A registered evaluation of the Donchian ensemble (#290), with its own random-entry baseline, the O3 bootstrap and the O12 drawdown rule | A registration, and later the lockbox | Open. The exploration (#291) found the lead in returns over an equal-weight hold could not be told from chance, with a smaller fall on one path. The lockbox stays closed until a finalist is declared (O5) |
-| O18 | Volatility sizing at a higher target than 25% a year | Spends trials from the budget | Open. At 25% it cut drawdowns no more than its own sizes in random order did (#291) |
-| O19 | A matched-holding random baseline (2.4) | The 2026-11-07 decision kept the strategy's own exits for random entries | Open. Not built: it would change what the random baseline measures |
+| O17 | A registered evaluation of the Donchian ensemble (#290), with its own random-entry baseline, the O3 bootstrap and the O12 drawdown rule | A registration, and later the lockbox | The exploration (#291) found the lead in returns over an equal-weight hold could not be told from chance, with a smaller fall on one path. **2026-11-13: draft it for review.** Nothing runs, and the lockbox stays closed (O5), until the owner approves the draft |
+| O18 | Volatility sizing at a higher target than 25% a year | Spends trials from the budget | At 25% it cut drawdowns no more than its own sizes in random order did (#291). **2026-11-13: test 50% and 75% a year**, two explorations of 10 seeded runs each |
+| O19 | A matched-holding random baseline (2.4) | The 2026-11-07 decision kept the strategy's own exits for random entries | **2026-11-13: add it beside the current baseline, reported only.** No pass or fail rule uses it unless a registration names it |
+| O20 | Merge PRs #288 to #298 | Merges into the protected branch | **Approved 2026-11-13**: merged by me in stacked order, each brought up to date and green first. Later PRs are the owner's to merge |
+| O21 | N11: the drawdown halt on the trader's own equity | Loosens a protective limit | **2026-11-13: a design first**, as a docs PR. Trading is unchanged until a build is approved |
 
 **Next research work (owner, 2026-11-12):** 4.2 (volatility features and sizing), then 3.1 (the Zarattini ensemble). **Done 2026-11-13**: 4.2 in PR #289, 3.1 in PR #290, both explored in PR #291.

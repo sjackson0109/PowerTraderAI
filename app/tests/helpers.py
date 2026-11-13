@@ -24,6 +24,7 @@ if APP_DIR not in sys.path:
 import pandas as pd  # noqa: E402
 
 import trading_mode as tm  # noqa: E402
+from market_data.candles import SETTLE_SECONDS  # noqa: E402
 from pt_exchange_abstraction import PriceQuote, Sourced, TradingFees  # noqa: E402
 
 
@@ -65,7 +66,11 @@ class Feed:
         self.calls = 0
         self.fail = None
 
-    def set_after_bar(self, k, seconds_after_close=10):
+    def set_after_bar(self, k, seconds_after_close=None):
+        """The clock ``seconds_after_close`` after bar ``k`` closes (default: 10 s
+        after it has settled, ``SETTLE_SECONDS``, so the engine decides it)."""
+        if seconds_after_close is None:
+            seconds_after_close = SETTLE_SECONDS + 10
         close = self.frame["open_time"].iloc[k] + HOUR
         self.now = close.timestamp() + seconds_after_close
 

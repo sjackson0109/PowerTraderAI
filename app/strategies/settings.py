@@ -17,9 +17,15 @@ unknown, out of bounds or breaks a rule between two of them) is *not* replaced:
 it is reported in ``problem`` and the trader places no orders.
 
 **Authorisation** (FDS-SR-001 section 5.3). Given the trading ``mode``, a strategy or
-overlay whose catalogue ``authorisation`` does not cover it is a problem too, so a
-research-only entry can never trade and a paper-only one cannot trade live. A
-strategy's timeframe must be one of its ``timeframes_permitted``.
+overlay that may not trade in it is a problem too. A strategy's timeframe must be one
+of its ``timeframes_permitted``.
+
+Whether an entry may trade in a mode is the owner's switch for it, where Settings >
+Strategy saved one, and otherwise its catalogue ``authorisation`` (a research-only
+entry never trades, a paper-only one never trades live). The switches are
+``strategy.trading_allowed``: ``{id: {"paper"|"live": true|false}}``, holding only the
+entries and modes the owner set differently from the catalogue. A switch setting
+that is not that shape allows nothing, and is a problem.
 
 ``strategy.research_enabled`` (``read_research_enabled``) lists the strategies and
 overlays the research windows offer. It never affects trading.
@@ -57,6 +63,8 @@ DEFAULT_RESEARCH_ENABLED = (
     "OVL-COOLDOWN",
 )
 USES = {"research": "research only", "paper": "paper trading", "live": "live trading"}
+TRADING_MODES = ("paper", "live")
+Switches = Dict[str, Dict[str, bool]]
 
 
 @dataclass(frozen=True)
@@ -112,18 +120,64 @@ def params_problem(strategy_id: str, params: Mapping[str, Any]) -> Optional[str]
     return None
 
 
-def authorisation_problem(entry_id: Any, mode: Any) -> Optional[str]:
+def _mode_name(mode: Any) -> str:
+    return str(getattr(mode, "value", mode))
+
+
+def parse_switches(raw: Any) -> Tuple[Switches, Optional[str]]:
+    """``strategy.trading_allowed`` as ``{id: {mode: on}}``, and None; or ``{}`` and
+    why it cannot be read (then nothing may trade). Missing (None) is ``{}``."""
+    if raw is None:
+        return {}, None
+    if isinstance(raw, Mapping) and all(
+        isinstance(k, str)
+        and isinstance(v, Mapping)
+        and all(m in TRADING_MODES and isinstance(on, bool) for m, on in v.items())
+        for k, v in raw.items()
+    ):
+        return {k: dict(v) for k, v in raw.items()}, None
+    return {}, f"invalid strategy.trading_allowed {raw!r}"
+
+
+def read_trading_switches(settings: Any = None) -> Tuple[Switches, Optional[str]]:
+    """The owner's trading switches (``parse_switches`` of ``strategy.trading_allowed``)."""
+    src = settings_mapping(settings)
+    return parse_switches(lookup_setting(src, "strategy.trading_allowed", None))
+
+
+def allowed_for_trading(
+    entry_id: Any, mode: Any, switches: Optional[Mapping[str, Mapping]] = None
+) -> bool:
+    """Whether ``entry_id`` may trade in ``mode`` ("paper" or "live"): the owner's switch
+    for it in ``switches`` where there is one, otherwise its catalogue authorisation. An
+    unknown id or mode is never allowed."""
+    if not isinstance(entry_id, str) or entry_id not in CATALOGUE:
+        return False
+    name = _mode_name(mode)
+    if name not in TRADING_MODES:
+        return False
+    on = (switches or {}).get(entry_id, {}).get(name)
+    if isinstance(on, bool):
+        return on
+    return allowed_in_mode(entry_id, name)
+
+
+def authorisation_problem(
+    entry_id: Any, mode: Any, switches: Optional[Mapping[str, Mapping]] = None
+) -> Optional[str]:
     """Why ``entry_id`` (a strategy or overlay) may not be selected in ``mode``
-    ("paper" or "live"), or None (FDS-SR-001 section 5.3)."""
-    if allowed_in_mode(entry_id, mode):
+    ("paper" or "live"), or None (FDS-SR-001 section 5.3). ``switches``: the owner's
+    (``read_trading_switches``); without them, the catalogue alone decides."""
+    if allowed_for_trading(entry_id, mode, switches):
         return None
     entry = CATALOGUE.get(entry_id) if isinstance(entry_id, str) else None
     if entry is None:
         return f"unknown id {entry_id!r}"
+    name = _mode_name(mode)
+    if (switches or {}).get(entry_id, {}).get(name) is False:
+        return f"{entry_id} is switched off for {name} trading in Settings > Strategy"
     use = USES.get(entry["authorisation"], entry["authorisation"])
-    return (
-        f"{entry_id} can be used for {use}, not {getattr(mode, 'value', mode)} trading"
-    )
+    return f"{entry_id} can be used for {use}, not {name} trading"
 
 
 def read_strategy_settings(settings: Any = None, mode: Any = None) -> StrategySettings:
@@ -199,9 +253,14 @@ def read_strategy_settings(settings: Any = None, mode: Any = None) -> StrategySe
         problems.append(f"invalid strategy.overlays {raw_overlays!r}")
 
     if engine == "catalogue" and mode is not None:
+        switches, problem = parse_switches(
+            lookup_setting(src, "strategy.trading_allowed", None)
+        )
+        if problem:
+            problems.append(problem)
         for entry_id in [active_id] + [o["id"] for o in overlays]:
             if isinstance(entry_id, str) and entry_id in CATALOGUE:
-                problem = authorisation_problem(entry_id, mode)
+                problem = authorisation_problem(entry_id, mode, switches)
                 if problem:
                     problems.append(problem)
 

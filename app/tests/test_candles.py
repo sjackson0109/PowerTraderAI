@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import pandas as pd
 
@@ -98,6 +99,25 @@ class GetCandlesTests(unittest.TestCase):
         self.assertEqual(server.requests_made, asked)
         pd.testing.assert_frame_equal(first, second)
         self.assertTrue(os.path.isfile(cd.cache_path("BTCUSDT", "1h", self.tmp.name)))
+
+    def test_a_cache_that_cannot_be_replaced_still_returns_the_bars(self):
+        """Another process reading the cache (on Windows) makes replacing it fail:
+        the fetched bars are returned, no temporary file is left, and the next call
+        fetches again and caches them."""
+        server = FakeKlines()
+        path = cd.cache_path("BTCUSDT", "1h", self.tmp.name)
+        with mock.patch.object(cd.os, "replace", side_effect=PermissionError("in use")):
+            df, _ = self.get(server, at(0), at(48))
+        self.assertEqual(len(df), 48)
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(
+            [n for n in os.listdir(os.path.dirname(path)) if n.endswith(".tmp")], []
+        )
+        asked = server.requests_made
+        again, _ = self.get(server, at(0), at(48))
+        self.assertGreater(server.requests_made, asked)
+        pd.testing.assert_frame_equal(df, again)
+        self.assertTrue(os.path.isfile(path))
 
     def test_only_missing_ranges_are_fetched(self):
         server = FakeKlines()

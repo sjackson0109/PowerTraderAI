@@ -10,7 +10,8 @@ section 5.8). An exploratory run is never evidence: it is logged as a trial of k
    through the exchange layer and its cache;
 3. takes the strategy's trades decided in the period and replays them in one account of
    the chosen size, with today's venue minimums and sell steps, against buy-and-hold,
-   cash and random entries replayed through the strategy's own exits;
+   cash and random entries replayed through the strategy's own exits, with its
+   daily, weekly, monthly and annual returns (``research_stats.periods``);
 4. logs the trial and saves the run under ``<data dir>/strategy_lab/runs/<id>/run.json``.
 
 ``stop`` (a threading.Event) is checked between the stages; a stopped run saves nothing.
@@ -24,12 +25,13 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
 from market_data.candles import exchange_candles
+from research_stats import periods
 from signal_fusion.evaluation.replay import Account, Costs, Paths
 from strategy_lab import baselines as bl
 from strategy_lab import experiment
@@ -225,8 +227,12 @@ def run(
         "cash": {"net_usd": 0.0, "return_per_capital_day": 0.0},
         "random_entries": random_part,
         "curve": _curve(path),
+        # daily, weekly, monthly and annual returns from the whole curve (WP 2.6)
+        "periods": (periods.report(*path.curve) if path.curve is not None else None),
     }
     if save:
+        run_id, folder = _claim_folder(run_id)
+        record["id"] = run_id
         experiment.log_trial(
             run_id,
             "run",
@@ -237,14 +243,29 @@ def run(
             {"net_usd": record["strategy_result"]["net_usd"]},
             now=now,
         )
-        folder = os.path.join(runs_dir(), run_id)
-        os.makedirs(folder, exist_ok=True)
         with open(
             os.path.join(folder, "run.json"), "w", encoding="utf-8", newline="\n"
         ) as f:
             json.dump(record, f, indent=2, sort_keys=True, default=str)
             f.write("\n")
     return record
+
+
+def _claim_folder(run_id: str) -> Tuple[str, str]:
+    """A new folder for a run: ``run_id``, or ``run_id-2``, ``-3``, ... when a run of
+    the same strategy was saved in the same second (parallel research jobs can). The
+    folder's creation is the claim, so two processes never get the same one."""
+    base = runs_dir()
+    os.makedirs(base, exist_ok=True)
+    n = 1
+    while True:
+        rid = run_id if n == 1 else f"{run_id}-{n}"
+        folder = os.path.join(base, rid)
+        try:
+            os.mkdir(folder)
+            return rid, folder
+        except FileExistsError:
+            n += 1
 
 
 def list_runs() -> List[Dict[str, Any]]:

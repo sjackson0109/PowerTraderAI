@@ -5,6 +5,8 @@
   so it can never be E1's 896 days.
 * On synthetic series the test holds its size under the null, with independent and
   with dependent days, and detects a known edge.
+* The O3 variants (percentile or studentised; block length x1 or x1.5) each run and
+  repeat with the seed; the default is the calibration's choice, variant D.
 
 Synthetic data only."""
 
@@ -171,3 +173,106 @@ def test_the_same_seed_gives_the_same_result():
 def test_a_period_without_capital_is_refused():
     with pytest.raises(ValueError):
         rs.rpcd_test(rs.DailyMarks(0, np.zeros(10), np.zeros(10)))
+
+
+# -- the variants (O3 calibration: docs/dev/ptai-rd-001/O3-bootstrap-calibration.md) -------
+
+VARIANTS = [
+    ("percentile", 1.0),  # A
+    ("studentised", 1.0),  # B
+    ("percentile", 1.5),  # C
+    ("studentised", 1.5),  # D
+]
+
+
+@pytest.mark.parametrize("method,scale", VARIANTS)
+def test_each_variant_runs_and_is_deterministic_per_seed(method, scale):
+    rng = np.random.default_rng(40)
+    marks = rs.DailyMarks(0, ar1(400, 0.4, rng) + 0.05, np.ones(400))
+    a = rs.rpcd_test(marks, draws=199, seed=11, method=method, block_scale=scale)
+    b = rs.rpcd_test(marks, draws=199, seed=11, method=method, block_scale=scale)
+    c = rs.rpcd_test(marks, draws=199, seed=12, method=method, block_scale=scale)
+    assert a == b
+    assert a.method == method and a.draws == 199 and a.days == 400
+    assert 0.0 < a.p_value <= 1.0
+    assert a.interval[0] < a.theta < a.interval[1]
+    assert c.interval != a.interval  # another seed, other draws
+
+
+def test_the_default_is_the_calibrated_variant_d():
+    # O3: no variant met the 6.0% worst-case size; D's 6.2% was the lowest
+    assert (rs.DEFAULT_METHOD, rs.DEFAULT_BLOCK_SCALE) == ("studentised", 1.5)
+    rng = np.random.default_rng(44)
+    marks = rs.DailyMarks(0, ar1(300, 0.4, rng), np.ones(300))
+    explicit = rs.rpcd_test(
+        marks, draws=99, seed=5, method="studentised", block_scale=1.5
+    )
+    assert rs.rpcd_test(marks, draws=99, seed=5) == explicit
+
+
+def test_an_unknown_method_is_refused():
+    marks = rs.DailyMarks(0, np.ones(20), np.ones(20))
+    with pytest.raises(ValueError):
+        rs.rpcd_test(marks, method="basic")
+
+
+def test_the_block_scale_multiplies_the_chosen_length_within_the_cap():
+    rng = np.random.default_rng(41)
+    n = 600
+    x = ar1(n, 0.5, rng)
+    marks = rs.DailyMarks(0, x, np.ones(n))
+    chosen = rs.optimal_block_length(x)
+    assert rs.rpcd_test(marks, draws=50, block_scale=1.0).mean_block == chosen
+    assert rs.rpcd_test(marks, draws=50, block_scale=1.5).mean_block == pytest.approx(
+        1.5 * chosen
+    )
+    walk = rs.DailyMarks(0, np.cumsum(rng.normal(size=n)), np.ones(n))
+    assert rs.rpcd_test(walk, draws=50, block_scale=1.5).mean_block <= rs.block_cap(n)
+    given = rs.rpcd_test(marks, draws=50, mean_block=7.0, block_scale=1.5)
+    assert given.mean_block == 7.0  # a length given is used as it is
+
+
+def test_the_bartlett_long_run_variance():
+    z = np.array([[1.0, -1.0, 1.0, -1.0]])
+    assert rs.bartlett_lrv(z, 1.0)[0] == pytest.approx(1.0)  # R(0) only
+    # bandwidth 2: R(0) + 2 x 0.5 x R(1), R(1) = -3/4
+    assert rs.bartlett_lrv(z, 2.0)[0] == pytest.approx(0.25)
+    rng = np.random.default_rng(42)
+    rows = rng.normal(size=(5, 300))
+    rows -= rows.mean(axis=1, keepdims=True)
+    assert np.all(rs.bartlett_lrv(rows, 12.0) >= 0.0)
+
+
+def marked_null_trades(n, rng, sigma=0.03):
+    """The real use case under no edge: a martingale price, long-only trades of 20 to 60
+    days with flat gaps of 30 to 120 days, marked daily (most days hold no capital)."""
+    close = 100.0 * np.exp(np.cumsum(rng.normal(-0.5 * sigma**2, sigma, n)))
+    closes = {"X": {d: float(close[d]) for d in range(n)}}
+    trades, d0 = [], int(rng.integers(0, 121))
+    while True:
+        d1 = d0 + int(rng.integers(20, 61)) - 1
+        if d1 >= n:
+            break
+        amount = float(rng.uniform(50.0, 150.0))
+        trades.append(
+            {
+                "coin": "X",
+                "entry_s": d0 * DAY + 60,
+                "exit_s": (d1 + 1) * DAY,
+                "amount": amount,
+                "entry_price": float(close[d0]),
+                "net": amount / close[d0] * close[d1] - amount,
+            }
+        )
+        d0 = d1 + 1 + int(rng.integers(30, 121))
+    return rs.daily_marks(trades, closes, 0, n)
+
+
+def test_the_default_holds_its_size_on_marked_trades_without_an_edge():
+    rng = np.random.default_rng(43)
+    reps, hits = 200, 0
+    for r in range(reps):
+        marks = marked_null_trades(500, rng)
+        hits += rs.rpcd_test(marks, draws=199, seed=r).p_value <= 0.05
+    # 200 replications: a standard error of about 1.5 points around 5%
+    assert 0.01 <= hits / reps <= 0.10, hits / reps

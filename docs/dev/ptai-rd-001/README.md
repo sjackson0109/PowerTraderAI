@@ -10,7 +10,7 @@ The owner's programme brief of 2026-11-11.
 
 **Still the owner's to decide:** live trading, raising a strategy's authorisation, opening the lockbox, and paid data (D §3).
 
-**The owner's decisions of 2026-11-12** are in D §3: O1, O2, O6 and O7 approved; O3 answered with "measure a stricter variant first"; and a new request, a trading switch for every strategy in Settings > Strategy. The owner's answers that evening (O3 accepted, O10 to O16) are in the same table.
+**The owner's decisions of 2026-11-12** are in D §3: O1, O2, O6 and O7 approved; O3 answered with "measure a stricter variant first"; and a new request, a trading switch for every strategy in Settings > Strategy. The owner's answers that evening (O3 accepted, O10 to O16) are in the same table. O17 to O19 (2026-11-13) are open: they follow from the ensemble and sizing exploration.
 
 ## Deliverables
 
@@ -21,7 +21,7 @@ The owner's programme brief of 2026-11-11.
 | A | `A3-hardware-inventory.md` | The workstation as measured, and what it means for research |
 | B | `B-strategy-catalogue.md` + `B-candidates.json` | 130 sourced candidates: strategies, signals, models, data sources, risk and portfolio rules. Each has evidence quality, crypto evidence, data needs, licences, turnover and fee sensitivity, and a priority set without looking at returns |
 | C | `C-architecture.md` | The integrated architecture: one implementation per job, its interfaces, the qualification path, the statistical method, and the programme trial ledger |
-| D | `D-backlog.md` | Work packages by milestone (M0-M8), the order of work, and the owner decisions O1-O8 |
+| D | `D-backlog.md` | Work packages by milestone (M0-M8), the order of work, and the owner decisions O1-O19 |
 | E | Pull requests | Below |
 
 ## First implementation (Deliverable E)
@@ -60,6 +60,23 @@ The owner's programme brief of 2026-11-11.
 | #285 | M3 | STRAT-006, price above its average, research only (backlog 3.2) |
 | #286 | M1 | Observation: LLM signals, exchange order and program files frozen; fuller Reconcile; the frozen hash shown (D2, D3, D4, D6, D7) |
 | #287 | M4 | The feature library: 13 price, volatility and volume features, checked as of each bar (WP 4.1) |
+
+#267 to #287 were merged on 2026-11-13 (O10), the last as `76534a1`.
+
+**Opened on 2026-11-13, for the owner to merge** (stacks merge bottom first):
+
+| PR | Milestone | What |
+|---|---|---|
+| #288 | M1 (O12) | The intrabar drawdown's peak is the highest high of the earlier bars (N18) |
+| #289 | M4 | Sizing policies for replays: a volatility target, with random orders of its sizes as the baseline (WP 4.2; on #288) |
+| #290 | M3 | STRAT-007, OVL-MIDLINE and the Donchian ensemble, research only (backlog 3.1; on #289) |
+| #291 | Docs | The ensemble and volatility sizing, explored on the development months (on #290) |
+| #292 | M1 (O15) | Entries are acted on only within 15 minutes of their bar's close (N12; changes live and paper behaviour) |
+| #293 | M1 (O15) | Live and paper hold an entry while the bars it reads span a gap over a day (N17, the live part; on #292) |
+| #294 | M1 (O15) | Bars are used 30 s after their close; the last cached bars are fetched again; gaps are refilled (N16; on #293) |
+| #295 | M1 (O15) | Binance order results: partial fills, average price and fee (N7; changes live behaviour) |
+| #296 | M1 (O15) | An unreadable settings file blocks trading instead of reading as the defaults (N10) |
+| #297 | M1 (O14) | Paper fills follow the exchange's sell step and minimum order (N28) |
 
 ## The headline findings
 

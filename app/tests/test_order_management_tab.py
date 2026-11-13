@@ -11,8 +11,9 @@
   symbol of the exchange the order is for, with prices from that exchange's bid and
   ask. Its types are Market, Limit, Stop-Limit, Trailing Stop, OCO and Bracket, each
   showing only its own fields and saying how it is carried out; it refuses a buy
-  above Buying Power and any order while trading is halted, and confirms every
-  order, naming the paper account or the live exchange.
+  above Buying Power and any buy while buying is halted (a sell is still made, and
+  an order that sells still runs), and confirms every order, naming the paper
+  account or the live exchange.
 * In paper mode every type fills the paper account and the trade history.
 * The Order Notifications under a splitter, newest first, with Mark all read.
 
@@ -698,20 +699,45 @@ def test_preview_and_testnet_accounts_say_so(settings, text):
     assert text in omv.account_text(settings)[0]
 
 
-# ---- acceptance: a halt stops manual orders too ----
+# ---- acceptance: a halt stops manual buys too, and lets sells through ----
 
 
-def test_no_order_is_created_while_trading_is_halted(root, manager, world, dialogs):
+def test_no_buy_order_is_created_while_buying_is_halted(root, manager, world, dialogs):
     world.halted = "Account drawdown 25%"
     dlg = open_dialog(view(root, manager, world), root)
     dlg.qty_var.set("0.01")
     root.update()
-    assert "Trading is halted" in str(dlg.warning_label.cget("text"))
+    assert "Buying is halted" in str(dlg.warning_label.cget("text"))
     assert dlg.create() is None
     name, title, message, _kw = dialogs.calls[-1]
     assert title == "Order refused" and "Account drawdown 25%" in message
     assert "Settings > Risk" in message
     assert orders_in_db(manager) == []
+
+
+def test_a_sell_still_goes_through_while_buying_is_halted(
+    root, manager, world, dialogs
+):
+    v = view(root, manager, world, buying_power=100_000.0)
+    dlg = open_dialog(v, root)
+    fill(dlg, root, omv.LIMIT, side="Buy", qty="0.5", limit_var="3400")
+    buy = dlg.create()
+    assert buy
+    world.halted = "Account drawdown 25%"
+    dlg = open_dialog(v, root)
+    fill(dlg, root, omv.MARKET, side="Sell", qty="0.5")
+    assert "halted" not in str(dlg.warning_label.cget("text"))
+    sell = dlg.create()
+    assert sell
+    world.prices.set("ETH", 3395.0, 3396.0)  # the buy's limit is reached
+    v.executor.check()
+    status = {r.id: r.status for r in orders_in_db(manager)}
+    assert status[sell] == "filled"
+    assert status[buy] != "filled"  # it waits while buying is halted
+    world.halted = ""  # Resume trading
+    v.executor.check()
+    status = {r.id: r.status for r in orders_in_db(manager)}
+    assert status[buy] == "filled"
 
 
 # ---- acceptance: each type in paper mode, in Active Orders, filled ----

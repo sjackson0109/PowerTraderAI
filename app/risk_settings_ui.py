@@ -7,7 +7,8 @@ Settings > Risk: the limits that protect the account.
   value it equals at the peak; and Reset peak, which sets the peak to the account
   value shown.
 * **Trading halt** - after an emergency stop: since when, why, and Resume trading,
-  the only way trading starts again (a restart does not).
+  the only way buying starts again (a restart does not). A halt refuses buys only:
+  exits, stops and the trailing margin still sell.
 * **Position and DCA limits** - Start allocation %, Minimum order margin %, Max per
   coin %, DCA multiplier and Max DCA buys per coin in 24 hours, with the dollar
   amounts at the last account value.
@@ -20,7 +21,7 @@ when they change). The window says when each change applies. Reset peak and Resu
 trading
 are requests the trader applies (``risk_state``). The window is built like Settings
 > Strategy (``strategy_settings_ui``): a scrolling body, a status line, Save and
-Cancel. ``HaltBanner`` is the hub's TRADING HALTED banner.
+Cancel. ``HaltBanner`` is the hub's BUYING HALTED banner.
 """
 
 from __future__ import annotations
@@ -316,7 +317,7 @@ class RiskSettingsWindow(tk.Toplevel):
         dd = drawdown_pct(self._peak, value)
         self.drawdown_var.set("" if dd is None else f"{dd:.2f}%")
         self.halt_var.set(
-            f"Trading is halted: {halt_text(view)}."
+            f"Buying is halted: {halt_text(view)}. Sells still go through."
             if view.halted
             else "Trading is not halted."
         )
@@ -363,15 +364,15 @@ class RiskSettingsWindow(tk.Toplevel):
         return True
 
     def resume(self) -> bool:
-        """Clear the halt, after a confirmation: the trader trades again from its
-        next start."""
+        """Clear the halt, after a confirmation: the trader buys again from its
+        next pass."""
         view = risk_state.current(self._books_dir)
         if not view.halted or not self._books_dir:
             self.refresh()
             return False
         message = (
-            f"Trading was halted: {halt_text(view)}.\n\nThe trader trades again "
-            "from its next start."
+            f"Buying was halted: {halt_text(view)}.\n\nThe trader buys again "
+            "from its next pass."
         )
         try:
             from trading_mode import read_drawdown_levels
@@ -383,8 +384,8 @@ class RiskSettingsWindow(tk.Toplevel):
         if stop is not None and dd is not None and dd >= stop:
             message += (
                 f"\n\nThe account is {dd:.2f}% below its peak, at or above the "
-                f"{stop:g}% emergency stop: the trader stops again at its first "
-                "check, unless the peak is reset or the stop is raised first."
+                f"{stop:g}% emergency stop: the trader halts buying again at its "
+                "first check, unless the peak is reset or the stop is raised first."
             )
         if not self._box.askyesno("Resume trading?", message, parent=self):
             return False
@@ -397,8 +398,8 @@ class RiskSettingsWindow(tk.Toplevel):
             return False
         self.refresh()
         self.status_var.set(
-            "Trading resumes when the trader is next started (the \u25ba button in "
-            "the Trading section)."
+            "Buying resumes at the trader's next pass, or when it is next started "
+            "(the \u25ba button in the Trading section)."
         )
         self._changed()
         return True
@@ -583,8 +584,9 @@ class RiskSettingsWindow(tk.Toplevel):
         self._help(
             frm,
             r,
-            "After an emergency stop the trader places no orders, also after a "
-            "restart, until trading is resumed here.",
+            "After an emergency stop the trader places no new buys, also after a "
+            "restart, until trading is resumed here. What it holds is still "
+            "managed: exits, stops and the trailing margin still sell.",
         )
         return r + 1
 
@@ -680,7 +682,7 @@ class RiskSettingsWindow(tk.Toplevel):
 
 
 class HaltBanner(tk.Frame):
-    """Across the top of the hub while trading is halted: TRADING HALTED, why and
+    """Across the top of the hub while buying is halted: BUYING HALTED, why and
     since when, and a button that opens the Risk window (where Resume trading is)."""
 
     def __init__(self, parent: tk.Misc, on_open: Callable[[], None], **kwargs) -> None:
@@ -688,7 +690,7 @@ class HaltBanner(tk.Frame):
         super().__init__(parent, bg=bg, highlightthickness=0, bd=0, **kwargs)
         tk.Label(
             self,
-            text="TRADING HALTED",
+            text="BUYING HALTED",
             bg=bg,
             fg=fg,
             font=ui_tokens.font("display", "bold"),

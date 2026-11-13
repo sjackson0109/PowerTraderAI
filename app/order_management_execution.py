@@ -386,6 +386,16 @@ class Item:
         return None
 
 
+def buys_now(item: Item) -> bool:
+    """Whether carrying ``item`` on now could buy: a buy order, or a Bracket order
+    whose buy entry has not filled yet (once it has, only its exits are left)."""
+    if item.role == "group" and item.kind == BRACKET:
+        entry = item.leg("entry")
+        if entry is not None:
+            return entry.side == "buy" and entry.status != "filled"
+    return item.side == "buy"
+
+
 def _item(order: Order, m: ManagedOrder) -> Item:
     return Item(
         id=order.id,
@@ -492,8 +502,10 @@ class OrderExecutor:
             return ""
         return view.halt_reason or "Emergency stop"
 
-    def refusal(self, settings: Any) -> str:
-        """Why no order can be made for ``settings`` now ("" when one can)."""
+    def refusal(self, settings: Any, side: Optional[str] = None) -> str:
+        """Why no order can be made for ``settings`` now ("" when one can). A halt
+        (Settings > Risk's emergency stop) refuses buys only: an order whose ``side``
+        is "sell" can still be made."""
         if settings is None:
             return "The trading mode is not known."
         if settings.is_live and not settings.active_broker:
@@ -504,9 +516,10 @@ class OrderExecutor:
                 "off Preview orders only in File > Trading Mode to place orders."
             )
         reason = self.halt_reason(settings.data_subdir)
-        if reason:
+        if reason and side != "sell":
             return (
-                f"Trading is halted ({reason}). Resume trading is in Settings > Risk."
+                f"Buying is halted ({reason}): only sell orders can be made. Resume "
+                "trading is in Settings > Risk."
             )
         return ""
 
@@ -607,7 +620,7 @@ class OrderExecutor:
         id (a group's for an OCO or Bracket order). Sends nothing: ``submit`` does.
         Raises ValueError with the reason when it cannot be made."""
         settings = self.settings()
-        refused = self.refusal(settings)
+        refused = self.refusal(settings, spec.side)
         if refused:
             raise ValueError(refused)
         problem = problem_with(spec, None, None)
@@ -893,8 +906,8 @@ class OrderExecutor:
         if item.account != settings.key:
             raise Skip("Waits: made for another account than the one trading now")
         halt = self.halt_reason(item.books)
-        if halt:
-            raise Skip(f"Not carried out while trading is halted ({halt})")
+        if halt and buys_now(item):
+            raise Skip(f"Not carried out while buying is halted ({halt})")
         if item.state == "new" and not first:
             made = item.updated or item.created or _utcnow()
             if _utcnow() - made > timedelta(seconds=SEND_WITHIN_S):
@@ -1603,7 +1616,7 @@ class OrderExecutor:
             return "A market order fills when it is sent: it cannot be changed"
         settings = self.settings()
         refused = (
-            self.refusal(settings)
+            self.refusal(settings, "buy" if buys_now(item) else "sell")
             if item.account == settings.key
             else ("It is on another account than the one trading now")
         )

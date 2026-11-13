@@ -17,13 +17,27 @@ its p-values carried no information.
   the correction of Patton, Politis and White 2009), on the marked daily series, capped
   at min(3 sqrt(N), N/3).
 * **Tests return per capital-day**, theta = sum(pnl) / sum(capital), for H0: theta <= 0
-  against theta > 0. It uses the centred p-value of the existing bootstrap
-  (``signal_fusion.evaluation.bootstrap``): (1 + #{b : theta*_b - theta_hat >=
-  theta_hat}) / (B + 1). It also gives a percentile interval.
+  against theta > 0, by one of two methods (``rpcd_test``):
 
-It is a library, checked on synthetic null and known-skill series (size and power).
-Adopting it for a declared evaluation is the owner's decision (PTAI-RD-001 D, O3).
-Nothing existing calls it.
+  - ``"percentile"``: the centred p-value of the existing bootstrap
+    (``signal_fusion.evaluation.bootstrap``): (1 + #{b : theta*_b - theta_hat >=
+    theta_hat}) / (B + 1), with a percentile interval.
+  - ``"studentised"`` (bootstrap-t): the same, on t = theta / se, with a Bartlett-kernel
+    standard error computed the same way on the original and on every resample.
+
+**The default (O3 calibration, 2026-11-12;
+``docs/dev/ptai-rd-001/O3-bootstrap-calibration.md``)** is ``"studentised"`` with the
+chosen block length x1.5 (variant D). The rule, declared in the calibration brief
+before the run, was:
+worst null size at nominal 5% at most 6.0% across every null scenario and both lengths,
+then the most power. No variant met 6.0%; the rule then takes the lowest worst-case
+size, which was D's: 6.2% (AR(0.4) with Student-t(3) shocks, 750 days; 1000
+replications, so about 0.75 points of Monte Carlo error). The percentile method at x1.0
+(PR #266's) reached 7.5% (AR(0.7), 750 days). D costs about 1.6 points of mean power.
+Synthetic series only.
+
+It is a library, and nothing existing calls it. A declared evaluation that uses it names
+the method and block scale in its registration, which the owner approves.
 """
 
 from __future__ import annotations
@@ -102,6 +116,12 @@ def _flat_top(t: float) -> float:
     return 0.0
 
 
+def block_cap(n: int) -> float:
+    """The largest mean block length used for ``n`` days: ceil(min(3 sqrt(N), N/3)), at
+    least 1."""
+    return max(1.0, float(math.ceil(min(3.0 * math.sqrt(n), n / 3.0))))
+
+
 def optimal_block_length(x: Iterable[float]) -> float:
     """The stationary bootstrap's mean block length for series ``x`` (Politis and White
     2004, corrected by Patton, Politis and White 2009), at least 1 and at most
@@ -117,7 +137,7 @@ def optimal_block_length(x: Iterable[float]) -> float:
         return 1.0
     e = x - x.mean()
     acv0 = float(e @ e) / n
-    b_max = float(math.ceil(min(3.0 * math.sqrt(n), n / 3.0)))
+    b_max = block_cap(n)
     if acv0 <= 0:
         return 1.0
     kn = max(5, int(math.ceil(math.log10(n))))
@@ -158,15 +178,39 @@ def stationary_indices(
     return idx
 
 
+def bartlett_lrv(z: np.ndarray, bandwidth: float) -> np.ndarray:
+    """The Bartlett-kernel (Newey and West 1987) long-run variance of each row of ``z``:
+    R(0) + 2 sum_k (1 - k / bandwidth) R(k) over 0 < k < bandwidth, with R(k) =
+    sum_t z_t z_{t+k} / N. The rows must already be centred. Never negative."""
+    z = np.atleast_2d(np.asarray(z, dtype=float))
+    n = z.shape[1]
+    bw = max(1.0, float(bandwidth))
+    out = np.einsum("ij,ij->i", z, z) / n
+    for k in range(1, min(n - 1, int(math.ceil(bw)) - 1) + 1):
+        w = 1.0 - k / bw
+        if w <= 0.0:
+            break
+        out = out + 2.0 * w * np.einsum("ij,ij->i", z[:, k:], z[:, :-k]) / n
+    return out
+
+
+METHODS = ("percentile", "studentised")
+# Variant D of the O3 calibration (module docstring): the lowest worst-case null size.
+DEFAULT_METHOD = "studentised"
+DEFAULT_BLOCK_SCALE = 1.5
+
+
 @dataclass(frozen=True)
 class Result:
     theta: float  # return per capital-day
     p_value: float  # H0: theta <= 0
-    interval: Tuple[float, float]  # percentile interval at ``level``
+    # at ``level``: the percentile interval, or the bootstrap-t one (studentised)
+    interval: Tuple[float, float]
     level: float
-    mean_block: float
+    mean_block: float  # the mean block length used (after ``block_scale`` and the cap)
     draws: int
     days: int
+    method: str = "percentile"
 
 
 def rpcd_test(
@@ -175,22 +219,81 @@ def rpcd_test(
     seed: int = 0,
     mean_block: Optional[float] = None,
     level: float = 0.95,
+    method: str = DEFAULT_METHOD,
+    block_scale: float = DEFAULT_BLOCK_SCALE,
 ) -> Result:
-    """The stationary-bootstrap test of return per capital-day (module docstring). The
-    mean block length is chosen from the marked daily profit or loss unless given."""
+    """The stationary-bootstrap test of return per capital-day (module docstring).
+
+    The default is the O3 calibration's choice, ``method="studentised",
+    block_scale=1.5``: its worst null size was 6.2% at nominal 5%, the lowest of the four
+    variants measured, though above the 6.0% the declared rule asked for. PR #266's method
+    is ``method="percentile", block_scale=1.0`` (worst 7.5%).
+
+    The mean block length is chosen from the marked daily profit or loss and multiplied
+    by ``block_scale``, then capped at min(3 sqrt(N), N/3) days; a ``mean_block`` given
+    is used as it is. The studentised method's Bartlett bandwidth is that same length.
+
+    ``method="percentile"``: theta_hat against the centred bootstrap draws,
+    p = (1 + #{theta*_b - theta_hat >= theta_hat}) / (B + 1), with a percentile interval.
+
+    ``method="studentised"`` (bootstrap-t): t = theta_hat / se and, on each resample,
+    t*_b = (theta*_b - theta_hat) / se*_b; p = (1 + #{t*_b >= t}) / (B + 1), with the
+    bootstrap-t interval. se comes from the linearised ratio, z_t = pnl_t - theta_hat
+    capital_t, as se^2 = N V(z) / (sum capital)^2, with V the Bartlett-kernel long-run
+    variance whose bandwidth is the mean block length (``bartlett_lrv``). se*_b is the same
+    formula on resample b, with theta*_b in place of theta_hat. Using the same formula on
+    the original and on each resample is the "naive" block bootstrap of a HAC t statistic:
+    Goncalves and Vogelsang (2011) show, for the moving-block bootstrap, that it
+    reproduces the statistic's fixed-bandwidth distribution, including the kernel
+    estimate's downward bias, which a normal critical value ignores. It is a
+    dependence-robust studentisation in the sense of Goetze and Kuensch (1996) and Lahiri
+    (2003), but not their matched-variance form, whose observed t keeps the block
+    variance's bias."""
+    if method not in METHODS:
+        raise ValueError(f"method must be one of {METHODS}, not {method!r}")
     n = marks.days
     if n < 2 or not np.sum(marks.capital) > 0:
         raise ValueError("the test needs at least two days with capital in the market")
     theta = marks.rpcd()
-    block = float(mean_block) if mean_block else optimal_block_length(marks.pnl)
+    if mean_block:
+        block = float(mean_block)
+    else:
+        block = optimal_block_length(marks.pnl) * float(block_scale)
+        block = max(1.0, min(block, block_cap(n)))
     idx = stationary_indices(n, block, int(draws), np.random.default_rng(seed))
-    pnl_b = marks.pnl[idx].sum(axis=1)
-    cap_b = marks.capital[idx].sum(axis=1)
+    pnl_r = marks.pnl[idx]
+    cap_r = marks.capital[idx]
+    pnl_b = pnl_r.sum(axis=1)
+    cap_b = cap_r.sum(axis=1)
     with np.errstate(divide="ignore", invalid="ignore"):
         stars = np.where(cap_b > 0, pnl_b / cap_b, np.nan)
-    stars = stars[np.isfinite(stars)]
-    b = len(stars)
-    p = (1 + int(np.sum(stars - theta >= theta))) / (b + 1)
     tail = (1.0 - level) / 2.0
-    lo, hi = np.quantile(stars, [tail, 1.0 - tail]) if b else (np.nan, np.nan)
-    return Result(theta, float(p), (float(lo), float(hi)), level, block, b, n)
+    if method == "percentile":
+        stars = stars[np.isfinite(stars)]
+        b = len(stars)
+        p = (1 + int(np.sum(stars - theta >= theta))) / (b + 1)
+        lo, hi = np.quantile(stars, [tail, 1.0 - tail]) if b else (np.nan, np.nan)
+        return Result(theta, float(p), (float(lo), float(hi)), level, block, b, n)
+    cap_total = float(np.sum(marks.capital))
+    z = marks.pnl - theta * marks.capital
+    se = math.sqrt(n * float(bartlett_lrv(z, block)[0])) / cap_total
+    ok = np.isfinite(stars)
+    z_r = pnl_r[ok] - stars[ok][:, None] * cap_r[ok]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        se_r = np.sqrt(n * bartlett_lrv(z_r, block)) / cap_b[ok]
+        t_r = (stars[ok] - theta) / se_r
+    t_r = t_r[np.isfinite(t_r)]
+    b = len(t_r)
+    if se > 0:
+        t_obs = theta / se
+    else:
+        t_obs = math.copysign(math.inf, theta) if theta != 0 else 0.0
+    p = (1 + int(np.sum(t_r >= t_obs))) / (b + 1)
+    if b and se > 0:
+        q_lo, q_hi = np.quantile(t_r, [tail, 1.0 - tail])
+        lo, hi = theta - q_hi * se, theta - q_lo * se
+    else:
+        lo, hi = theta, theta
+    return Result(
+        theta, float(p), (float(lo), float(hi)), level, block, b, n, "studentised"
+    )

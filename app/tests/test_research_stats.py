@@ -7,6 +7,9 @@
   with dependent days, and detects a known edge.
 * The O3 variants (percentile or studentised; block length x1 or x1.5) each run and
   repeat with the seed; the default is the calibration's choice, variant D.
+* The test of a daily series' mean (``mean_test``, SR1-E2's comparison with a hold):
+  both methods hold their size on independent days, find a clear positive mean, repeat
+  with the seed, and agree with ``rpcd_test`` when every day has one unit of capital.
 
 Synthetic data only."""
 
@@ -276,3 +279,108 @@ def test_the_default_holds_its_size_on_marked_trades_without_an_edge():
         hits += rs.rpcd_test(marks, draws=199, seed=r).p_value <= 0.05
     # 200 replications: a standard error of about 1.5 points around 5%
     assert 0.01 <= hits / reps <= 0.10, hits / reps
+
+
+# -- the mean of a daily series (mean_test: SR1-E2's comparison with a hold) ---------------
+
+
+@pytest.mark.parametrize("method", rs.METHODS)
+def test_the_mean_test_holds_its_size_on_independent_days(method):
+    rng = np.random.default_rng(50)
+    reps, hits = 200, 0
+    for r in range(reps):
+        x = rng.normal(0.0, 0.02, 500)  # daily log-return differences with mean 0
+        hits += rs.mean_test(x, draws=199, seed=r, method=method).p_value <= 0.05
+    # 200 replications: a standard error of about 1.5 points around 5%
+    assert 0.01 <= hits / reps <= 0.10, hits / reps
+
+
+@pytest.mark.parametrize("method", rs.METHODS)
+def test_the_mean_test_finds_a_clear_positive_mean_and_not_a_negative_one(method):
+    rng = np.random.default_rng(51)
+    # AR 0.3 with unit shocks has a long-run sd of 1 / 0.7, so the mean's standard error
+    # over 600 days is about 0.058, and 0.4 a day is about 7 of them
+    x = ar1(600, 0.3, rng) + 0.4
+    up = rs.mean_test(x, draws=499, seed=1, method=method)
+    assert up.p_value <= 0.01, up.p_value
+    assert 0.0 < up.interval[0] < up.mean < up.interval[1]
+    down = rs.mean_test(-x, draws=499, seed=1, method=method)
+    assert down.p_value >= 0.99, down.p_value  # one-sided: H0 is mean <= 0
+
+
+@pytest.mark.parametrize("method", rs.METHODS)
+def test_the_mean_test_repeats_with_its_seed_and_reports_per_day(method):
+    rng = np.random.default_rng(52)
+    x = 0.01 * ar1(400, 0.4, rng) + 0.001
+    a = rs.mean_test(x, draws=199, seed=11, method=method)
+    b = rs.mean_test(list(x), draws=199, seed=11, method=method)
+    c = rs.mean_test(x, draws=199, seed=12, method=method)
+    assert a == b
+    assert c.interval != a.interval  # another seed, other draws
+    assert a.method == method and a.draws == 199 and a.days == 400 and a.level == 0.95
+    assert a.mean == float(np.mean(x))  # per day, not annualised
+    assert 0.0 < a.p_value <= 1.0
+    assert a.interval[0] < a.mean < a.interval[1]
+
+
+@pytest.mark.parametrize("method", rs.METHODS)
+def test_the_mean_test_is_rpcd_test_with_one_unit_of_capital_every_day(method):
+    # with the same capital every day, return per capital-day is the mean, so the two
+    # tests must agree draw for draw: the same blocks, the same statistic, the same p
+    rng = np.random.default_rng(53)
+    x = ar1(500, 0.4, rng) + 0.05
+    marks = rs.DailyMarks(0, x, np.ones(500))
+    for kw in ({"block_scale": 1.0}, {"block_scale": 1.5}, {"mean_block": 7.0}):
+        m = rs.mean_test(x, draws=299, seed=3, method=method, **kw)
+        r = rs.rpcd_test(marks, draws=299, seed=3, method=method, **kw)
+        assert m.mean == pytest.approx(r.theta)
+        assert m.p_value == r.p_value
+        assert m.interval == pytest.approx(r.interval)
+        assert (m.mean_block, m.draws, m.days) == (r.mean_block, r.draws, r.days)
+
+
+def test_the_mean_tests_methods_differ_and_the_default_is_studentised_x1_5():
+    rng = np.random.default_rng(54)
+    x = ar1(300, 0.4, rng)
+    p = rs.mean_test(x, draws=199, seed=5, method="percentile")
+    s = rs.mean_test(x, draws=199, seed=5, method="studentised")
+    assert p.method == "percentile" and s.method == "studentised"
+    assert p.interval != s.interval and p.p_value != s.p_value
+    explicit = rs.mean_test(x, draws=199, seed=5, method="studentised", block_scale=1.5)
+    assert rs.mean_test(x, draws=199, seed=5) == explicit
+
+
+def test_the_mean_tests_block_length_scale_cap_and_a_length_given():
+    rng = np.random.default_rng(55)
+    n = 600
+    x = ar1(n, 0.5, rng)
+    chosen = rs.optimal_block_length(x)
+    assert rs.mean_test(x, draws=50, block_scale=1.0).mean_block == chosen
+    assert rs.mean_test(x, draws=50, block_scale=1.5).mean_block == pytest.approx(
+        1.5 * chosen
+    )
+    walk = np.cumsum(rng.normal(size=n))  # its chosen length x3 is past the cap
+    assert 3.0 * rs.optimal_block_length(walk) > rs.block_cap(n)
+    assert rs.mean_test(walk, draws=50, block_scale=3.0).mean_block == rs.block_cap(n)
+    # a length given is used as it is, whatever the scale, and above the cap too
+    given = rs.mean_test(x, draws=50, mean_block=7.0, block_scale=1.5)
+    assert given.mean_block == 7.0
+    assert given == rs.mean_test(x, draws=50, mean_block=7.0, block_scale=1.0)
+    assert given != rs.mean_test(x, draws=50, block_scale=1.5)
+    assert rs.mean_test(x, draws=50, mean_block=400.0).mean_block == 400.0
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [[], [0.01], [0.01, float("nan"), 0.0], [0.01, float("inf"), 0.0], [0.01, None]],
+)
+def test_the_mean_test_refuses_too_few_days_and_values_that_are_not_finite(bad):
+    with pytest.raises(ValueError):
+        rs.mean_test(bad)
+
+
+def test_the_mean_test_refuses_an_unknown_method_and_a_table():
+    with pytest.raises(ValueError):
+        rs.mean_test(np.ones(20), method="basic")
+    with pytest.raises(ValueError):
+        rs.mean_test(np.ones((5, 4)))

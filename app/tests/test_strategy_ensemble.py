@@ -527,3 +527,57 @@ def test_the_hold_on_some_coins(ens):
     assert sub.detail[0][1] == pytest.approx(10_000.0 / 3)  # 1/1 coin x 1/3 members
     with pytest.raises(ValueError, match="ZZZ"):
         ens.hold(FREE, 10_000.0, None, coins=["ZZZ"])
+
+
+# -- the equal-weight hold funds every coin (the owner's decision of 2026-11-14) -----------
+
+
+def _late_listing():
+    """AAA and BBB from 2021-01-01, doubling after their first month; CCC listed on day
+    350, when the other two have doubled, and doubling after its own first month."""
+    early = [100.0] * 30 + list(np.linspace(100, 200, 300)) + [200.0] * 170
+    frames = {
+        "AAA": daily(early, start="2021-01-01"),
+        "BBB": daily(early, start="2021-01-01"),
+        "CCC": daily([50.0] * 30 + list(np.linspace(50, 100, 120)), start="2021-12-17"),
+    }
+    return en.Ensemble(Universe("1d", frames), lookbacks=(20,))
+
+
+def test_the_hold_buys_a_late_coin_with_its_own_share_of_the_start():
+    group = _late_listing()
+    hold = group.hold(FREE, 9_000.0, None, detail=True)
+    # every coin is bought, each with 1/N of the starting account, not of the grown one
+    assert int(hold.trades[0]) == 3 and int(hold.skipped_cash[0]) == 0
+    trades = group.hold_trades(None)
+    amounts = {trades[i].coin: amount for i, amount, *_ in hold.detail}
+    assert amounts == pytest.approx({"AAA": 3_000.0, "BBB": 3_000.0, "CCC": 3_000.0})
+    assert hold.intrabar_max_drawdown is not None  # lows and highs still marked
+
+
+def test_a_late_coins_share_waits_idle_until_its_first_bar():
+    group = _late_listing()
+    hold = group.hold(FREE, 9_000.0, None, detail=True)
+    times, equity = hold.curve
+    ccc = next(t for t in group.hold_trades(None) if t.coin == "CCC")
+    frame = group.universe.frames["AAA"]
+    close_s = frame["open_time"].map(lambda t: int(t.timestamp())) + DAY
+    before = np.flatnonzero(times < ccc.entry_s)[-1]
+    k = int(np.searchsorted(close_s.to_numpy(), times[before], side="right")) - 1
+    price = float(frame["close"].iloc[k])  # AAA and BBB are the same series
+    # the two positions at their close, and CCC's share as cash
+    assert equity[before] == pytest.approx(2 * 3_000.0 * price / 100.0 + 3_000.0)
+    # from its first bar that share is in CCC, which doubles
+    assert float(hold.final_equity[0]) == pytest.approx(2 * 6_000.0 + 6_000.0)
+
+
+def test_a_coin_whose_share_is_below_its_minimum_is_named_not_skipped_silently():
+    group = _late_listing()
+    dear = Costs(fee=0.0, allowance=0.0, minimum_usd={"CCC": 5_000.0})
+    plan = group.hold_plan(dear, 9_000.0, None)
+    assert [t.coin for t in plan.trades] == ["AAA", "BBB"]
+    assert "below its minimum entry" in plan.not_bought["CCC"]
+    hold = group.hold(dear, 9_000.0, None, detail=True)
+    assert int(hold.trades[0]) == 2 and int(hold.skipped_cash[0]) == 0
+    # its share stays cash to the end
+    assert float(hold.final_equity[0]) == pytest.approx(2 * 6_000.0 + 3_000.0)

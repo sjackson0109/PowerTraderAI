@@ -25,7 +25,9 @@ holding the slices.
 at the coin's closes (and lows and highs, for the intrabar drawdown), with the
 coin's minimum and sell step. The figures
 are ``replay``'s, against each member alone (the coin's whole allocation) and an
-equal-weight buy-and-hold of the same coins.
+equal-weight buy-and-hold of the same coins (``hold``: each coin bought with its own
+1/N of the starting account at its first decision bar, a late-listed coin's share
+waiting as cash until then, as the owner defined it on 2026-11-14).
 
 **Any trades through the same book** (``replay_trades``): the replay above takes each
 member's trades, so the book's own and a random baseline's go through the same account,
@@ -92,6 +94,16 @@ class BookDraws:
     wanted: Dict[str, int]
     reached: List[int]
     dropped: Optional[List[int]] = None
+
+
+@dataclass
+class HoldPlan:
+    """The equal-weight hold's trades (by entry time), the coins it does not buy with
+    the reason, and each coin's share of the starting account."""
+
+    trades: List[Trade]
+    not_bought: Dict[str, str]
+    share_usd: float
 
 
 @dataclass
@@ -349,11 +361,44 @@ class Ensemble:
     def hold_trades(
         self, from_s: Optional[int], coins: Optional[Sequence[str]] = None
     ) -> List[Trade]:
-        """The equal-weight hold's trades: each coin bought once, at the open after its
-        first decision bar at or after ``from_s``, held to the last close."""
+        """Each coin's hold trade: bought once, at the open after its first decision bar
+        at or after ``from_s``, held to the last close (the hold buys those
+        ``hold_plan`` keeps)."""
         first = next(iter(self.sims.values()))
         keep = set(self._coins(coins))
         return [t for t in bl.hold_trades(first, from_s) if t.coin in keep]
+
+    def hold_plan(
+        self,
+        costs: Costs,
+        account_usd: float,
+        from_s: Optional[int],
+        coins: Optional[Sequence[str]] = None,
+    ) -> HoldPlan:
+        """What the equal-weight hold buys (``hold``): each of the N coins with its own
+        1/N of the starting account. A coin is not bought only when that share is below
+        its minimum entry, or when it has no decision bar to buy at; each such coin is
+        named with the reason."""
+        keep = self._coins(coins)
+        share = float(account_usd) / len(keep)
+        margin = Account().margin_pct
+        found = {t.coin: t for t in self.hold_trades(from_s, keep)}
+        bought: List[Trade] = []
+        not_bought: Dict[str, str] = {}
+        for coin in keep:
+            t = found.get(coin)
+            floor = costs.floor(coin, margin)
+            if t is None:
+                not_bought[coin] = "it has no decision bar to buy at"
+            elif floor and share < floor:
+                not_bought[coin] = (
+                    f"its share, ${share:,.2f}, is below its minimum entry, "
+                    f"${floor:,.2f}"
+                )
+            else:
+                bought.append(t)
+        bought.sort(key=lambda t: (t.entry_s, t.coin))
+        return HoldPlan(bought, not_bought, share)
 
     def hold(
         self,
@@ -363,14 +408,31 @@ class Ensemble:
         detail: bool = False,
         coins: Optional[Sequence[str]] = None,
     ) -> Paths:
-        """Equal-weight buy-and-hold of the coins (``coins``, all by default): 1/N each,
-        from the first decision bar at or after ``from_s`` to the last close."""
+        """Equal-weight buy-and-hold of the coins (``coins``, all by default), as the
+        owner defined it on 2026-11-14: each of the N coins bought with its own 1/N of
+        the starting account (not of the grown account) at the open after its first
+        decision bar at or after ``from_s``, and held to the last close. A late-listed
+        coin's share waits as cash until it is bought; no coin is skipped for cash (a
+        coin whose share is below its minimum entry is not bought: ``hold_plan`` names
+        it). The same costs and sell steps as any trade, marked at the closes, lows and
+        highs.
+
+        In the replay the hold never sells before the end, so the k-th coin bought (in
+        time order, from 0) finds N - k shares of cash: it is bought with 1/(N - k) of
+        the cash then (``size_fraction`` 1 with that scale), which is its own 1/N."""
         first = next(iter(self.sims.values()))
-        keep = self._coins(coins)
-        pct = 100.0 / len(keep)
-        account = Account(start=float(account_usd), start_pct=pct, max_coin_pct=pct)
+        n = len(self._coins(coins))
+        plan = self.hold_plan(costs, account_usd, from_s, coins)
+        scale = None
+        if plan.trades:
+            scale = np.array([[1.0 / (n - k) for k in range(len(plan.trades))]])
         return first.replay(
-            self.hold_trades(from_s, keep), costs, account, detail=detail
+            plan.trades,
+            costs,
+            Account(start=float(account_usd)),
+            size_fraction=1.0,
+            scale=scale,
+            detail=detail,
         )
 
 
@@ -403,7 +465,10 @@ def report(
         "policy": policy.record(),
         "ensemble": _figures(book),
         "members": members,
-        "equal_weight_hold": _figures(ens.hold(costs, account_usd, from_s)),
+        "equal_weight_hold": {
+            **_figures(ens.hold(costs, account_usd, from_s)),
+            "not_bought": ens.hold_plan(costs, account_usd, from_s).not_bought,
+        },
     }
 
 

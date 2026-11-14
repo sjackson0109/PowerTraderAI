@@ -335,3 +335,195 @@ def test_the_book_reports_the_intrabar_drawdown_from_the_earlier_highs(ens):
     assert book.intrabar_max_drawdown[0] >= book.max_drawdown[0]
     hold = ens.hold(FREE, 10_000.0, None)
     assert hold.intrabar_max_drawdown is not None
+
+
+# -- random entries for the book (REF-RANDOM-E) and matched holding --------------------------
+
+COSTS = Costs(fee=0.005, allowance=0.0005)
+
+
+def _book(ens, costs=FREE, usd=10_000.0):
+    by = ens.trades()
+    path = ens.replay(costs, usd, detail=True)
+    return by, path, ens.taken(by, path)
+
+
+def _exit_by_hand(closes, n, entry):
+    """The exit fill of a trade entered at bar ``entry``'s open: the first close below
+    the midline stop, which starts at the midline and never moves down; None when it
+    is still open at the last bar (closed there, at the end of the data)."""
+    stop = None
+    for k in range(entry, len(closes) - 1):
+        prev = closes[k - n : k]
+        mid = (max(prev) + min(prev)) / 2
+        stop = mid if stop is None else max(stop, mid)
+        if closes[k] < stop:
+            return k + 1
+    return None
+
+
+def test_the_book_replays_its_slices_in_one_order(ens):
+    by, path, taken = _book(ens)
+    order = ens.slices(by)
+    assert [n for n, _t in order] == sorted(n for n, _t in order)
+    assert len(order) == sum(len(v) for v in by.values())
+    # the taken trades are path 0's, by member, and each slice holds one at a time
+    rows = [order[i] for i, *_ in path.detail]
+    assert sum(len(v) for v in taken.values()) == len(rows) == int(path.trades[0])
+    for n, trades in taken.items():
+        for coin in ens.coins:
+            mine = sorted(
+                (t for t in trades if t.coin == coin), key=lambda t: t.entry_s
+            )
+            assert all(a.exit_s <= b.entry_s for a, b in zip(mine, mine[1:]))
+    # replaying the same trades directly is the same book
+    again = ens.replay_trades(by, FREE, 10_000.0, detail=True)
+    assert again.net[0] == path.net[0] and again.detail == path.detail
+
+
+def test_random_entries_match_each_slices_entries(ens):
+    _by, _path, taken = _book(ens)
+    draws = ens.random_draws(taken, seed=40, count=6)
+    wanted = {
+        en._key(c, n): sum(t.coin == c for t in taken[n])
+        for n in taken
+        for c in ens.coins
+    }
+    assert draws.wanted == wanted and sum(wanted.values()) > 0
+    full = 0
+    for b, d in enumerate(draws.draws):
+        assert set(d) == set(taken)
+        got = {
+            en._key(c, n): sum(t.coin == c for t in d[n]) for n in d for c in ens.coins
+        }
+        assert all(got[k] <= wanted[k] for k in wanted)  # fewer only when out of bars
+        assert draws.reached[b] == sum(got.values())
+        full += got == wanted
+    assert full >= 1
+
+
+def test_each_random_entry_exits_by_its_members_own_rule(ens):
+    _by, _path, taken = _book(ens)
+    draws = ens.random_draws(taken, seed=41, count=4)
+    checked = 0
+    for d in draws.draws:
+        for n, trades in d.items():
+            for t in trades:
+                table = ens.sims[n].tables[t.coin]
+                assert t == table.trade_from(t.decided)
+                assert t.exit_rule in ("strategy", "stop:OVL-MIDLINE", "end_of_data")
+                closes = list(ens.universe.frames[t.coin]["close"])
+                by_hand = _exit_by_hand(closes, n, t.entry_i)
+                if by_hand is None:
+                    assert t.forced
+                else:
+                    assert (t.exit_i, t.forced) == (by_hand, False)
+                checked += 1
+    assert checked > 20
+
+
+def test_random_entries_repeat_for_a_seed_and_each_member_has_its_own(ens):
+    from strategy_lab import baselines as bl
+
+    _by, _path, taken = _book(ens)
+    one = ens.random_draws(taken, seed=500, count=3)
+    two = ens.random_draws(taken, seed=500, count=3)
+    other = ens.random_draws(taken, seed=501, count=3)
+    assert one.draws == two.draws and one.draws != other.draws
+    # member k's draw b is drawn with seed + k * count + b
+    for k, n in enumerate(ens.lookbacks):
+        alone = bl.random_draws(ens.sims[n], taken[n], 500 + k * 3, 3)
+        assert [d[n] for d in one.draws] == alone.draws
+
+
+def test_random_entries_go_through_the_same_book(ens):
+    _by, _path, taken = _book(ens, COSTS)
+    draws = ens.random_draws(taken, seed=42, count=5)
+    many = ens.replay_draws(draws.draws, COSTS, 10_000.0)
+    chunked = ens.replay_draws(draws.draws, COSTS, 10_000.0, chunk=2)
+    for p, d in enumerate(draws.draws):
+        one = ens.replay_trades(d, COSTS, 10_000.0)
+        # (not ``skipped_cash``: with many paths the replay counts the cash before a
+        # path's veto, so it counts other draws' entries too)
+        for name in (
+            "net",
+            "capital_days",
+            "trades",
+            "skipped_minimum",
+            "max_drawdown",
+        ):
+            assert getattr(many, name)[p] == pytest.approx(getattr(one, name)[0])
+            assert getattr(chunked, name)[p] == pytest.approx(getattr(one, name)[0])
+        # the same cash: no path ever holds more than the account
+        assert many.peak_committed[p] <= 1.0 + 1e-9
+    # the same slices and minimums: where the book's slices are below the minimum,
+    # every random entry is skipped too
+    dear = Costs(fee=0.0, allowance=0.0, minimum_usd={"AAA": 300.0, "BBB": 300.0})
+    small = ens.replay_draws(draws.draws, dear, 1_000.0)
+    assert small.trades.sum() == 0 and (small.skipped_minimum > 0).all()
+
+
+def test_the_book_skips_entries_it_cannot_fund_and_so_do_random_ones():
+    # one coin rising: both members enter and gain; a dip stops the 20-day member out
+    # but not the 30-day one, and on the next highs the 20-day member's share of the
+    # grown account is more than the cash its exit left (the 30-day slice holds more)
+    closes = (
+        [100.0] * 400
+        + list(np.linspace(101, 300, 200))
+        + [296.0, 292.0, 288.0]
+        + list(np.linspace(289, 400, 100))
+        + [400.0] * 60
+    )
+    frames = {"AAA": daily(closes, start="2021-01-01")}
+    group = en.Ensemble(Universe("1d", frames), lookbacks=(20, 30))
+    by, path, taken = _book(group)
+    assert path.skipped_cash[0] > 0
+    # the book's own trades, as one draw, are the book: the same trades and skips
+    own = group.replay_draws([by], FREE, 10_000.0)
+    assert (own.net[0], own.trades[0], own.skipped_cash[0]) == (
+        path.net[0], path.trades[0], path.skipped_cash[0],
+    )  # fmt: skip
+    draws = group.random_draws(taken, seed=7, count=8)
+    rp = group.replay_draws(draws.draws, FREE, 10_000.0)
+    # each draw is replayed by the same book, so its entries meet the same rule
+    for p, d in enumerate(draws.draws):
+        one = group.replay_trades(d, FREE, 10_000.0)
+        assert (rp.net[p], rp.trades[p]) == (pytest.approx(one.net[0]), one.trades[0])
+
+
+def test_matched_holds_keep_each_slices_holds(ens):
+    from strategy_lab import baselines as bl
+
+    _by, _path, taken = _book(ens)
+    draws = ens.matched_draws(taken, seed=60, count=4)
+    for b, d in enumerate(draws.draws):
+        missing = 0
+        for n in taken:
+            for c in ens.coins:
+                want = sorted(bl.held_bars(t) for t in taken[n] if t.coin == c)
+                got = sorted(bl.held_bars(t) for t in d[n] if t.coin == c)
+                assert len(got) <= len(want)
+                missing += len(want) - len(got)
+                # within a slice no two holds share a bar
+                spans = sorted((t.entry_i, t.exit_i) for t in d[n] if t.coin == c)
+                assert all(a[1] < b[0] for a, b in zip(spans, spans[1:]))
+        assert missing == draws.dropped[b]
+    for k, n in enumerate(ens.lookbacks):
+        alone = bl.matched_draws(ens.sims[n], taken[n], 60 + k * 4, 4)
+        assert [d[n] for d in draws.draws] == alone.draws
+
+
+def test_the_hold_on_some_coins(ens):
+    both = ens.hold(FREE, 10_000.0, None, detail=True)
+    one = ens.hold(FREE, 10_000.0, None, coins=["AAA"], detail=True)
+    assert both.trades[0] == 2 and one.trades[0] == 1
+    assert one.detail[0][1] == pytest.approx(10_000.0)  # the one coin has it all
+    assert one.curve is not None
+    sub = ens.replay(FREE, 10_000.0, detail=True, coins=["AAA"])
+    order = ens.slices(
+        {n: [t for t in v if t.coin == "AAA"] for n, v in ens.trades().items()}
+    )
+    assert {order[i][1].coin for i, *_ in sub.detail} == {"AAA"}
+    assert sub.detail[0][1] == pytest.approx(10_000.0 / 3)  # 1/1 coin x 1/3 members
+    with pytest.raises(ValueError, match="ZZZ"):
+        ens.hold(FREE, 10_000.0, None, coins=["ZZZ"])

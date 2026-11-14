@@ -10,7 +10,7 @@ The owner's programme brief of 2026-11-11.
 
 **Still the owner's to decide:** live trading, raising a strategy's authorisation, opening the lockbox, and paid data (D §3).
 
-**The owner's decisions of 2026-11-12** are in D §3: O1, O2, O6 and O7 approved; O3 answered with "measure a stricter variant first"; and a new request, a trading switch for every strategy in Settings > Strategy. The owner's answers that evening (O3 accepted, O10 to O16) are in the same table. The owner's answers of 2026-11-13 (O17 to O25) follow from the ensemble and sizing exploration, and cover the merges of #288 to #303, the design for N11 and the fixes that came from it.
+**The owner's decisions of 2026-11-12** are in D §3: O1, O2, O6 and O7 approved; O3 answered with "measure a stricter variant first"; and a new request, a trading switch for every strategy in Settings > Strategy. The owner's answers that evening (O3 accepted, O10 to O16) are in the same table. The owner's answers of 2026-11-13 (O17 to O28) follow from the ensemble and sizing exploration, and cover the merges of #288 to #303, the design for N11 and the fixes that came from it.
 
 ## Deliverables
 
@@ -21,7 +21,7 @@ The owner's programme brief of 2026-11-11.
 | A | `A3-hardware-inventory.md` | The workstation as measured, and what it means for research |
 | B | `B-strategy-catalogue.md` + `B-candidates.json` | 130 sourced candidates: strategies, signals, models, data sources, risk and portfolio rules. Each has evidence quality, crypto evidence, data needs, licences, turnover and fee sensitivity, and a priority set without looking at returns |
 | C | `C-architecture.md` | The integrated architecture: one implementation per job, its interfaces, the qualification path, the statistical method, and the programme trial ledger |
-| D | `D-backlog.md` | Work packages by milestone (M0-M8), the order of work, and the owner decisions O1-O25 |
+| D | `D-backlog.md` | Work packages by milestone (M0-M8), the order of work, and the owner decisions O1-O28 |
 | E | Pull requests | Below |
 
 **A design awaiting a decision:** `N11-halt-equity-design.md`, which covers what the drawdown halt measures, how money moved in or out of the account moves it, and a proposed fix in three parts (N11, O21). It is docs only, and trading is unchanged.
@@ -97,7 +97,16 @@ The owner's programme brief of 2026-11-11.
 | #307 | M1 (O22) | The halt measures every balance, funds on hold included (N11 part 1; on #306) |
 | #308 | M1 (O22) | A deposit never reduces the drawdown (N11 part 2; on #307) |
 
-#299 to #303 were approved for merging by me on 2026-11-13 (O25). #304, #305 and #306 to #308 are the owner's to merge.
+#299 to #303 were merged by me on 2026-11-13 and 2026-11-14 (O25), and #304 to #309 on 2026-11-14 (O26).
+
+**Opened on 2026-11-14, for SR1-E2** (merged by me, O28):
+
+| PR | Milestone | What |
+|---|---|---|
+| #310 | M2 | A stationary-bootstrap test of a daily mean, calibrated on synthetic nulls (worst size 6.9% at nominal 5%) |
+| #311 | Docs | The exploration's equal-weight hold buys every coin (a correction to #291) |
+| #312 | M6 (O27) | SR1-E2's code: random entries for the book's slices, F3 for a book with D1, the record and the driver (on #310) |
+| #313 | Docs (O27) | SR1-E2 approved, with D1 to D5 and the hold's rule; decisions O26 to O28 |
 
 ## The headline findings
 

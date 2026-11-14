@@ -1,0 +1,752 @@
+{
+  "accounts": {
+    "deciding_gbp": 10000.0,
+    "gbp": [
+      10000.0,
+      500.0,
+      50.0
+    ],
+    "gbp_usd": 1.3238,
+    "halt": "reported, not modelled",
+    "halt_pct": 8.0,
+    "rate": {
+      "ecb_latest": {
+        "cross": 1.3226582414820665,
+        "rate_date": "2026-11-13"
+      },
+      "file_sha256": "18c877a99a9e13fc3430b03e8b441d3ba1cf2c9a9b52f8d0c382189b4f7a2af9",
+      "gbp_usd": 1.3238,
+      "note": "the latest day both publish at retrieval; frozen in E1's record and applied to every account; never read during the replay",
+      "rate_date": "2026-11-12",
+      "raw_sha256": "692708ed296284f1cae70a8ba6d645eb3d814cd12be2723b8672fdb1779060b9",
+      "retrieved_at": "2026-11-14T18:57:33.160588+00:00",
+      "source": "Bank of England Database, series XUDLUSS (spot exchange rate, US$ into sterling)",
+      "url": "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp?csv.x=yes&Datefrom=15/Oct/2026&Dateto=now&SeriesCodes=XUDLUSS&CSVF=TN&UsingCodes=Y&VPD=Y&VFD=N",
+      "verification": {
+        "agrees": true,
+        "cross": 1.325557748669179,
+        "gbp_per_eur": 0.83595,
+        "rate_date": "2026-11-12",
+        "raw_sha256": "9811ba2a93131661323bac357cf1a839d6b8111bc2a98d6339073dc5e7fba94a",
+        "relative_difference": 0.0013278053098495501,
+        "source": "European Central Bank euro foreign exchange reference rates (USD per EUR / GBP per EUR)",
+        "tolerance": 0.0025,
+        "url": "https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist-90d.xml",
+        "usd_per_eur": 1.1081
+      }
+    },
+    "usd": {
+      "10000.0": 13238.0,
+      "50.0": 66.19,
+      "500.0": 661.9
+    }
+  },
+  "approved": "2026-11-14",
+  "authority": "the work in the registration's section 8, its rehearsal, the freeze and one development run (D5); no paper or live activation, no promotion, the lockbox stays closed (O5)",
+  "baselines": {
+    "REF-CASH": "no trades",
+    "REF-RANDOM-E": "per (coin, member) slice, as many random entries as the book's path took there, on that coin's decision bars, the same waits in a random order, each exited by the member's own rule and ratchet, replayed through the same book (strategy_lab.ensemble.Ensemble.random_draws); member k's draw b seeded seed + 2,000 k + b; 10 runs of 200",
+    "equal-weight hold": "the equal-weight hold funds every coin: each of the N coins bought with its own 1/N of the starting account (not of the grown account) at the open after its first decision bar from 2020-12-31 (entering from 2021-01-01), and held to the last close; a late-listed coin's share waits as cash until it is bought; no coin is skipped for cash, and a coin whose share is below its minimum entry is not bought and is named (the owner's decision of 2026-11-14; Ensemble.hold)",
+    "matched holding": "per slice, random entries each held as long as one of the slice's trades (Ensemble.matched_draws), through the same book; reported only (O19)"
+  },
+  "code": {
+    "backtest/__init__.py": "21b5ed9d6ef2acb51657ab5c0e2d9fcb379318dee059b8c05e939251ab1bb091",
+    "backtest/__main__.py": "13a1a5b340cdcfc1902b62be90e508c7c71886000d5bf087e7854aadf09fb35e",
+    "backtest/cli.py": "8b947b9406959772ed045cc8f3e32c8cb804e407bf6a6934843d43226ba986a7",
+    "backtest/engine.py": "057775101820a91c6c34b39dd59ae982cb39e61ab56735aa37d0cade57f31c62",
+    "backtest/kpis.py": "c2c5b7c079f0a147cf1cffd809d20caa81230cd42a86dfd4cc81b4243e540c28",
+    "backtest/model_eval.py": "7d9dd37aac7d370cefdb60da222cddb6931be78bc58ba5b8bf3b06e25320220a",
+    "backtest/random_baseline.py": "b73e40daa128b7d4f8ad57d4258bff0296e988baf009a65317e96101cd64c6e1",
+    "feature_library/__init__.py": "1884886a5bed8f494a3aafaeccc12e55d1abd52cdf76078ed2043d7da1f9c9f2",
+    "feature_library/base.py": "1a8e9fa7a62178e4d23b79569af18b942bc230da4139066c814666c71e98902a",
+    "feature_library/builtin.py": "391ddcace841f66f5c90adcf8c2661521c645a6afd164e5eed99a9a1f0a1cb9a",
+    "market_data/candles.py": "fb13a646a330420a3ec37a3e87d6a9dc63d0fa77b558c438074c226bccf5efac",
+    "market_data/gaps.py": "6d00869d491c75de0cf0fa1fb0c5bf7ed3936b80881d152b6d5349f3f00e1366",
+    "market_data/timeframes.py": "7e27157c45a4e37b6164eed995688d19c87929f2e62121e09439a8b967800a5c",
+    "model_lab/__init__.py": "803c1587948240831df70a5f62f6f2237dcbe1ca8d9537caf88d2c5efab18e3b",
+    "model_lab/baselines.py": "5d912d0ff94b207f7aca9940b9483e08c27f7952e03704fe6f083e0fc4761f5d",
+    "model_lab/batch.py": "3a5ffbc87b83650fa3c6b1561965dba1a876fe8d8241be5623bd4e02c948b5f6",
+    "model_lab/catalogue.py": "00b5b553d55e15107f3e8b0e73868518065e2c2cae9783ec04a61c36c5dcf5f8",
+    "model_lab/contestants.py": "f03b84bc2ae5162ad0b122254910e9d11c702adce6edaeb03fcef4ce3002dab0",
+    "model_lab/features.py": "d5adc85935d2368c746e780e167b5f023155005e7922551366c7cf70ac4f0610",
+    "model_lab/replay.py": "8ecbf7a4d2c59b94442b59be15ff8efc39739254113e6f690deb3a476f16df5c",
+    "model_lab/series.py": "8a29df6861b0c8e663584dae5f74d208dfab2c1fd3852b1b9585229dfc3e0e5b",
+    "model_lab/stats.py": "e12163a27cf21f38a1e03ca52df88ca35f60eb2c0202085e6b5771adf8821ba3",
+    "model_lab/targets.py": "9111c08aa26ba1a351a353ad98d3b13eda7d336161e598decc11676c7100ac0e",
+    "model_lab/walkforward.py": "1bf0e4d913a486014050fa0fbaebd6c0d27610d00c9142912b225010fbf8d839",
+    "position_sizing.py": "05c8dec225474082e96b5db760308cb537240cc7949033795d1a923d0ff8a328",
+    "research_engine/ledger.py": "2d8d6cf527c7acbdc1733fb4569c8ee421ba16e6d543a506273cef2345c6dc4b",
+    "research_stats/__init__.py": "2a1a5a546c03b8c8e4ef46ac403847e0bdebd2370e419ed7d598d0a70a4c5463",
+    "research_stats/drawdowns.py": "9ceb2533e06170a060ba145df06ca87d2ee75aef155435454a9918932bf79e26",
+    "research_stats/multiple.py": "9cfa72f912e34fdb29d33c6953e02d545ee0469fed1315053691774151fe4e5a",
+    "research_stats/overfitting.py": "df05fdc37bd1f52e414f95e368a660824a282af17bedb8cd6e7364fd753443ba",
+    "research_stats/periods.py": "055af960273bcbd7159879aafae4313de03a26ae592b8d4c890c2839a25b85d1",
+    "research_stats/power.py": "2f5864357d8b2cb19a08d9bf6c65c119d67b03551bc7c87afdf969d45c950be3",
+    "research_stats/resampling.py": "153f672b3c00cc9f0a5452299d1a1662f78ec9e69e422debe6d1cce047d4abea",
+    "signal_fusion/__init__.py": "fa7976a62f754def91982bc88b2b0c38781cd10bf585c09480fd57883573599b",
+    "signal_fusion/artifact.py": "558c8a14931bf5c962c4a14304f81ad006d426789ef527ace8b785af2734d60a",
+    "signal_fusion/assessment.py": "4eee8d99f9c446538e0a9b5748c5bbf5dd97e9115a2dc55c4593328494485811",
+    "signal_fusion/compat.py": "914aa228e5ca5f9889436e9e532b953bf0db66040fa226269c390864483fcdaa",
+    "signal_fusion/evaluation/__init__.py": "ad4674c5a4d6c843d04ca6496e737846889757b2571f15c08a18f6a484e6f840",
+    "signal_fusion/evaluation/baselines.py": "1c32a231981ab1d2741e326019d5da3f45c4d5a9e4f65b8cfb091da8f7115e0c",
+    "signal_fusion/evaluation/bootstrap.py": "0d863f1be3f3a96fb536df16c24b04cced0d75f40ad87c966dcbd9a5622c70b9",
+    "signal_fusion/evaluation/findings.py": "6cd12f5885f33d6cd76aa7f2a2c8a9b5397e7769dc4618915f742ec5a6eabae3",
+    "signal_fusion/evaluation/replay.py": "0db85482a21f847575c6352eaa1c45e5062fd0aa79f82b08c64630fa6cc04d81",
+    "signal_fusion/evaluation/scoring.py": "977cd6f782eef4940da4acf9af9ebeae700841fd0eb839bb07455a7d16e4a835",
+    "signal_fusion/labels.py": "3a02cfa423740b377b9c30211dac8d4b51ffe64a0917bed4cb7922e035e1ccf8",
+    "signal_fusion/liquidity.py": "fb63ad44a310e0bd8f11105e24967f5a1f30940325d44194f8541602538a0442",
+    "signal_fusion/live.py": "76e15e59f7aa6d5c4dd4ef92e254f5f628e4a16c9dc8e17ec42a0a1c121964c5",
+    "signal_fusion/meta.py": "ea717304025a2bb31cc43c830344d196ce0e952667cc335dd528ca8715d6a580",
+    "signal_fusion/settings.py": "fc087756ef773f6efd93429b83d53fba4c9596154223b17731cf5190447317ee",
+    "signal_fusion/volatility.py": "6df80ce22c35cbf0f5dced944955b5408875676055416e6543871168ed3e0585",
+    "strategies/__init__.py": "5d42e7a41b0b77ce9aed7c689935b028776d857909cee4bd335da4fd8a279dbc",
+    "strategies/base.py": "99681024ba340ae427c52c5dd1363b2ecb471c3471543f3276aaafd799745018",
+    "strategies/breakout.py": "44c477aa585acc64525982049ce2fec58f311f6bfdde5b847d692bec2d9b0e35",
+    "strategies/builtin.py": "820694a814969643bc48dc66f32be3e8dd2383dbe8192f60b83798d7a0d928e0",
+    "strategies/catalogue.py": "0016562a85299c5ad856c15741bf7abc8b20f222579fffc0d2ad1cbb395f12f9",
+    "strategies/descriptions.py": "ec8342f2603a5d12beea50fa25676b111b136f0993ebd5b0ef4d4046e3ed5903",
+    "strategies/donchian_midline.py": "2e51d39a1d1dbf6d4cf2d6421bf7696c04417370349041b8a52061498c22cd81",
+    "strategies/factory.py": "218c812339988578bc40f1fe79495e68f826d41430073a3c681542ec41022887",
+    "strategies/indicators.py": "f5afe8ed7ff2a7d21fb5658a75dbdce5d9fc7fee0f7a71e34cba940c7b0f8ae8",
+    "strategies/model_strategy.py": "f3ca870e7c0880790359f4461f12a22f642266758d47a42eeb76a63390aabf06",
+    "strategies/momentum.py": "18eec45155dcc345e4cc6fc4be127fa670adacfb33ab09e0cf46c6b7c924f8b8",
+    "strategies/overlays.py": "40814070fc68f9ce391262756ecd336145c34577b4770641981e3190dd9006ef",
+    "strategies/price_average.py": "f02bf99f5247f2f562129e1cbea959b5c5b2a8310ac09868df5a90eaf3d14070",
+    "strategies/runner.py": "054f34d6cc41117fbb4973f389dd796977d4aa287d6b78420cc455e9eeb09383",
+    "strategies/settings.py": "7a82a33dd33fb474bdc0e8474e5cf2e7c47f433b0e693c5516fa7efb75980e18",
+    "strategies/supertrend.py": "4eebe9c88f3a29090a2e53aba6c5a94ca42ec6e90483671e1be9cc7373ea3790",
+    "strategies/trend_crossover.py": "0f79415ae2e24219ca43324853d32ce387ac2fc4ed782416b61f341be8257873",
+    "strategy_lab/__init__.py": "2b4a2fd4c785990839d7a06bf5e1306e7e78f85b38b0ef5f77a2305d5693703b",
+    "strategy_lab/baselines.py": "b9d818f84a1357c5453e636ab47006c34baeb6d8b5a9db1acf77c10d29336974",
+    "strategy_lab/candidates.py": "0983b2a3f194746eb33b0e9961636d2e90397d035a921a8ff18e5a7dbb7c2060",
+    "strategy_lab/e1.py": "2b157f6f2059bbfe031b27220ce3d94ff9c9a52fff2aac87afa9c39db784d7ae",
+    "strategy_lab/e2.py": "91111dcdb799e5fa3afedbdb2df05c1669f7328ef954a05c5dcfb763ce4c0a30",
+    "strategy_lab/ensemble.py": "2da2bb03ccad49fe4f36bc14b4e48eca2447761dfbd3c6d133fa909aed3730a3",
+    "strategy_lab/evidence.py": "29ae010fcf91f8760eb791b084a8f59e03f150fc1e81cd4e5689caf315cb4d6c",
+    "strategy_lab/experiment.py": "82b8d25f0c1a4f90a407647406234bcf38c42d8d3ea0f8d8f8a3bae77df9553a",
+    "strategy_lab/looks.py": "e70ebd08b26c4a53ffc8d4f8ccfc0cf5de7c8265244a69d0b11070cb96004d3a",
+    "strategy_lab/models.py": "2ef38c4e503fbf2d31f400d07201150194d4e97cc1e7b5784de3d0493c07d2af",
+    "strategy_lab/observation.py": "2a2ad34eea03fcc0f9343c123eabcae5d24e4ac51ae19f8152c4b9bd96043652",
+    "strategy_lab/runs.py": "c41fc42917ac1862aae3eec524e5a2fba4a4422e9d640345704af7dbd718055e",
+    "strategy_lab/simulate.py": "4c569418f638f56f6c0eafc12f204538cce66870cd252db7069f2787c3fc27d6",
+    "strategy_lab/sizing.py": "48b3630b7957947139a78fec29092e5ecafdebc32867c7d4f5da5858f032d7b5",
+    "strategy_lab/venue.py": "8c51005b1b19cd2e995572aba6182318ca523b42925db8d26b5a775b11ffad7e",
+    "strategy_lab/windows.py": "3f9901e0cf91be51fc6eb58dd500f8885dddeda0c29748c2478edc403e26c32b"
+  },
+  "code_extra": {
+    "files": [
+      "research_engine/ledger.py"
+    ],
+    "packages": [
+      "research_stats",
+      "feature_library"
+    ]
+  },
+  "costs": {
+    "allowance": 0.0005,
+    "applied": "to every entry and exit fill, once (the replay's m(f, e))",
+    "base_increment": {
+      "BTC": 1e-08,
+      "DASH": 1e-08,
+      "DOGE": 0.1,
+      "ETH": 1e-08,
+      "SOL": 1e-08,
+      "XRP": 1e-06,
+      "ZEC": 1e-08
+    },
+    "exchange_layer_fees": {
+      "BTC": {
+        "exchange": "coinbase",
+        "maker": 0.006,
+        "pair": "BTC-USD",
+        "source": "default",
+        "taker": 0.012
+      },
+      "DASH": {
+        "exchange": "coinbase",
+        "maker": 0.006,
+        "pair": "DASH-USD",
+        "source": "default",
+        "taker": 0.012
+      },
+      "DOGE": {
+        "exchange": "coinbase",
+        "maker": 0.006,
+        "pair": "DOGE-USD",
+        "source": "default",
+        "taker": 0.012
+      },
+      "ETH": {
+        "exchange": "coinbase",
+        "maker": 0.006,
+        "pair": "ETH-USD",
+        "source": "default",
+        "taker": 0.012
+      },
+      "SOL": {
+        "exchange": "coinbase",
+        "maker": 0.006,
+        "pair": "SOL-USD",
+        "source": "default",
+        "taker": 0.012
+      },
+      "XRP": {
+        "exchange": "coinbase",
+        "maker": 0.006,
+        "pair": "XRP-USD",
+        "source": "default",
+        "taker": 0.012
+      },
+      "ZEC": {
+        "exchange": "coinbase",
+        "maker": 0.006,
+        "pair": "ZEC-USD",
+        "source": "default",
+        "taker": 0.012
+      }
+    },
+    "fee": 0.005,
+    "fee_source": "the owner's account taker rate on Coinbase, 0.50% (E1's E-D10, from the check window on 2026-11-05), as the registration's section 4 sets",
+    "minimum_usd": {
+      "BTC": 1.0,
+      "DASH": 1.0,
+      "DOGE": 1.0,
+      "ETH": 1.0,
+      "SOL": 1.0,
+      "XRP": 1.0,
+      "ZEC": 1.0
+    },
+    "proportional": "no fixed fee an order (an assumption)",
+    "venue_note": "today's values; past values are not recorded",
+    "venue_read_at": "2026-11-14T18:57:57.957789+00:00",
+    "venue_source": "the exchange layer's public product data, primary first",
+    "venue_unknown": {}
+  },
+  "decisions": {
+    "D1": "the book's maximum drawdown below the equal-weight hold's maximum drawdown, both with each open position at its bar's low, from a peak at the highest high of the earlier bars (the replay's intrabar figures, with lows and highs: O12); the trader's 8% halt is reported, not modelled (D1)",
+    "D2": "the nine coins of the exploration, each series from the first exchange in Settings order whose cache holds it",
+    "D3": "the comparison with the equal-weight hold is shown, not a member: K = 2",
+    "D4": "the book's own sizing decides; volatility-sized books are shown only",
+    "D5": "build, rehearse on synthetic candles, freeze, one development run"
+  },
+  "design_sha256": "de4c2057797408a8acd4f90a3d81855bf56076ace137133d49365bec7c407c80",
+  "earlier_exposures": {
+    "runs": [
+      {
+        "pr": 291,
+        "report": "docs/dev/ENSEMBLE-SIZING-EXPLORATION-dev.md",
+        "what": "the ensemble exploration of 2026-11-13: the book, each member alone and volatility sizing at 25% a year, on these nine coins and months"
+      },
+      {
+        "pr": 300,
+        "report": "docs/dev/ENSEMBLE-SIZING-EXPLORATION-dev.md, section 4",
+        "what": "O18's runs at 50% and 75% a year, of STRAT-004 and of this book"
+      },
+      {
+        "pr": 257,
+        "report": "docs/dev/COMPARISON-9-COINS-REPORT-dev.md",
+        "what": "the nine-coin comparison: STRAT-004 and others, not STRAT-007, on the same months and coins"
+      }
+    ],
+    "sandbox_at_freeze": {
+      "ledger_entries": 0,
+      "trial_log_lines": 0,
+      "trial_log_sha256": null
+    },
+    "trial_log": {
+      "explorations": 38,
+      "file": "docs/dev/compare-ensemble/trials.jsonl",
+      "lines": 84,
+      "sha256": "6bcba1c97f39d4278804c0150a25d8e5fcd97af5976df3e123fcbea6584d8ec4"
+    }
+  },
+  "execution": "market orders: an entry fills at the next bar's open after the decision, an exit at the next open after the exit decision; a trade open at the end is closed at the last close",
+  "family": {
+    "B": {
+      "alpha": 0.05,
+      "correction": "Holm",
+      "k": 2,
+      "members": [
+        "B1",
+        "B2"
+      ],
+      "name": "The ensemble's book"
+    }
+  },
+  "frozen_at": "2026-11-14T18:57:57.985193+00:00",
+  "id": "SR1-E2",
+  "libraries": {
+    "numpy": "2.5.4",
+    "pandas": "3.1.0",
+    "sklearn": "1.9.1"
+  },
+  "market": {
+    "candles": "read once per coin from the exchange layer's cache, from 2020-01-01 or the coin's first cached bar, to 2025-05-06 (exclusive); a series with a gap longer than a day is used from after its last such gap (market_data.gaps)",
+    "coins": [
+      "BTC",
+      "ETH",
+      "XRP",
+      "BNB",
+      "DOGE",
+      "SOL",
+      "ZEC",
+      "DASH",
+      "HYPE"
+    ],
+    "coins_with_development_bars": [
+      "BTC",
+      "DASH",
+      "DOGE",
+      "ETH",
+      "SOL",
+      "XRP",
+      "ZEC"
+    ],
+    "exchange_order": [
+      "coinbase",
+      "kraken",
+      "kucoin",
+      "binance"
+    ],
+    "left_out": {
+      "BNB": "BNB-USD 1d: no cached bars",
+      "HYPE": "HYPE-USD 1d: no cached bars"
+    },
+    "listed_by_2021": [
+      "BTC",
+      "DASH",
+      "ETH",
+      "ZEC"
+    ],
+    "offline": true,
+    "second_exchange": {
+      "coins": [],
+      "exchange": "kraken",
+      "left_out": {
+        "BNB": "BNB-USD 1d: no cached bars",
+        "BTC": "BTC-USD 1d: no cached bars",
+        "DASH": "DASH-USD 1d: no cached bars",
+        "DOGE": "DOGE-USD 1d: no cached bars",
+        "ETH": "ETH-USD 1d: no cached bars",
+        "HYPE": "HYPE-USD 1d: no cached bars",
+        "SOL": "SOL-USD 1d: no cached bars",
+        "XRP": "XRP-USD 1d: no cached bars",
+        "ZEC": "ZEC-USD 1d: no cached bars"
+      },
+      "served_by": {}
+    },
+    "series_sha256": {
+      "BTC:1d": "206cfa3016c230a6ee9356e50e2d9d1a9222f94d7965d8123266a82d66855e1c",
+      "DASH:1d": "547870c910594628412c2be2c4478c588bf559adc1d9d2c77f0dc3e3f62857c7",
+      "DOGE:1d": "16a9ac890d1e0c1dcd397a03f6d3141aad921087d2e7aebc22c8aa0633b2beee",
+      "ETH:1d": "0763f5f33c0b1916baaf6bd60d7658cd8db03ff8d90c2869afb4336ff36d5b7f",
+      "SOL:1d": "f77ced64f69fa4a64f2586fe79ede9150ad37683a64ba66d6e0de768f8f27889",
+      "XRP:1d": "c84796f075b489dbd82eeba8d9a976735102c2951ef8cc60ad88c1f9cfd93d31",
+      "ZEC:1d": "b72cccf126157333138337d0194e47d3a515180d5239f8651929efea709e550a"
+    },
+    "served_by": {
+      "BTC:1d": "coinbase",
+      "DASH:1d": "coinbase",
+      "DOGE:1d": "coinbase",
+      "ETH:1d": "coinbase",
+      "SOL:1d": "coinbase",
+      "XRP:1d": "coinbase",
+      "ZEC:1d": "coinbase"
+    },
+    "timeframe": "1d"
+  },
+  "members": [
+    {
+      "family": "B",
+      "id": "B1",
+      "kind": "strategy",
+      "question": "Does the ensemble's book time its entries better than random entries with each member's own exits?",
+      "seed": 2000000,
+      "test": "random"
+    },
+    {
+      "family": "B",
+      "id": "B2",
+      "kind": "strategy",
+      "question": "Is the ensemble's book profitable after fees at £10,000 and 0.50% + 0.05%?",
+      "seed": 2100000,
+      "test": "economic"
+    }
+  ],
+  "registration": "docs/dev/ptai-rd-001/E2-ensemble-registration-draft.md",
+  "robustness": {
+    "notes": {
+      "fees at 1.20%": "Coinbase's published taker rate, with the same slippage",
+      "the second exchange in Settings order": "the coins its cache holds development bars for, at the same fees and minimums",
+      "£50": "each slice is 1/7 of a coin's 1/N of the account: the skips show how many fell below the venue's minimums",
+      "£500": "each slice is 1/7 of a coin's 1/N of the account: the skips show how many fell below the venue's minimums"
+    },
+    "pbo": {
+      "blocks": 16,
+      "contestants": [
+        "member 20 alone",
+        "member 30 alone",
+        "member 60 alone",
+        "member 90 alone",
+        "member 150 alone",
+        "member 250 alone",
+        "member 360 alone",
+        "the book"
+      ],
+      "scored": "each block's marked profit over its capital-days"
+    },
+    "variants": [
+      {
+        "account_gbp": null,
+        "coins": null,
+        "exchange": null,
+        "fee": 0.012,
+        "name": "fees at 1.20%"
+      },
+      {
+        "account_gbp": null,
+        "coins": "BTC+ETH",
+        "exchange": null,
+        "fee": null,
+        "name": "BTC and ETH only"
+      },
+      {
+        "account_gbp": null,
+        "coins": "listed_by_2021",
+        "exchange": null,
+        "fee": null,
+        "name": "coins with bars from 2021-01-01"
+      },
+      {
+        "account_gbp": null,
+        "coins": null,
+        "exchange": "second",
+        "fee": null,
+        "name": "the second exchange in Settings order"
+      },
+      {
+        "account_gbp": 500.0,
+        "coins": null,
+        "exchange": null,
+        "fee": null,
+        "name": "£500"
+      },
+      {
+        "account_gbp": 50.0,
+        "coins": null,
+        "exchange": null,
+        "fee": null,
+        "name": "£50"
+      }
+    ]
+  },
+  "sha256": "0ee98507b4da92e155a9e54be7eaf2a279b94e46c4231375897b4d4961913bb5",
+  "sizing": {
+    "deciding": "the book's own (D4)",
+    "shown": [
+      {
+        "cap": 1.0,
+        "feature": "volatility.ewma@1{\"burn_in\":30,\"lam\":0.94}",
+        "id": "volatility-target",
+        "target": 0.25
+      },
+      {
+        "cap": 1.0,
+        "feature": "volatility.ewma@1{\"burn_in\":30,\"lam\":0.94}",
+        "id": "volatility-target",
+        "target": 0.5
+      },
+      {
+        "cap": 1.0,
+        "feature": "volatility.ewma@1{\"burn_in\":30,\"lam\":0.94}",
+        "id": "volatility-target",
+        "target": 0.75
+      }
+    ]
+  },
+  "spec": "FDS-SR-001",
+  "spec_version": "1",
+  "strategy": {
+    "book": "each coin 1/N of the account and each member 1/M of that (M = 7), sized once at entry and never re-sized; a slice below the venue's minimum is skipped, never raised; an entry the cash cannot fund is skipped and counted (strategy_lab.ensemble)",
+    "lookbacks": [
+      20,
+      30,
+      60,
+      90,
+      150,
+      250,
+      360
+    ],
+    "members": {
+      "150": {
+        "id": "STRAT-007",
+        "overlays": [
+          {
+            "id": "OVL-MIDLINE",
+            "params": {
+              "days": 150
+            },
+            "version": "1.0.0"
+          }
+        ],
+        "params": {
+          "channel_days": 150
+        },
+        "params_sha256": "062744d76e82d1744d6e465390ea63e0aba6cff94223c8a02a89196c4d3e4d01",
+        "timeframe": "1d",
+        "version": "1.0.0"
+      },
+      "20": {
+        "id": "STRAT-007",
+        "overlays": [
+          {
+            "id": "OVL-MIDLINE",
+            "params": {
+              "days": 20
+            },
+            "version": "1.0.0"
+          }
+        ],
+        "params": {
+          "channel_days": 20
+        },
+        "params_sha256": "ca893b7f346c4f76ddc0afff301d392aa562eb45047e7caf2b730e8bf651cdc6",
+        "timeframe": "1d",
+        "version": "1.0.0"
+      },
+      "250": {
+        "id": "STRAT-007",
+        "overlays": [
+          {
+            "id": "OVL-MIDLINE",
+            "params": {
+              "days": 250
+            },
+            "version": "1.0.0"
+          }
+        ],
+        "params": {
+          "channel_days": 250
+        },
+        "params_sha256": "c11cf1e1b005a46ba0668806c0ef100f0e7417f05a8b136bb8295493111bd275",
+        "timeframe": "1d",
+        "version": "1.0.0"
+      },
+      "30": {
+        "id": "STRAT-007",
+        "overlays": [
+          {
+            "id": "OVL-MIDLINE",
+            "params": {
+              "days": 30
+            },
+            "version": "1.0.0"
+          }
+        ],
+        "params": {
+          "channel_days": 30
+        },
+        "params_sha256": "e7ffd96d9855c17056e7ea361b0cdc5d51130f61a3180eed744e33ccca83fdca",
+        "timeframe": "1d",
+        "version": "1.0.0"
+      },
+      "360": {
+        "id": "STRAT-007",
+        "overlays": [
+          {
+            "id": "OVL-MIDLINE",
+            "params": {
+              "days": 360
+            },
+            "version": "1.0.0"
+          }
+        ],
+        "params": {
+          "channel_days": 360
+        },
+        "params_sha256": "1f77ca5cfc5299950753f85dc5b29c3d50a1da3ea8a0c6a973ca73af02806cd8",
+        "timeframe": "1d",
+        "version": "1.0.0"
+      },
+      "60": {
+        "id": "STRAT-007",
+        "overlays": [
+          {
+            "id": "OVL-MIDLINE",
+            "params": {
+              "days": 60
+            },
+            "version": "1.0.0"
+          }
+        ],
+        "params": {
+          "channel_days": 60
+        },
+        "params_sha256": "525beac96bd27aa05b7e1d03f374921373851b051fa5570c92bcf6b092ad3ff8",
+        "timeframe": "1d",
+        "version": "1.0.0"
+      },
+      "90": {
+        "id": "STRAT-007",
+        "overlays": [
+          {
+            "id": "OVL-MIDLINE",
+            "params": {
+              "days": 90
+            },
+            "version": "1.0.0"
+          }
+        ],
+        "params": {
+          "channel_days": 90
+        },
+        "params_sha256": "2f0ea48402a78f942941608b3567a1406eecb40b81b51726d62384e2385b5a27",
+        "timeframe": "1d",
+        "version": "1.0.0"
+      }
+    },
+    "sizing": {
+      "id": "fixed"
+    }
+  },
+  "tests": {
+    "economic": {
+      "bootstrap": "research_stats.resampling.rpcd_test at its default (studentised, the chosen block length x1.5: O3) on the book's daily marks (research_stats.resampling.daily_marks), 10 runs of 2,000 seeded seed + r, pooled: p = (1 + the runs' draws at or above) / (20,000 + 1)",
+      "drawdown": "the book's maximum drawdown below the equal-weight hold's maximum drawdown, both with each open position at its bar's low, from a peak at the highest high of the earlier bars (the replay's intrabar figures, with lows and highs: O12); the trader's 8% halt is reported, not modelled (D1)",
+      "requirements": [
+        "at least 100 trades and 30 in each half, else Not assessable",
+        "return per capital-day above 0: the family member",
+        "a net profit in each half",
+        "a net profit without the most profitable coin, every member's trades on it summed as they occurred",
+        "the drawdown requirement"
+      ]
+    },
+    "exploratory": "Benjamini-Hochberg at q = 0.1, shown, never a pass",
+    "hold_comparison": "research_stats.resampling.mean_test on the daily log-return difference (book less hold), 10 runs of 2,000 seeded seed + r, pooled; the mean and interval annualised x 365; shown (D3)",
+    "holm_alpha": 0.05,
+    "power": 0.8,
+    "random_p": "(1 + #{draw >= value}) / (B + 1), pooled over 10 runs; each run's p shown",
+    "seed_ranges": {
+      "B1": [
+        2000000,
+        2013999
+      ],
+      "B2": [
+        2100000,
+        2100009
+      ],
+      "hold comparison": [
+        2200000,
+        2200009
+      ],
+      "matched holding": [
+        2300000,
+        2313999
+      ],
+      "member 150 alone": [
+        2400400,
+        2400409
+      ],
+      "member 20 alone": [
+        2400000,
+        2400009
+      ],
+      "member 250 alone": [
+        2400500,
+        2400509
+      ],
+      "member 30 alone": [
+        2400100,
+        2400109
+      ],
+      "member 360 alone": [
+        2400600,
+        2400609
+      ],
+      "member 60 alone": [
+        2400200,
+        2400209
+      ],
+      "member 90 alone": [
+        2400300,
+        2400309
+      ],
+      "robust BTC and ETH only": [
+        2600100,
+        2600109
+      ],
+      "robust coins with bars from 2021-01-01": [
+        2600200,
+        2600209
+      ],
+      "robust fees at 1.20%": [
+        2600000,
+        2600009
+      ],
+      "robust the second exchange in Settings order": [
+        2600300,
+        2600309
+      ],
+      "robust £50": [
+        2600500,
+        2600509
+      ],
+      "robust £500": [
+        2600400,
+        2600409
+      ],
+      "volatility 25%": [
+        2500000,
+        2500009
+      ],
+      "volatility 50%": [
+        2500100,
+        2500109
+      ],
+      "volatility 75%": [
+        2500200,
+        2500209
+      ]
+    },
+    "seeds": {
+      "B1": 2000000,
+      "B2": 2100000
+    },
+    "shown_seeds": {
+      "hold comparison": 2200000,
+      "matched holding": 2300000,
+      "member 150 alone": 2400400,
+      "member 20 alone": 2400000,
+      "member 250 alone": 2400500,
+      "member 30 alone": 2400100,
+      "member 360 alone": 2400600,
+      "member 60 alone": 2400200,
+      "member 90 alone": 2400300,
+      "robust BTC and ETH only": 2600100,
+      "robust coins with bars from 2021-01-01": 2600200,
+      "robust fees at 1.20%": 2600000,
+      "robust the second exchange in Settings order": 2600300,
+      "robust £50": 2600500,
+      "robust £500": 2600400,
+      "volatility 25%": 2500000,
+      "volatility 50%": 2500100,
+      "volatility 75%": 2500200
+    },
+    "statistic": "return per capital-day: summed net / summed (amount x days held)",
+    "too_few": "a trading member that does not pass, whose smallest detectable edge, (z at 1 - 0.05/K + z at 0.8) x the random draws' standard deviation, is above 50% of |the random median|"
+  },
+  "windows": {
+    "development": [
+      "2021-01-01",
+      "2025-05-06"
+    ],
+    "halves": "at the window's middle day, by entry day",
+    "history_from": "2020-01-01",
+    "lockbox": [
+      "2025-05-06",
+      "2026-11-06"
+    ],
+    "lockbox_read": false,
+    "scored": "trades whose entry fills from 2021-01-01 to 2025-05-06"
+  }
+}

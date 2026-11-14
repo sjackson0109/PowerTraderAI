@@ -1,0 +1,8 @@
+Primary exchange: coinbase
+19:37:16 candles (Settings order ['coinbase', 'kraken', 'kucoin', 'binance'])
+19:37:17 9 series; coins ['BNB', 'BTC', 'DASH', 'DOGE', 'ETH', 'HYPE', 'SOL', 'XRP', 'ZEC']
+19:37:17 served by ['coinbase', 'kucoin']
+19:37:17 venue rules
+19:37:25 fee rates from the exchange layer
+Coinbase trading fees could not be read from the exchange; using its standard rates: maker 0.60%, taker 1.20%
+19:37:37 frozen SR1-E2 f3caa70d9b2cb80328b787dbff9a946ed0eb963291308d4efcbf18643514cd4a at 2026-11-14T19:37:25.667668+00:00

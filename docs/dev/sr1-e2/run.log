@@ -1,0 +1,31 @@
+19:37:56 verified SR1-E2 f3caa70d9b2cb80328b787dbff9a946ed0eb963291308d4efcbf18643514cd4a
+Primary exchange: coinbase
+19:37:56 candles verified
+19:37:56 the members' trades
+19:40:08 the book: 630 trades, net +36,983.30
+19:40:08 B1: random entries for the book
+19:48:58 B1 p = 0.1549225387306347
+19:48:58 B2: the book's economics
+19:48:59 B2 p = 0.0967451627418629
+19:48:59 the hold comparison
+19:49:00 matched holding
+19:53:24 each member alone
+19:53:26 member 20 alone: net +50,781.24, p = 0.0362
+19:53:29 member 30 alone: net +56,039.42, p = 0.0251
+19:53:30 member 60 alone: net +36,180.35, p = 0.1311
+19:53:32 member 90 alone: net +25,748.07, p = 0.2109
+19:53:34 member 150 alone: net +25,668.65, p = 0.2182
+19:53:36 member 250 alone: net +21,365.01, p = 0.2501
+19:53:38 member 360 alone: net +32,342.82, p = 0.1732
+19:53:38 volatility-sized books
+19:53:40 volatility 25%: net +9,215.80
+19:53:43 volatility 50%: net +20,627.06
+19:53:46 volatility 75%: net +32,239.47
+19:53:46 robustness
+19:53:48 robust fees at 1.20%: net +30,023.25, 630 trades
+19:53:51 robust BTC and ETH only: net +8,466.44, 142 trades
+19:53:53 robust coins with bars from 2021-01-01: net +32,486.12, 414 trades
+19:53:55 robust £500: net +1,848.50, 630 trades
+19:53:57 robust £50: net +184.14, 630 trades
+19:53:59 done in 961.9 s
+exit 0 after 966 s

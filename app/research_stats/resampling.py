@@ -24,6 +24,11 @@ its p-values carried no information.
     theta_hat}) / (B + 1), with a percentile interval.
   - ``"studentised"`` (bootstrap-t): the same, on t = theta / se, with a Bartlett-kernel
     standard error computed the same way on the original and on every resample.
+* **Tests the mean of a daily series** (``mean_test``), for H0: mean <= 0 against
+  mean > 0, by the same two methods and block rule: for example the daily log-return
+  difference between a book and a hold, which SR1-E2 shows (its registration draft, §8
+  item 2). Its calibration on synthetic nulls is
+  ``docs/dev/ptai-rd-001/mean-test-calibration.md``.
 
 **The default (O3 calibration, 2026-11-12;
 ``docs/dev/ptai-rd-001/O3-bootstrap-calibration.md``)** is ``"studentised"`` with the
@@ -296,4 +301,100 @@ def rpcd_test(
         lo, hi = theta, theta
     return Result(
         theta, float(p), (float(lo), float(hi)), level, block, b, n, "studentised"
+    )
+
+
+@dataclass(frozen=True)
+class MeanResult:
+    mean: float  # the sample mean of x (per day)
+    p_value: float  # H0: mean <= 0 against mean > 0
+    # at ``level``, of the mean (per day): the percentile interval, or the bootstrap-t one
+    interval: Tuple[float, float]
+    level: float
+    mean_block: float  # the mean block length used (after ``block_scale`` and the cap)
+    draws: int
+    days: int
+    method: str = DEFAULT_METHOD
+
+
+def mean_test(
+    x: Iterable[float],
+    draws: int = 2000,
+    seed: int = 0,
+    mean_block: Optional[float] = None,
+    level: float = 0.95,
+    method: str = DEFAULT_METHOD,
+    block_scale: float = DEFAULT_BLOCK_SCALE,
+) -> MeanResult:
+    """The stationary-bootstrap test of a daily series' mean, for H0: mean <= 0 against
+    mean > 0: ``rpcd_test``'s two methods and block rule, on the mean of ``x`` instead of
+    a ratio. With one unit of capital every day the two tests agree draw for draw.
+
+    The mean and its interval are per day; a caller wanting a yearly figure multiplies
+    them by 365. Calibrated on synthetic nulls in
+    ``docs/dev/ptai-rd-001/mean-test-calibration.md``.
+
+    The mean block length is chosen from ``x`` (Politis and White 2004, corrected by
+    Patton, Politis and White 2009) and multiplied by ``block_scale``, then capped at
+    min(3 sqrt(N), N/3) days; a ``mean_block`` given is used as it is. Days are drawn by
+    the stationary bootstrap (Politis and Romano 1994), seeded by ``seed``.
+
+    ``method="percentile"``: m_hat against the centred bootstrap means,
+    p = (1 + #{m*_b - m_hat >= m_hat}) / (B + 1), with a percentile interval.
+
+    ``method="studentised"`` (bootstrap-t): t = m_hat / se and, on each resample,
+    t*_b = (m*_b - m_hat) / se*_b; p = (1 + #{t*_b >= t}) / (B + 1), with the bootstrap-t
+    interval. se^2 = V(x - m_hat) / N, with V the Bartlett-kernel long-run variance
+    (Newey and West 1987) whose bandwidth is the mean block length (``bartlett_lrv``);
+    se*_b is the same formula on resample b, about m*_b. As in ``rpcd_test``, this is the
+    "naive" block bootstrap of a HAC t statistic (Goncalves and Vogelsang 2011, for the
+    moving-block bootstrap), a dependence-robust studentisation in the sense of Goetze
+    and Kuensch (1996) and Lahiri (2003). ``draws`` in the result counts the resamples
+    with a finite t*, which is all of them unless a resample is constant.
+
+    Refuses fewer than two days, and any value that is not finite."""
+    if method not in METHODS:
+        raise ValueError(f"method must be one of {METHODS}, not {method!r}")
+    x = np.asarray(list(x), dtype=float)
+    if x.ndim != 1:
+        raise ValueError("the test needs one value a day")
+    n = len(x)
+    if n < 2:
+        raise ValueError("the test needs at least two days")
+    if not np.all(np.isfinite(x)):
+        raise ValueError("every day's value must be finite")
+    mean = float(np.mean(x))
+    if mean_block:
+        block = float(mean_block)
+    else:
+        block = optimal_block_length(x) * float(block_scale)
+        block = max(1.0, min(block, block_cap(n)))
+    x_r = x[stationary_indices(n, block, int(draws), np.random.default_rng(seed))]
+    stars = x_r.mean(axis=1)
+    tail = (1.0 - level) / 2.0
+    if method == "percentile":
+        b = len(stars)
+        p = (1 + int(np.sum(stars - mean >= mean))) / (b + 1)
+        lo, hi = np.quantile(stars, [tail, 1.0 - tail]) if b else (np.nan, np.nan)
+        return MeanResult(
+            mean, float(p), (float(lo), float(hi)), level, block, b, n, "percentile"
+        )
+    se = math.sqrt(float(bartlett_lrv(x - mean, block)[0]) / n)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        se_r = np.sqrt(bartlett_lrv(x_r - stars[:, None], block) / n)
+        t_r = (stars - mean) / se_r
+    t_r = t_r[np.isfinite(t_r)]
+    b = len(t_r)
+    if se > 0:
+        t_obs = mean / se
+    else:
+        t_obs = math.copysign(math.inf, mean) if mean != 0 else 0.0
+    p = (1 + int(np.sum(t_r >= t_obs))) / (b + 1)
+    if b and se > 0:
+        q_lo, q_hi = np.quantile(t_r, [tail, 1.0 - tail])
+        lo, hi = mean - q_hi * se, mean - q_lo * se
+    else:
+        lo, hi = mean, mean
+    return MeanResult(
+        mean, float(p), (float(lo), float(hi)), level, block, b, n, "studentised"
     )

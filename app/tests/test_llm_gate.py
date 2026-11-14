@@ -338,7 +338,9 @@ def test_the_trader_loop_is_not_held_up_or_flooded(store, requests_on):
     h.check("ETH")
     start = time.monotonic()
     verdict = h.check("ETH")
-    assert time.monotonic() - start < 0.3
+    # waiting again would take the whole signal_timeout_s (1 s); a busy CI runner
+    # has taken over 0.4 s for the pass itself, so the bound sits between the two
+    assert time.monotonic() - start < 0.9
     assert verdict.reason.startswith("a signal for ETH is still being asked for")
     for thread in h.threads():
         thread.join(timeout=5)

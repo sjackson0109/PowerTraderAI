@@ -559,6 +559,7 @@ class OrderExecutor:
                     initial_balance=tm.DEFAULT_PAPER_BALANCE,
                     price_feed=tm.fetch_public_quote,
                     fee_feed=tm.fetch_trading_fees,
+                    venue_feed=tm.fetch_venue_rules,
                     state_path=path,
                 )
         return self._paper[path]
@@ -1112,7 +1113,12 @@ class OrderExecutor:
                     if trade.order_id == result.order_id:
                         pnl = float(trade.pnl) - float(result.fee or 0.0)
                         break
-            closes = item.side == "sell" and item.coin not in paper.account.positions
+            # a sell of the whole holding ends the position: anything left is what
+            # the exchange's sell step rounded off, which cannot be sold
+            left = paper.account.positions.get(item.coin)
+            closes = item.side == "sell" and (
+                left is None or left.quantity <= _d(item.quantity) - _d(result.amount)
+            )
             self._record_fill(
                 item,
                 qty=float(result.amount),

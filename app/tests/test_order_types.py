@@ -392,6 +392,67 @@ def test_an_unreadable_paper_book_is_never_overwritten(world):
         assert f.read() == "{not json"
 
 
+# ---- the exchange's sell step and minimum order (paper) ----
+
+
+class SteppedWorld(World):
+    """A paper account whose exchanges state a sell step of 0.1 DOGE and a $1
+    minimum order (the exchange layer's ``lot_increment`` and ``min_order_usd``); it
+    holds 400.0123 DOGE, at bid 0.25 / ask 0.2502."""
+
+    def __init__(self, db, tmp_path):
+        super().__init__(db, tmp_path, Prices(DOGE=(0.25, 0.2502)), cash=None)
+        tm.write_paper_book(
+            self.book,
+            tm.PaperBook(
+                Decimal("10000"),
+                Decimal("9900"),
+                {"DOGE": (Decimal("400.0123"), Decimal("0.25"))},
+            ),
+        )
+
+    def paper(self, path):
+        return tm.PaperExchange(
+            state_path=path,
+            price_feed=self.prices.feed,
+            fee_feed=lambda base, exchange: FEES,
+            settings_source={},
+            venue_feed=lambda base: tm.VenueRules(sell_step=0.1, minimum_usd=1.0),
+        )
+
+
+def test_a_paper_sell_of_the_whole_holding_is_rounded_and_ends_the_position(
+    db, tmp_path
+):
+    world = SteppedWorld(db, tmp_path)
+    oid = world.place(ome.MARKET, coin="DOGE", side="sell", qty="400.0123")
+    assert world.item(oid).status == "filled"
+    (row,) = world.history()
+    assert row["qty"] == 400.0
+    # what is left is what the step rounded off: the position has ended
+    assert row["closes_position"] is True
+    assert world.book_now().positions["DOGE"][0] == Decimal("0.0123")
+
+
+def test_a_paper_order_below_the_minimum_is_rejected_with_the_reason(db, tmp_path):
+    world = SteppedWorld(db, tmp_path)
+    oid = world.place(ome.MARKET, coin="DOGE", side="sell", qty="2")  # $0.50
+    item = world.item(oid)
+    assert item.status == "rejected"
+    assert item.note.startswith("BELOW_MINIMUM: 2 DOGE is worth about $0.50")
+    assert world.history() == []
+    assert world.book_now().positions["DOGE"][0] == Decimal("400.0123")
+
+
+def test_the_paper_account_asks_the_exchange_layer_for_its_step_and_minimum(
+    db, tmp_path
+):
+    executor = ome.OrderExecutor(
+        db, hub_dir=str(tmp_path / "hub"), trading=paper_settings
+    )
+    assert executor.paper_account()._venue_feed is tm.fetch_venue_rules
+
+
 # ---- cancelling ----
 
 

@@ -36,7 +36,8 @@ These are earlier exposures (FDS-SR-001 §6.1). They are recorded in the record 
 | **B2** | The ensemble's economics: F3's requirements (FDS-SIG-004 §6.1) at £10,000 and 0.50% + 0.05% a fill | 1. At least 100 trades and 30 in each half (otherwise "Not assessable").<br>2. Return per capital-day above 0 by `research_stats.resampling.rpcd_test` at its default (studentised, blocks ×1.5: O3). This is the family member.<br>3. Net profit above 0 in each half.<br>4. Above 0 without the most profitable coin.<br>5. **Drawdown (D1):** the book's largest drawdown (O12) is below the equal-weight hold's. The 8% halt is reported, not modelled; trading the book would need the halt changed. |
 
 **Shown, deciding nothing** (BH at q = 0.10 where a p-value exists):
-- **Against an equal-weight hold:** the yearly mean daily log-return difference, with its studentised stationary-bootstrap interval (§8 item 2). See D3 for why this is not a family member.
+- **Against an equal-weight hold:** the yearly mean daily log-return difference, with its studentised stationary-bootstrap interval (§8 item 2; `research_stats.resampling.mean_test`, PR #310). See D3 for why this is not a family member. Its calibration on synthetic nulls gave a worst size of 6.9% at nominal 5%, above O3's 6.0% limit (`mean-test-calibration.md`): the interval is shown with that caveat.
+  - **The hold** (the owner, 2026-11-14): each of the nine coins is bought with its own ninth of the starting account at its first decision bar, and held to the last close. A late-listed coin's ninth waits as cash until then. No coin is skipped for cash. The hold first built sized late coins from the grown account and so skipped two of them; the exploration (#291) is corrected for it. The same hold is the comparator for B2's fifth requirement (D1).
 - **Matched holding** (O19): random entries held as long as the book's trades.
 - **Each member alone**, with its trades a coin a year.
 - **Sizing:** the book under volatility targeting at 25%, 50% and 75% a year (D4; O18 found nothing beyond holding less).
@@ -130,3 +131,4 @@ The evidence writer refuses once the code changes.
 | D3 | (a): the hold comparison is shown only (K = 2) |
 | D4 | (a): the book's own sizing decides; volatility-sized books are shown |
 | D5 | Approved: the work in §8, the rehearsal, the freeze and one development run |
+| Hold | (2026-11-14) Every coin funded from its own ninth of the starting account, as §3 now says |

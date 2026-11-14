@@ -73,8 +73,9 @@ LEVELS = (
         "Emergency stop %:",
         EMERGENCY_DRAWDOWN_RANGE,
         DEFAULT_EMERGENCY_DRAWDOWN_PCT,
-        "At this drawdown the trader stops trading, and stays stopped, also after "
-        "a restart, until Resume trading is pressed.",
+        "At this drawdown the trader halts buying, and stays halted, also after "
+        "a restart, until Resume trading is pressed. Exits, stops and the trailing "
+        "margin still sell.",
     ),
 )
 
@@ -147,8 +148,8 @@ APPLY_TEXT = (
     "Saved levels and limits apply from the trader's next cycle: it reads them "
     "again every cycle, so a running trader needs no restart. Reset peak applies at "
     "the trader's next cycle, or when it next starts. After an emergency stop the "
-    "trader has stopped; after Resume trading it trades again when it is next "
-    "started."
+    "trader keeps running but buys nothing; after Resume trading it buys again from "
+    "its next pass, or when it is next started."
 )
 FIX_TEXT = "Nothing was saved: correct the values marked in red."
 

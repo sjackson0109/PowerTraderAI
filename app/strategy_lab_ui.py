@@ -8,9 +8,9 @@ timeframe, coins from Settings, a period inside the development period (to 2025-
 an account in pounds with the GBP-to-USD rate, the fee and the slippage, and the sizing
 (the account's own, or a volatility target: ``strategy_lab.sizing``). It runs off the
 Tk thread (``ui_jobs``), can be stopped, and shows the strategy against buy-and-hold,
-cash and random entries, at each account size, by day, week, month and year, per coin,
-with its equity line. Each run is logged as an exploratory run and saved
-(``strategy_lab.runs``).
+cash and random entries (and, in the notes, random entries held as long as its trades),
+at each account size, by day, week, month and year, per coin, with its equity line.
+Each run is logged as an exploratory run and saved (``strategy_lab.runs``).
 
 **Compare results...** Every saved run in one table, with a search box.
 
@@ -284,6 +284,7 @@ def notes(record: Dict[str, Any]) -> str:
             f"Random draws with a return per capital-day at or above this strategy's: "
             f"{_pct(r['share_at_or_above'], 1)}."
         )
+    lines.extend(matched_lines(record.get("matched_holding")))
     longest = (record.get("drawdowns") or {}).get("longest")
     if longest:
         back = longest["recovered_at"]
@@ -314,6 +315,27 @@ def notes(record: Dict[str, Any]) -> str:
         )
     lines.append("Logged as an exploratory run.")
     return "\n".join(lines)
+
+
+def matched_lines(part: Optional[Dict[str, Any]]) -> List[str]:
+    """Random entries held as long as the strategy's trades (none for a run saved
+    before they were recorded)."""
+    if not part:
+        return []
+    lines = [
+        f"Random entries held as long as this strategy's trades ({part['draws']} "
+        f"draws): return per capital-day at or above this strategy's in "
+        f"{_pct(part['share_at_or_above'], 1)}; largest drawdown at or below this "
+        f"strategy's in {_pct(part['share_drawdown_at_or_below'], 1)}."
+    ]
+    if part.get("trades_dropped"):
+        lines.append(
+            f"Trades left out of those draws, with no free bars on their coin for the "
+            f"whole hold: {part['trades_dropped']:,} of "
+            f"{part['trades_wanted'] * part['draws']:,}, in {part['draws_short']:,} "
+            f"draws."
+        )
+    return lines
 
 
 def ensemble_lines(group: Optional[Dict[str, Any]]) -> List[str]:

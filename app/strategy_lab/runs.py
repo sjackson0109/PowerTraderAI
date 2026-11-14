@@ -11,7 +11,9 @@ section 5.8). An exploratory run is never evidence: it is logged as a trial of k
 3. takes the strategy's trades decided in the period and replays them in one account of
    the chosen size, with today's venue minimums and sell steps, against buy-and-hold,
    cash and random entries replayed through the strategy's own exits, with its
-   daily, weekly, monthly and annual returns (``research_stats.periods``);
+   daily, weekly, monthly and annual returns (``research_stats.periods``); as many
+   random entries again, each held as long as one of the strategy's trades
+   (``baselines.matched_draws``), are reported beside them and scored by nothing;
    then the same trades and buy-and-hold at each of ``ACCOUNTS_GBP`` (``accounts``):
    each account's results, its drawdowns and recovery (``research_stats.drawdowns``),
    its period returns, and whether it took the same trades as the largest account
@@ -75,7 +77,7 @@ class RunConfig:
     gbp_usd: float
     fee: float  # taker, a fraction a side
     allowance: float = 0.0005  # slippage a fill
-    draws: int = 200  # random-entry draws
+    draws: int = 200  # random-entry draws, and as many matched-holding draws
     seed: int = 700_000
     # the sizing policy's record (``strategy_lab.sizing``); None: the account's own
     sizing: Optional[Mapping[str, Any]] = None
@@ -321,6 +323,19 @@ def run(
         else None
     )
     check()
+    # random entries held as long as the strategy's trades: reported only (the owner's
+    # decision of 2026-11-13); their seeds follow the random entries' own
+    progress(f"Replaying {config.draws} draws held as long as the strategy's trades")
+    matched_seed = int(config.seed) + int(config.draws)
+    matched = bl.matched_draws(sim, taken, matched_seed, int(config.draws), start_s)
+    matched_paths = (
+        bl.replay_draws(
+            sim, matched.draws, costs, account, policy=None if fixed else policy
+        )
+        if config.draws
+        else None
+    )
+    check()
     ensemble_part = None
     if config.ensemble:
         progress("Replaying the ensemble")
@@ -352,6 +367,24 @@ def run(
             "entries_wanted": draws.wanted,
             "entries_reached_median": float(np.median(draws.reached)),
         }
+    matched_part = None
+    if matched_paths is not None and len(matched_paths.net):
+        m = matched_paths
+        matched_part = {
+            "draws": int(len(m.net)),
+            "seed": matched_seed,  # draw b: seed + b
+            "median_net_usd": float(np.median(m.net)),
+            "median_return_per_capital_day": float(np.median(m.rpcd)),
+            "share_at_or_above": float(np.mean(m.rpcd >= mine)),
+            "median_max_drawdown": float(np.median(m.max_drawdown)),
+            "share_drawdown_at_or_below": float(
+                np.mean(m.max_drawdown <= path.max_drawdown[0] + 1e-12)
+            ),
+            "trades_wanted": matched.wanted,
+            # the strategy's trades a draw had no room for, over all the draws
+            "trades_dropped": int(sum(matched.dropped)),
+            "draws_short": int(sum(1 for d in matched.dropped if d)),
+        }
     when = datetime.fromtimestamp(now or time.time(), tz=timezone.utc)
     run_id = f"{when.strftime('%Y%m%d-%H%M%S')}-{config.strategy_id}"
     record = {
@@ -375,6 +408,9 @@ def run(
         "buy_and_hold": _figures(hold),
         "cash": {"net_usd": 0.0, "return_per_capital_day": 0.0},
         "random_entries": random_part,
+        # random entries held as long as the strategy's trades: reported only, and
+        # absent from runs saved before it was recorded
+        "matched_holding": matched_part,
         "curve": _curve(path),
         # daily, weekly, monthly and annual returns from the whole curve (WP 2.6)
         "periods": (periods.report(*path.curve) if path.curve is not None else None),

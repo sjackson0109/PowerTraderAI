@@ -2200,6 +2200,17 @@ class CryptoAPITrading:
             return 0.0
         return max(0.0, min(float(holding_qty), ledger_qty))
 
+    def _own_quantity(self, symbol: str, holding_qty: float) -> float:
+        """Quantity of ``symbol`` the legacy engine manages: what this trader's ledger
+        says it bought, capped by the exchange balance, as for a strategy exit (never
+        the user's other holdings). The ledger adds its fills up in floats, so a total
+        that differs from the balance only by that rounding is the balance: selling it
+        leaves nothing behind, as selling the whole balance did."""
+        own = self._catalogue_exit_quantity(symbol, holding_qty)
+        if own > 0.0 and math.isclose(own, float(holding_qty), rel_tol=1e-9):
+            return float(holding_qty)
+        return own
+
     def _report_position_stops(
         self, symbol: str, pos, decision, positions: dict
     ) -> None:
@@ -2883,6 +2894,18 @@ class CryptoAPITrading:
                     )
                 continue
 
+            # --- Legacy engine: only what this trader bought ---------------------------
+            # The exchange's balance can include coins bought outside the trader. As for
+            # a strategy exit, only the quantity the ledger says this trader bought is
+            # managed: the trailing margin sells it and DCA is sized from it. A coin it
+            # holds none of, or only a remainder of too small to sell, is left alone.
+            own_quantity = self._own_quantity(symbol, quantity)
+            if own_quantity <= 0.0 or self._is_dust(
+                full_symbol, own_quantity, current_sell_price
+            ):
+                continue
+            own_value = own_quantity * current_sell_price
+
             # --- Trailing profit margin (0.5% trail gap) ---
             # PM "start line" is the normal 5% / 2.5% line (depending on DCA levels hit).
             # Trailing activates once price is ABOVE the PM start line, then line follows peaks up
@@ -2957,7 +2980,7 @@ class CryptoAPITrading:
                             "sell",
                             "market",
                             full_symbol,
-                            quantity,
+                            own_quantity,
                             expected_price=current_sell_price,
                             avg_cost_basis=avg_cost_basis,
                             pnl_pct=gain_loss_percentage_sell,
@@ -2975,8 +2998,8 @@ class CryptoAPITrading:
                                 # line (still crossed) and the DCA window stay, so the
                                 # next cycle sells the rest.
                                 print(
-                                    f"  Sold {response.get('quantity')} of {quantity} "
-                                    f"{symbol}; the rest is still held."
+                                    f"  Sold {response.get('quantity')} of "
+                                    f"{own_quantity} {symbol}; the rest is still held."
                                 )
                             else:
                                 self.trailing_pm.pop(
@@ -2986,7 +3009,7 @@ class CryptoAPITrading:
                                 # Trade ended -> reset rolling 24h DCA window for this coin
                                 self._reset_dca_window_for_trade(symbol, sold=True)
 
-                                print(f"  Successfully sold {quantity} {symbol}.")
+                                print(f"  Successfully sold {own_quantity} {symbol}.")
                             time.sleep(5)
                             holdings = self.get_holdings()
                             continue
@@ -3039,13 +3062,13 @@ class CryptoAPITrading:
 
                 print(f"  DCAing {symbol} (stage {current_stage + 1}) via {reason}.")
 
-                print(f"  Current Value: ${value:.2f}")
-                dca_amount = value * float(DCA_MULTIPLIER or 0.0)
+                print(f"  Current Value: ${own_value:.2f}")
+                dca_amount = own_value * float(DCA_MULTIPLIER or 0.0)
                 print(f"  DCA Amount: ${dca_amount:.2f}")
                 print(f"  Buying Power: ${buying_power:.2f}")
 
                 recent_dca = self._dca_window_count(symbol)
-                invested = float(avg_cost_basis or 0.0) * float(quantity or 0.0)
+                invested = float(avg_cost_basis or 0.0) * float(own_quantity or 0.0)
                 if recent_dca >= int(getattr(self, "max_dca_buys_per_24h", 2)):
                     print(
                         f"  Skipping DCA for {symbol}. "
@@ -3280,12 +3303,10 @@ class CryptoAPITrading:
         if trades_made:
             time.sleep(5)
             print("Trades were made in this iteration. Recalculating cost basis...")
-            new_cost_basis = self.calculate_cost_basis()
-            if new_cost_basis:
-                self.cost_basis = new_cost_basis
-                print("Cost basis recalculated successfully.")
-            else:
-                print("Failed to recalculcate cost basis.")
+            # From the ledger as it is now, as at a restart: empty once the last trade
+            # has closed, so a coin sold keeps no cost basis (and no trailing line)
+            self.cost_basis = self.calculate_cost_basis()
+            print("Cost basis recalculated successfully.")
             self.initialize_dca_levels()
 
         # --- GUI HUB STATUS WRITE ---

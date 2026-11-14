@@ -15,6 +15,8 @@ APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
+import trading_mode as tm
+from helpers import PaperTraderCase
 from pt_exchanges import (
     BinanceExchange,
     BinanceRateLimitError,
@@ -801,6 +803,205 @@ class TestBinanceListenKey(unittest.TestCase):
         ex = BinanceExchange(api_key="", api_secret="")
         with self.assertRaises(RuntimeError):
             ex.create_listen_key()
+
+
+def _fill(price, qty, commission, asset):
+    """One fill of a FULL order answer, in Binance's field names."""
+    return {
+        "price": price,
+        "qty": qty,
+        "commission": commission,
+        "commissionAsset": asset,
+        "tradeId": 1,
+    }
+
+
+def _order_answer(status, executed, quote_value, fills=None, side="BUY"):
+    """An answer to an order in the shape Binance documents: POST /api/v3/order with
+    the FULL response (the default for MARKET orders) has ``fills``; GET
+    /api/v3/order has none (``fills=None``). A market order's ``price`` is 0."""
+    answer = {
+        "symbol": "BTCUSDT",
+        "orderId": 28,
+        "orderListId": -1,
+        "clientOrderId": "c-1",
+        "transactTime": 1762900000000,
+        "time": 1762900000000,
+        "price": "0.00000000",
+        "origQty": "0.00100000",
+        "executedQty": executed,
+        "cummulativeQuoteQty": quote_value,
+        "status": status,
+        "timeInForce": "GTC",
+        "type": "MARKET",
+        "side": side,
+    }
+    if fills is not None:
+        answer["fills"] = fills
+    return answer
+
+
+class TestBinanceOrderResults(unittest.TestCase):
+    """What the trader reads from Binance's answer to an order (A2 defect register
+    N7): what filled, at what average price, and the fee."""
+
+    def setUp(self):
+        self.ex = _make_exchange()
+        _seed_filters(self.ex, "BTCUSDT")
+
+    def place(self, answer, side="buy"):
+        with patch.object(self.ex, "_signed_request", return_value=answer):
+            return self.ex.place_order("BTC-USD", side, 0.001)
+
+    def status(self, answer):
+        with patch.object(self.ex, "_signed_request", return_value=answer):
+            return self.ex.get_order_status("BTCUSDT:28")
+
+    def test_an_order_that_ended_after_filling_in_part_is_filled_for_that_part(self):
+        expired = _order_answer(
+            "EXPIRED",
+            "0.00040000",
+            "40.00000000",
+            [_fill("100000.00", "0.00040000", "0.04000000", "USDT")],
+        )
+        result = self.place(expired)
+        self.assertEqual(result.status, "filled")
+        self.assertTrue(result.partial)
+        self.assertEqual(result.amount, 0.0004)
+        self.assertEqual(result.reason, "partly filled: 0.0004 of 0.001")
+        for state in ("EXPIRED", "CANCELED", "EXPIRED_IN_MATCH"):
+            later = self.status(_order_answer(state, "0.00040000", "40.00000000"))
+            self.assertEqual((later.status, later.partial), ("filled", True), state)
+            self.assertEqual(later.amount, 0.0004)
+        # nothing filled: the order ended, and nothing is recorded
+        for state, ended in (("EXPIRED", "expired"), ("CANCELED", "canceled")):
+            none = self.place(_order_answer(state, "0.00000000", "0.00000000", []))
+            self.assertEqual((none.status, none.partial), (ended, False))
+
+    def test_a_market_order_is_priced_at_its_average_fill_not_0(self):
+        filled = _order_answer(
+            "FILLED",
+            "0.00100000",
+            "100.05000000",
+            [
+                _fill("100000.00", "0.00050000", "0.05000000", "USDT"),
+                _fill("100100.00", "0.00050000", "0.05005000", "USDT"),
+            ],
+        )
+        result = self.place(filled)
+        self.assertEqual((result.status, result.partial), ("filled", False))
+        self.assertAlmostEqual(result.price, 100.05 / 0.001)  # 100,050
+        self.assertAlmostEqual(result.filled_value, 100.05)
+        # GET /api/v3/order says the same, without its fills
+        later = self.status(_order_answer("FILLED", "0.00100000", "100.05000000"))
+        self.assertAlmostEqual(later.price, 100050.0)
+        self.assertAlmostEqual(later.filled_value, 100.05)
+
+    def test_the_fee_is_the_commission_of_every_fill_in_the_quote_asset(self):
+        sold = _order_answer(
+            "FILLED",
+            "0.00100000",
+            "100.05000000",
+            [
+                _fill("100000.00", "0.00050000", "0.05000000", "USDT"),
+                _fill("100100.00", "0.00050000", "0.05005000", "USDT"),
+            ],
+            side="SELL",
+        )
+        result = self.place(sold, side="sell")
+        self.assertAlmostEqual(result.fee, 0.10005)
+        self.assertEqual(result.fee_currency, "USDT")
+        self.assertEqual(result.other_fees, {})
+        # GET /api/v3/order has no fills: the fee is not known from it
+        later = self.status(_order_answer("FILLED", "0.00100000", "100.05000000"))
+        self.assertIsNone(later.fee)
+
+    def test_a_commission_in_bnb_is_not_counted_as_quote(self):
+        in_bnb = _order_answer(
+            "FILLED",
+            "0.00100000",
+            "100.05000000",
+            [
+                _fill("100000.00", "0.00050000", "0.00007000", "BNB"),
+                _fill("100100.00", "0.00050000", "0.00007500", "BNB"),
+            ],
+        )
+        result = self.place(in_bnb)
+        self.assertIsNone(result.fee)  # not known in dollars
+        self.assertEqual(result.fee_currency, "")
+        self.assertEqual(result.other_fees, {"BNB": 0.000145})  # as Binance gave it
+        self.assertAlmostEqual(result.filled_value, 100.05)
+        mixed = _order_answer(
+            "FILLED",
+            "0.00100000",
+            "100.05000000",
+            [
+                _fill("100000.00", "0.00050000", "0.05000000", "USDT"),
+                _fill("100100.00", "0.00050000", "0.00007500", "BNB"),
+            ],
+        )
+        result = self.place(mixed)
+        self.assertAlmostEqual(result.fee, 0.05)  # the USDT part only
+        self.assertEqual(result.other_fees, {"BNB": 0.000075})
+
+
+class TestBinancePartialFillInTheTrader(PaperTraderCase):
+    """The trader records a Binance order that ended after filling in part for the
+    part that filled (A2 defect register N7); before, it recorded nothing."""
+
+    def setUp(self):
+        super().setUp()
+        sleep = patch.object(self.pt_trader.time, "sleep")
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    def test_a_buy_that_expired_after_filling_in_part_is_recorded_for_that_part(self):
+        binance = _make_exchange()
+        _seed_filters(binance, "BTCUSDT")
+        target = tm.OrderTarget(tm.TradingMode.LIVE, "binance", binance, "live:binance")
+        answer = _order_answer(
+            "EXPIRED",
+            "0.00040000",
+            "40.02000000",
+            [
+                _fill("100000.00", "0.00020000", "0.02000000", "USDT"),
+                _fill("100100.00", "0.00020000", "0.02002000", "USDT"),
+            ],
+        )
+        trader = self.trader()
+        with patch.object(binance, "_signed_request", return_value=answer):
+            placed = trader._place_gated_order(
+                target, "buy", "BTC-USD", 0.001, 99000.0, None, None, "entry"
+            )
+        self.assertIsNotNone(placed, "the part that filled was not recorded")
+        self.assertEqual((placed["quantity"], placed["partial"]), (0.0004, True))
+        (row,) = self.ledger_rows()
+        self.assertEqual(row["order_id"], "BTCUSDT:28")
+        self.assertEqual(row["qty"], 0.0004)
+        self.assertAlmostEqual(row["price"], 100050.0)  # not the trader's 99,000
+        self.assertAlmostEqual(row["fees_usd"], 0.04002)
+        self.assertEqual(row["fee_currency"], "USDT")
+        self.assertAlmostEqual(row["buying_power_delta"], -(40.02 + 0.04002))
+
+    def test_a_fee_in_bnb_is_recorded_as_binance_gave_it(self):
+        binance = _make_exchange()
+        _seed_filters(binance, "BTCUSDT")
+        target = tm.OrderTarget(tm.TradingMode.LIVE, "binance", binance, "live:binance")
+        answer = _order_answer(
+            "FILLED",
+            "0.00100000",
+            "100.00000000",
+            [_fill("100000.00", "0.00100000", "0.00015000", "BNB")],
+        )
+        trader = self.trader()
+        with patch.object(binance, "_signed_request", return_value=answer):
+            trader._place_gated_order(
+                target, "buy", "BTC-USD", 0.001, 99000.0, None, None, "entry"
+            )
+        (row,) = self.ledger_rows()
+        self.assertIsNone(row["fees_usd"])
+        self.assertEqual(row["other_fees"], {"BNB": 0.00015})
+        self.assertAlmostEqual(row["buying_power_delta"], -100.0)
 
 
 class TestBinanceBrokerSelectorHelpers(unittest.TestCase):

@@ -12,7 +12,9 @@ It is the single chokepoint that decides where an order may go:
   with ``ExchangeFactory.get_exchange(ExchangeType(active_broker))``.
 
 The gate fails closed: a missing, unreadable or malformed settings file, or a
-mode value it does not recognise, resolves to paper - never to live.
+mode value it does not recognise, resolves to paper - never to live. A file that
+exists but cannot be read is a problem in the strategy settings as well
+(``settings_problem``), so the trader places no orders at all until it can be.
 
 ``PaperExchange`` adapts ``PaperTradingAccount`` to the ``AbstractExchange``
 call shape so the trader talks to one interface whichever target it gets.
@@ -30,7 +32,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from enum import Enum
 from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 
@@ -45,6 +47,7 @@ from pt_exchange_abstraction import (
     default_trading_fees,
     exchange_name,
     usable_fees,
+    usable_minimum,
 )
 from pt_paper_trading import (
     MarketDataSimulator,
@@ -80,6 +83,9 @@ from pt_settings_manager import (
 logger = get_logger("trading_mode")
 
 PRICE_UNAVAILABLE = "PRICE_UNAVAILABLE"
+# The reason a paper order is refused for its size, as live connectors give it
+# (e.g. CoinbaseExchange._market_order)
+BELOW_MINIMUM = "BELOW_MINIMUM"
 
 # Brokers whose exchange class accepts a ``testnet`` constructor flag. The
 # ``trading.<broker>_testnet`` setting is only forwarded to these.
@@ -149,14 +155,34 @@ def _lookup(settings: Any, dotted_key: str, default: Any = None) -> Any:
     return default
 
 
+class UnreadableSettings(dict):
+    """No settings, for a settings file that exists but cannot be read: every setting
+    reads as its default (the mode as paper), and ``problem`` says why. The strategy
+    settings report it as a problem, so no orders are placed while it lasts."""
+
+    def __init__(self, problem: str = ""):
+        super().__init__()
+        self.problem = problem
+
+
 def _read_settings_file(path: str) -> Dict[str, Any]:
-    """Raw read of the settings file. Any problem yields {} (=> paper)."""
+    """Raw read of the settings file. A missing file (a fresh install) yields {}
+    (=> paper, every setting its default). One that exists but cannot be read, or
+    is not a JSON object, yields an UnreadableSettings: the same, with why."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, ValueError):
+    except FileNotFoundError:
         return {}
-    return data if isinstance(data, dict) else {}
+    except (OSError, ValueError) as exc:
+        return UnreadableSettings(
+            f"the settings file {path} cannot be read ({type(exc).__name__}: {exc})"
+        )
+    if not isinstance(data, dict):
+        return UnreadableSettings(
+            f"the settings file {path} cannot be read (it is not a JSON object)"
+        )
+    return data
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -304,6 +330,14 @@ def _settings_mapping(settings: Any) -> Any:
     if isinstance(settings, (str, os.PathLike)):
         return _read_settings_file(os.fspath(settings))
     return settings
+
+
+def settings_problem(settings: Any = None) -> Optional[str]:
+    """Why the settings file behind ``settings`` (anything ``settings_mapping``
+    takes) cannot be read, or None: None too for a missing file, and for settings
+    that are not a file."""
+    mapping = _settings_mapping(settings)
+    return mapping.problem if isinstance(mapping, UnreadableSettings) else None
 
 
 # Public names for other modules that read the same settings source.
@@ -536,6 +570,65 @@ def fetch_trading_fees(base: str, exchange: str = "") -> Optional[TradingFees]:
     return default_trading_fees(exchange) if exchange else None
 
 
+# --- Sell step and minimum order for paper fills (the exchange layer) ---------
+
+
+@dataclass(frozen=True)
+class VenueRules:
+    """What the exchanges in Settings state for orders in a coin: the step a sell's
+    quantity is rounded down to, in coins (Coinbase's ``base_increment``), and the
+    smallest order, in USD. None for either when no exchange states it."""
+
+    sell_step: Optional[float] = None
+    minimum_usd: Optional[float] = None
+
+
+def _layer_venue_rules(base: str) -> VenueRules:
+    """The exchange layer's sell step and minimum order for ``base``: the exchanges in
+    Settings, primary first, from public product data. The paper trader's minimum
+    order (its entry size and dust) and the strategy lab's venue rules, which the
+    replay's costs use, come from the same two calls."""
+    from pt_multi_exchange import market_exchanges
+
+    manager = market_exchanges()
+    symbol = f"{base}-USD"
+    return VenueRules(manager.lot_increment(symbol), manager.min_order_usd(symbol))
+
+
+def _usable_venue_rules(value: Any) -> VenueRules:
+    """``value`` with any figure that is not a positive, finite number left out (a
+    connector may answer anything)."""
+    if not isinstance(value, VenueRules):
+        return VenueRules()
+    return VenueRules(
+        usable_minimum(value.sell_step), usable_minimum(value.minimum_usd)
+    )
+
+
+def fetch_venue_rules(base: str) -> VenueRules:
+    """
+    The sell step and minimum order a paper fill of ``base`` follows: those the
+    exchanges in Settings state, primary first. Either is None when no exchange
+    states it, or the exchange layer cannot be asked (offline). Public product data
+    only: no credentials.
+    """
+    try:
+        return _usable_venue_rules(_layer_venue_rules(base))
+    except Exception as exc:
+        logger.debug(f"No sell step or minimum order for {base}: {exc}")
+        return VenueRules()
+
+
+def _plain(value: Any) -> str:
+    """A quantity or price as written, without trailing zeros (``4.0`` is ``4``)."""
+    return format(Decimal(str(value)).normalize(), "f")
+
+
+def _worth(value: Decimal) -> str:
+    """An order's value in dollars, for a refusal's reason."""
+    return f"about ${value:,.2f}" if value >= Decimal("0.01") else "less than $0.01"
+
+
 # --- Paper adapter -----------------------------------------------------------
 
 
@@ -583,6 +676,15 @@ class PaperExchange(AbstractExchange):
     rates from the feed, that exchange's stored standard rates; with none at all,
     the paper account's own rate, logged at WARNING.
 
+    Every order follows the exchange's sell step and minimum order, as live orders
+    do (``venue_feed(base) -> VenueRules``, the exchange layer's ``lot_increment``
+    and ``min_order_usd``: the exchanges in Settings, primary first). A sell is
+    rounded down to the step and what is left stays in the book; a buy is not
+    rounded (Coinbase sizes a market buy in dollars). A sell smaller than one step,
+    or an order worth less than the minimum at its fill price, is rejected with
+    reason ``BELOW_MINIMUM: ...`` and changes nothing. Where no exchange states a
+    step or a minimum (or there is no feed), nothing is rounded or refused.
+
     With ``state_path`` the book is shared: the trader and the hub's Order
     Management each have an account on the same file. Every order and balance read
     takes the book's lock file and first reads the book again when another process
@@ -593,6 +695,9 @@ class PaperExchange(AbstractExchange):
     _SIM_HALF_SPREAD = 0.0005
     # How long fee rates are reused before they are asked for again.
     _FEES_TTL_SECONDS = 3600.0
+    # How long a coin's sell step and minimum order are reused (the trader keeps the
+    # minimum it tells dust by as long: pt_trader.DUST_MINIMUM_SECONDS).
+    _VENUE_TTL_SECONDS = 3600.0
 
     def __init__(
         self,
@@ -603,6 +708,7 @@ class PaperExchange(AbstractExchange):
         settings_source: Any = None,
         clock: Callable[[], float] = time.time,
         fee_feed: Optional[Callable[[str, str], Optional[TradingFees]]] = None,
+        venue_feed: Optional[Callable[[str], Optional[VenueRules]]] = None,
         **kwargs: Any,
     ) -> None:
         super().__init__("", "", **kwargs)
@@ -611,6 +717,9 @@ class PaperExchange(AbstractExchange):
         self.account.market_simulator = self._simulator
         self._price_feed = price_feed
         self._fee_feed = fee_feed
+        self._venue_feed = venue_feed
+        # base -> (when read, its sell step and minimum order)
+        self._venue: Dict[str, Tuple[float, VenueRules]] = {}
         self._state_path = state_path
         self.settings_source = settings_source
         self._clock = clock
@@ -755,6 +864,62 @@ class PaperExchange(AbstractExchange):
         order.fee_exchange = fees.exchange
         order.fee_source = fees.source
 
+    # -- the exchange's sell step and minimum order --
+
+    def _venue_for(self, base: str) -> VenueRules:
+        """The sell step and minimum order the exchanges in Settings state for
+        ``base``, reused for ``_VENUE_TTL_SECONDS``; neither without a venue feed."""
+        if self._venue_feed is None:
+            return VenueRules()
+        now = self._clock()
+        cached = self._venue.get(base)
+        if cached is not None and now - cached[0] < self._VENUE_TTL_SECONDS:
+            return cached[1]
+        try:
+            rules = _usable_venue_rules(self._venue_feed(base))
+        except Exception as exc:
+            logger.debug(f"No sell step or minimum order for {base}: {exc}")
+            rules = VenueRules()
+        self._venue[base] = (now, rules)
+        return rules
+
+    def _venue_size(
+        self, base: str, side: OrderSide, amount: Any, price: Any
+    ) -> Tuple[Decimal, str]:
+        """(the quantity of ``base`` the exchange takes for an order of ``amount``,
+        why it would refuse the order: "" when it would not), as a live connector
+        works it out before sending (``CoinbaseExchange._market_order``). A sell is
+        rounded down to the sell step; a buy is not rounded. A sell left with nothing,
+        or an order worth less than the minimum at ``price``, is refused. With no
+        step or minimum stated, ``amount`` is taken as it is (as before)."""
+        rules = self._venue_for(base)
+        asked = Decimal(str(amount))
+        quantity = asked
+        if side is OrderSide.SELL and rules.sell_step is not None:
+            step = Decimal(str(rules.sell_step))
+            quantity = (asked / step).to_integral_value(rounding=ROUND_DOWN) * step
+            if quantity <= 0:
+                return quantity, (
+                    f"{BELOW_MINIMUM}: {_plain(asked)} {base} is less than the "
+                    f"exchange's sell step of {_plain(step)} {base}"
+                )
+        if rules.minimum_usd is not None:
+            value = quantity * Decimal(str(price))
+            minimum = Decimal(str(rules.minimum_usd))
+            if value < minimum:
+                return quantity, (
+                    f"{BELOW_MINIMUM}: {_plain(quantity)} {base} is worth "
+                    f"{_worth(value)}, below the exchange's minimum order of "
+                    f"${_plain(minimum)} for {base}-USD"
+                )
+        if quantity != asked:
+            logger.info(
+                f"Paper sell of {_plain(asked)} {base} rounded down to "
+                f"{_plain(quantity)}: the exchange's sell step is "
+                f"{_plain(rules.sell_step)} {base}"
+            )
+        return quantity, ""
+
     # -- orders --
 
     def place_order(
@@ -775,28 +940,33 @@ class PaperExchange(AbstractExchange):
                     priced = self._priced_quote(base)
                 except PriceUnavailable:
                     return self._reject(symbol, side_l, amount, PRICE_UNAVAILABLE)
-                self._simulator.anchors[base] = Decimal(
-                    str(priced.ask if order_side is OrderSide.BUY else priced.bid)
-                )
+                fill = priced.ask if order_side is OrderSide.BUY else priced.bid
+                quantity, refusal = self._venue_size(base, order_side, amount, fill)
+                if refusal:
+                    return self._reject(symbol, side_l, amount, refusal)
+                self._simulator.anchors[base] = Decimal(str(fill))
                 fees = self._fees_for(base, priced.exchange)
                 fee_type, rate = fees.for_order("market")
                 order_id = self.account.place_order(
                     symbol=base,
                     order_type=OrderType.MARKET,
                     side=order_side,
-                    quantity=Decimal(str(amount)),
+                    quantity=quantity,
                     commission_rate=Decimal(str(rate)),
                 )
             else:
                 # Limit order: the price is the caller's, no feed involved; it pays
                 # the maker rate.
+                quantity, refusal = self._venue_size(base, order_side, amount, price)
+                if refusal:
+                    return self._reject(symbol, side_l, amount, refusal)
                 fees = self.trading_fees(base)
                 fee_type, rate = fees.for_order("limit")
                 order_id = self.account.place_order(
                     symbol=base,
                     order_type=OrderType.LIMIT,
                     side=order_side,
-                    quantity=Decimal(str(amount)),
+                    quantity=quantity,
                     price=Decimal(str(price)),
                     commission_rate=Decimal(str(rate)),
                 )
@@ -816,6 +986,7 @@ class PaperExchange(AbstractExchange):
         side_l = str(side).lower().strip()
         if side_l not in ("buy", "sell"):
             raise ValueError(f"Invalid order side: {side!r}")
+        order_side = OrderSide.BUY if side_l == "buy" else OrderSide.SELL
         base = _base_asset(symbol)
         with self._book():
             try:
@@ -823,14 +994,17 @@ class PaperExchange(AbstractExchange):
             except PriceUnavailable:
                 return self._reject(symbol, side_l, amount, PRICE_UNAVAILABLE)
             limit = Decimal(str(price))
+            quantity, refusal = self._venue_size(base, order_side, amount, limit)
+            if refusal:
+                return self._reject(symbol, side_l, amount, refusal)
             self._simulator.anchors[base] = limit
             fees = self._fees_for(base, priced.exchange)
             fee_type, rate = fees.for_order("limit")
             order_id = self.account.place_order(
                 symbol=base,
                 order_type=OrderType.LIMIT,
-                side=OrderSide.BUY if side_l == "buy" else OrderSide.SELL,
-                quantity=Decimal(str(amount)),
+                side=order_side,
+                quantity=quantity,
                 price=limit,
                 commission_rate=Decimal(str(rate)),
             )
@@ -1298,6 +1472,7 @@ def configure_paper_exchange(
     fee_feed: Optional[
         Callable[[str, str], Optional[TradingFees]]
     ] = fetch_trading_fees,
+    venue_feed: Optional[Callable[[str], Optional[VenueRules]]] = fetch_venue_rules,
 ) -> PaperExchange:
     """(Re)create the process-wide paper exchange. Call once at trader start-up.
 
@@ -1314,6 +1489,7 @@ def configure_paper_exchange(
             state_path=state_path,
             settings_source=settings_source,
             fee_feed=fee_feed,
+            venue_feed=venue_feed,
         )
         if state_path:
             if os.path.exists(state_path) and not _paper_exchange.state_loaded:
@@ -1337,7 +1513,9 @@ def get_paper_exchange() -> PaperExchange:
     with _paper_lock:
         if _paper_exchange is None:
             _paper_exchange = PaperExchange(
-                price_feed=fetch_public_quote, fee_feed=fetch_trading_fees
+                price_feed=fetch_public_quote,
+                fee_feed=fetch_trading_fees,
+                venue_feed=fetch_venue_rules,
             )
         return _paper_exchange
 

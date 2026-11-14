@@ -14,7 +14,9 @@ in an older settings file is ignored.
 Missing keys take their defaults. A value that is present but wrong (unknown
 engine, unknown strategy id, bad timeframe, bad overlay spec, a parameter that is
 unknown, out of bounds or breaks a rule between two of them) is *not* replaced:
-it is reported in ``problem`` and the trader places no orders.
+it is reported in ``problem`` and the trader places no orders. So is a settings
+file that exists but cannot be read (``trading_mode.settings_problem``): its
+settings are not known. A missing file (a fresh install) is all defaults.
 
 **Authorisation** (FDS-SR-001 section 5.3). Given the trading ``mode``, a strategy or
 overlay that may not trade in it is a problem too. A strategy's timeframe must be one
@@ -45,7 +47,7 @@ from strategies.catalogue import (
     allowed_in_mode,
     create,
 )
-from trading_mode import lookup_setting, settings_mapping
+from trading_mode import lookup_setting, settings_mapping, settings_problem
 
 ENGINES = ("catalogue", "legacy_neural")
 DEFAULT_ENGINE = "catalogue"
@@ -266,6 +268,9 @@ def read_strategy_settings(settings: Any = None, mode: Any = None) -> StrategySe
 
     if engine == "legacy_neural":
         problems = []  # the catalogue settings are not used by the legacy engine
+    unreadable = settings_problem(src)
+    if unreadable:
+        problems = [unreadable]  # nothing above was read from the file
 
     return StrategySettings(
         engine=engine,

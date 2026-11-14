@@ -503,6 +503,13 @@ class TestWords:
             assert "profitable" not in line.lower()
             assert line.endswith(e2.DEV_ONLY)
 
+    def test_a_small_pooled_p_is_never_shown_as_zero(self):
+        assert e2.p_text(1 / 20_001) == "0.000050"
+        assert e2.p_text(1 / 2_001) == "0.00050"
+        assert (e2.p_text(0.01), e2.p_text(0.0909)) == ("0.0100", "0.0909")
+        line = e2.member_line(self.member("B2"), self.economic(p=1 / 20_001), True)
+        assert "p = 0.000050 (Holm over 2)" in line
+
     def test_the_books_economics(self):
         b2 = self.member("B2")
         halt = int(pd.Timestamp("2021-01-22", tz="UTC").timestamp())

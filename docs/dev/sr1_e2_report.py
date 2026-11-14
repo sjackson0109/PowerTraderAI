@@ -5,6 +5,7 @@ results as markdown. It formats only; nothing here scores or decides.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from typing import Any, List, Mapping, Optional, Sequence
 
@@ -43,7 +44,13 @@ def rpcd(x) -> str:
 
 
 def pval(x) -> str:
-    return _f(x, ".4f")
+    """4 decimals, or 2 significant figures below 0.001 (a pooled p is never 0)."""
+    if x is None:
+        return "n/a"
+    p = float(x)
+    if not p > 0:
+        return f"{p:.4f}"
+    return f"{p:.{max(4, 1 - math.floor(math.log10(p)))}f}"
 
 
 def day(s) -> str:
@@ -66,6 +73,10 @@ def _row(name: str, f: Mapping[str, Any], extra: Sequence[Any] = ()) -> List[Any
         share(f.get("intrabar_max_drawdown")), share(f.get("mean_committed")),
         f.get("skipped_cash"), f.get("skipped_minimum"), *extra,
     ]  # fmt: skip
+
+
+def _yes(x) -> str:
+    return "n/a" if x is None else ("yes" if x else "no")
 
 
 HEAD = [
@@ -137,7 +148,7 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
         ps = [float(r["p"] if isinstance(r, Mapping) else r) for r in runs]
         rows.append(
             [mid, OUTCOME[v["outcome"]], pval(v["p"]),
-             f"{min(ps):.4f} to {max(ps):.4f}" if ps else "n/a",
+             f"{pval(min(ps))} to {pval(max(ps))}" if ps else "n/a",
              pval(v.get("holm_adjusted_p")), "yes" if v["holm_pass"] else "no"]
         )  # fmt: skip
     L += table(
@@ -313,10 +324,13 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
         flag = (sp.get(f"member {n} alone") or {}).get("bh_flag")
         rows.append(
             _row(f"{n} days", v["figures"],
-                 [_f(v.get("trades_per_coin_year"), ".1f"), pval(v.get("p")),
-                  "yes" if flag else "no"])
+                 [_f(v.get("trades_per_coin_year"), ".1f"), _yes(v.get("below_hold")),
+                  pval(v.get("p")), "yes" if flag else "no"])
         )  # fmt: skip
-    L += table(HEAD + ["Trades a coin a year", "p (RPCD > 0)", "BH"], rows)
+    L += table(
+        HEAD + ["Trades a coin a year", "DD below the hold's", "p (RPCD > 0)", "BH"],
+        rows,
+    )
 
     # 7. sizing -----------------------------------------------------------------------------------
     L += ["## 7. Volatility-sized books (shown; the book's own sizing decides, D4)", ""]
@@ -324,10 +338,11 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
     for name, v in (result.get("sizing") or {}).items():
         flag = (sp.get(name) or {}).get("bh_flag")
         rows.append(
-            _row(name, v["figures"], [_f(v.get("mean_scale"), ".2f"), pval(v.get("p")),
+            _row(name, v["figures"], [_f(v.get("mean_scale"), ".2f"),
+                                     _yes(v.get("below_hold")), pval(v.get("p")),
                                      "yes" if flag else "no"])
         )  # fmt: skip
-    L += table(HEAD + ["Mean scale", "p (RPCD > 0)", "BH"], rows)
+    L += table(HEAD + ["Mean scale", "DD below the hold's", "p (RPCD > 0)", "BH"], rows)
 
     # 8. PBO ---------------------------------------------------------------------------------------
     pbo = result.get("pbo") or {}
@@ -347,14 +362,20 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
     for name, v in (result.get("robustness") or {}).items():
         if not v.get("run"):
             rows.append([name, "not run", "", "", "", "", "", "", "", "",
-                         v.get("reason", ""), "", ""])  # fmt: skip
+                         v.get("reason", ""), "", "", "", ""])  # fmt: skip
             continue
         flag = (sp.get(f"robust {name}") or {}).get("bh_flag")
         rows.append(
             _row(name, v["figures"],
-                 [", ".join(v["coins"]), pval(v.get("p")), "yes" if flag else "no"])
+                 [", ".join(v["coins"]),
+                  share((v.get("hold") or {}).get("intrabar_max_drawdown")),
+                  _yes(v.get("below_hold")), pval(v.get("p")), "yes" if flag else "no"])
         )  # fmt: skip
-    L += table(HEAD + ["Coins", "p (RPCD > 0)", "BH"], rows)
+    L += table(
+        HEAD
+        + ["Coins", "Hold's DD (lows)", "DD below the hold's", "p (RPCD > 0)", "BH"],
+        rows,
+    )
     L += [f"- **{k}:** {v}" for k, v in notes.items()] + [""]
 
     # 10. the halt ----------------------------------------------------------------------------------
@@ -367,11 +388,16 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
             ["Equal-weight hold", day(h["hold_intrabar_reached_s"]), day(h["hold_reached_s"])],
         ],
     )  # fmt: skip
+    if int(h["book_intrabar_reached_s"]) >= 0 or int(h["book_reached_s"]) >= 0:
+        L += [
+            "Trading the book as configured would need the trader's halt changed. For "
+            "this evaluation only, the registration replaced F3's halt requirement by "
+            "the comparison with the hold (D1).",
+            "",
+        ]
+    else:
+        L += ["The book never reached the trader's halt.", ""]
     L += [
-        "Trading the book as configured would need the trader's halt changed: the "
-        "registration replaced F3's halt requirement by the comparison with the hold "
-        "(D1) for this evaluation only.",
-        "",
         "## 11. Limits",
         "",
         "- **Not unseen evidence.** These months were explored for this book before "

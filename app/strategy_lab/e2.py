@@ -955,6 +955,15 @@ DEV_ONLY = e1.DEV_ONLY
 _pct = e1._pct
 
 
+def p_text(p: float) -> str:
+    """A p-value to 4 decimals, or to 2 significant figures below 0.001: a pooled p of
+    1 / 20,001 reads 0.000050, never 0.0000."""
+    p = float(p)
+    if not p > 0:
+        return f"{p:.4f}"
+    return f"{p:.{max(4, 1 - math.floor(math.log10(p)))}f}"
+
+
 def _day(s: Optional[int]) -> Optional[str]:
     if s is None or int(s) < 0:
         return None
@@ -1005,7 +1014,7 @@ def member_line(
                 "Profitable after fees at £10,000 with 0.50% taker and 0.05% slippage "
                 f"a fill (net ${rep['net_usd']:+,.2f} on £10,000, return per capital-day "
                 f"{_pct(rep['rpcd'])}, {rep['trades']} trades, {drawdown}, p = "
-                f"{result['test']['p']:.4f} (Holm over {k}), smallest detectable "
+                f"{p_text(result['test']['p'])} (Holm over {k}), smallest detectable "
                 f"return per capital-day {_pct(result.get('smallest_detectable'))})."
             )
             return fd.check_wording(f"{text} {halt} {DEV_ONLY}", True)
@@ -1019,7 +1028,7 @@ def member_line(
         if holm_pass:
             text += (
                 f" Its bootstrap test of return per capital-day passed Holm over {k} "
-                f"(p = {result['test']['p']:.4f}), but that is one of the five "
+                f"(p = {p_text(result['test']['p'])}), but that is one of the five "
                 "requirements, and a pass needs all five."
             )
         text += (
@@ -1035,7 +1044,7 @@ def member_line(
     against = "random entries with each member's own exits"
     stats_text = (
         f"return per capital-day {_pct(result['value'])} against a random median of "
-        f"{_pct(result['median'])}, p = {result['p']:.4f} (Holm over {k}, B = "
+        f"{_pct(result['median'])}, p = {p_text(result['p'])} (Holm over {k}, B = "
         f"{result['draws']:,}), {result.get('trades', 0)} trades"
     )
     if passed:

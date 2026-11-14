@@ -224,6 +224,19 @@ def test_the_window_says_when_changes_apply(root, folder):
     win.destroy()
 
 
+def test_the_words_say_a_halt_stops_buying_only():
+    """A halt refuses buys and the trader keeps running: exits, stops and the
+    trailing margin still sell, and Resume trading needs no restart."""
+    (stop_help,) = [
+        level[-1] for level in ui.LEVELS if level[0] == "emergency_drawdown_pct"
+    ]
+    for text in (stop_help, ui.APPLY_TEXT):
+        assert "stops trading" not in text and "has stopped" not in text
+        assert "buy" in text
+    assert "still sell" in stop_help
+    assert "next pass" in ui.APPLY_TEXT
+
+
 def test_the_words_name_no_spec_key_or_data_provider(root, folder):
     win = limits_window(root, folder)
     for text in texts(win) + [ui.APPLY_TEXT, ui.FIX_TEXT]:

@@ -11,8 +11,8 @@ approved it on 2026-11-14 (decisions D1 to D5 of its registration draft).
 * F3 for a book: halves by entry day; the total without the most profitable coin sums
   every member's trades on that coin; the drawdown requirement (D1) compares the book's
   drawdown with the equal-weight hold's, both at the bars' lows from the earlier highs.
-* The hold comparison: ten seeded runs of ``mean_test``, pooled (a stand-in here until
-  ``research_stats.resampling.mean_test`` is in the tree).
+* The hold comparison: ten seeded runs of ``research_stats.resampling.mean_test``,
+  pooled; the hold funds every coin, as the owner defined it on 2026-11-14.
 * The words: only the economic line says "profitable"; every line ends "Development
   only"; the halt is reported, and the line says trading the book would need it changed.
 * Each scored cell is logged in the strategy lab's trial log and the programme ledger.
@@ -86,7 +86,7 @@ class TestDeclaration:
     def test_the_declarations_hash_is_fixed(self):
         assert e2.design_sha256() == e2.DESIGN_SHA256
         assert e2.DESIGN_SHA256 == (
-            "7f7d4474d624ac59f7db5ca1193a1de475dafa0bb183c714b4f92b2447d46c9a"
+            "de4c2057797408a8acd4f90a3d81855bf56076ace137133d49365bec7c407c80"
         )
 
     def test_a_changed_member_is_refused(self, monkeypatch):
@@ -149,6 +149,9 @@ class TestDeclaration:
         assert sorted(int(k) for k in members) == list(ensemble.LOOKBACKS)
         assert members["90"]["overlays"][0]["params"] == {"days": 90}
         assert "below the equal-weight hold" in frozen["tests"]["economic"]["drawdown"]
+        hold = frozen["baselines"]["equal-weight hold"]
+        assert "funds every coin" in hold and "1/N of the starting account" in hold
+        assert e2.design()["hold_rule"] == hold
         assert frozen["market"]["second_exchange"]["exchange"] == "kraken"
         # the earlier exposures are in the record before any result
         prs = [x.get("pr") for x in frozen["earlier_exposures"]["runs"]]
@@ -406,9 +409,8 @@ def curves():
 
 
 def test_the_hold_comparison_pools_ten_runs_of_mean_test(monkeypatch):
-    """A stand-in for ``research_stats.resampling.mean_test`` (being added beside this
-    work), with its interface: the comparison asks for 10 seeded runs of 2,000 and
-    pools their counts."""
+    """With a stand-in for ``mean_test`` whose counts are known: the comparison asks
+    for 10 seeded runs of 2,000 at its default and pools their counts."""
     from research_stats import resampling
 
     calls = []
@@ -421,7 +423,7 @@ def test_the_hold_comparison_pools_ten_runs_of_mean_test(monkeypatch):
         return MR(float(x.mean()), (1 + k) / (draws + 1), (-0.001, 0.002), level, 7.5,
                   draws, len(x), method)  # fmt: skip
 
-    monkeypatch.setattr(resampling, "mean_test", stand_in, raising=False)
+    monkeypatch.setattr(resampling, "mean_test", stand_in)
     book, hold = curves()
     r = e2.hold_comparison(book, hold, seed=100)
     assert [c[2] for c in calls] == list(range(100, 110))
@@ -434,9 +436,28 @@ def test_the_hold_comparison_pools_ten_runs_of_mean_test(monkeypatch):
     assert r["p"] == pytest.approx((1 + counts) / (10 * 2000 + 1))
     assert r["runs"][0]["interval"] == pytest.approx([-0.365, 0.73])
     assert r["draws"] == 20_000
-    monkeypatch.delattr(resampling, "mean_test")
-    with pytest.raises(e2.E2Error, match="mean_test"):
-        e2.hold_comparison(book, hold, seed=100)
+
+
+def test_the_hold_comparison_is_mean_test_run_for_run():
+    from research_stats import resampling
+
+    book, hold = curves()
+    r = e2.hold_comparison(book, hold, seed=7)
+    _t, x = e2.daily_log_difference(book, hold)
+    for k in (0, 9):
+        one = resampling.mean_test(x, draws=2000, seed=7 + k)
+        assert r["runs"][k]["p"] == one.p_value
+        assert r["runs"][k]["interval"] == pytest.approx(
+            [365 * one.interval[0], 365 * one.interval[1]]
+        )
+    assert r["annualised_mean"] == pytest.approx(365 * one.mean)
+    assert r["mean_block"] == one.mean_block and r["method"] == "studentised"
+    # projected to the lockbox's days at the same daily spread: se x sqrt(n / days)
+    ratio = (
+        r["power"]["smallest_detectable_yearly_lockbox"]
+        / r["power"]["smallest_detectable_yearly"]
+    )
+    assert ratio == pytest.approx((len(x) / e2.LOCKBOX_DAYS) ** 0.5)
 
 
 # --- the words ---------------------------------------------------------------------------------

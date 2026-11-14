@@ -244,15 +244,19 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
         f"- **Without the most profitable coin** ({b2.get('best_coin')}, every member's "
         f"trades on it summed): {money(b2['without_best_coin'])}.",
     ]
-    if hold.get("skipped_cash"):
-        L += [
-            f"- **The hold's skips:** it could not fund {hold['skipped_cash']} of its "
-            f"{len(result.get('coins') or [])} coins' entries: each enters at the open "
-            "after its first decision bar with 1/N of the account's value then, and for "
-            "a coin listed late that was more than the cash left. It held that share as "
-            "cash.",
-        ]
-    L += [""]
+    L += [
+        f"- **The hold** buys each of the {len(result.get('coins') or [])} coins with its "
+        f"own 1/N of the starting account (${_f(hold.get('share_usd'), ',.2f')}) at its "
+        "first decision bar; a late-listed coin's share waits as cash until then. "
+        + (
+            "Not bought: "
+            + "; ".join(f"{c} ({why})" for c, why in sorted(hold["not_bought"].items()))
+            + "."
+            if hold.get("not_bought")
+            else "Every coin was bought."
+        ),
+        "",
+    ]
     comp = (result.get("shown_p") or {}).get("hold comparison") or {}
     hold_cmp = result.get("hold_comparison") or {}
     L += ["### The yearly lead over the hold (shown, D3)", ""]
@@ -376,7 +380,16 @@ def report(record: Mapping[str, Any], result: Mapping[str, Any]) -> str:
         + ["Coins", "Hold's DD (lows)", "DD below the hold's", "p (RPCD > 0)", "BH"],
         rows,
     )
-    L += [f"- **{k}:** {v}" for k, v in notes.items()] + [""]
+    L += [f"- **{k}:** {v}" for k, v in notes.items()]
+    for name, v in (result.get("robustness") or {}).items():
+        missing = ((v.get("hold") or {}).get("not_bought")) or {}
+        if missing:
+            L += [
+                f"- **{name}, the hold:** not bought: "
+                + "; ".join(f"{c} ({why})" for c, why in sorted(missing.items()))
+                + "."
+            ]
+    L += [""]
 
     # 10. the halt ----------------------------------------------------------------------------------
     h = result["halt"]

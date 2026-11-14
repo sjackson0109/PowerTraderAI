@@ -25,13 +25,10 @@ refuses any bar from the reserved months regardless.
   (``strategy_lab.experiment.freeze``). Nothing is scored.
 * ``run``: verifies the frozen record (its seal, the code, the libraries and the
   candles), runs ``strategy_lab.e2.evaluate``, and writes ``results.json``, the
-  evidence lines and the report. It refuses a tree without
-  ``research_stats.resampling.mean_test``.
+  evidence lines and the report.
 * ``rehearse``: the same pipeline on synthetic candles, venue rules and rate, in a
   separate sandbox whose folder name holds "rehearsal": it reads no real candles, and
-  shows that every step runs and how long it takes. Without ``mean_test`` in the tree it
-  uses a stand-in, ``rpcd_test`` with one unit of capital every day (the same test, as
-  ``mean_test``'s brief states), and says so in the results.
+  shows that every step runs and how long it takes.
 """
 
 from __future__ import annotations
@@ -301,7 +298,6 @@ def run(out: str) -> None:
 
     record = experiment.verify(e2.EXPERIMENT_ID)
     log(f"verified {e2.EXPERIMENT_ID} {record['sha256']}")
-    e2._mean_test()  # refuses a tree without it, before anything is read
     if list(e1.settings_exchanges()) != list(record["market"]["exchange_order"]):
         raise SystemExit("the exchanges in Settings are not the frozen order")
     started = time.time()
@@ -366,46 +362,15 @@ def _synthetic():
     return frames
 
 
-def _stand_in_mean_test():
-    """``rpcd_test`` with one unit of capital every day, as ``mean_test``'s brief says
-    the two agree draw for draw: for the rehearsal only."""
-    from collections import namedtuple
-
-    import numpy as np
-
-    from research_stats import resampling
-
-    MeanResult = namedtuple(
-        "MeanResult", "mean p_value interval level mean_block draws days method"
-    )
-
-    def mean_test(x, draws=2000, seed=0, mean_block=None, level=0.95,
-                  method=resampling.DEFAULT_METHOD,
-                  block_scale=resampling.DEFAULT_BLOCK_SCALE):  # fmt: skip
-        x = np.asarray(list(x), dtype=float)
-        marks = resampling.DailyMarks(0, x, np.ones(len(x)))
-        r = resampling.rpcd_test(
-            marks, draws, seed, mean_block, level, method, block_scale
-        )
-        return MeanResult(r.theta, r.p_value, r.interval, r.level, r.mean_block,
-                          r.draws, r.days, r.method)  # fmt: skip
-
-    return mean_test
-
-
 def rehearse(out: str) -> None:
     import pandas as pd
 
-    from research_stats import resampling
     from strategy_lab import e2, experiment
 
     if "rehearsal" not in os.environ["POWERTRADER_HOME"].lower():
         raise SystemExit(
             "rehearse only in a sandbox whose folder name holds 'rehearsal'"
         )
-    stand_in = getattr(resampling, "mean_test", None) is None
-    if stand_in:
-        resampling.mean_test = _stand_in_mean_test()
     frames = _synthetic()
     order = ["coinbase", "kraken", "kucoin"]
 
@@ -465,12 +430,7 @@ def rehearse(out: str) -> None:
     _write(os.path.join(out, "experiment.json"), frozen)
     log(f"rehearsal frozen in {time.time() - started:.0f} s")
     result = e2.evaluate(frozen, data, progress=log)
-    result["rehearsal"] = "synthetic candles, venue rules, fees and rate" + (
-        "; mean_test was not in the tree, so a stand-in ran the hold comparison "
-        "(rpcd_test with one unit of capital every day)"
-        if stand_in
-        else ""
-    )
+    result["rehearsal"] = "synthetic candles, venue rules, fees and rate"
     _finish(out, frozen, result, started)
 
 

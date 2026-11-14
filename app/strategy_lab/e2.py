@@ -27,6 +27,10 @@ draft.md``, with D1 to D4 as answered). Research only: nothing in trading reads 
     drawdown below the equal-weight hold's, both by the O12 rule (each position at its
     bar's low, from a peak at the earlier bars' highs: the replay's intrabar figures).
     The trader's 8% halt is reported, not modelled.
+* **The equal-weight hold** (``HOLD_RULE``, the owner's decision of 2026-11-14) funds
+  every coin: each of the N coins bought with its own 1/N of the starting account at
+  its first decision bar, a late-listed coin's share waiting as cash until then; a coin
+  whose share is below its minimum entry is not bought, and is named.
 * **Shown, deciding nothing** (Benjamini-Hochberg at q = 0.10 over the shown p-values):
   the hold comparison (D3; ``hold_comparison``); matched holding (O19, reported only,
   with no p-value); each member alone; the book volatility-sized at 25%, 50% and 75% a
@@ -115,6 +119,14 @@ BOOTSTRAP_DRAWS = 2000  # each run of rpcd_test and mean_test (their default)
 PBO_BLOCKS = 16
 TARGETS: Tuple[float, ...] = (0.25, 0.50, 0.75)  # D4: shown only
 SIZING_FEATURE = "volatility.ewma"
+HOLD_RULE = (
+    "the equal-weight hold funds every coin: each of the N coins bought with its own "
+    "1/N of the starting account (not of the grown account) at the open after its "
+    "first decision bar from 2020-12-31 (entering from 2021-01-01), and held to the "
+    "last close; a late-listed coin's share waits as cash until it is bought; no coin "
+    "is skipped for cash, and a coin whose share is below its minimum entry is not "
+    "bought and is named (the owner's decision of 2026-11-14; Ensemble.hold)"
+)
 D1_RULE = (
     "the book's maximum drawdown below the equal-weight hold's maximum drawdown, both "
     "with each open position at its bar's low, from a peak at the highest high of the "
@@ -230,8 +242,9 @@ CODE_EXTRA = {
     "files": ["research_engine/ledger.py"],
 }
 
-# the SHA-256 of ``design()`` as approved on 2026-11-14
-DESIGN_SHA256 = "7f7d4474d624ac59f7db5ca1193a1de475dafa0bb183c714b4f92b2447d46c9a"
+# the SHA-256 of ``design()`` as approved on 2026-11-14, with the owner's hold rule
+# (``HOLD_RULE``) of the same day
+DESIGN_SHA256 = "de4c2057797408a8acd4f90a3d81855bf56076ace137133d49365bec7c407c80"
 
 
 class E2Error(RuntimeError):
@@ -279,6 +292,7 @@ def design() -> Dict[str, Any]:
         "variants": [asdict(v) for v in VARIANTS],
         "shown_seeds": dict(SHOWN_SEEDS),
         "drawdown_rule": D1_RULE,
+        "hold_rule": HOLD_RULE,
     }
 
 
@@ -481,10 +495,7 @@ def declaration(
                 "trades (Ensemble.matched_draws), through the same book; reported only "
                 "(O19)"
             ),
-            "equal-weight hold": (
-                "each coin 1/N of the account, bought once at the open after its first "
-                "decision bar from 2020-12-31 (entering from 2021-01-01), held to the end"
-            ),
+            "equal-weight hold": HOLD_RULE,
             "REF-CASH": "no trades",
         },
         "tests": {
@@ -768,18 +779,6 @@ def detectable(se: float, k: int = 1, scale: float = 1.0) -> float:
     return power.minimum_detectable(float(se) * scale, HOLM_ALPHA / max(1, k), POWER)
 
 
-def _mean_test():
-    from research_stats import resampling
-
-    test = getattr(resampling, "mean_test", None)
-    if test is None:
-        raise E2Error(
-            "research_stats.resampling.mean_test is not in this tree: the hold "
-            "comparison needs it"
-        )
-    return test
-
-
 def daily_log_difference(
     book_curve: Tuple[np.ndarray, np.ndarray], hold_curve: Tuple[np.ndarray, np.ndarray]
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -802,11 +801,13 @@ def hold_comparison(book_curve, hold_curve, seed: int) -> Dict[str, Any]:
     months and on the lockbox's."""
     from research_stats import resampling
 
-    test = _mean_test()
     _t, x = daily_log_difference(book_curve, hold_curve)
     if len(x) < 2:
         return {"assessable": False, "reason": "fewer than two common days", "p": None}
-    results = [test(x, draws=BOOTSTRAP_DRAWS, seed=seed + r) for r in range(RUNS)]
+    results = [
+        resampling.mean_test(x, draws=BOOTSTRAP_DRAWS, seed=seed + r)
+        for r in range(RUNS)
+    ]
     out = _pooled(results, seed, scale=365.0)
     mean = float(np.mean(x))
     lrv = float(resampling.bartlett_lrv(x - mean, out["mean_block"])[0])
@@ -1196,9 +1197,14 @@ def book_figures(
 
 
 def _hold_figures(ens, costs, usd, gbp_usd, coins=None) -> Tuple[Dict[str, Any], Paths]:
-    trades = ens.hold_trades(DECIDE_FROM_S, coins)
+    """The equal-weight hold's figures (``Ensemble.hold``), with the coins it did not
+    buy and why, and its path."""
+    plan = ens.hold_plan(costs, usd, DECIDE_FROM_S, coins)
     path = ens.hold(costs, usd, DECIDE_FROM_S, detail=True, coins=coins)
-    return e1.figures(trades, path, costs, Account(start=float(usd)), gbp_usd), path
+    out = e1.figures(plan.trades, path, costs, Account(start=float(usd)), gbp_usd)
+    out["share_usd"] = plan.share_usd
+    out["not_bought"] = dict(plan.not_bought)
+    return out, path
 
 
 def _compact(f: Mapping[str, Any]) -> Dict[str, Any]:
@@ -1532,7 +1538,7 @@ def evaluate(
             "account_usd": acct,
             "fee": c.fee,
             "figures": _compact(f),
-            "hold": _compact(h_fig),
+            "hold": {**_compact(h_fig), "not_bought": h_fig["not_bought"]},
             "below_hold": (
                 f["intrabar_max_drawdown"] < h_fig["intrabar_max_drawdown"]
                 if f["intrabar_max_drawdown"] is not None

@@ -1,6 +1,6 @@
-# SR1-E2: a registered evaluation of the Donchian ensemble (draft)
+# SR1-E2: a registered evaluation of the Donchian ensemble (approved)
 
-**Status: draft for the owner's review (decision O17, 2026-11-13).** Nothing in this file has run. Nothing is frozen, no trial is logged and the lockbox stays closed. Approving this draft would authorise only the work in §8 and, after its rehearsal, the freeze and the development run. Opening the lockbox stays a separate decision (O5).
+**Status: approved by the owner on 2026-11-14 (D5), with the answers recorded under §9.** That authorises the work in §8, a rehearsal on synthetic candles, then the freeze and one development run. Nothing has run yet and nothing is frozen. The lockbox stays closed: opening it stays a separate decision (O5), and no paper or live use follows from the result.
 
 It is written under FDS-SR-001 §6 (a declared development evaluation, like E1), with the owner's decisions O3 (the stationary bootstrap) and O12 (drawdown at the lows, peak at earlier highs).
 
@@ -33,13 +33,13 @@ These are earlier exposures (FDS-SR-001 §6.1). They are recorded in the record 
 | Member | Test | Passes when |
 |---|---|---|
 | **B1** | The ensemble's book against **REF-RANDOM-E**, random entries in each (coin, member) slice with that member's own exits (§8 item 1) | Its return per capital-day is above the draws: p = (1 + #{draws ≥ book}) ÷ (B + 1), B = 200 draws a run, 10 seeded runs pooled, 2,000 in all (the owner's rule for simulations, as the exploration) |
-| **B2** | The ensemble's economics: F3's requirements (FDS-SIG-004 §6.1) at £10,000 and 0.50% + 0.05% a fill | 1. At least 100 trades and 30 in each half (otherwise "Not assessable").<br>2. Return per capital-day above 0 by `research_stats.resampling.rpcd_test` at its default (studentised, blocks ×1.5: O3). This is the family member.<br>3. Net profit above 0 in each half.<br>4. Above 0 without the most profitable coin.<br>5. **Drawdown: see decision D1.** |
+| **B2** | The ensemble's economics: F3's requirements (FDS-SIG-004 §6.1) at £10,000 and 0.50% + 0.05% a fill | 1. At least 100 trades and 30 in each half (otherwise "Not assessable").<br>2. Return per capital-day above 0 by `research_stats.resampling.rpcd_test` at its default (studentised, blocks ×1.5: O3). This is the family member.<br>3. Net profit above 0 in each half.<br>4. Above 0 without the most profitable coin.<br>5. **Drawdown (D1):** the book's largest drawdown (O12) is below the equal-weight hold's. The 8% halt is reported, not modelled; trading the book would need the halt changed. |
 
 **Shown, deciding nothing** (BH at q = 0.10 where a p-value exists):
 - **Against an equal-weight hold:** the yearly mean daily log-return difference, with its studentised stationary-bootstrap interval (§8 item 2). See D3 for why this is not a family member.
 - **Matched holding** (O19): random entries held as long as the book's trades.
 - **Each member alone**, with its trades a coin a year.
-- **Sizing:** the book under volatility targeting, at the target or targets D4 names.
+- **Sizing:** the book under volatility targeting at 25%, 50% and 75% a year (D4; O18 found nothing beyond holding less).
 - **PBO** across the seven members and the book.
 - **Robustness** (FDS-SR-001 §6.4):
   - fees at 1.20%;
@@ -120,3 +120,13 @@ The evidence writer refuses once the code changes.
 | **D3** | **The hold comparison: a member or shown?** | (a) Shown only (K = 2).<br>(b) A third member (K = 3) | **(a)**: at the exploration's spread, it could detect only a lead of about 0.5 a year on these months. As a member it would cost the other two tests power and almost certainly read "Too few to tell" |
 | **D4** | **Sizing in the record** | (a) The book's own sizing decides; volatility-sized books are shown.<br>(b) A volatility target decides | **(a)**: decide after O18's report. Choosing a target from these months would be fitting them |
 | **D5** | **Approve the work in §8 and the development run** | yes / no / change | Approve after D1 to D4 |
+
+**The owner's answers (2026-11-14):**
+
+| ID | Answer |
+|---|---|
+| D1 | (c): the book's drawdown below the equal-weight hold's, for this evaluation only; the halt is reported |
+| D2 | (a): the exploration's nine coins |
+| D3 | (a): the hold comparison is shown only (K = 2) |
+| D4 | (a): the book's own sizing decides; volatility-sized books are shown |
+| D5 | Approved: the work in §8, the rehearsal, the freeze and one development run |

@@ -311,6 +311,51 @@ def test_with_everything_counted_and_no_wait_neither_line_shows(root, folder, bo
     win.destroy()
 
 
+def test_the_drawdown_is_on_the_stops_measure_and_the_limits_on_the_account_value(
+    root, folder, books
+):
+    risk_state.write_state(books, {"peak_value": 12_000.0, "peak_ts": 1.7e9})
+    win = ui.RiskSettingsWindow(
+        root,
+        books_dir=books,
+        account_value=lambda: 10_000.0,  # the Account panel: entries are sized on it
+        halt_value=lambda: 11_400.0,  # every balance, funds on hold included
+        limits=dict(LIMITS_SAVED),
+        save_limits=lambda values: None,
+        manager_factory=lambda: manager(folder),
+        messagebox=Box(),
+    )
+    win.withdraw()
+    assert win.account_var.get() == "$11,400.00, as last reported by the trader"
+    assert win.drawdown_var.get() == "5.00%"
+    assert win.hints["start_allocation_pct"].get().startswith("≈ $100.00 per entry")
+    assert any("funds on hold included" in t for t in texts(win))
+    assert win.reset_peak()
+    assert risk_state.current(books).peak_value == 11_400.0
+    win.destroy()
+
+
+def test_a_peak_scaled_once_says_so_until_it_is_reset(root, folder, books):
+    risk_state.write_state(
+        books,
+        {
+            "peak_value": 12_150.54,
+            "peak_measure": "all_balances",
+            "peak_scaled": {"ts": 1.7e9, "from": 10_000.0, "to": 12_150.54},
+        },
+    )
+    win = open_window(root, folder, books, account=11_300.0)
+    assert win.scaled_var.get().startswith(
+        "The peak was scaled from $10,000.00 to $12,150.54 on "
+    )
+    assert win.scaled_var.get().endswith(
+        ", when funds on hold and the stablecoins were first counted."
+    )
+    assert win.reset_peak()
+    assert win.scaled_var.get() == ""
+    win.destroy()
+
+
 def test_reset_peak_needs_an_account_value(root, folder, books):
     box = Box()
     win = open_window(root, folder, books, account=None, box=box)
@@ -378,6 +423,29 @@ def test_settings_opens_the_risk_window_next_to_strategy(hub):
         in label_texts(win)
     )
     assert tm.read_drawdown_levels().emergency_pct == 10.0  # pt_config.json
+    win.destroy()
+
+
+def test_the_hub_shows_the_stops_measure_from_the_trader_status(hub):
+    os.makedirs(os.path.dirname(hub.trader_status_path), exist_ok=True)
+    with open(hub.trader_status_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "timestamp": 1.7e9,
+                "account": {"total_account_value": 10_000.0, "halt_equity": 12_000.0},
+                "positions": {},
+            },
+            f,
+        )
+    hub._last_trader_status_mtime = None
+    hub._refresh_trader_status()
+    assert hub._shown_account_value() == 10_000.0
+    assert hub._shown_halt_value() == 12_000.0
+    risk_state.write_state(hub._books_dir, {"peak_value": 12_500.0})
+    win = hub.open_risk_settings()
+    win.withdraw()
+    assert win.account_var.get() == "$12,000.00, as last reported by the trader"
+    assert win.drawdown_var.get() == "4.00%"
     win.destroy()
 
 

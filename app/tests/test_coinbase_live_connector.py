@@ -133,11 +133,13 @@ class BalanceTests(unittest.TestCase):
         }
         with recorded_http() as rec:
             rec.respond_with(200, page)
-            balances = connector().get_balance_with_holds()
-            available = connector().get_balance()
+            available, balances = connector().get_balance_and_holds()
         self.assertEqual(balances, {"USD": 6000.0, "BTC": 0.04, "ETH": 0.5})
-        self.assertEqual(available, {"USD": 5100.0, "BTC": 0.04})  # unchanged
-        self.assertEqual(rec.urls, [f"{BROKERAGE}/accounts"] * 2)
+        self.assertEqual(available, {"USD": 5100.0, "BTC": 0.04})
+        self.assertEqual(rec.urls, [f"{BROKERAGE}/accounts"])  # one read for both
+        with recorded_http() as rec:
+            rec.respond_with(200, page)
+            self.assertEqual(connector().get_balance(), available)  # unchanged
 
     def test_a_rate_limited_read_waits_and_is_tried_again(self):
         answers = [

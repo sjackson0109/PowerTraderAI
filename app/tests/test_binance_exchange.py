@@ -294,8 +294,11 @@ class TestBinanceGetBalance(unittest.TestCase):
                 {"asset": "XRP", "free": "0.0", "locked": "0.0"},
             ]
         }
-        self.assertEqual(self.ex.get_balance_with_holds(), {"USDT": 1050.0, "ETH": 1.0})
-        self.assertEqual(self.ex.get_balance(), {"USDT": 1000.0, "ETH": 0.0})
+        available, totals = self.ex.get_balance_and_holds()
+        self.assertEqual(totals, {"USDT": 1050.0, "ETH": 1.0})
+        self.assertEqual(available, {"USDT": 1000.0, "ETH": 0.0})
+        self.assertEqual(mock_get.call_count, 1)  # one read for both
+        self.assertEqual(self.ex.get_balance(), available)  # unchanged
 
     def test_missing_credentials_raises(self):
         ex = BinanceExchange(api_key="", api_secret="")

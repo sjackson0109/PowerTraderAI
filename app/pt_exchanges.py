@@ -1791,26 +1791,26 @@ class BinanceExchange(AbstractExchange):
         if not self.api_key or not self.api_secret:
             raise RuntimeError("Binance API credentials required for balance retrieval")
 
-        data = self._signed_request("GET", "/api/v3/account")
+        return self.get_balance_and_holds()[0]
 
-        return {
-            b["asset"]: float(b["free"])
-            for b in data.get("balances", [])
-            if float(b["free"]) > 0 or float(b["locked"]) > 0
-        }
-
-    def get_balance_with_holds(self) -> Dict[str, float]:
-        """Every asset's whole balance: free plus locked (held for open orders), for
-        the drawdown stop. Assets with neither are left out."""
+    def get_balance_and_holds(self) -> Tuple[Dict[str, float], Dict[str, float]]:
+        """From one ``GET /api/v3/account``: (the free balances, as ``get_balance``
+        gives them; every asset's whole balance, free plus locked (held for open
+        orders), for the drawdown stop). Assets with neither are left out."""
         if not self.api_key or not self.api_secret:
             raise RuntimeError("Binance API credentials required for balance retrieval")
 
         data = self._signed_request("GET", "/api/v3/account")
+        free = {
+            b["asset"]: float(b["free"])
+            for b in data.get("balances", [])
+            if float(b["free"]) > 0 or float(b["locked"]) > 0
+        }
         totals = {
             b["asset"]: float(b["free"]) + float(b["locked"])
             for b in data.get("balances", [])
         }
-        return {asset: qty for asset, qty in totals.items() if qty > 0}
+        return free, {asset: qty for asset, qty in totals.items() if qty > 0}
 
     def get_order_status(self, order_id: str) -> OrderResult:
         """
@@ -2722,34 +2722,35 @@ class CoinbaseExchange(AbstractExchange):
         """The available balance of each currency, from every page of ``GET
         /accounts``. Funds on hold are not included (like Binance's free balances)
         and zero balances are left out."""
-        return self._account_balances(("available_balance",))
+        return self.get_balance_and_holds()[0]
 
-    def get_balance_with_holds(self) -> Dict[str, float]:
-        """Each currency's available balance plus its ``hold``, for the drawdown
-        stop. ``hold`` is in the account shape Coinbase's reference shows (and the
-        recorded answers); that it holds a resting order's funds is not verified on
-        a live account (phase 0)."""
-        return self._account_balances(("available_balance", "hold"))
-
-    def _account_balances(self, fields: tuple) -> Dict[str, float]:
-        """The sum of ``fields`` (each ``{"value": ...}``) for each currency, from
-        every page of ``GET /accounts``; zero balances are left out."""
-        balances: Dict[str, float] = {}
+    def get_balance_and_holds(self) -> Tuple[Dict[str, float], Dict[str, float]]:
+        """From one read of every page of ``GET /accounts``: (each currency's
+        available balance, as ``get_balance`` gives it; that plus its ``hold``, for
+        the drawdown stop). ``hold`` is in the account shape Coinbase's reference
+        shows (and the recorded answers); that it holds a resting order's funds is
+        not verified on a live account (phase 0). Zero balances are left out."""
+        available: Dict[str, float] = {}
+        totals: Dict[str, float] = {}
         params = {"limit": self.ACCOUNTS_PAGE}
         for _ in range(1000):
             data = self._brokerage_request("GET", "/accounts", params=dict(params))
             for account in data.get("accounts") or []:
                 currency = str(account.get("currency") or "").strip().upper()
-                value = 0.0
-                for field in fields:
-                    part = _coinbase_number((account.get(field) or {}).get("value"))
-                    if part is not None:
-                        value += part
-                if currency and value > 0:
-                    balances[currency] = balances.get(currency, 0.0) + value
+                if not currency:
+                    continue
+                free = _coinbase_number(
+                    (account.get("available_balance") or {}).get("value")
+                )
+                held = _coinbase_number((account.get("hold") or {}).get("value"))
+                if free is not None and free > 0:
+                    available[currency] = available.get(currency, 0.0) + free
+                total = (free or 0.0) + (held or 0.0)
+                if total > 0:
+                    totals[currency] = totals.get(currency, 0.0) + total
             cursor = data.get("cursor")
             if not data.get("has_next") or not cursor:
-                return balances
+                return available, totals
             params["cursor"] = cursor
         raise RuntimeError("Coinbase accounts: the list did not end after 1000 pages")
 

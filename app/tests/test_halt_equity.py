@@ -14,29 +14,39 @@ the trader's order target, synthetic balances, holds and bids."""
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from unittest import mock
 
+from helpers_coinbase import recorded_http
+from test_coinbase_live_trader import BROKERAGE, REAL, FakeCoinbase
+from test_coinbase_paper_gate import CoinbaseGateBase
 from test_halt_unpriced_holdings import FakeAccount, LiveAccountCase
 
 import risk_state
 
 
 class FakeAccountWithHolds(FakeAccount):
-    """A live account whose connector also reports funds on hold."""
+    """A live account whose connector also reports funds on hold, from the same
+    read as the available balances. ``reads`` counts the balance reads."""
 
     def __init__(self, balances, bids, holds=None):
         super().__init__(balances, bids)
         self.holds = dict(holds or {})
+        self.reads = 0
 
-    def get_balance_with_holds(self):
-        if self.down:
-            raise ConnectionError("the exchange did not answer")
-        out = dict(self.get_balance())
+    def get_balance(self):
+        self.reads += 1
+        return super().get_balance()
+
+    def get_balance_and_holds(self):
+        self.reads += 1
+        available = super().get_balance()
+        totals = dict(available)
         for asset, qty in self.holds.items():
-            out[asset] = out.get(asset, 0.0) + qty
-        return {asset: qty for asset, qty in out.items() if qty > 0}
+            totals[asset] = totals.get(asset, 0.0) + qty
+        return available, {asset: qty for asset, qty in totals.items() if qty > 0}
 
 
 class HaltEquityCase(LiveAccountCase):
@@ -117,15 +127,59 @@ class MeasureTests(HaltEquityCase):
         self.one_pass(trader)
         self.assertEqual(trader._get_halt_value(), 10000.0)
 
-    def test_holds_that_cannot_be_read_form_no_value(self):
+    def test_an_answer_that_is_not_two_balance_lists_forms_no_value(self):
         trader = self.live_trader()
         self.one_pass(trader)
         with mock.patch.object(
-            self.account, "get_balance_with_holds", side_effect=ConnectionError("x")
+            self.account, "get_balance_and_holds", return_value={"USD": 1000.0}
         ):
-            self.account.balances["USD"] = 1000.0
             self.one_pass(trader)
         self.assertEqual(trader._get_halt_value(), 10000.0)  # the last complete one
+
+
+class BalanceReadTests(HaltEquityCase):
+    def test_a_pass_reads_the_balances_once(self):
+        trader = self.live_trader()
+        self.one_pass(trader)
+        self.account.reads = 0
+        self.one_pass(trader)
+        # b985d5a read them twice a pass (get_account, then get_holdings)
+        self.assertLessEqual(self.account.reads, 2)
+        self.assertEqual(self.account.reads, 1)  # one read serves all three
+        self.assertEqual(trader._get_account_value(), 10000.0)
+        self.assertEqual(trader._get_halt_value(), 10000.0)
+
+    def test_outside_the_pass_the_balances_are_read_afresh(self):
+        trader = self.live_trader()
+        self.one_pass(trader)
+        self.account.balances["USD"] = 5000.0  # after a trade, say
+        self.assertEqual(trader.get_account(), {"buying_power": 5000.0})
+        self.assertEqual(
+            trader.get_holdings(),
+            {"results": [{"asset_code": "BTC", "total_quantity": 0.04}]},
+        )
+
+
+class CoinbaseReadTests(CoinbaseGateBase):
+    """The Coinbase connector over recorded HTTP (test_coinbase_live_trader.py):
+    a pass makes one ``GET /accounts`` read (b985d5a made two)."""
+
+    def test_a_pass_makes_one_accounts_request(self):
+        with recorded_http() as rec, mock.patch(
+            "pt_trader.time.sleep"
+        ), mock.patch.object(self.pt_trader, "crypto_symbols", ["BTC"]), mock.patch(
+            "builtins.print"
+        ):
+            FakeCoinbase(rec)
+            trader = self.trader(copy.deepcopy(REAL))
+            trader.manage_trades()
+            before = len(rec.urls)
+            trader.manage_trades()
+            urls = rec.urls[before:]
+        accounts = [u for u in urls if u == f"{BROKERAGE}/accounts"]
+        self.assertLessEqual(len(accounts), 2)
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(trader._get_halt_value(), trader._get_account_value())
 
 
 class MigrationTests(HaltEquityCase):

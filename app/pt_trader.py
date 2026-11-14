@@ -1816,6 +1816,9 @@ class CryptoAPITrading:
                     exc, "balance retrieval", self._target.key
                 )
             }
+        return self._account_from(balances)
+
+    def _account_from(self, balances: Dict[str, float]) -> dict:
         return {"buying_power": self._buying_power_from(balances)}
 
     def get_holdings(self) -> Any:
@@ -1827,7 +1830,32 @@ class CryptoAPITrading:
                     exc, "balance retrieval", self._target.key
                 )
             }
+        return self._holdings_from(balances)
 
+    def _read_balances(self) -> tuple:
+        """A pass's one balance read (``OrderTarget.get_balance_and_holds``):
+        (account, holdings, every balance with funds on hold), the first two as
+        ``get_account`` and ``get_holdings`` give them, the last for the drawdown
+        stop (``_stop_balances``). When the balances cannot be read the first two
+        are the error and the last None. Outside the pass (after a trade) the
+        balances are read afresh with ``get_account`` and ``get_holdings``."""
+        try:
+            available, with_holds = self._target.get_balance_and_holds()
+            if not isinstance(available, dict) or not isinstance(with_holds, dict):
+                raise ValueError("the exchange's answer is not two balance lists")
+        except Exception as exc:
+            error = self._describe_exchange_error(
+                exc, "balance retrieval", self._target.key
+            )
+            return {"error": error}, {"error": error}, None
+        return (
+            self._account_from(available),
+            self._holdings_from(available),
+            self._stop_balances(with_holds),
+        )
+
+    @staticmethod
+    def _holdings_from(balances: Dict[str, float]) -> dict:
         results = []
         for asset, qty in balances.items():
             code = str(asset).upper().strip()
@@ -1936,17 +1964,11 @@ class CryptoAPITrading:
             value = last.get("total_account_value")
         return float(value) if value is not None else None
 
-    def _balances_with_holds(self) -> Optional[Dict[str, float]]:
-        """Every balance with the funds held for open orders included, by asset code
-        (``OrderTarget.get_balance_with_holds``), for the drawdown stop; None when the
-        balances cannot be read. Codes the trader cannot price are left out, as in
+    @staticmethod
+    def _stop_balances(balances: Dict[str, float]) -> Dict[str, float]:
+        """Every balance with the funds held for open orders included, by asset code,
+        for the drawdown stop. Codes the trader cannot price are left out, as in
         ``get_holdings``."""
-        try:
-            balances = self._target.get_balance_with_holds()
-        except Exception:
-            return None
-        if not isinstance(balances, dict):
-            return None
         totals: Dict[str, float] = {}
         for asset, qty in balances.items():
             code = str(asset).upper().strip()
@@ -2706,12 +2728,9 @@ class CryptoAPITrading:
             )
         catalogue_mode = self._catalogue_mode
 
-        # Fetch account details
-        account = self.get_account()
-        # Fetch holdings
-        holdings = self.get_holdings()
-        # Every balance, funds on hold included: what the drawdown stop measures
-        totals = self._balances_with_holds()
+        # One balance read for the pass: the account (buying power), the holdings
+        # and every balance with funds on hold (what the drawdown stop measures)
+        account, holdings, totals = self._read_balances()
         # Fetch trading pairs
         trading_pairs = self.get_trading_pairs()
 

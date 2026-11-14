@@ -432,6 +432,43 @@ class _TraderRiskAdapter:
         if (self._state.get("not_counted"), self._state.get("buys_waiting")) != before:
             self._save_state()
 
+    def measures_all_balances(self) -> bool:
+        """Whether the peak is in the stop's own measure (every balance, funds on
+        hold included, the cash assets at $1): from this version's first pass."""
+        return self._state.get("peak_measure") == risk_state.ALL_BALANCES
+
+    def measure_all_balances(self, new_value: float, old_value: float) -> bool:
+        """Once: the stop measures every balance where it measured the account value.
+        A peak saved by an earlier version (on the account value) is scaled by
+        ``new_value / old_value``, both from the same pass, so a drawdown in progress
+        is kept; the scaling is saved (``peak_scaled``) and printed. Equal values
+        (nothing on hold, no stablecoin: always so in paper) change nothing. Without
+        both values above 0 it waits for a pass with them. True once it is done."""
+        if self.measures_all_balances():
+            return True
+        if self.peak_value > 0.0 and abs(float(new_value) - float(old_value)) > 0.005:
+            if not (new_value > 0.0 and old_value > 0.0):
+                return False
+            before = self.peak_value
+            self.peak_value = before * float(new_value) / float(old_value)
+            self._state["peak_scaled"] = {
+                "ts": time.time(),
+                "from": before,
+                "to": self.peak_value,
+                "account_value": float(old_value),
+                "all_balances": float(new_value),
+            }
+            message = (
+                f"Peak account value scaled from ${before:,.2f} to "
+                f"${self.peak_value:,.2f}: the drawdown now counts every balance, "
+                "funds on hold included, with USD and the stablecoins at $1"
+            )
+            print(message)
+            logger.info(message)
+        self._state["peak_measure"] = risk_state.ALL_BALANCES
+        self._save_state()
+        return True
+
     def update_portfolio_value(self, value: float) -> None:
         if self.state_dir:
             self._apply_requests()
@@ -1888,6 +1925,67 @@ class CryptoAPITrading:
         value = (self._last_good_account_snapshot or {}).get("total_account_value")
         return float(value) if value is not None else None
 
+    def _get_halt_value(self) -> Optional[float]:
+        """What the drawdown stop measures, from the last complete snapshot: every
+        balance, funds on hold included, the cash assets at $1 (``_halt_equity``);
+        the account value until the saved peak is in that measure. None before the
+        first snapshot."""
+        last = self._last_good_account_snapshot or {}
+        value = last.get("halt_equity")
+        if value is None:
+            value = last.get("total_account_value")
+        return float(value) if value is not None else None
+
+    def _balances_with_holds(self) -> Optional[Dict[str, float]]:
+        """Every balance with the funds held for open orders included, by asset code
+        (``OrderTarget.get_balance_with_holds``), for the drawdown stop; None when the
+        balances cannot be read. Codes the trader cannot price are left out, as in
+        ``get_holdings``."""
+        try:
+            balances = self._target.get_balance_with_holds()
+        except Exception:
+            return None
+        if not isinstance(balances, dict):
+            return None
+        totals: Dict[str, float] = {}
+        for asset, qty in balances.items():
+            code = str(asset).upper().strip()
+            try:
+                if code not in CASH_ASSETS:
+                    code = InputValidator.validate_crypto_symbol(code)
+                quantity = float(qty)
+            except (ValidationError, TypeError, ValueError):
+                continue
+            if quantity > 0.0 and math.isfinite(quantity):
+                totals[code] = totals.get(code, 0.0) + quantity
+        return totals
+
+    def _halt_equity(
+        self, totals: Dict[str, float], buy_prices: dict, sell_prices: dict, now: float
+    ) -> tuple:
+        """(value, left out, not yet priced) of the drawdown stop's own measure of
+        ``totals``: the cash assets (CASH_ASSETS) at $1 and every other asset at its
+        bid, or left out as in the account value (``_held_price``; (asset, quantity,
+        why)). An asset with no price yet in this run holds the value back, as in the
+        account value. The owner's own coins count like any other."""
+        value = 0.0
+        not_counted = []
+        not_yet = []
+        for code, qty in totals.items():
+            if code in CASH_ASSETS:
+                value += qty
+                continue
+            _ask, bid, why = self._held_price(
+                f"{code}-USD", buy_prices, sell_prices, now
+            )
+            if why == NOT_YET_PRICED:
+                not_yet.append(code)
+            elif why:
+                not_counted.append((code, qty, why))
+            else:
+                value += qty * bid
+        return value, not_counted, not_yet
+
     def _held_price(
         self, symbol: str, buy_prices: dict, sell_prices: dict, now: float
     ) -> tuple:
@@ -1963,7 +2061,12 @@ class CryptoAPITrading:
         portfolio_value = self._get_account_value()
         if portfolio_value is None:
             portfolio_value = self._get_buying_power()
-        self.risk_manager.update_portfolio_value(portfolio_value)
+        # the peak is raised on what the stop measures; the buy is sized on the
+        # account value
+        measured = self._get_halt_value()
+        self.risk_manager.update_portfolio_value(
+            portfolio_value if measured is None else measured
+        )
 
         # One buy may use the coin's whole budget (Max per coin %); the exchange's
         # minimum order is always allowed, as the entry is raised to it (with its
@@ -2607,6 +2710,8 @@ class CryptoAPITrading:
         account = self.get_account()
         # Fetch holdings
         holdings = self.get_holdings()
+        # Every balance, funds on hold included: what the drawdown stop measures
+        totals = self._balances_with_holds()
         # Fetch trading pairs
         trading_pairs = self.get_trading_pairs()
 
@@ -2621,6 +2726,11 @@ class CryptoAPITrading:
         for s in crypto_symbols:
             full = f"{s}-USD"
             if full not in symbols:
+                symbols.append(full)
+        # ...and every other asset in the balances (one held for an order too)
+        for code in totals or {}:
+            full = f"{code}-USD"
+            if code not in CASH_ASSETS and full not in symbols:
                 symbols.append(full)
 
         current_buy_prices, current_sell_prices, valid_symbols = self.get_price(symbols)
@@ -2693,6 +2803,21 @@ class CryptoAPITrading:
                 snapshot_ok = False
                 continue
 
+        # The drawdown stop's own measure: every balance, funds on hold included, the
+        # cash assets at $1 and every other asset at its bid. Entries are still sized
+        # on the account value. A pass that cannot read it forms no value.
+        halt_equity, halt_not_counted = None, None
+        if totals is None:
+            snapshot_ok = False
+        else:
+            halt_equity, halt_not_counted, not_yet = self._halt_equity(
+                totals, current_buy_prices, current_sell_prices, now
+            )
+            for code in not_yet:
+                snapshot_ok = False
+                if code not in not_yet_priced:
+                    not_yet_priced.append(code)
+
         total_account_value = buying_power + holdings_sell_value
         in_use = (
             (holdings_sell_value / total_account_value) * 100
@@ -2723,6 +2848,11 @@ class CryptoAPITrading:
                 )
                 in_use = float(last.get("percent_in_trade", in_use or 0.0))
         else:
+            # A peak saved on the account value is scaled to the stop's measure once,
+            # here; until then the stop measures the account value, as the peak was
+            measured = None
+            if self.risk_manager.measure_all_balances(halt_equity, total_account_value):
+                measured = float(halt_equity)
             # Save last complete snapshot
             self._last_good_account_snapshot = {
                 "total_account_value": float(total_account_value),
@@ -2730,11 +2860,13 @@ class CryptoAPITrading:
                 "holdings_sell_value": float(holdings_sell_value),
                 "holdings_buy_value": float(holdings_buy_value),
                 "percent_in_trade": float(in_use),
+                "halt_equity": measured,
             }
             self._account_value_ts = now
             self._value_formed = True
             self._no_value_yet = False
-        # what the value leaves out, and whether buys wait, for Settings > Risk
+            not_counted = halt_not_counted
+        # what the stop's value leaves out, and whether buys wait, for Settings > Risk
         buys_waiting = self._buys_wait_reason()
         self.risk_manager.report(not_counted if value_formed else None, buys_waiting)
 
@@ -2757,7 +2889,7 @@ class CryptoAPITrading:
         # The drawdown is checked on the value this pass formed, before anything is
         # bought (run() does not check it again at the next cycle's start)
         if value_formed:
-            self._check_drawdown(self._get_account_value())
+            self._check_drawdown(self._get_halt_value())
             self._last_good_account_snapshot["checked"] = True
         print(
             f"Trailing PM: start +{self.pm_start_pct_no_dca:.2f}% (no DCA) / +{self.pm_start_pct_with_dca:.2f}% (with DCA) "
@@ -3433,6 +3565,8 @@ class CryptoAPITrading:
                 "signals": self._signals_status(),
                 "account": {
                     "total_account_value": total_account_value,
+                    # what the drawdown stop measures (Settings > Risk shows it)
+                    "halt_equity": self._get_halt_value(),
                     "buying_power": buying_power,
                     "holdings_sell_value": holdings_sell_value,
                     "holdings_buy_value": holdings_buy_value,
@@ -3500,7 +3634,7 @@ class CryptoAPITrading:
                 # snapshot, so it starts after the first manage_trades() pass). This
                 # also applies Resume trading from Settings > Risk. A value the pass
                 # that formed it has checked is not checked (or warned about) again.
-                current_portfolio_value = self._get_account_value()
+                current_portfolio_value = self._get_halt_value()
                 last = self._last_good_account_snapshot or {}
                 if last.pop("checked", False) or current_portfolio_value is None:
                     if current_portfolio_value is not None:

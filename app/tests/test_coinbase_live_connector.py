@@ -119,6 +119,26 @@ class BalanceTests(unittest.TestCase):
                 claim(call), "GET api.coinbase.com/api/v3/brokerage/accounts"
             )
 
+    def test_the_drawdown_stops_balances_add_the_funds_on_hold(self):
+        # ``hold`` is in the account shape Coinbase's reference shows; that it holds
+        # a resting order's funds is not verified on a live account (phase 0)
+        page = {
+            "accounts": [
+                account("USD", "5100", hold="900"),
+                account("BTC", "0.04"),
+                account("ETH", "0", hold="0.5"),
+                account("SOL", "0", hold="0"),
+            ],
+            "has_next": False,
+        }
+        with recorded_http() as rec:
+            rec.respond_with(200, page)
+            balances = connector().get_balance_with_holds()
+            available = connector().get_balance()
+        self.assertEqual(balances, {"USD": 6000.0, "BTC": 0.04, "ETH": 0.5})
+        self.assertEqual(available, {"USD": 5100.0, "BTC": 0.04})  # unchanged
+        self.assertEqual(rec.urls, [f"{BROKERAGE}/accounts"] * 2)
+
     def test_a_rate_limited_read_waits_and_is_tried_again(self):
         answers = [
             make_response(429, {"message": "slow down"}),

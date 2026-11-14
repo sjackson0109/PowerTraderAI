@@ -1799,6 +1799,19 @@ class BinanceExchange(AbstractExchange):
             if float(b["free"]) > 0 or float(b["locked"]) > 0
         }
 
+    def get_balance_with_holds(self) -> Dict[str, float]:
+        """Every asset's whole balance: free plus locked (held for open orders), for
+        the drawdown stop. Assets with neither are left out."""
+        if not self.api_key or not self.api_secret:
+            raise RuntimeError("Binance API credentials required for balance retrieval")
+
+        data = self._signed_request("GET", "/api/v3/account")
+        totals = {
+            b["asset"]: float(b["free"]) + float(b["locked"])
+            for b in data.get("balances", [])
+        }
+        return {asset: qty for asset, qty in totals.items() if qty > 0}
+
     def get_order_status(self, order_id: str) -> OrderResult:
         """
         Get status of an existing order via GET /api/v3/order.
@@ -2709,16 +2722,30 @@ class CoinbaseExchange(AbstractExchange):
         """The available balance of each currency, from every page of ``GET
         /accounts``. Funds on hold are not included (like Binance's free balances)
         and zero balances are left out."""
+        return self._account_balances(("available_balance",))
+
+    def get_balance_with_holds(self) -> Dict[str, float]:
+        """Each currency's available balance plus its ``hold``, for the drawdown
+        stop. ``hold`` is in the account shape Coinbase's reference shows (and the
+        recorded answers); that it holds a resting order's funds is not verified on
+        a live account (phase 0)."""
+        return self._account_balances(("available_balance", "hold"))
+
+    def _account_balances(self, fields: tuple) -> Dict[str, float]:
+        """The sum of ``fields`` (each ``{"value": ...}``) for each currency, from
+        every page of ``GET /accounts``; zero balances are left out."""
         balances: Dict[str, float] = {}
         params = {"limit": self.ACCOUNTS_PAGE}
         for _ in range(1000):
             data = self._brokerage_request("GET", "/accounts", params=dict(params))
             for account in data.get("accounts") or []:
                 currency = str(account.get("currency") or "").strip().upper()
-                value = _coinbase_number(
-                    (account.get("available_balance") or {}).get("value")
-                )
-                if currency and value is not None and value > 0:
+                value = 0.0
+                for field in fields:
+                    part = _coinbase_number((account.get(field) or {}).get("value"))
+                    if part is not None:
+                        value += part
+                if currency and value > 0:
                     balances[currency] = balances.get(currency, 0.0) + value
             cursor = data.get("cursor")
             if not data.get("has_next") or not cursor:

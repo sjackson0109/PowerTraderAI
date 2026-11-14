@@ -1633,6 +1633,13 @@ class OrderTarget:
     def get_balance(self) -> Dict[str, float]:
         return self.exchange.get_balance()
 
+    def get_balance_with_holds(self) -> Dict[str, float]:
+        """Every balance with the funds held for open orders included, for the
+        drawdown stop. A connector that cannot say what is on hold (the paper
+        account holds nothing) gives ``get_balance``."""
+        read = getattr(self.exchange, "get_balance_with_holds", None)
+        return read() if callable(read) else self.exchange.get_balance()
+
     def get_order_status(self, order_id: str) -> OrderResult:
         return self.exchange.get_order_status(order_id)
 

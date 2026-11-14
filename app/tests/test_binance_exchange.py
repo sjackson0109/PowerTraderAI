@@ -285,6 +285,18 @@ class TestBinanceGetBalance(unittest.TestCase):
         result = self.ex.get_balance()
         self.assertIn("ETH", result)
 
+    @patch("pt_exchanges.requests.get")
+    def test_the_drawdown_stops_balances_add_what_is_locked(self, mock_get):
+        mock_get.return_value.json.return_value = {
+            "balances": [
+                {"asset": "USDT", "free": "1000.0", "locked": "50.0"},
+                {"asset": "ETH", "free": "0.0", "locked": "1.0"},
+                {"asset": "XRP", "free": "0.0", "locked": "0.0"},
+            ]
+        }
+        self.assertEqual(self.ex.get_balance_with_holds(), {"USDT": 1050.0, "ETH": 1.0})
+        self.assertEqual(self.ex.get_balance(), {"USDT": 1000.0, "ETH": 0.0})
+
     def test_missing_credentials_raises(self):
         ex = BinanceExchange(api_key="", api_secret="")
         with self.assertRaises(RuntimeError):

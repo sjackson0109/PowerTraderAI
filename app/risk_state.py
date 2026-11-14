@@ -11,6 +11,10 @@ writer, so neither can undo the other's change:
   Settings > Risk request it has applied; also, for Settings > Risk, the holdings
   its last account value left out (``not_counted``: no usable USD price) and why
   buys wait, if they do (``buys_waiting``). A file without these shows neither.
+  ``peak_measure`` says the peak is in the stop's own measure (``ALL_BALANCES``:
+  every balance, funds on hold included, the cash assets at $1). A file without it
+  has a peak measured on the account value, which the trader scales once, on its
+  first pass, keeping the drawdown (``peak_scaled`` records how).
 * ``risk_requests.json`` - the hub's: "set the peak to this value" (Reset peak; no
   value clears the peak, so the next account value is the peak) and "resume
   trading" (Resume trading), each with the time it was asked for.
@@ -35,6 +39,8 @@ STATE_FILE = "risk_state.json"
 REQUESTS_FILE = "risk_requests.json"
 UNREADABLE_REASON = "The saved risk state could not be read"
 HALT_KEYS = ("halted", "halt_reason", "halted_ts", "halt_value")
+# ``peak_measure``: the peak counts every balance, funds on hold included
+ALL_BALANCES = "all_balances"
 
 
 def state_path(folder: str) -> str:
@@ -170,6 +176,19 @@ class RiskView:
     not_counted: Tuple[Tuple[str, float, str], ...] = ()
     buys_waiting: str = ""  # why buys wait ("" when they do not)
     buys_waiting_ts: float = 0.0
+    # (from, to, when) the saved peak was scaled to the stop's own measure, until a
+    # Reset peak after it
+    peak_scaled: Optional[Tuple[float, float, float]] = None
+
+
+def _peak_scaled(state: Mapping[str, Any]) -> Optional[Tuple[float, float, float]]:
+    scaled = state.get("peak_scaled")
+    if not isinstance(scaled, Mapping):
+        return None
+    ts = _number(scaled.get("ts"))
+    if ts <= _number(state.get("peak_reset_ts")):
+        return None
+    return (_number(scaled.get("from")), _number(scaled.get("to")), ts)
 
 
 def _not_counted(entries: Any) -> Tuple[Tuple[str, float, str], ...]:
@@ -204,6 +223,7 @@ def current(folder: Optional[str]) -> RiskView:
         not_counted=_not_counted(state.get("not_counted")),
         buys_waiting=str(state.get("buys_waiting") or ""),
         buys_waiting_ts=_number(state.get("buys_waiting_ts")),
+        peak_scaled=_peak_scaled(state),
     )
 
 

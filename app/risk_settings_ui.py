@@ -2,7 +2,9 @@
 Settings > Risk: the limits that protect the account.
 
 * **Account drawdown** - how far the account value is below the highest value the
-  trader has seen (the peak): the peak, the account value and the drawdown now;
+  trader has seen (the peak): the peak, the account value and the drawdown now,
+  measured as the trader's stop measures them (every balance, funds on hold
+  included, US dollars and the stablecoins at $1);
   the warning and critical levels and the emergency stop, each with the account
   value it equals at the peak; and Reset peak, which sets the peak to the account
   value shown; and the holdings the account value leaves out (no usable USD price).
@@ -217,6 +219,18 @@ def waiting_text(view: risk_state.RiskView) -> str:
     return f"Buys are waiting: {view.buys_waiting}{since}. Sells still go through."
 
 
+def scaled_text(view: risk_state.RiskView) -> str:
+    """How the saved peak was scaled once to the stop's own measure ("" when it was
+    not, or a Reset peak came after)."""
+    if view.peak_scaled is None:
+        return ""
+    before, after, ts = view.peak_scaled
+    return (
+        f"The peak was scaled from {money(before)} to {money(after)} on {when(ts)}, "
+        "when funds on hold and the stablecoins were first counted."
+    )
+
+
 def level_hint(peak: float, pct: Optional[float]) -> str:
     """The account value a level equals at the peak."""
     if not peak > 0.0 or pct is None:
@@ -225,12 +239,23 @@ def level_hint(peak: float, pct: Optional[float]) -> str:
     return f"at {money(peak - below)} ({money(below)} below the peak)"
 
 
+def _usable(read: Callable[[], Any]) -> Optional[float]:
+    """``read()`` as a value above 0, or None."""
+    try:
+        value = float(read())
+    except Exception:
+        return None
+    return value if value > 0.0 and math.isfinite(value) else None
+
+
 class RiskSettingsWindow(tk.Toplevel):
     """The Risk window over ``parent``. ``manager_factory()`` returns the settings
     manager to read from and save through (a fresh one each time, so a change
     another window saved meanwhile is kept). ``books_dir`` is the trader's books
     folder for the trading mode (where the peak is kept); ``account_value()`` the
-    last account value the trader reported (None before it has). ``limits`` are the
+    last account value the trader reported (None before it has), which entries are
+    sized on; ``halt_value()`` the value its drawdown stop measured (every balance,
+    funds on hold included; ``account_value`` when not given). ``limits`` are the
     position and DCA limits as saved, ``save_limits(values)`` saves them (without
     it the window shows no limits). ``on_saved()`` runs after a save,
     ``on_changed()`` after Reset peak or Resume trading (the hub refreshes its
@@ -241,6 +266,7 @@ class RiskSettingsWindow(tk.Toplevel):
         parent: tk.Misc,
         books_dir: Optional[str] = None,
         account_value: Optional[Callable[[], Optional[float]]] = None,
+        halt_value: Optional[Callable[[], Optional[float]]] = None,
         limits: Optional[Mapping[str, Any]] = None,
         save_limits: Optional[Callable[[Dict[str, Any]], None]] = None,
         manager_factory: Optional[Callable[[], Any]] = None,
@@ -260,6 +286,7 @@ class RiskSettingsWindow(tk.Toplevel):
         self._factory = manager_factory
         self._books_dir = books_dir
         self._account_value = account_value or (lambda: None)
+        self._halt_value = halt_value or self._account_value
         self._save_limits = save_limits
         self._on_saved = on_saved
         self._on_changed = on_changed
@@ -277,6 +304,7 @@ class RiskSettingsWindow(tk.Toplevel):
         self.halt_var = tk.StringVar(master=self)
         self.not_counted_var = tk.StringVar(master=self)
         self.waiting_var = tk.StringVar(master=self)
+        self.scaled_var = tk.StringVar(master=self)
         self._shown_when_set: Dict[str, ttk.Label] = {}  # by var name
         # per setting key: the field's text, its hint, and what is wrong with it
         self.vars: Dict[str, tk.StringVar] = {}
@@ -317,21 +345,18 @@ class RiskSettingsWindow(tk.Toplevel):
     # -- what the trader has seen -----------------------------------------------------
 
     def account_value(self) -> Optional[float]:
-        try:
-            value = self._account_value()
-        except Exception:
-            return None
-        try:
-            value = float(value)
-        except (TypeError, ValueError):
-            return None
-        return value if value > 0.0 and math.isfinite(value) else None
+        """The account value entries are sized on (the limits' dollar amounts)."""
+        return _usable(self._account_value)
+
+    def halt_value(self) -> Optional[float]:
+        """The value the drawdown stop measured (the drawdown, Reset peak)."""
+        return _usable(self._halt_value)
 
     def refresh(self) -> None:
         """Show the peak, the account value and the drawdown now."""
         view = risk_state.current(self._books_dir)
         self._peak = view.peak_value
-        value = self.account_value()
+        value = self.halt_value()
         if self._peak > 0.0:
             seen = f", seen {when(view.peak_ts)}" if view.peak_ts > 0.0 else ""
             self.peak_var.set(money(self._peak) + seen)
@@ -351,7 +376,8 @@ class RiskSettingsWindow(tk.Toplevel):
         )
         self.not_counted_var.set(not_counted_text(view))
         self.waiting_var.set(waiting_text(view))
-        for var in (self.not_counted_var, self.waiting_var):
+        self.scaled_var.set(scaled_text(view))
+        for var in (self.not_counted_var, self.waiting_var, self.scaled_var):
             label = self._shown_when_set.get(str(var))
             if label is None:
                 continue
@@ -375,7 +401,7 @@ class RiskSettingsWindow(tk.Toplevel):
 
     def reset_peak(self) -> bool:
         """Set the peak to the account value shown, after a confirmation."""
-        value = self.account_value()
+        value = self.halt_value()
         if value is None or not self._books_dir:
             message = "There is no account value from the trader to set the peak to."
             self.status_var.set(message)
@@ -418,7 +444,7 @@ class RiskSettingsWindow(tk.Toplevel):
             stop = read_drawdown_levels(self._factory()).emergency_pct
         except Exception:
             stop = None
-        dd = drawdown_pct(view.peak_value, self.account_value())
+        dd = drawdown_pct(view.peak_value, self.halt_value())
         if stop is not None and dd is not None and dd >= stop:
             message += (
                 f"\n\nThe account is {dd:.2f}% below its peak, at or above the "
@@ -648,7 +674,9 @@ class RiskSettingsWindow(tk.Toplevel):
             frm,
             r,
             "Drawdown is how far the account value is below the highest account "
-            "value the trader has seen (the peak).",
+            "value the trader has seen (the peak). Here the account value is every "
+            "balance, funds on hold included: US dollars and the stablecoins USDT, "
+            "USDC and BUSD at $1, every other asset at its bid.",
         )
         r += 1
         for label, var in (
@@ -664,6 +692,7 @@ class RiskSettingsWindow(tk.Toplevel):
             )
             r += 1
         r = self._line_when_set(frm, r, self.not_counted_var, column=1)
+        r = self._line_when_set(frm, r, self.scaled_var, column=1)
         ttk.Button(frm, text="Reset peak...", command=self.reset_peak).grid(
             row=r, column=0, sticky="w", pady=(6, 0)
         )

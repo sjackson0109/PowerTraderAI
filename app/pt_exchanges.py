@@ -259,6 +259,24 @@ def _partly_filled(order: dict, filled: float) -> str:
     return f"partly filled: {filled:g}"
 
 
+def _binance_commissions(fills, quote: str) -> Tuple[Optional[float], Dict[str, float]]:
+    """The commission of a Binance order's ``fills`` (its FULL answer has them): the
+    sum charged in ``quote`` (None when none was), and the sums charged in any other
+    asset (BNB, or the coin bought), asset -> amount as Binance gave them. Nothing is
+    converted from one asset to another."""
+    sums: Dict[str, Decimal] = {}
+    for fill in fills or []:
+        try:
+            amount = Decimal(str(fill.get("commission") or "0"))
+        except (AttributeError, InvalidOperation):
+            continue
+        asset = str(fill.get("commissionAsset") or "").upper()
+        sums[asset] = sums.get(asset, Decimal(0)) + amount
+    in_quote = sums.pop(quote, None) if quote else None
+    others = {asset: float(amount) for asset, amount in sums.items()}
+    return (float(in_quote) if in_quote is not None else None), others
+
+
 _KUCOIN_TYPE = {
     "1m": "1min",
     "3m": "3min",
@@ -690,6 +708,10 @@ class BinanceExchange(AbstractExchange):
     requests_per_second = 10.0
 
     SUPPORTS_LIVE_ORDERS = True
+    # Binance order states that end an order before it has filled in full
+    # (EXPIRED_IN_MATCH: ended by self-trade prevention). One that filled in part
+    # first is handled in _order_result.
+    ENDED_STATES = ("CANCELED", "EXPIRED", "EXPIRED_IN_MATCH")
 
     def __init__(
         self,
@@ -1375,15 +1397,77 @@ class BinanceExchange(AbstractExchange):
         # Prefix order_id with symbol so get_order_status/cancel_order can use it
         compound_id = f"{binance_symbol}:{data['orderId']}"
 
-        return OrderResult(
+        # the pair's quote asset, which the fee is counted in: USDT for BTC-USD
+        coin = str(symbol).upper().split("-")[0]
+        pair = binance_symbol.upper()
+        return self._order_result(
+            data,
             order_id=compound_id,
             symbol=symbol,
             side=side.lower(),
-            amount=float(data.get("executedQty", amount)),
-            price=float(data.get("price", price or 0)),
-            status=data.get("status", "UNKNOWN").lower(),
+            quote=pair[len(coin) :] if "-" in symbol and pair.startswith(coin) else "",
+            amount=amount,
+            price=price,
+            time_key="transactTime",
+        )
+
+    def _order_result(
+        self,
+        data: dict,
+        order_id: str,
+        symbol: str,
+        side: str,
+        quote: str = "",
+        amount: Optional[float] = None,
+        price: Optional[float] = None,
+        time_key: str = "time",
+    ) -> OrderResult:
+        """Binance's answer about an order (``POST`` or ``GET /api/v3/order``) in the
+        trader's terms. What filled is ``executedQty`` (``amount`` when the answer
+        does not say), its value ``cummulativeQuoteQty`` and its price the average,
+        the one over the other (a market order's own ``price`` is 0). An order that
+        ended (ENDED_STATES) after filling in part is ``filled`` for the part that
+        filled, as a Coinbase order is. The fee is the commission of the fills
+        charged in ``quote``; a commission in another asset is in ``other_fees``.
+        Only the FULL answer to an order has its fills, so the fee is not known from
+        ``GET /api/v3/order``."""
+        state = str(data.get("status") or "UNKNOWN").upper()
+        executed = data.get("executedQty")
+        filled = float(executed) if executed not in (None, "") else float(amount or 0)
+        value = float(data.get("cummulativeQuoteQty") or 0)
+        partial = state in self.ENDED_STATES and filled > 0
+        if partial:
+            status = "filled"
+        elif state == "EXPIRED_IN_MATCH":
+            status = "expired"
+        else:
+            status = state.lower()
+        reason = ""
+        if partial:
+            ordered = float(data.get("origQty") or 0)
+            reason = f"partly filled: {filled:g}" + (
+                f" of {ordered:g}" if ordered > 0 else ""
+            )
+        fee, other_fees = _binance_commissions(data.get("fills"), quote)
+        return OrderResult(
+            order_id=order_id,
+            symbol=symbol,
+            side=side,
+            amount=filled,
+            price=(
+                value / filled
+                if filled > 0 and value > 0
+                else float(data.get("price", price or 0))
+            ),
+            status=status,
             exchange="binance",
-            timestamp=data.get("transactTime", time.time() * 1000) / 1000,
+            timestamp=data.get(time_key, time.time() * 1000) / 1000,
+            reason=reason,
+            fee=fee,
+            fee_currency=quote if fee is not None else "",
+            filled_value=value if filled > 0 and value > 0 else None,
+            partial=partial,
+            other_fees=other_fees,
         )
 
     # ------------------------------------------------------------------
@@ -1749,15 +1833,8 @@ class BinanceExchange(AbstractExchange):
 
         symbol = binance_symbol.replace("USDT", "-USD")
 
-        return OrderResult(
-            order_id=order_id,
-            symbol=symbol,
-            side=data["side"].lower(),
-            amount=float(data.get("executedQty", 0)),
-            price=float(data.get("price", 0)),
-            status=data.get("status", "UNKNOWN").lower(),
-            exchange="binance",
-            timestamp=data.get("time", time.time() * 1000) / 1000,
+        return self._order_result(
+            data, order_id=order_id, symbol=symbol, side=data["side"].lower()
         )
 
     def cancel_order(self, order_id: str) -> bool:

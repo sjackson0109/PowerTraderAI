@@ -24,6 +24,8 @@ The owner's programme brief of 2026-11-11.
 | D | `D-backlog.md` | Work packages by milestone (M0-M8), the order of work, and the owner decisions O1-O21 |
 | E | Pull requests | Below |
 
+**A design awaiting a decision:** `N11-halt-equity-design.md`, which covers what the drawdown halt measures, how money moved in or out of the account moves it, and a proposed fix in three parts (N11, O21). It is docs only, and trading is unchanged.
+
 ## First implementation (Deliverable E)
 
 | PR | Milestone | What |

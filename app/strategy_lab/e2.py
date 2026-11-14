@@ -389,8 +389,20 @@ def declaration(
     second exchange in Settings order, the coins it has development bars for and those
     it has not; ``exposures`` the exploration's trial log (``exposures_record``);
     ``fees_read`` what the exchange layer gives as each coin's fee rates, beside the
-    declared 0.50%."""
+    declared 0.50%.
+
+    D2 declares the nine coins, so a record that leaves one out is refused: a coin with
+    no development bars in any exchange's cache is a missing input, not a smaller
+    evaluation."""
     check_declaration()
+    missing = sorted(set(COINS) - set(coins_kept))
+    if missing or left_out:
+        reasons = {c: left_out.get(c, "not loaded") for c in missing}
+        reasons.update({c: r for c, r in left_out.items() if c not in reasons})
+        raise E2Error(
+            "D2 declares the nine coins; these have no development bars in the caches "
+            f"of the exchanges in Settings order: {reasons}"
+        )
     gbp_usd = float(rate["gbp_usd"])
     lookbacks = [int(n) for n in ens_mod.LOOKBACKS]
     return {
@@ -569,6 +581,37 @@ def declaration(
 Loader = Callable[..., pd.DataFrame]
 
 
+def first_cached(
+    symbol: str,
+    tf: str,
+    cache_dir: Optional[str] = None,
+    exchanges: Optional[Sequence[str]] = None,
+) -> Optional[pd.Timestamp]:
+    """The first bar of ``symbol`` and ``tf`` in the cache of the first exchange, in
+    Settings order, whose cache holds bars of it. Each exchange's file is named by its
+    own pair, as the exchange layer reads it (``connector.market_symbol``): KuCoin holds
+    ``BNB-USDT``, not ``BNB-USD``. E1's ``first_cached`` names every file by the dollar
+    pair, which was right for its series, all from Coinbase; here it found no cached
+    bars for BNB and HYPE, which only KuCoin holds for these months."""
+    from market_data.candles import (
+        _connector,
+        _exchange_manager,
+        _read_cache,
+        cache_path,
+    )
+    from pt_exchange_abstraction import dollar_symbol
+
+    manager = _exchange_manager()
+    market = dollar_symbol(symbol)
+    for name in manager.exchange_names() if exchanges is None else exchanges:
+        connector = _connector(manager, name)
+        pair = connector.market_symbol(market) if connector is not None else market
+        frame = _read_cache(cache_path(pair, tf, cache_dir, name))
+        if not frame.empty:
+            return e1._utc(frame["open_time"].iloc[0])
+    return None
+
+
 def development_loader(
     base: Optional[Loader] = None,
     first: Optional[Callable[[str, str], Optional[pd.Timestamp]]] = None,
@@ -591,7 +634,7 @@ def development_loader(
     if first is None:
 
         def first(symbol, tf):
-            return e1.first_cached(symbol, tf, exchanges=names)
+            return first_cached(symbol, tf, exchanges=names)
 
     return e1.development_loader(base, first, offline=True)
 

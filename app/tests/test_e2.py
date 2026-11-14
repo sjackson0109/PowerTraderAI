@@ -56,8 +56,8 @@ def record_for_test():
         rate={"gbp_usd": 1.3476, "source": "test"},
         venue={"minimum_usd": {"BTC": 1.0}, "base_increment": {"BTC": 1e-8}},
         series_sha256={"BTC:1d": "aa"},
-        coins_kept=["BTC"],
-        left_out={"HYPE": "no bars"},
+        coins_kept=list(e2.COINS),
+        left_out={},
         exchange_order=["coinbase", "kraken", "kucoin"],
         listed_by_2021=["BTC"],
         served_by={"BTC:1d": "coinbase"},
@@ -236,11 +236,69 @@ class TestCandles:
             return e2.HISTORY_START
 
         monkeypatch.setattr(candles, "exchange_candles", fake)
-        monkeypatch.setattr(e1, "first_cached", first)
+        monkeypatch.setattr(e2, "first_cached", first)
         e2.development_loader(exchanges=["kraken"])(
             "BTC-USD", "1d", e2.HISTORY_START, e2.DEV_END
         )
         assert seen == [("first", ["kraken"]), ("candles", ["kraken"], True)]
+
+    def test_each_exchanges_cache_is_read_under_its_own_pair(
+        self, tmp_path, monkeypatch
+    ):
+        """Coinbase's cache has only a header for BNB-USD (it lists BNB from 2025-10);
+        KuCoin's holds BNB-USDT. The first bar is KuCoin's: E1's lookup, which names
+        every file by the dollar pair, finds none (what left BNB and HYPE out of the
+        first freeze, 2026-11-14)."""
+        import market_data.candles as candles
+
+        (tmp_path / "coinbase").mkdir()
+        (tmp_path / "kucoin").mkdir()
+        header = "open_time_ms,open,high,low,close,volume\n"
+        (tmp_path / "coinbase" / "BNB-USD_1d.csv").write_text(header)
+        rows = "".join(
+            f"{1577836800000 + i * DAY * 1000},30,31,29,30,1\n" for i in range(5)
+        )
+        (tmp_path / "kucoin" / "BNB-USDT_1d.csv").write_text(header + rows)
+
+        class Connector:
+            def __init__(self, quote):
+                self.quote = quote
+
+            def market_symbol(self, market):
+                return market.replace("-USD", f"-{self.quote}")
+
+        class Manager:
+            def exchange_names(self):
+                return ["coinbase", "kraken", "kucoin"]
+
+        connectors = {"coinbase": Connector("USD"), "kucoin": Connector("USDT")}
+        monkeypatch.setattr(candles, "_exchange_manager", lambda: Manager())
+        monkeypatch.setattr(candles, "_connector", lambda m, name: connectors.get(name))
+        first = e2.first_cached("BNB-USD", "1d", cache_dir=str(tmp_path))
+        assert first == pd.Timestamp("2020-01-01", tz="UTC")
+        assert (
+            e1.first_cached(
+                "BNB-USD",
+                "1d",
+                cache_dir=str(tmp_path),
+                exchanges=["coinbase", "kraken", "kucoin"],
+            )
+            is None
+        )
+
+    def test_a_record_that_leaves_a_declared_coin_out_is_refused(self):
+        with pytest.raises(e2.E2Error, match="D2 declares the nine coins"):
+            e2.declaration(
+                rate={"gbp_usd": 1.3476, "source": "test"},
+                venue={"minimum_usd": {"BTC": 1.0}, "base_increment": {"BTC": 1e-8}},
+                series_sha256={"BTC:1d": "aa"},
+                coins_kept=[c for c in e2.COINS if c not in ("BNB", "HYPE")],
+                left_out={"BNB": "no cached bars", "HYPE": "no cached bars"},
+                exchange_order=["coinbase", "kraken", "kucoin"],
+                listed_by_2021=["BTC"],
+                served_by={"BTC:1d": "coinbase"},
+                exposures=e2.exposures_record(EXPOSURE_LOG),
+            )
 
     def test_a_coin_without_bars_is_left_out_with_the_reason(self):
         def base(symbol, tf, a, b, cache_dir=None, offline=True):

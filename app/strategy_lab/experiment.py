@@ -8,7 +8,9 @@ accounts, the baselines with their seeds, the tests and the family they belong t
 
 * ``freeze`` writes it, sealed with its own SHA-256, with the code's hashes and the
   libraries' versions, under ``<data dir>/strategy_lab/experiments/<id>/`` and refuses
-  to overwrite one. Nothing is scored by freezing.
+  to overwrite one. Nothing is scored by freezing. A declaration that runs code beyond
+  the strategy packages (the research statistics, say) names it in ``code_extra``, and
+  its hashes are frozen and checked with the rest.
 * ``verify`` refuses a frozen experiment whose record, code, libraries or candles have
   changed since: such a run would not be the declared one.
 * ``log_trial`` appends one line per scored member to ``<data dir>/strategy_lab/
@@ -112,11 +114,17 @@ def strategy_record(
     }
 
 
-def code_hashes(app: Optional[str] = None) -> Dict[str, str]:
-    """SHA-256 (LF line endings) of every module a strategy experiment runs."""
+def code_hashes(
+    app: Optional[str] = None, code_extra: Optional[Mapping[str, Any]] = None
+) -> Dict[str, str]:
+    """SHA-256 (LF line endings) of every module a strategy experiment runs. A
+    declaration's ``code_extra`` (``{"packages": [...], "files": [...]}``) adds the
+    packages and files it runs beside these; without it the set is the one every
+    earlier record was frozen with."""
     app = app or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    more = code_extra or {}
     out: Dict[str, str] = {}
-    for package in CODE_PACKAGES:
+    for package in tuple(CODE_PACKAGES) + tuple(more.get("packages") or ()):
         for path in sorted(
             glob.glob(os.path.join(app, package, "**", "*.py"), recursive=True)
         ):
@@ -128,6 +136,7 @@ def code_hashes(app: Optional[str] = None) -> Dict[str, str]:
         "market_data/candles.py",
         "market_data/gaps.py",
         "market_data/timeframes.py",
+        *(more.get("files") or ()),
     ):
         path = os.path.join(app, extra)
         if os.path.isfile(path):
@@ -136,6 +145,13 @@ def code_hashes(app: Optional[str] = None) -> Dict[str, str]:
                     f.read().replace(b"\r\n", b"\n")
                 ).hexdigest()
     return out
+
+
+def _code_of(record: Mapping[str, Any]) -> Dict[str, str]:
+    """The code hashes a record is frozen and checked with: the strategy packages', and
+    its ``code_extra``'s when it names any (a record without one is unchanged)."""
+    extra = record.get("code_extra")
+    return code_hashes(code_extra=extra) if extra else code_hashes()
 
 
 def library_versions() -> Dict[str, Optional[str]]:
@@ -177,7 +193,7 @@ def freeze(
             "spec": SPEC,
             "spec_version": SPEC_VERSION,
             "frozen_at": frozen_at.isoformat(),
-            "code": code_hashes(),
+            "code": _code_of(declaration),
             "libraries": library_versions(),
         }
     )
@@ -206,7 +222,7 @@ def verify(
         "sha256"
     ] != record.get("sha256"):
         raise ExperimentError(f"experiment {experiment_id}: its record has been edited")
-    now_code = code_hashes()
+    now_code = _code_of(record)
     changed = sorted(
         name
         for name in set(record["code"]) | set(now_code)

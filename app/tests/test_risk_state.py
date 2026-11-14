@@ -303,6 +303,29 @@ def test_the_view_shows_what_the_value_leaves_out_and_why_buys_wait(tmp_path):
     assert view.peak_value == 50.0
 
 
+def test_a_peak_reset_clears_the_last_balances(tmp_path):
+    state = {
+        "peak_value": 10.0,
+        "last_balances": {"USD": 6.0, "BTC": 0.04},
+        "last_balances_ts": 5.0,
+        "balance_changes": [{"ts": 4.0, "kind": "loss", "value": -1.0}],
+    }
+    after = risk_state.apply_requests(state, {"reset_peak": {"ts": 9.0, "value": 8.0}})
+    assert "last_balances" not in after and "last_balances_ts" not in after
+    assert after["peak_value"] == 8.0
+    assert after["balance_changes"] == state["balance_changes"]  # kept, as facts
+    cleared = risk_state.apply_requests(
+        state, {"reset_peak": {"ts": 9.0, "value": None}}
+    )
+    assert "last_balances" not in cleared  # a Paper Account save clears them too
+    # a reset applied before is not applied again
+    again = dict(after, last_balances={"USD": 7.0}, last_balances_ts=10.0)
+    assert (
+        risk_state.apply_requests(again, {"reset_peak": {"ts": 9.0, "value": 8.0}})
+        == again
+    )
+
+
 from helpers import PaperTraderCase  # noqa: E402
 
 

@@ -4,7 +4,9 @@ Settings > Risk: the limits that protect the account.
 * **Account drawdown** - how far the account value is below the highest value the
   trader has seen (the peak): the peak, the account value and the drawdown now,
   measured as the trader's stop measures them (every balance, funds on hold
-  included, US dollars and the stablecoins at $1);
+  included, US dollars and the stablecoins at $1); and the last balance changes
+  no recorded fill explained (a rise counted as a deposit, which keeps the
+  drawdown; a fall as a loss);
   the warning and critical levels and the emergency stop, each with the account
   value it equals at the peak; and Reset peak, which sets the peak to the account
   value shown; and the holdings the account value leaves out (no usable USD price).
@@ -231,6 +233,36 @@ def scaled_text(view: risk_state.RiskView) -> str:
     )
 
 
+def changes_text(view: risk_state.RiskView, last: int = 5) -> str:
+    """The last balance changes no recorded fill explained, newest first ("" when
+    there are none)."""
+    if not view.balance_changes:
+        return ""
+    lines = ["Balance changes no recorded fill explains:"]
+    for change in reversed(view.balance_changes[-last:]):
+        assets = ", ".join(
+            f"{a} {'+' if q >= 0 else '-'}{quantity(abs(q))}" for a, q in change.assets
+        )
+        what = f" ({assets})" if assets else ""
+        if change.kind == "deposit":
+            line = (
+                f"Rose by {money(change.value)}{what} on {when(change.ts)}: "
+                "counted as a deposit"
+            )
+            if change.peak_from is not None and change.peak_to is not None:
+                line += (
+                    f"; the peak was scaled from {money(change.peak_from)} to "
+                    f"{money(change.peak_to)}, so the drawdown is unchanged"
+                )
+        else:
+            line = (
+                f"Fell by {money(-change.value)}{what} on {when(change.ts)}: "
+                "counted as a loss"
+            )
+        lines.append(line + ".")
+    return "\n".join(lines)
+
+
 def level_hint(peak: float, pct: Optional[float]) -> str:
     """The account value a level equals at the peak."""
     if not peak > 0.0 or pct is None:
@@ -305,6 +337,7 @@ class RiskSettingsWindow(tk.Toplevel):
         self.not_counted_var = tk.StringVar(master=self)
         self.waiting_var = tk.StringVar(master=self)
         self.scaled_var = tk.StringVar(master=self)
+        self.changes_var = tk.StringVar(master=self)
         self._shown_when_set: Dict[str, ttk.Label] = {}  # by var name
         # per setting key: the field's text, its hint, and what is wrong with it
         self.vars: Dict[str, tk.StringVar] = {}
@@ -377,7 +410,13 @@ class RiskSettingsWindow(tk.Toplevel):
         self.not_counted_var.set(not_counted_text(view))
         self.waiting_var.set(waiting_text(view))
         self.scaled_var.set(scaled_text(view))
-        for var in (self.not_counted_var, self.waiting_var, self.scaled_var):
+        self.changes_var.set(changes_text(view))
+        for var in (
+            self.not_counted_var,
+            self.waiting_var,
+            self.scaled_var,
+            self.changes_var,
+        ):
             label = self._shown_when_set.get(str(var))
             if label is None:
                 continue
@@ -693,6 +732,7 @@ class RiskSettingsWindow(tk.Toplevel):
             r += 1
         r = self._line_when_set(frm, r, self.not_counted_var, column=1)
         r = self._line_when_set(frm, r, self.scaled_var, column=1)
+        r = self._line_when_set(frm, r, self.changes_var, column=1)
         ttk.Button(frm, text="Reset peak...", command=self.reset_peak).grid(
             row=r, column=0, sticky="w", pady=(6, 0)
         )

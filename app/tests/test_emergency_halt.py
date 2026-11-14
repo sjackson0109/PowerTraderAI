@@ -110,6 +110,20 @@ class HaltedSessionTests(PaperTraderCase):
         # the same sell (its price says the bar), the same quantity, no other buy
         self.assertEqual(halted, plain)
 
+    def test_a_session_s_own_fills_explain_every_balance_change(self):
+        # the drawdown stop compares its balances with the fills recorded: a
+        # paper session's own buy and sell leave nothing unexplained, so no buy
+        # waits and nothing is counted as a deposit or a loss
+        import risk_state
+
+        self.assertEqual(
+            [o[1] for o in self.session()], ["OrderSide.BUY", "OrderSide.SELL"]
+        )
+        trader = self.trader_seen
+        self.assertIsNone(trader._balance_change)
+        self.assertEqual(risk_state.current(trader.data_dir).balance_changes, ())
+        self.assertIn("last_balances", risk_state.read_state(trader.data_dir))
+
     def test_halted_from_the_start_it_buys_nothing(self):
         self.assertEqual(self.session(halt_at="start"), [])
 

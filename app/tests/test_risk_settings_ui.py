@@ -249,6 +249,55 @@ def test_reset_peak_sets_the_peak_to_the_account_value_after_asking(
     win.destroy()
 
 
+def test_holdings_left_out_of_the_account_value_are_listed(root, folder, books):
+    risk_state.write_state(
+        books,
+        {
+            "peak_value": 10_000.0,
+            "not_counted": [
+                {"asset": "GBP", "quantity": 1250.0, "why": "no USD price"},
+                {
+                    "asset": "BTC",
+                    "quantity": 0.04,
+                    "why": "no price for over 10 minutes",
+                },
+            ],
+        },
+    )
+    win = open_window(root, folder, books, account=6_000.0)
+    assert win.not_counted_var.get() == (
+        "Not counted in the account value: GBP 1,250.00 (no USD price), "
+        "BTC 0.04 (no price for over 10 minutes)."
+    )
+    assert win.not_counted_var.get() in texts(win)
+    win.destroy()
+
+
+def test_buys_waiting_is_shown_with_why(root, folder, books):
+    risk_state.write_state(
+        books,
+        {
+            "buys_waiting": "no account value for over 10 minutes (the balances "
+            "could not be read)",
+            "buys_waiting_ts": 1.7e9,
+        },
+    )
+    win = open_window(root, folder, books)
+    assert win.waiting_var.get().startswith(
+        "Buys are waiting: no account value for over 10 minutes (the balances "
+        "could not be read), since "
+    )
+    assert win.waiting_var.get().endswith(". Sells still go through.")
+    win.destroy()
+
+
+def test_with_everything_counted_and_no_wait_neither_line_shows(root, folder, books):
+    risk_state.write_state(books, {"peak_value": 10_000.0})  # an older file
+    win = open_window(root, folder, books, account=9_500.0)
+    assert win.not_counted_var.get() == "" and win.waiting_var.get() == ""
+    win.destroy()
+
+
 def test_reset_peak_needs_an_account_value(root, folder, books):
     box = Box()
     win = open_window(root, folder, books, account=None, box=box)

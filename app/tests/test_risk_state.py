@@ -279,6 +279,30 @@ def test_the_view_shows_the_halt(tmp_path):
     assert risk_state.current(None) == risk_state.RiskView(0.0, 0.0)
 
 
+def test_the_view_shows_what_the_value_leaves_out_and_why_buys_wait(tmp_path):
+    books = str(tmp_path)
+    risk_state.write_state(books, {"peak_value": 50.0})  # a file from before
+    view = risk_state.current(books)
+    assert (view.not_counted, view.buys_waiting, view.buys_waiting_ts) == ((), "", 0.0)
+    risk_state.write_state(
+        books,
+        {
+            "peak_value": 50.0,
+            "not_counted": [
+                {"asset": "GBP", "quantity": 1250.0, "why": "no USD price"},
+                {"asset": "", "quantity": 1.0},  # unusable entries are skipped
+                "XRP",
+            ],
+            "buys_waiting": "no account value",
+            "buys_waiting_ts": 9.0,
+        },
+    )
+    view = risk_state.current(books)
+    assert view.not_counted == (("GBP", 1250.0, "no USD price"),)
+    assert (view.buys_waiting, view.buys_waiting_ts) == ("no account value", 9.0)
+    assert view.peak_value == 50.0
+
+
 from helpers import PaperTraderCase  # noqa: E402
 
 

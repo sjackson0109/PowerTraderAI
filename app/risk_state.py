@@ -8,7 +8,9 @@ trader_status.json, so paper and each live broker keep their own), each with one
 writer, so neither can undo the other's change:
 
 * ``risk_state.json`` - the trader's: the peak, the halt, and the time of the last
-  Settings > Risk request it has applied.
+  Settings > Risk request it has applied; also, for Settings > Risk, the holdings
+  its last account value left out (``not_counted``: no usable USD price) and why
+  buys wait, if they do (``buys_waiting``). A file without these shows neither.
 * ``risk_requests.json`` - the hub's: "set the peak to this value" (Reset peak; no
   value clears the peak, so the next account value is the peak) and "resume
   trading" (Resume trading), each with the time it was asked for.
@@ -27,7 +29,7 @@ import math
 import os
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 STATE_FILE = "risk_state.json"
 REQUESTS_FILE = "risk_requests.json"
@@ -164,6 +166,26 @@ class RiskView:
     halt_reason: str = ""
     halted_ts: float = 0.0
     halt_value: Optional[float] = None
+    # held assets the trader's last account value left out: (asset, quantity, why)
+    not_counted: Tuple[Tuple[str, float, str], ...] = ()
+    buys_waiting: str = ""  # why buys wait ("" when they do not)
+    buys_waiting_ts: float = 0.0
+
+
+def _not_counted(entries: Any) -> Tuple[Tuple[str, float, str], ...]:
+    """The saved ``not_counted`` list as (asset, quantity, why); entries without an
+    asset are skipped."""
+    out = []
+    for entry in entries if isinstance(entries, list) else []:
+        if isinstance(entry, Mapping) and str(entry.get("asset") or "").strip():
+            out.append(
+                (
+                    str(entry["asset"]).strip(),
+                    _number(entry.get("quantity")),
+                    str(entry.get("why") or ""),
+                )
+            )
+    return tuple(out)
 
 
 def current(folder: Optional[str]) -> RiskView:
@@ -179,6 +201,9 @@ def current(folder: Optional[str]) -> RiskView:
         halt_reason=str(state.get("halt_reason") or ""),
         halted_ts=_number(state.get("halted_ts")),
         halt_value=value if value > 0.0 else None,
+        not_counted=_not_counted(state.get("not_counted")),
+        buys_waiting=str(state.get("buys_waiting") or ""),
+        buys_waiting_ts=_number(state.get("buys_waiting_ts")),
     )
 
 

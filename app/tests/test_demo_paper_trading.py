@@ -1,5 +1,6 @@
 """FDS-087: the paper-trading demo goes through the real gate; the exchange layer's
-quotes (the exchanges in Settings, primary first) are faked."""
+quotes, fees and sell step and minimum order (the exchanges in Settings, primary
+first) are faked."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import unittest
 from unittest import mock
 
 import requests
-from helpers import FakeFees, FakeQuotes
+from helpers import FakeFees, FakeMarkets, FakeQuotes
 
 import demo_paper_trading as demo
 import trading_mode as tm
@@ -26,10 +27,12 @@ class DemoTests(unittest.TestCase):
         self.addCleanup(tm._quote_cache.clear)
         self.quotes = FakeQuotes()
         self.fees = FakeFees()  # 0.1% maker and taker
+        self.markets = FakeMarkets()  # no sell step or minimum order
         self.lines = []
         for patcher in (
             mock.patch.object(tm, "_layer_quote", self.quotes.layer_quote),
             mock.patch.object(tm, "_layer_fees", self.fees.layer_fees),
+            mock.patch.object(tm, "_layer_venue_rules", self.markets.venue_rules),
         ):
             patcher.start()
             self.addCleanup(patcher.stop)

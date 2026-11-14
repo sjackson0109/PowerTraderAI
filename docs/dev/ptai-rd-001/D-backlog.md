@@ -30,15 +30,19 @@ Work packages (WP) by milestone, with what they depend on, the tests they need a
 | 1.3 | Research series end at gaps over a day (strategy lab; the single-coin backtester `backtest/` still to do) | N17 | No | a 30-day hole: no trade spans it; XRP compare row recomputed as a diagnostic | Review | **PR #265** |
 | 1.4 | `MarketNotFound` is a HOLD, and each coin is handled in its own `try` | N8 | Yes (fix) | first coin raises; second still decided; status written | Review | **PR #272** |
 | 1.5 | The decision log names the exchange whose bars were used | N15 | No | primary fails; log names the fallback | Review | **PR #273** |
-| 1.6 | Refetch the last cached bars; refill interior gaps | N16 | Yes (data) | provisional close revised; the cache holds the revision | Review | Planned |
+| 1.6 | Refetch the last cached bars; refill interior gaps | N16 | Yes (data) | provisional close revised; the cache holds the revision | **Owner (O15): left to me 2026-11-12** | **PR #294** (stacked on #293 and #292): bars used 30 s after their close; the last 3 cached bars fetched again; interior gaps refilled within limits |
 | 1.7 | Cooldown counted from the fill bar | N13 | Yes (parity fix, live overlay) | replay and engine agree on the first allowed bar | Review | **PR #280** |
-| 1.8 | Entry actionable only within a window after its bar | N12 | Yes | ENTER at close + 6 h is recorded as missed | **Owner (O4)** | Proposed |
+| 1.8 | Entry actionable only within a window after its bar | N12 | Yes | ENTER at close + 6 h is recorded as missed | **Owner (O4, O15): left to me 2026-11-12** | **PR #292**: 15 minutes |
 | 1.9 | Risk states: entries refused / exits only / liquidate-if-authorised; remove false stub logs | N1 to N4 | Yes | a halt with held positions: exits still sell (after O1) | **Owner (O1): approved 2026-11-12** | **PR #270** |
 | 1.10 | Persisted order intents, resent with the same client id | N5, N6 | Yes (live) | a network error after acceptance: one order, not two | **Owner (O2): approved 2026-11-12** | **PR #271** |
 | 1.11 | Stationary bootstrap on marked days; calibration on null and known-skill fixtures | N19, N22 | No | size near 5% on null series; power reported on skill fixtures | **Owner (O3)**: measure a stricter variant first | **PR #266** (library) and **PR #277** (calibration; the default is the studentised test with 1.5x blocks) |
 | 1.12 | Observation fixes: freeze LLM mode and exchange order; code hash; Reconcile completeness | D2 to D7 | No | the readiness tests listed in A2 | Review | **PR #279** (D5) and **PR #286** (D2, D3, D4, D6, D7) |
-| 1.13 | Fee defaults from the exchange layer, or a refusal; paper applies sell steps and minimums | N27, N28 | Yes (paper) | fee feed fails: paper refuses; DOGE sell rounds to 0.1 | Review | Planned |
-| 1.14 | Intrabar drawdown for the halt check in replays | N18 | No | 9% intraday dip, 7% on closes: halt reported | Review | **PR #284** |
+| 1.13 | Fee defaults from the exchange layer, or a refusal; paper applies sell steps and minimums | N27, N28 | Yes (paper) | fee feed fails: paper refuses; DOGE sell rounds to 0.1 | **Owner (O14): N28 only** | **PR #297** (N28). N27 not done: paper keeps its 0.10% last resort |
+| 1.14 | Intrabar drawdown for the halt check in replays | N18 | No | 9% intraday dip, 7% on closes: halt reported | Review | **PR #284**; the peak at the earlier bars' highs (O12): **PR #288** |
+| 1.15 | Live and paper hold an entry while the bars it reads span a gap over a day; STRAT-005 finds its bars by time and is exempt | N17 (live part) | Yes | 30 days missing inside STRAT-004's window: the breakout is held as `LONG_GAP`; exits still run | **Owner (O15): left to me 2026-11-12** | **PR #293** (stacked on #292) |
+| 1.16 | Binance order results: partial fills, average price and fees | N7 | Yes (live, Binance) | an `EXPIRED` answer with `executedQty > 0` is recorded as a partial fill | **Owner (O15)** | **PR #295** |
+| 1.17 | An unreadable settings file blocks trading instead of reading as the defaults | N10 | Yes (paper) | a cut-short `pt_config.json` in paper mode: no orders | **Owner (O15)** | **PR #296** |
+| 1.18 | The drawdown halt on the trader's own equity, allowing for transfers | N11 | Yes (loosens a protective limit) | a 9% withdrawal does not trigger the halt | **Owner (O15, O21)** | **Held**: a design for transfers first (O21) |
 
 ### M2: unified research framework
 
@@ -47,7 +51,7 @@ Work packages (WP) by milestone, with what they depend on, the tests they need a
 | 2.1 | Programme trial ledger (C §5) + adapters from strategy-lab and model-lab trials. **PR #274** | — | old ledgers unchanged byte for byte; every engine job appends one line |
 | 2.2 | Dataset snapshots + one bar hash (replaces three). **PR #283** | 2.1 | the same bars give the same id; a revised bar gives a new id |
 | 2.3 | One statistics module (bootstrap, Holm, Romano-Wolf, deflated Sharpe, PBO, power). **PR #282** (the bootstrap is #266 and #277) | 1.11 | each method on null and skill fixtures |
-| 2.4 | One baseline library (random with the strategy's exits, matched holding, hold, cash, unfiltered) | — | each baseline's trade count and holding match their definition |
+| 2.4 | One baseline library (random with the strategy's exits, matched holding, hold, cash, unfiltered). Matched holding: beside the current baseline, reported only (O19) | — | each baseline's trade count and holding match their definition |
 | 2.5 | One cost model from `trading_fees` (retire 3 others) | 1.13 | every caller reads the same rate for the same exchange |
 | 2.6 | Report: daily/weekly/monthly/annual returns; £50/£200/£500/£10,000 accounts; capital use; return per capital-day; recovery time. **PR #276**: the period returns; **PR #281**: the account sizes, capital use and recovery time | 2.3 | hand-computed fixtures |
 | 2.7 | Code hashes cover every file on the path (strategies, exchange layer) | — | changing a strategy file breaks the seal |
@@ -66,11 +70,11 @@ The order follows B §20. OHLCV-only candidates come first, because no other dat
 
 | WP | Candidate (B id) | Kind of work | Notes |
 |---|---|---|---|
-| 3.1 | `breakout.zarattini-ensemble` | New catalogue entry | An ensemble of Donchian lookbacks of 20 days or more, with the midline ratchet; daily, long-only, sized at most 100% |
+| 3.1 | `breakout.zarattini-ensemble` | New catalogue entry | An ensemble of Donchian lookbacks of 20 days or more, with the midline ratchet; daily, long-only, sized at most 100%. **PR #290**: STRAT-007 (default 20 days, bounds 20 to 365) with OVL-MIDLINE, and an ensemble of 20, 30, 60, 90, 150, 250 and 360 days, each sized once at entry; research only. Explored on the development months in **PR #291** |
 | 3.2 | `trend.price-above-ma` | New catalogue entry | Daily close above its 50-200-day average, else cash. Declared as a member of the TSMOM family **PR #285**: STRAT-006, default 20 days (the published crypto rule), bounds 5 to 200; a declared evaluation names its grid |
 | 3.3 | `portfolio.equal-weight-1n`, `portfolio.dca-periodic` | Baselines (M2 2.4) | Every multi-coin result is compared with 1/N and periodic buying, as well as with random entries |
 | 3.4 | `risk.ratchet-stop`, `risk.atr-trailing-stop`, `regime.ma-trend-gate` | Evaluation only (M6) | Already built: evaluated as STRAT-004's exits and gate, against no stop and random stops. No new code |
-| 3.5 | `volatility.vol-targeting-sizing` + `volatility.ewma-riskmetrics` | SizingPolicy (M4 4.2) | Sized once at entry, at most 100%; re-tested, since the repo's earlier test found no drawdown gain |
+| 3.5 | `volatility.vol-targeting-sizing` + `volatility.ewma-riskmetrics` | SizingPolicy (M4 4.2) | Sized once at entry, at most 100%; re-tested, since the repo's earlier test found no drawdown gain. **PR #289**; explored in **PR #291**: at 25% a year, no drawdown gain beyond its smaller size |
 | 3.6 | `momentum.dual-momentum` | Needs the portfolio interface (C L6) | A weekly BTC/ETH/cash switch: one decision across coins |
 | 3.7 | `ml_model.calibration-ev-gate`, `ml_model.meta-labelling` | Gates (M4 4.4) | Take or skip STRAT-004/005 entries; must beat a random skip at the same rate |
 | 3.8 | `data_source.coinbase-public-market-data` | Recorder job | Records order-book snapshots and trades from now on, since no history exists. Needs WP 5.7 to run while the hub is closed |
@@ -83,8 +87,8 @@ Mean-reversion and microstructure candidates are priority 4 in B: the evidence i
 
 | WP | What | Depends |
 |---|---|---|
-| 4.1 | Feature library (C L2), with as-of tests; consolidates RSI, SMA and Parkinson | 2.2 |
-| 4.2 | Volatility features and sizing: EWMA, GARCH(1,1) (`arch`, NCSA licence), realised volatility; volatility targeting as a SizingPolicy | 4.1 |
+| 4.1 | Feature library (C L2), with as-of tests; consolidates RSI, SMA and Parkinson. **PR #287** | 2.2 |
+| 4.2 | Volatility features and sizing: EWMA, GARCH(1,1) (`arch`, NCSA licence), realised volatility; volatility targeting as a SizingPolicy. **PR #289**: Yang-Zhang added to the library's EWMA, realised and Parkinson; volatility targeting as a sizing policy, with random orders of its sizes as the baseline. GARCH(1,1) left out: `arch` is not installed, and the catalogue ranks it after the simple estimators | 4.1 |
 | 4.3 | Regime models: HMM (`hmmlearn`, BSD) and threshold rules, as overlays | 4.1 |
 | 4.4 | Meta-labelling and calibrated expected value on catalogue trades (the strategy lab's M family generalised) | 2.3 |
 | 4.5 | Combination policies plus the ablation harness (C L5) | 4.4 |
@@ -145,7 +149,7 @@ The lockbox is used only through O5.
 | O1 | Change the emergency halt: entries refused, exits still run, and liquidation only if explicitly allowed | It changes live and paper behaviour. FDS-SR-001 left the halt out of scope | **Approved 2026-11-12** ("yes, sounds like a big flaw"): PR #270, exits only, no liquidation |
 | O2 | Persisted order intents with resend under the same client id | Live order behaviour | **Approved 2026-11-12**: PR #271 |
 | O3 | Adopt the stationary, marked-day bootstrap for long holdings (it replaces the draft amendment) | A change to research rules | **2026-11-12: measure a stricter variant first.** Done in PR #277: none of four variants met the declared 6.0% limit; the lowest worst case (studentised, 1.5x blocks, 6.2%) is the library default. A declared evaluation names its method in its registration. **Accepted as the default, 2026-11-12** |
-| O4 | Entry actionable only within a window after its bar (for example 15 minutes) | Changes when trades happen | Yes, for parity with backtests. **2026-11-12: the owner left the live defect fixes to me** ("You decide, I just don't know"); built as its own PR (N12), merged by the owner |
+| O4 | Entry actionable only within a window after its bar (for example 15 minutes) | Changes when trades happen | Yes, for parity with backtests. **2026-11-12: the owner left the live defect fixes to me** ("You decide, I just don't know"); built as **PR #292** (N12), for the owner to merge |
 | O5 | Any lockbox opening | Spends the only unseen months | Not before a declared M6 finalist exists |
 | O6 | Install scikit-learn in the app's `.venv` | Changes the owner's environment | **Done 2026-11-12** ("go ahead, add it to requirements.txt too"): installed, pinned to what was there; PR #267 |
 | O7 | Raise any candidate to `paper` (STRAT-004 first, once D1 is merged) | Authorisation | **Approved 2026-11-12** for STRAT-004: PR #268, after #260 merged |
@@ -153,10 +157,15 @@ The lockbox is used only through O5.
 | O9 | A trading switch for any strategy in Settings > Strategy (the owner's request of 2026-11-12, e.g. STRAT-001 off now and on later) | Authorisation from the UI | Built: PR #269; switching on an entry its authorisation does not clear asks first |
 | O10 | Merge PRs #267 to #287 | Merges into the protected branch | **Approved 2026-11-12**: merged by me in stacked order, each brought up to date and green first. Later PRs are the owner's to merge |
 | O11 | N13: the live cooldown counts from the fill bar (#280) | Live behaviour | **Approved 2026-11-12** |
-| O12 | Drawdown in future registered evaluations (N18; F3 requirement 5 and E1's halt condition use daily closes) | A change to research rules | **2026-11-12: the trough at each bar's low, the peak at the highest high of the earlier bars.** E1 stays as registered. #284 reports the figures; the rule is a follow-up |
+| O12 | Drawdown in future registered evaluations (N18; F3 requirement 5 and E1's halt condition use daily closes) | A change to research rules | **2026-11-12: the trough at each bar's low, the peak at the highest high of the earlier bars.** E1 stays as registered. #284 reports the figures; **PR #288** moves their peak to the earlier bars' highs |
 | O13 | `pt_settings_manager.py` among an observation segment's frozen files (#286) | Ends running segments more often | **Approved 2026-11-12**: in #286 |
-| O14 | Paper fills: refuse when no fee rate is known (N27); round sells and apply minimums (N28) | Paper behaviour | **2026-11-12: N28 only.** Paper keeps its 0.10% last resort |
-| O15 | The live defect fixes N7, N10, N11, N12, N16, N17 (live part) | Live behaviour | **2026-11-12: left to me.** Built, each its own PR: N10, N12, N16, N7, N17. Held: N11, because measuring the halt on the trader's own equity loosens a protective limit; it needs a design for transfers first |
+| O14 | Paper fills: refuse when no fee rate is known (N27); round sells and apply minimums (N28) | Paper behaviour | **2026-11-12: N28 only** (**PR #297**). Paper keeps its 0.10% last resort |
+| O15 | The live defect fixes N7, N10, N11, N12, N16, N17 (live part) | Live behaviour | **2026-11-12: left to me.** Built, each its own PR: N12 **#292**, N17 **#293** (STRAT-005 exempt, owner's choice), N16 **#294**, N7 **#295**, N10 **#296**. Held: N11, because measuring the halt on the trader's own equity loosens a protective limit; it needs a design for transfers first |
 | O16 | STRAT-006's default average (#285): 20 days, or the backlog's 50 to 200 | Research defaults | **2026-11-12: 20 days**, the published rule |
+| O17 | A registered evaluation of the Donchian ensemble (#290), with its own random-entry baseline, the O3 bootstrap and the O12 drawdown rule | A registration, and later the lockbox | The exploration (#291) found the lead in returns over an equal-weight hold could not be told from chance, with a smaller fall on one path. **2026-11-13: draft it for review.** Nothing runs, and the lockbox stays closed (O5), until the owner approves the draft |
+| O18 | Volatility sizing at a higher target than 25% a year | Spends trials from the budget | At 25% it cut drawdowns no more than its own sizes in random order did (#291). **2026-11-13: test 50% and 75% a year**, two explorations of 10 seeded runs each |
+| O19 | A matched-holding random baseline (2.4) | The 2026-11-07 decision kept the strategy's own exits for random entries | **2026-11-13: add it beside the current baseline, reported only.** No pass or fail rule uses it unless a registration names it |
+| O20 | Merge PRs #288 to #298 | Merges into the protected branch | **Approved 2026-11-13**: merged by me in stacked order, each brought up to date and green first. Later PRs are the owner's to merge |
+| O21 | N11: the drawdown halt on the trader's own equity | Loosens a protective limit | **2026-11-13: a design first**, as a docs PR. Trading is unchanged until a build is approved |
 
-**Next research work (owner, 2026-11-12):** 4.2 (volatility features and sizing), then 3.1 (the Zarattini ensemble).
+**Next research work (owner, 2026-11-12):** 4.2 (volatility features and sizing), then 3.1 (the Zarattini ensemble). **Done 2026-11-13**: 4.2 in PR #289, 3.1 in PR #290, both explored in PR #291.

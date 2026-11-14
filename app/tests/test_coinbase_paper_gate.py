@@ -76,9 +76,11 @@ class CoinbaseGateBase(unittest.TestCase):
         for patch in (
             mock.patch.dict(os.environ, env, clear=True),
             mock.patch.object(self.pt_trader, "HUB_DATA_DIR", self.tmp.name),
-            # no network: the exchange layer gives no quote and no trading fees
+            # no network: the exchange layer gives no quote, no trading fees and no
+            # sell step or minimum order
             mock.patch.object(tm, "_layer_quote", return_value=None),
             mock.patch.object(tm, "_layer_fees", return_value=None),
+            mock.patch.object(tm, "_layer_venue_rules", return_value=tm.VenueRules()),
             # a stored credentials file must not leak into these tests
             mock.patch.object(ExchangeFactory, "_credentials", {}),
             mock.patch.object(ExchangeFactory, "load_credentials"),

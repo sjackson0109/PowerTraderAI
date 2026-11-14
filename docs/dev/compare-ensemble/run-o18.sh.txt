@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# O18 (2026-11-13): volatility sizing at 50% and 75% a year, and a recheck of the 25%
+# exploration's ensemble books on the merged #290 code. Same scratch sandbox as the 25%
+# exploration (copied from the nine-coin comparison's): no real user folders, no keys
+# (the keyring fails), its Settings and cached public candles. Code: the combined tree
+# wt-all7 (main 76534a1 + #288 to #298).
+set -u
+S="<the scratch folder>"
+B="$S/cmpens/sbx"
+PY="$S/venv2/Scripts/python.exe"
+APP="$S/wt-all7/app"
+C9="$S/wt-all7/docs/dev/run_compare9.py"
+CE="$S/wt-all7/docs/dev/run_compare_ensemble.py"
+export POWERTRADER_HOME="$(cygpath -w "$B/home")"
+export APPDATA="$(cygpath -w "$B/roaming")"
+export LOCALAPPDATA="$(cygpath -w "$B/local")"
+export PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1 PYTHONIOENCODING=utf-8 POWERTRADER_USER_REGION=GLOBAL
+cd "$B" || exit 1
+w() { cygpath -w "$1"; }
+echo "trials before: $(wc -l < "$B/home/data/strategy_lab/trials.jsonl")"
+"$PY" -u "$(w "$S/cmpvol/ensemble_recheck.py")" "$(w "$APP")" "$(w "$S/cmpvol/out/ensemble_recheck.json")" "$(w "$C9")" "$(w "$CE")" "$(w "$S/cmpens/out/lines")" || { echo "RECHECK FAILED"; exit 1; }
+"$PY" -u "$(w "$S/cmpvol/run_vol_targets.py")" "$(w "$APP")" "$(w "$S/cmpvol/out")" "$(w "$C9")" "$(w "$CE")" || { echo "RUNS FAILED"; exit 1; }
+echo "trials after: $(wc -l < "$B/home/data/strategy_lab/trials.jsonl")"
+echo "ALL DONE"

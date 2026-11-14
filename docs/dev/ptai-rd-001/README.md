@@ -107,6 +107,10 @@ The owner's programme brief of 2026-11-11.
 | #311 | Docs | The exploration's equal-weight hold buys every coin (a correction to #291) |
 | #312 | M6 (O27) | SR1-E2's code: random entries for the book's slices, F3 for a book with D1, the record and the driver (on #310) |
 | #313 | Docs (O27) | SR1-E2 approved, with D1 to D5 and the hold's rule; decisions O26 to O28 |
+| #314 | M6 | SR1-E2 reads each exchange's cache under its own pair, and refuses a record missing a declared coin (found by the void first freeze) |
+| #315 | M6 (O27) | SR1-E2's run: the report, the frozen record, the evidence and the run log (not a finalist) |
+
+#314 was merged by me on the owner's word of 2026-11-14. #315 is the owner's to merge.
 
 ## The headline findings
 

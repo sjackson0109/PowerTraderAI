@@ -633,6 +633,85 @@ The owner approved raising STRAT-004 to `paper` once the late-candle defect D1 w
 
 **Still open before an observation segment starts** (readiness section 14): the coins, the paper balance, the fee source, the code freeze, the duration, the reserved months, the forward months and the thresholds. D2, D3, D6 and D7 are unchanged.
 
+## SR1-E2: the Donchian ensemble, registered and run (2026-11-14)
+
+### The owner's authorisation
+
+The owner approved SR1-E2 on 2026-11-14 (`ptai-rd-001/E2-ensemble-registration-draft.md`, D5, PR #313): the build, a rehearsal on synthetic candles, the freeze and one development run. There is no paper or live activation and no promotion, and the lockbox stays closed.
+
+**Decisions:**
+- **D1:** for this evaluation only, the book's drawdown must be below the equal-weight hold's; the 8% halt is reported.
+- **D2:** the nine coins.
+- **D3:** the hold comparison is shown, not tested.
+- **D4:** the book's own sizing decides.
+- **The hold:** every coin is bought with its own ninth of the starting account (#311 corrected #291 for it).
+
+### What was done, in order
+
+1. **The code, merged first.**
+   - PRs #310 (`mean_test`), #311, #312 (SR1-E2's code) and #313 (the approval record) were merged in that order, each green first.
+   - The full guarded suite with #310 and #312 passed: 3,565 passed, 0 failed.
+   - The rehearsal on synthetic candles took 862 s.
+2. **The rate.**
+   - **Value:** £1 = $1.3238, from the Bank of England's XUDLUSS for 2026-11-12, retrieved 2026-11-14T18:57:33Z with E1's `rate` step.
+   - **Checked:** against the ECB's same-day cross (1.32556): a difference of 0.133%, against a 0.25% tolerance.
+3. **The sandbox.**
+   - **Source:** the exploration's, with every exchange's candle cache cut at 2025-05-06 00:00 UTC (`cache_cut.json`). The cache held no later bar, so nothing was dropped.
+   - **Not copied:** its trial log.
+4. **The first freeze was void.**
+   - **The record:** `0ee98507…`, 18:58 UTC.
+   - **What went wrong:** it kept 7 coins, with BNB and HYPE listed as "no cached bars". E1's `first_cached` names every exchange's file by the dollar pair, so KuCoin's `BNB-USDT` and `HYPE-USDT` were not found after Coinbase's header-only files. Nothing was run, scored or logged (`sr1-e2/void-1/`).
+   - **The fix:** PR #314 (merged `b8eb618`). It names each exchange's file by its own pair and refuses a record that leaves out a declared coin.
+5. **The freeze.**
+   - **When and where:** `SR1-E2`, 2026-11-14T19:37:25Z, in a fresh sandbox, on `main` at `b8eb618`.
+   - **The record:** SHA-256 `f3caa70d9b2cb80328b787dbff9a946ed0eb963291308d4efcbf18643514cd4a`; the approved design `de4c2057…`.
+   - **The candles:** 9 series. BNB and HYPE came from KuCoin and the other seven from Coinbase.
+6. **The run.**
+   - **Checks:** the record, the code and the candles were verified first.
+   - **Duration:** 962 s.
+   - **Trials logged:** 19 (strategy 16, sizing 3), in both the trial log and the programme ledger. The second-exchange row did not run, because Kraken's cache holds no development bars.
+
+**After the run,** section 12 of the report was written by hand.
+
+**Files** in `docs/dev/sr1-e2/`:
+
+| File | What | SHA-256 |
+|---|---|---|
+| `experiment.json` | The frozen record, as the sandbox stores it | `69151aff…` |
+| `results.json` | Every figure | `bb85b1d8…` |
+| `evidence.json` | The sealed result lines | `d665d8be…` |
+| `trials.jsonl`, `ledger.jsonl` | The trial log and the programme ledger | `877158f7…`, `86bf808e…` |
+| `rate.json`, `rate/` | The rate and its two raw sources | `18c877a9…` |
+| `cache_cut.json` | The candle cache's cut, file by file | `1df523ae…` |
+| `SR1-E2-REPORT-dev.md` | The report | — |
+| `run.log`, `freeze.log` | The run's progress | — |
+| `void-1/` | The void first freeze's record and log | — |
+
+### Results, in brief
+
+| Member | Outcome |
+|---|---|
+| B1: the book against random entries | Too few trades to tell (p = 0.155; 0.19 after Holm). 15.4% of 2,000 draws did as well; the smallest detectable edge was +0.22% a capital-day |
+| B2: the book's economics | Fail: the profit test did not pass Holm (p = 0.097). Every other requirement passed, including D1: a 47.3% fall against the hold's 74.5%, at the lows |
+
+- **Not a finalist:** the lockbox stays closed.
+- **Shown:**
+  - The lead over the hold was +0.021 a year (p = 0.46).
+  - PBO was 0.93.
+  - The book reached the 8% halt on 2021-01-12.
+
+Every line is development only: not evidence for enabling anything.
+
+### Where the registration was not explicit (as built, recorded in the record)
+
+| Point | As built |
+|---|---|
+| REF-RANDOM-E's count | The trades the book's path took in each slice, with E1's "same waits, random order"; member k's draw b is seeded seed + 2,000k + b |
+| Pooling | B2's `rpcd_test` and the hold's `mean_test`: 10 runs of 2,000; p pooled from the counts; the interval is the median of the runs' bounds |
+| PBO | Marked daily profit in 16 equal blocks of days, since these members hold for months |
+| Shown p-values | Each member alone, the sizing books and the robustness rows get a 10-run `rpcd_test` p (for BH); matched holding gets none (O19) |
+| Fees | 0.50% declared; the exchange layer's unauthenticated answer (Coinbase's standard rates) is recorded beside it |
+
 ## Backlog (non-critical)
 
 FDS-SR-001 §13, and:

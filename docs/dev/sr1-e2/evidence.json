@@ -1,0 +1,22 @@
+{
+ "experiment": "SR1-E2",
+ "lines": [
+  {
+   "kind": "trading",
+   "model": "The ensemble of 7 channels (20 to 360 days) against random entries with each member's own exits",
+   "period": "2021-01-01 to 2025-05-06, 9 coins, 0.50% taker + 0.05% slippage, £10,000 (E2)",
+   "recorded": "2026-11-14, development only",
+   "strategy_id": "STRAT-007",
+   "text": "Too few trades to tell: this test could only see an edge above +0.2184% a capital-day (return per capital-day +0.3751% against a random median of +0.2981%, p = 0.1549 (Holm over 2, B = 2,000), 630 trades). Development only: not evidence for enabling anything."
+  },
+  {
+   "kind": "economic",
+   "model": "The ensemble of 7 channels (20 to 360 days)",
+   "period": "2021-01-01 to 2025-05-06, 9 coins, 0.50% taker + 0.05% slippage, £10,000 (E2)",
+   "recorded": "2026-11-14, development only",
+   "strategy_id": "STRAT-007",
+   "text": "Not shown to be profitable after fees. The book failed the requirement that its bootstrap test of return per capital-day passes Holm (p = 0.0967). Figures: net $+36,983.30 on £10,000, return per capital-day +0.3751%, 630 trades, maximum drawdown 47.26% at the bars' lows, against the equal-weight hold's 74.55%, smallest detectable return per capital-day +0.7626%. The book reached the trader's 8% halt on 2021-01-12: trading it would need the halt changed. Development only: not evidence for enabling anything."
+  }
+ ],
+ "sha256": "19c677f49420f95649b077dbb0953cbdca7cff7ec7e8d667d323454323974edc"
+}

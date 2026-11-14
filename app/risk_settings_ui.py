@@ -5,10 +5,11 @@ Settings > Risk: the limits that protect the account.
   trader has seen (the peak): the peak, the account value and the drawdown now;
   the warning and critical levels and the emergency stop, each with the account
   value it equals at the peak; and Reset peak, which sets the peak to the account
-  value shown.
+  value shown; and the holdings the account value leaves out (no usable USD price).
 * **Trading halt** - after an emergency stop: since when, why, and Resume trading,
   the only way buying starts again (a restart does not). A halt refuses buys only:
-  exits, stops and the trailing margin still sell.
+  exits, stops and the trailing margin still sell. Also why buys wait, while they
+  do (no account value for a time).
 * **Position and DCA limits** - Start allocation %, Minimum order margin %, Max per
   coin %, DCA multiplier and Max DCA buys per coin in 24 hours, with the dollar
   amounts at the last account value.
@@ -193,6 +194,30 @@ def halt_text(view: risk_state.RiskView) -> str:
     return " \u00b7 ".join(parts)
 
 
+def quantity(value: float) -> str:
+    """``1250.0`` -> ``"1,250.00"``, ``0.00012`` -> ``"0.00012"``."""
+    text = f"{value:,.8f}".rstrip("0")
+    whole, _, part = text.partition(".")
+    return f"{whole}.{part.ljust(2, '0')}"
+
+
+def not_counted_text(view: risk_state.RiskView) -> str:
+    """The held assets the trader's account value leaves out, and why ("" when
+    none)."""
+    if not view.not_counted:
+        return ""
+    held = ", ".join(f"{a} {quantity(q)} ({why})" for a, q, why in view.not_counted)
+    return f"Not counted in the account value: {held}."
+
+
+def waiting_text(view: risk_state.RiskView) -> str:
+    """Why buys wait, and since when ("" when they do not)."""
+    if not view.buys_waiting:
+        return ""
+    since = f", since {when(view.buys_waiting_ts)}" if view.buys_waiting_ts else ""
+    return f"Buys are waiting: {view.buys_waiting}{since}. Sells still go through."
+
+
 def level_hint(peak: float, pct: Optional[float]) -> str:
     """The account value a level equals at the peak."""
     if not peak > 0.0 or pct is None:
@@ -251,6 +276,9 @@ class RiskSettingsWindow(tk.Toplevel):
         self.account_var = tk.StringVar(master=self)
         self.drawdown_var = tk.StringVar(master=self)
         self.halt_var = tk.StringVar(master=self)
+        self.not_counted_var = tk.StringVar(master=self)
+        self.waiting_var = tk.StringVar(master=self)
+        self._shown_when_set: Dict[str, ttk.Label] = {}  # by var name
         # per setting key: the field's text, its hint, and what is wrong with it
         self.vars: Dict[str, tk.StringVar] = {}
         self.hints: Dict[str, tk.StringVar] = {}
@@ -322,6 +350,16 @@ class RiskSettingsWindow(tk.Toplevel):
             if view.halted
             else "Trading is not halted."
         )
+        self.not_counted_var.set(not_counted_text(view))
+        self.waiting_var.set(waiting_text(view))
+        for var in (self.not_counted_var, self.waiting_var):
+            label = self._shown_when_set.get(str(var))
+            if label is None:
+                continue
+            if var.get():
+                label.grid()
+            else:
+                label.grid_remove()
         self.resume_button.state(["!disabled"] if view.halted else ["disabled"])
         self._show_hints()
 
@@ -568,6 +606,16 @@ class RiskSettingsWindow(tk.Toplevel):
             justify="left",
         ).grid(row=r, column=column, columnspan=3 - column, sticky="w")
 
+    def _line_when_set(
+        self, frm: ttk.Frame, r: int, var: tk.StringVar, column: int = 0
+    ) -> int:
+        """A line showing ``var``, hidden while it is empty (``refresh``)."""
+        label = ttk.Label(frm, textvariable=var, wraplength=HELP_WRAP, justify="left")
+        label.grid(row=r, column=column, columnspan=3 - column, sticky="w", pady=(4, 0))
+        label.grid_remove()
+        self._shown_when_set[str(var)] = label
+        return r + 1
+
     def _build_halt(self, frm: ttk.Frame, r: int) -> int:
         ttk.Label(frm, text="Trading halt", style="Header.TLabel").grid(
             row=r, column=0, columnspan=3, sticky="w"
@@ -577,6 +625,7 @@ class RiskSettingsWindow(tk.Toplevel):
             frm, textvariable=self.halt_var, wraplength=HELP_WRAP, justify="left"
         ).grid(row=r, column=0, columnspan=3, sticky="w", pady=(4, 0))
         r += 1
+        r = self._line_when_set(frm, r, self.waiting_var)
         self.resume_button = ttk.Button(
             frm, text="Resume trading...", command=self.resume
         )
@@ -615,6 +664,7 @@ class RiskSettingsWindow(tk.Toplevel):
                 row=r, column=1, columnspan=2, sticky="w", pady=(4, 0)
             )
             r += 1
+        r = self._line_when_set(frm, r, self.not_counted_var, column=1)
         ttk.Button(frm, text="Reset peak...", command=self.reset_peak).grid(
             row=r, column=0, sticky="w", pady=(6, 0)
         )

@@ -77,6 +77,19 @@ UNKNOWN_ORDER_RESEND_SECONDS = 15 * 60
 # Elsewhere no order is sent on that coin and side for this long, so the holdings
 # can show whether it was made (an entry is never made in a coin already held):
 UNKNOWN_ORDER_WAIT_SECONDS = 60
+# A held asset with no price this pass is valued at its last bid while that is at
+# most this old; after that it is left out of the account value (and listed in
+# Settings > Risk), so one asset without a USD price cannot stop the drawdown check.
+# One with no price yet in this run holds the value back (the pass forms none, buys
+# wait) for this long since the run first saw it so, and is then left out the same
+# way: a quote missing on the first pass after a start cannot drop a large holding.
+HELD_PRICE_MAX_AGE_SECONDS = 10 * 60
+NO_USD_PRICE = "no USD price"
+PRICE_TOO_OLD = f"no price for over {HELD_PRICE_MAX_AGE_SECONDS // 60} minutes"
+NOT_YET_PRICED = "no price yet"
+# With no account value at all for this long (the balances cannot be read), the
+# drawdown cannot be checked: buys wait until there is one again; sells go on
+ACCOUNT_VALUE_MAX_AGE_SECONDS = 10 * 60
 
 
 # Initialize colorama
@@ -403,6 +416,22 @@ class _TraderRiskAdapter:
             self.manager.is_trading_halted or self.manager.emergency_stop_triggered
         )
 
+    def report(self, not_counted: Optional[list], buys_waiting: str) -> None:
+        """For Settings > Risk: the held assets this pass's account value left out,
+        as (asset, quantity, why) (None: no value this pass, the last list stays),
+        and why buys wait ("" when they do not). Saved only when either changes."""
+        before = (self._state.get("not_counted"), self._state.get("buys_waiting"))
+        if not_counted is not None:
+            self._state["not_counted"] = [
+                {"asset": asset, "quantity": float(qty), "why": why}
+                for asset, qty, why in not_counted
+            ]
+        if buys_waiting != (self._state.get("buys_waiting") or ""):
+            self._state["buys_waiting"] = buys_waiting
+            self._state["buys_waiting_ts"] = time.time() if buys_waiting else 0.0
+        if (self._state.get("not_counted"), self._state.get("buys_waiting")) != before:
+            self._save_state()
+
     def update_portfolio_value(self, value: float) -> None:
         if self.state_dir:
             self._apply_requests()
@@ -575,6 +604,17 @@ class CryptoAPITrading:
             "holdings_buy_value": None,
             "percent_in_trade": None,
         }
+        # When an account value was last formed (this start, until the first pass
+        # forms one), and why there is none since: with none for
+        # ACCOUNT_VALUE_MAX_AGE_SECONDS, buys wait
+        self._account_value_ts = time.time()
+        self._no_value_why = ""
+        # whether this run has formed an account value, and whether a pass has found
+        # none yet (buys wait until the first one: no buy before a drawdown check)
+        self._value_formed = False
+        self._no_value_yet = False
+        # <ASSET>-USD -> when this run first saw it held with no price at all
+        self._unpriced_since: Dict[str, float] = {}
 
         self.dca_levels_triggered = {}  # Track DCA levels for each crypto
         self.dca_levels = list(DCA_LEVELS)  # Hard DCA triggers (percent PnL)
@@ -1848,6 +1888,53 @@ class CryptoAPITrading:
         value = (self._last_good_account_snapshot or {}).get("total_account_value")
         return float(value) if value is not None else None
 
+    def _held_price(
+        self, symbol: str, buy_prices: dict, sell_prices: dict, now: float
+    ) -> tuple:
+        """(ask, bid, "") for a held asset in the account value: this pass's price,
+        or its last one while that is at most HELD_PRICE_MAX_AGE_SECONDS old. Else
+        (0.0, 0.0, why not): PRICE_TOO_OLD when its last one is older, and with none
+        in this run NOT_YET_PRICED (the pass forms no value) until it has gone
+        HELD_PRICE_MAX_AGE_SECONDS so since this run first saw it, then NO_USD_PRICE.
+        Both PRICE_TOO_OLD and NO_USD_PRICE leave it out of the value."""
+        cached = self._last_good_bid_ask.get(symbol) or {}
+        age = now - float(cached.get("ts", 0.0) or 0.0) if cached else None
+        ask = float(buy_prices.get(symbol, 0.0) or 0.0)
+        bid = float(sell_prices.get(symbol, 0.0) or 0.0)
+        unpriced = self.__dict__.setdefault("_unpriced_since", {})
+        if (
+            ask > 0.0
+            and bid > 0.0
+            and (age is None or age <= HELD_PRICE_MAX_AGE_SECONDS)
+        ):
+            unpriced.pop(symbol, None)
+            return ask, bid, ""
+        if age is not None and age <= HELD_PRICE_MAX_AGE_SECONDS:
+            ask = float(cached.get("ask", 0.0) or 0.0)
+            bid = float(cached.get("bid", 0.0) or 0.0)
+            if ask > 0.0 and bid > 0.0:
+                return ask, bid, ""
+        if cached:
+            return 0.0, 0.0, PRICE_TOO_OLD
+        since = unpriced.setdefault(symbol, now)
+        if now - since < HELD_PRICE_MAX_AGE_SECONDS:
+            return 0.0, 0.0, NOT_YET_PRICED
+        return 0.0, 0.0, NO_USD_PRICE
+
+    def _buys_wait_reason(self) -> str:
+        """Why buys wait ("" when they do not): while this run's passes have formed
+        no account value yet, and with none for over ACCOUNT_VALUE_MAX_AGE_SECONDS,
+        the drawdown cannot be checked, so buys wait until there is one again.
+        Sells are never held back."""
+        since = getattr(self, "_account_value_ts", None)
+        why = getattr(self, "_no_value_why", "") or "the balances could not be read"
+        if getattr(self, "_no_value_yet", False):
+            return f"no account value yet since the trader started ({why})"
+        if since is None or time.time() - since <= ACCOUNT_VALUE_MAX_AGE_SECONDS:
+            return ""
+        minutes = ACCOUNT_VALUE_MAX_AGE_SECONDS // 60
+        return f"no account value for over {minutes} minutes ({why})"
+
     def _risk_check(
         self,
         symbol: str,
@@ -1863,6 +1950,13 @@ class CryptoAPITrading:
             print(
                 f"{Fore.RED}RISK HALT: buying is halted by the emergency stop; sells "
                 f"still go through{Style.RESET_ALL}"
+            )
+            return False
+        waiting = self._buys_wait_reason()
+        if side != "sell" and waiting:
+            print(
+                f"{Fore.YELLOW}BUYS WAITING: {waiting}; sells still go "
+                f"through{Style.RESET_ALL}"
             )
             return False
 
@@ -2573,6 +2667,11 @@ class CryptoAPITrading:
 
         holdings_buy_value = 0.0
         holdings_sell_value = 0.0
+        # held assets left out of the account value: (asset, quantity, why), and
+        # those with no price yet in this run (they hold the value back)
+        not_counted = []
+        not_yet_priced = []
+        now = time.time()
 
         for holding in holdings_list:
             try:
@@ -2585,12 +2684,18 @@ class CryptoAPITrading:
                     continue
 
                 sym = f"{asset}-USD"
-                bp = float(current_buy_prices.get(sym, 0.0) or 0.0)
-                sp = float(current_sell_prices.get(sym, 0.0) or 0.0)
+                bp, sp, why = self._held_price(
+                    sym, current_buy_prices, current_sell_prices, now
+                )
 
-                # If any held asset is missing a usable price this tick, do NOT allow a new "low" snapshot
-                if bp <= 0.0 or sp <= 0.0:
+                # A held asset with no usable price is left out of the value and
+                # listed; one with no price yet in this run holds the value back
+                if why == NOT_YET_PRICED:
+                    not_yet_priced.append(str(asset))
                     snapshot_ok = False
+                    continue
+                if why:
+                    not_counted.append((str(asset), qty, why))
                     continue
 
                 holdings_buy_value += qty * bp
@@ -2607,7 +2712,16 @@ class CryptoAPITrading:
         )
 
         # If this tick is incomplete, fall back to last known-good snapshot so the GUI chart never gets a bogus dip.
-        if (not snapshot_ok) or (total_account_value <= 0.0):
+        value_formed = snapshot_ok and total_account_value > 0.0
+        if not value_formed:
+            if not_yet_priced:
+                self._no_value_why = f"no price yet for {', '.join(not_yet_priced)}"
+            elif not snapshot_ok:
+                self._no_value_why = "the balances could not be read"
+            else:
+                self._no_value_why = "nothing in the account has a USD value"
+            # until this run forms a value, buys wait: none before a drawdown check
+            self._no_value_yet = not getattr(self, "_value_formed", False)
             last = getattr(self, "_last_good_account_snapshot", None) or {}
             if last.get("total_account_value") is not None:
                 total_account_value = float(last["total_account_value"])
@@ -2628,12 +2742,34 @@ class CryptoAPITrading:
                 "holdings_buy_value": float(holdings_buy_value),
                 "percent_in_trade": float(in_use),
             }
+            self._account_value_ts = now
+            self._value_formed = True
+            self._no_value_yet = False
+        # what the value leaves out, and whether buys wait, for Settings > Risk
+        buys_waiting = self._buys_wait_reason()
+        self.risk_manager.report(not_counted if value_formed else None, buys_waiting)
 
         os.system("cls" if os.name == "nt" else "clear")
         print("\n--- Account Summary ---")
         print(f"Total Account Value: ${total_account_value:.2f}")
         print(f"Holdings Value: ${holdings_sell_value:.2f}")
         print(f"Percent In Trade: {in_use:.2f}%")
+        if value_formed and not_counted:
+            left_out = ", ".join(f"{a} {q:g} ({why})" for a, q, why in not_counted)
+            print(
+                f"{Fore.YELLOW}Not counted in the account value: "
+                f"{left_out}{Style.RESET_ALL}"
+            )
+        if buys_waiting:
+            print(
+                f"{Fore.YELLOW}BUYS WAITING: {buys_waiting}. Exits, stops and the "
+                f"trailing margin still sell.{Style.RESET_ALL}"
+            )
+        # The drawdown is checked on the value this pass formed, before anything is
+        # bought (run() does not check it again at the next cycle's start)
+        if value_formed:
+            self._check_drawdown(self._get_account_value())
+            self._last_good_account_snapshot["checked"] = True
         print(
             f"Trailing PM: start +{self.pm_start_pct_no_dca:.2f}% (no DCA) / +{self.pm_start_pct_with_dca:.2f}% (with DCA) "
             f"| gap {self.trailing_gap_pct:.2f}%"
@@ -3176,9 +3312,10 @@ class CryptoAPITrading:
 
         entry_coins = set(self._entry_coins())
         start_index = 0
-        # buying is halted (an emergency stop): no new trade is looked for, so no
-        # entry decision, LLM check or entry assessment is made either
-        if self.risk_manager.is_trading_halted():
+        # buying is halted (an emergency stop), or buys wait (no account value): no
+        # new trade is looked for, so no entry decision, LLM check or entry
+        # assessment is made either
+        if self.risk_manager.is_trading_halted() or buys_waiting:
             start_index = len(crypto_symbols)
         while start_index < len(crypto_symbols):
             base_symbol = crypto_symbols[start_index].upper().strip()
@@ -3357,37 +3494,44 @@ class CryptoAPITrading:
         )
         logger.warning(f"Buying halted ({reason}); held positions are still managed")
 
+    def _check_drawdown(self, value: float) -> None:
+        """The emergency stop's check of the account value ``value``: the peak is
+        raised first (and Settings > Risk's requests applied), then the warnings, and
+        at the emergency level a halt. An emergency stop halts buying: no new trade
+        and no DCA buy, also after a restart, until Resume trading. What is held is
+        still managed: exits, stops and the trailing margin still sell."""
+        self.risk_manager.update_portfolio_value(value)
+        if self.risk_manager.is_trading_halted():
+            self._say_halted()
+            return
+        risk_status = self.risk_manager.check_emergency_conditions(value)
+        if risk_status["emergency_stop"]:
+            print(f"{Fore.RED}EMERGENCY STOP: {risk_status['reason']}{Style.RESET_ALL}")
+            self.risk_manager.emergency_stop(risk_status["reason"], value)
+            self._say_halted(force=True)
+
+        # Log risk warnings
+        for warning in risk_status["warnings"]:
+            print(f"{Fore.YELLOW}RISK WARNING: {warning}{Style.RESET_ALL}")
+
     def run(self):
         while True:
             try:
                 # Risk monitoring at start of each cycle (needs a complete account
                 # snapshot, so it starts after the first manage_trades() pass). This
-                # also applies Resume trading from Settings > Risk.
+                # also applies Resume trading from Settings > Risk. A value the pass
+                # that formed it has checked is not checked (or warned about) again.
                 current_portfolio_value = self._get_account_value()
-                if current_portfolio_value is not None:
-                    self.risk_manager.update_portfolio_value(current_portfolio_value)
-
-                # An emergency stop halts buying: no new trade and no DCA buy, also
-                # after a restart, until Resume trading. What is held is still
-                # managed: exits, stops and the trailing margin still sell.
-                if self.risk_manager.is_trading_halted():
-                    self._say_halted()
-                elif current_portfolio_value is not None:
-                    risk_status = self.risk_manager.check_emergency_conditions(
-                        current_portfolio_value
-                    )
-                    if risk_status["emergency_stop"]:
-                        print(
-                            f"{Fore.RED}EMERGENCY STOP: {risk_status['reason']}{Style.RESET_ALL}"
+                last = self._last_good_account_snapshot or {}
+                if last.pop("checked", False) or current_portfolio_value is None:
+                    if current_portfolio_value is not None:
+                        self.risk_manager.update_portfolio_value(
+                            current_portfolio_value
                         )
-                        self.risk_manager.emergency_stop(
-                            risk_status["reason"], current_portfolio_value
-                        )
-                        self._say_halted(force=True)
-
-                    # Log risk warnings
-                    for warning in risk_status["warnings"]:
-                        print(f"{Fore.YELLOW}RISK WARNING: {warning}{Style.RESET_ALL}")
+                    if self.risk_manager.is_trading_halted():
+                        self._say_halted()
+                else:
+                    self._check_drawdown(current_portfolio_value)
 
                 self.manage_trades()
                 time.sleep(0.5)

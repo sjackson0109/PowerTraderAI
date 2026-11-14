@@ -101,15 +101,18 @@ class DustLeftBySell(LegacyPaperTrader):
 
     def test_a_remainder_too_small_to_sell_does_not_stop_a_new_entry(self):
         self.markets.minimum = 1.0  # the smallest order the exchanges take: $1
+        self.markets.step = 0.00001  # the step a sell is rounded down to
         trader = self.trader(dict(self.SETTINGS))
         exchange = tm.get_paper_exchange()
-        exchange.place_order("BTC-USD", "buy", 0.000001)  # ~$0.0001 of BTC
+        exchange.place_order("BTC-USD", "buy", 0.050001)
+        exchange.place_order("BTC-USD", "sell", 0.050001)  # 0.05 is sold
+        self.assertAlmostEqual(btc_held(), 0.000001, places=10)  # ~$0.0001 of BTC
         self.signal(7)
         with mock.patch.object(trader, "place_sell_order") as sell:
             trader.manage_trades()
         sell.assert_not_called()  # the remainder is left alone
         buys = [o for o in exchange.account.orders.values() if o.side.value == "buy"]
-        self.assertEqual(len(buys), 2)  # the remainder, then the trader's entry
+        self.assertEqual(len(buys), 2)  # the remainder's, then the trader's entry
         self.assertGreater(btc_held(), 0.5)  # ~1% of $10,000 at ~100
 
     def test_a_holding_worth_an_order_still_counts_as_held(self):

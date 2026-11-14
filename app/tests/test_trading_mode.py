@@ -443,10 +443,11 @@ class TraderGateTests(unittest.TestCase):
         patches = [
             mock.patch.object(self.pt_trader, "HUB_DATA_DIR", self.tmp.name),
             # nothing in these tests may use the network, public quotes included:
-            # the exchange layer gives no quote and no trading fees (paper fills pay
-            # the paper account's own 0.1%)
+            # the exchange layer gives no quote, no trading fees (paper fills pay
+            # the paper account's own 0.1%) and no sell step or minimum order
             mock.patch.object(tm, "_layer_quote", return_value=None),
             mock.patch.object(tm, "_layer_fees", return_value=None),
+            mock.patch.object(tm, "_layer_venue_rules", return_value=tm.VenueRules()),
         ]
         for p in patches:
             p.start()

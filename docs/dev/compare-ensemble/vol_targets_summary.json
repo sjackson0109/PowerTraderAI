@@ -1,0 +1,236 @@
+[
+  {
+    "intrabar_max_drawdown": 0.0710380250878012,
+    "max_drawdown": 0.057307724464366425,
+    "mean_committed": 0.021084247593573566,
+    "net_usd": 3197.6055320875093,
+    "random_entries_at_or_above": {
+      "max": 0.12,
+      "min": 0.055,
+      "pooled": 0.0875
+    },
+    "return_per_capital_day": 0.006140724220555871,
+    "seeds": 10,
+    "sizing": "own",
+    "strategy": "STRAT-004",
+    "trades": 99
+  },
+  {
+    "intrabar_max_drawdown": 0.020283802695359354,
+    "max_drawdown": 0.017641435107895564,
+    "mean_committed": 0.008369587869401666,
+    "mean_scale": 0.35703151232753816,
+    "net_usd": 1068.5558412876721,
+    "random_entries_at_or_above": {
+      "max": 0.165,
+      "min": 0.095,
+      "pooled": 0.12250000000000001
+    },
+    "random_order_drawdown_at_or_below": {
+      "max": 0.08,
+      "min": 0.025,
+      "pooled": 0.05
+    },
+    "random_order_net_at_or_above": {
+      "max": 0.58,
+      "min": 0.425,
+      "pooled": 0.4885
+    },
+    "return_per_capital_day": 0.005679933168223761,
+    "seeds": 10,
+    "sizing": "25%",
+    "strategy": "STRAT-004",
+    "trades": 99
+  },
+  {
+    "intrabar_max_drawdown": 0.03887450882041465,
+    "max_drawdown": 0.03384432497420822,
+    "mean_committed": 0.015435610147362921,
+    "mean_scale": 0.6769285342081944,
+    "net_usd": 2097.5564426722585,
+    "random_entries_at_or_above": {
+      "max": 0.185,
+      "min": 0.095,
+      "pooled": 0.131
+    },
+    "random_order_drawdown_at_or_below": {
+      "max": 0.095,
+      "min": 0.045,
+      "pooled": 0.0675
+    },
+    "random_order_net_at_or_above": {
+      "max": 0.56,
+      "min": 0.42,
+      "pooled": 0.487
+    },
+    "return_per_capital_day": 0.005778990107297455,
+    "seeds": 10,
+    "sizing": "50%",
+    "strategy": "STRAT-004",
+    "trades": 99
+  },
+  {
+    "intrabar_max_drawdown": 0.05600701728882437,
+    "max_drawdown": 0.04753389904857416,
+    "mean_committed": 0.018907545900524663,
+    "mean_scale": 0.8505138954406094,
+    "net_usd": 2996.917560828228,
+    "random_entries_at_or_above": {
+      "max": 0.15,
+      "min": 0.07,
+      "pooled": 0.10400000000000001
+    },
+    "random_order_drawdown_at_or_below": {
+      "max": 0.34,
+      "min": 0.195,
+      "pooled": 0.264
+    },
+    "random_order_net_at_or_above": {
+      "max": 0.275,
+      "min": 0.165,
+      "pooled": 0.2085
+    },
+    "return_per_capital_day": 0.006485909770790701,
+    "seeds": 10,
+    "sizing": "75%",
+    "strategy": "STRAT-004",
+    "trades": 99
+  },
+  {
+    "ensemble": {
+      "halt_reached": "2021-01-22T00:00:00+00:00",
+      "intrabar_max_drawdown": 0.4726485937177972,
+      "max_drawdown": 0.42227048237174575,
+      "mean_committed": 0.18909506332037632,
+      "net_per_point_of_fall": 891.5669929409446,
+      "net_usd": 37648.24241758995,
+      "skipped_cash": 62,
+      "trades": 630
+    },
+    "intrabar_max_drawdown": 0.056970408228949054,
+    "max_drawdown": 0.04303209596513925,
+    "mean_committed": 0.023259908829782683,
+    "net_usd": 2630.336357315653,
+    "random_entries_at_or_above": {
+      "max": 0.055,
+      "min": 0.02,
+      "pooled": 0.0405
+    },
+    "return_per_capital_day": 0.00473433939322107,
+    "seeds": 10,
+    "sizing": "own",
+    "strategy": "STRAT-007",
+    "trades": 237
+  },
+  {
+    "ensemble": {
+      "halt_reached": "2021-02-24T00:00:00+00:00",
+      "intrabar_max_drawdown": 0.23874775346121524,
+      "max_drawdown": 0.22257417227636941,
+      "mean_committed": 0.0802218477279453,
+      "net_per_point_of_fall": 421.4955976660534,
+      "net_usd": 9381.403376865546,
+      "skipped_cash": 0,
+      "trades": 647
+    },
+    "intrabar_max_drawdown": 0.018692068904684826,
+    "max_drawdown": 0.01606122773469562,
+    "mean_committed": 0.008947400981751463,
+    "mean_scale": 0.3688996663243572,
+    "net_usd": 860.9177848102798,
+    "random_entries_at_or_above": {
+      "max": 0.075,
+      "min": 0.015,
+      "pooled": 0.040999999999999995
+    },
+    "random_order_drawdown_at_or_below": {
+      "max": 0.25,
+      "min": 0.155,
+      "pooled": 0.21200000000000002
+    },
+    "random_order_net_at_or_above": {
+      "max": 0.65,
+      "min": 0.37,
+      "pooled": 0.46799999999999997
+    },
+    "return_per_capital_day": 0.004361397803910986,
+    "seeds": 10,
+    "sizing": "25%",
+    "strategy": "STRAT-007",
+    "trades": 237
+  },
+  {
+    "ensemble": {
+      "halt_reached": "2021-02-21T00:00:00+00:00",
+      "intrabar_max_drawdown": 0.36036930087123126,
+      "max_drawdown": 0.3432677251571635,
+      "mean_committed": 0.1444571747689823,
+      "net_per_point_of_fall": 611.7032746484352,
+      "net_usd": 20997.799155975597,
+      "skipped_cash": 0,
+      "trades": 647
+    },
+    "intrabar_max_drawdown": 0.034028475812447646,
+    "max_drawdown": 0.029113546120248638,
+    "mean_committed": 0.016603225239516184,
+    "mean_scale": 0.6959450490775728,
+    "net_usd": 1666.700646529312,
+    "random_entries_at_or_above": {
+      "max": 0.06,
+      "min": 0.02,
+      "pooled": 0.039
+    },
+    "random_order_drawdown_at_or_below": {
+      "max": 0.2,
+      "min": 0.095,
+      "pooled": 0.1585
+    },
+    "random_order_net_at_or_above": {
+      "max": 0.705,
+      "min": 0.565,
+      "pooled": 0.6295
+    },
+    "return_per_capital_day": 0.004421653882003477,
+    "seeds": 10,
+    "sizing": "50%",
+    "strategy": "STRAT-007",
+    "trades": 237
+  },
+  {
+    "ensemble": {
+      "halt_reached": "2021-02-21T00:00:00+00:00",
+      "intrabar_max_drawdown": 0.43636298523420675,
+      "max_drawdown": 0.40831877712272935,
+      "mean_committed": 0.17452094528221548,
+      "net_per_point_of_fall": 803.7650716158345,
+      "net_usd": 32819.23711361405,
+      "skipped_cash": 35,
+      "trades": 636
+    },
+    "intrabar_max_drawdown": 0.04277407310147896,
+    "max_drawdown": 0.03545978069020376,
+    "mean_committed": 0.02074653612197301,
+    "mean_scale": 0.8729398157917444,
+    "net_usd": 2146.3865943851215,
+    "random_entries_at_or_above": {
+      "max": 0.05,
+      "min": 0.02,
+      "pooled": 0.036
+    },
+    "random_order_drawdown_at_or_below": {
+      "max": 0.075,
+      "min": 0.02,
+      "pooled": 0.053500000000000006
+    },
+    "random_order_net_at_or_above": {
+      "max": 0.795,
+      "min": 0.72,
+      "pooled": 0.763
+    },
+    "return_per_capital_day": 0.004451522669672126,
+    "seeds": 10,
+    "sizing": "75%",
+    "strategy": "STRAT-007",
+    "trades": 237
+  }
+]

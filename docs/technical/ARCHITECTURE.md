@@ -159,6 +159,8 @@ coins, the default, or a chosen set of them; `paper_coins.py`). Held positions a
 says. The old `strategy.symbols` (default BTC only) is ignored.
 Entry size is the trader's existing start allocation; a strategy exit sells only the quantity the trader's own
 ledger says it bought (never the user's other holdings), and a holding without a ledger cost basis is never sold.
+The legacy engine works on the same quantity: its trailing margin sells only that, and its DCA buy is sized from
+it; a coin the trader holds none of (or only a remainder of too small to sell) gets no order from it.
 If the last closed candle is older than 2x the timeframe the engine returns `HOLD` with reason `STALE_CANDLES`.
 An entry is acted on only within 15 minutes of its bar's close (`ENTRY_WINDOW_S`), where the backtester fills it (at
 the next bar's open), and a refused one is retried within that time only. Later the engine returns `HOLD` with reason

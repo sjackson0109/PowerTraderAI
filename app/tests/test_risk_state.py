@@ -279,6 +279,53 @@ def test_the_view_shows_the_halt(tmp_path):
     assert risk_state.current(None) == risk_state.RiskView(0.0, 0.0)
 
 
+def test_the_view_shows_what_the_value_leaves_out_and_why_buys_wait(tmp_path):
+    books = str(tmp_path)
+    risk_state.write_state(books, {"peak_value": 50.0})  # a file from before
+    view = risk_state.current(books)
+    assert (view.not_counted, view.buys_waiting, view.buys_waiting_ts) == ((), "", 0.0)
+    risk_state.write_state(
+        books,
+        {
+            "peak_value": 50.0,
+            "not_counted": [
+                {"asset": "GBP", "quantity": 1250.0, "why": "no USD price"},
+                {"asset": "", "quantity": 1.0},  # unusable entries are skipped
+                "XRP",
+            ],
+            "buys_waiting": "no account value",
+            "buys_waiting_ts": 9.0,
+        },
+    )
+    view = risk_state.current(books)
+    assert view.not_counted == (("GBP", 1250.0, "no USD price"),)
+    assert (view.buys_waiting, view.buys_waiting_ts) == ("no account value", 9.0)
+    assert view.peak_value == 50.0
+
+
+def test_a_peak_reset_clears_the_last_balances(tmp_path):
+    state = {
+        "peak_value": 10.0,
+        "last_balances": {"USD": 6.0, "BTC": 0.04},
+        "last_balances_ts": 5.0,
+        "balance_changes": [{"ts": 4.0, "kind": "loss", "value": -1.0}],
+    }
+    after = risk_state.apply_requests(state, {"reset_peak": {"ts": 9.0, "value": 8.0}})
+    assert "last_balances" not in after and "last_balances_ts" not in after
+    assert after["peak_value"] == 8.0
+    assert after["balance_changes"] == state["balance_changes"]  # kept, as facts
+    cleared = risk_state.apply_requests(
+        state, {"reset_peak": {"ts": 9.0, "value": None}}
+    )
+    assert "last_balances" not in cleared  # a Paper Account save clears them too
+    # a reset applied before is not applied again
+    again = dict(after, last_balances={"USD": 7.0}, last_balances_ts=10.0)
+    assert (
+        risk_state.apply_requests(again, {"reset_peak": {"ts": 9.0, "value": 8.0}})
+        == again
+    )
+
+
 from helpers import PaperTraderCase  # noqa: E402
 
 

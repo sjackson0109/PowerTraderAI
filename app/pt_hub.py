@@ -6405,6 +6405,8 @@ Platform: {sys.platform}
             total_val = float(acct.get("total_account_value", 0.0) or 0.0)
 
             self._last_total_account_value = total_val
+            # what the trader's drawdown stop measured (Settings > Risk)
+            self._last_halt_equity = acct.get("halt_equity")
 
             from_book = data.get("source") == "paper_book"
             self.lbl_acct_total_value.config(
@@ -7539,6 +7541,16 @@ Platform: {sys.platform}
             return None
         return value if value > 0.0 else None
 
+    def _shown_halt_value(self) -> Optional[float]:
+        """What the trader's drawdown stop measured (trader_status.json's
+        ``halt_equity``: every balance, funds on hold included), or the account value
+        when the trader has not reported one."""
+        try:
+            value = float(getattr(self, "_last_halt_equity", None) or 0.0)
+        except (TypeError, ValueError):
+            value = 0.0
+        return value if value > 0.0 else self._shown_account_value()
+
     def open_risk_settings(self, parent=None, on_saved=None):
         """Settings > Risk: the account drawdown levels, the peak they are
         measured from, and Resume trading after an emergency stop
@@ -7569,6 +7581,7 @@ Platform: {sys.platform}
                 parent or self,
                 books_dir=getattr(self, "_books_dir", None),
                 account_value=self._shown_account_value,
+                halt_value=self._shown_halt_value,
                 limits={
                     key: self.settings.get(key, DEFAULT_SETTINGS[key])
                     for key in RISK_LIMIT_KEYS

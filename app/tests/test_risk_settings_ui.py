@@ -262,6 +262,136 @@ def test_reset_peak_sets_the_peak_to_the_account_value_after_asking(
     win.destroy()
 
 
+def test_holdings_left_out_of_the_account_value_are_listed(root, folder, books):
+    risk_state.write_state(
+        books,
+        {
+            "peak_value": 10_000.0,
+            "not_counted": [
+                {"asset": "GBP", "quantity": 1250.0, "why": "no USD price"},
+                {
+                    "asset": "BTC",
+                    "quantity": 0.04,
+                    "why": "no price for over 10 minutes",
+                },
+            ],
+        },
+    )
+    win = open_window(root, folder, books, account=6_000.0)
+    assert win.not_counted_var.get() == (
+        "Not counted in the account value: GBP 1,250.00 (no USD price), "
+        "BTC 0.04 (no price for over 10 minutes)."
+    )
+    assert win.not_counted_var.get() in texts(win)
+    win.destroy()
+
+
+def test_buys_waiting_is_shown_with_why(root, folder, books):
+    risk_state.write_state(
+        books,
+        {
+            "buys_waiting": "no account value for over 10 minutes (the balances "
+            "could not be read)",
+            "buys_waiting_ts": 1.7e9,
+        },
+    )
+    win = open_window(root, folder, books)
+    assert win.waiting_var.get().startswith(
+        "Buys are waiting: no account value for over 10 minutes (the balances "
+        "could not be read), since "
+    )
+    assert win.waiting_var.get().endswith(". Sells still go through.")
+    win.destroy()
+
+
+def test_with_everything_counted_and_no_wait_neither_line_shows(root, folder, books):
+    risk_state.write_state(books, {"peak_value": 10_000.0})  # an older file
+    win = open_window(root, folder, books, account=9_500.0)
+    assert win.not_counted_var.get() == "" and win.waiting_var.get() == ""
+    win.destroy()
+
+
+def test_the_drawdown_is_on_the_stops_measure_and_the_limits_on_the_account_value(
+    root, folder, books
+):
+    risk_state.write_state(books, {"peak_value": 12_000.0, "peak_ts": 1.7e9})
+    win = ui.RiskSettingsWindow(
+        root,
+        books_dir=books,
+        account_value=lambda: 10_000.0,  # the Account panel: entries are sized on it
+        halt_value=lambda: 11_400.0,  # every balance, funds on hold included
+        limits=dict(LIMITS_SAVED),
+        save_limits=lambda values: None,
+        manager_factory=lambda: manager(folder),
+        messagebox=Box(),
+    )
+    win.withdraw()
+    assert win.account_var.get() == "$11,400.00, as last reported by the trader"
+    assert win.drawdown_var.get() == "5.00%"
+    assert win.hints["start_allocation_pct"].get().startswith("≈ $100.00 per entry")
+    assert any("funds on hold included" in t for t in texts(win))
+    assert win.reset_peak()
+    assert risk_state.current(books).peak_value == 11_400.0
+    win.destroy()
+
+
+def test_a_peak_scaled_once_says_so_until_it_is_reset(root, folder, books):
+    risk_state.write_state(
+        books,
+        {
+            "peak_value": 12_150.54,
+            "peak_measure": "all_balances",
+            "peak_scaled": {"ts": 1.7e9, "from": 10_000.0, "to": 12_150.54},
+        },
+    )
+    win = open_window(root, folder, books, account=11_300.0)
+    assert win.scaled_var.get().startswith(
+        "The peak was scaled from $10,000.00 to $12,150.54 on "
+    )
+    assert win.scaled_var.get().endswith(
+        ", when funds on hold and the stablecoins were first counted."
+    )
+    assert win.reset_peak()
+    assert win.scaled_var.get() == ""
+    win.destroy()
+
+
+def test_balance_changes_no_fill_explains_are_listed(root, folder, books):
+    risk_state.write_state(
+        books,
+        {
+            "peak_value": 11_075.27,
+            "balance_changes": [
+                {
+                    "ts": 1.7e9,
+                    "kind": "loss",
+                    "value": -10.0,
+                    "assets": {"USD": -1000.0, "BTC": 0.0099},
+                },
+                {
+                    "ts": 1.7e9 + 60,
+                    "kind": "deposit",
+                    "value": 1000.0,
+                    "assets": {"USD": 1000.0},
+                    "peak_from": 10_000.0,
+                    "peak_to": 11_075.27,
+                },
+            ],
+        },
+    )
+    win = open_window(root, folder, books, account=10_300.0)
+    lines = win.changes_var.get().splitlines()
+    assert lines[0] == "Balance changes no recorded fill explains:"
+    assert lines[1].startswith("Rose by $1,000.00 (USD +1,000.00) on ")
+    assert lines[1].endswith(
+        ": counted as a deposit; the peak was scaled from $10,000.00 to "
+        "$11,075.27, so the drawdown is unchanged."
+    )
+    assert lines[2].startswith("Fell by $10.00 (USD -1,000.00, BTC +0.0099) on ")
+    assert lines[2].endswith(": counted as a loss.")
+    win.destroy()
+
+
 def test_reset_peak_needs_an_account_value(root, folder, books):
     box = Box()
     win = open_window(root, folder, books, account=None, box=box)
@@ -329,6 +459,29 @@ def test_settings_opens_the_risk_window_next_to_strategy(hub):
         in label_texts(win)
     )
     assert tm.read_drawdown_levels().emergency_pct == 10.0  # pt_config.json
+    win.destroy()
+
+
+def test_the_hub_shows_the_stops_measure_from_the_trader_status(hub):
+    os.makedirs(os.path.dirname(hub.trader_status_path), exist_ok=True)
+    with open(hub.trader_status_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "timestamp": 1.7e9,
+                "account": {"total_account_value": 10_000.0, "halt_equity": 12_000.0},
+                "positions": {},
+            },
+            f,
+        )
+    hub._last_trader_status_mtime = None
+    hub._refresh_trader_status()
+    assert hub._shown_account_value() == 10_000.0
+    assert hub._shown_halt_value() == 12_000.0
+    risk_state.write_state(hub._books_dir, {"peak_value": 12_500.0})
+    win = hub.open_risk_settings()
+    win.withdraw()
+    assert win.account_var.get() == "$12,000.00, as last reported by the trader"
+    assert win.drawdown_var.get() == "4.00%"
     win.destroy()
 
 

@@ -5,8 +5,8 @@ PTAI-RD-001 backlog 3.1 and work package 4.2, run on 2026-11-13. **Exploration o
 ## Verdict
 
 **The ensemble ended ahead of an equal-weight hold, with a much smaller fall. But on one path, the lead in returns cannot be told from chance.**
-- **Return:** about 4 points a year ahead in mean daily log return, but the bootstrap's 95% interval runs from −33 to +44 points, and 42% of resamples were at or below zero.
-- **Drawdown:** the largest fall was 42% against the hold's 72%. That is one path, untested.
+- **Return:** about 2 points a year ahead in mean daily log return, but the bootstrap's 95% interval runs from −37 to +45 points, and 46% of resamples were at or below zero. (First published as 4 points, −33 to +44 and 42%, against a hold that left two coins unbought: see the correction under §1.)
+- **Drawdown:** the largest fall was 42% against the hold's 72.5%. That is one path, untested.
 - **Volatility sizing:** it cut every drawdown, but by about as much as the same sizes handed out in random order (5% and 21% of random orders did as well). It also cut the net by two thirds or more.
 - **At 50% and 75% a year (§4, added the same day, O18):** no consistent sign that the timing of the sizes helps. Across six comparisons (two strategies, three targets), the share of random orders that fell no further ranged from 5% to 26%, with no pattern by strategy or target. The smallest, 5.0%, is not unusual among six looks (Holm-adjusted, 30%). Sizing also made the ensemble's book worse per unit of drawdown at every target.
 
@@ -34,7 +34,7 @@ Both are fully invested by design, and both are in the same $13,476 account.
 | | Net | Compound a year | Largest fall (closes) | Within the bar | Longest below a high | Trades |
 |---|---:|---:|---:|---:|---:|---:|
 | **Ensemble** | **+$37,648 (+279%)** | **36.0%** | **42.2%** | 47.3%* | 1,031 days (to 2024-03-08) | 630 |
-| Equal-weight hold | +$29,095 (+216%) | 30.5% | 72.2% | 75.4% | 1,306 days (to 2024-12-08) | 9 |
+| Equal-weight hold | +$32,955 (+245%)† | 33.1%† | 72.5%† | 74.6%† | 1,121 days (to 2024-12-04)† | 9 |
 | Ensemble, volatility-sized | +$9,381 (+70%) | 13.0% | 22.3% | 23.9%* | 1,031 days | 647 |
 
 \* **Corrected on 2026-11-13** (first published as 45.1% and 22.7%).
@@ -45,17 +45,28 @@ Both are fully invested by design, and both are in the same $13,476 account.
   - the volatility-sized book's intrabar halt date, from 2021-02-23 to 2021-02-21.
 - **Unchanged:** every other figure (net, trades, the close-based falls, the hold) came out identical.
 
+† **Corrected on 2026-11-14: the hold now buys every coin.**
+- **What was wrong:** the hold first published sized each late-listed coin at 1/9 of the account as it had grown by then, more than the cash left. Two of its nine coins were never bought, so it held seven coins and kept the rest as cash. It was published as +$29,095 (+216%), 30.5% a year, falls of 72.2% and 75.4%, 1,306 days below a high, and 9 trades, though it made 7.
+- **The rule now** (the owner, 2026-11-14; `strategy_lab.ensemble.Ensemble.hold`): each coin is bought with its own ninth of the starting account at its first decision bar and held to the last close. A late coin's ninth waits as cash until then.
+- **Its entries:**
+  - BNB, BTC, DASH, ETH and ZEC on 2021-01-02;
+  - DOGE on 2021-06-25 and SOL on 2021-07-09;
+  - XRP on 2023-08-03 (after its halt gap);
+  - HYPE on 2024-12-28.
+- **Recomputed** with `hold_correction.py`, on the code that SR1-E2 uses (`compare-ensemble/ensemble_periods_funded.json`, `ensemble_difference_funded.json`).
+- **Unchanged:** the books and every member came out the same. The records in `compare_ensemble.json` keep the hold as it was first run.
+
 **By calendar year:**
 
 | | 2021 | 2022 | 2023 | 2024 | 2025 (to May 6) |
 |---|---:|---:|---:|---:|---:|
 | Ensemble | +109% | −12% | +30% | +71% | −7% |
-| Equal-weight hold | +209% (from its first entry) | −56% | +33% | +116% | −19% |
+| Equal-weight hold† | +260% (from its first entry) | −62% | +54% | +103% | −20% |
 | Ensemble, volatility-sized | +29% | −4% | +12% | +26% | −3% |
 
 - **Years at or above 10%:** 3 of 4 whole years for the ensemble; 2 of 3 for the hold, whose 2021 is not whole.
-- **Where the gap comes from:** 2022. The ensemble lost 12% where the hold lost 56%.
-- **Each member alone** (with the coin's whole 1/9): four of the seven (20, 30, 60 and 360 days) beat the hold's net, and the 90-, 150- and 250-day members did not. Every one fell less than the hold. By days, with trades a coin a year:
+- **Where the gap comes from:** 2022. The ensemble lost 12% where the hold lost 62%.
+- **Each member alone** (with the coin's whole 1/9): three of the seven (20, 30 and 60 days) beat the hold's net. The 360-day member fell $31 short, and the 90-, 150- and 250-day members did not come close. Every one fell less than the hold. By days, with trades a coin a year:
 
 | Days | 20 | 30 | 60 | 90 | 150 | 250 | 360 |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -67,12 +78,12 @@ Both are fully invested by design, and both are in the same $13,476 account.
 - **Skipped entries:** the ensemble skipped 62 entries because the cash was in other slices that had gained. It sizes once at entry and never re-sizes, as the branch's notes say.
 
 **How sure (`ensemble_difference.py`):**
-- the daily log-return difference (book less hold), annualised: +0.041;
+- the daily log-return difference (book less hold), annualised: +0.022†;
 - a stationary bootstrap of the days (mean block 20), as 10 seeded runs of 500;
-- pooled 95% interval −0.327 to +0.443; 41.5% of resamples at or below zero;
+- pooled 95% interval −0.367 to +0.448; 46.2% of resamples at or below zero;
 - every run's interval also spans zero (each run is listed in the file).
 
-This is descriptive, not a registered test. The volatility-sized book is −0.144 against the hold (interval −0.637 to +0.373; 70% at or below zero).
+This is descriptive, not a registered test. The volatility-sized book is −0.164 against the hold (interval −0.678 to +0.380; 72% at or below zero).
 
 ## 2. Volatility sizing
 
@@ -155,6 +166,7 @@ This is descriptive, not a registered test. The volatility-sized book is −0.14
 - `run_compare_ensemble.py`: the four set-ups, 10 seeds each, in a sandbox (`compare-ensemble/run.sh.txt`).
 - `ensemble_periods.py`: the books' period returns and drawdowns, recomputed for this report (nothing logged).
 - `ensemble_difference.py`: the bootstrap.
+- `hold_correction.py`: the books against the hold that buys every coin (the correction of 2026-11-14; nothing logged).
 - `run_vol_targets.py`: §4's four runs; `vol_targets_summary.py`: its tables; `ensemble_recheck.py`: the correction in §1 (nothing logged).
 - `compare-ensemble/`:
   - `compare_ensemble.json`: every run's record, with daily and weekly rows trimmed;
@@ -162,6 +174,7 @@ This is descriptive, not a registered test. The volatility-sized book is −0.14
   - `ensemble_difference.json`;
   - `vol_targets.json`: §4's records, trimmed the same way, and `vol_targets_summary.json`;
   - `ensemble_recheck.json`: the correction in §1;
+  - `ensemble_periods_funded.json` and `ensemble_difference_funded.json`: the hold correction in §1 (`run-holdfix.sh.txt`);
   - `trials.jsonl`: the sandbox's trial log after §4 (84 lines);
   - `run-o18.sh.txt`: how §4 and the correction were run.
 

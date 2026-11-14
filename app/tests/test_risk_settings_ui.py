@@ -356,6 +356,42 @@ def test_a_peak_scaled_once_says_so_until_it_is_reset(root, folder, books):
     win.destroy()
 
 
+def test_balance_changes_no_fill_explains_are_listed(root, folder, books):
+    risk_state.write_state(
+        books,
+        {
+            "peak_value": 11_075.27,
+            "balance_changes": [
+                {
+                    "ts": 1.7e9,
+                    "kind": "loss",
+                    "value": -10.0,
+                    "assets": {"USD": -1000.0, "BTC": 0.0099},
+                },
+                {
+                    "ts": 1.7e9 + 60,
+                    "kind": "deposit",
+                    "value": 1000.0,
+                    "assets": {"USD": 1000.0},
+                    "peak_from": 10_000.0,
+                    "peak_to": 11_075.27,
+                },
+            ],
+        },
+    )
+    win = open_window(root, folder, books, account=10_300.0)
+    lines = win.changes_var.get().splitlines()
+    assert lines[0] == "Balance changes no recorded fill explains:"
+    assert lines[1].startswith("Rose by $1,000.00 (USD +1,000.00) on ")
+    assert lines[1].endswith(
+        ": counted as a deposit; the peak was scaled from $10,000.00 to "
+        "$11,075.27, so the drawdown is unchanged."
+    )
+    assert lines[2].startswith("Fell by $10.00 (USD -1,000.00, BTC +0.0099) on ")
+    assert lines[2].endswith(": counted as a loss.")
+    win.destroy()
+
+
 def test_reset_peak_needs_an_account_value(root, folder, books):
     box = Box()
     win = open_window(root, folder, books, account=None, box=box)

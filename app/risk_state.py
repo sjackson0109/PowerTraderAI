@@ -15,6 +15,13 @@ writer, so neither can undo the other's change:
   every balance, funds on hold included, the cash assets at $1). A file without it
   has a peak measured on the account value, which the trader scales once, on its
   first pass, keeping the drawdown (``peak_scaled`` records how).
+  ``last_balances`` (and ``last_balances_ts``) are the stop's balances the trader
+  last settled on, the cash assets together as ``USD``: each pass it compares them,
+  after the fills recorded since, to find a change no fill explains, also one made
+  while it was stopped. ``balance_changes`` lists the last such changes (a rise is
+  counted as a deposit, a fall as a loss). A file without them has nothing to
+  compare, as before; a Reset peak (and so a Paper Account save) clears them, so
+  nothing is compared across it.
 * ``risk_requests.json`` - the hub's: "set the peak to this value" (Reset peak; no
   value clears the peak, so the next account value is the peak) and "resume
   trading" (Resume trading), each with the time it was asked for.
@@ -152,6 +159,9 @@ def apply_requests(
         value = _number(raw)
         if (raw is None or value > 0.0) and ts > _number(out.get("peak_reset_ts")):
             out.update(peak_value=value, peak_ts=ts if value else 0.0, peak_reset_ts=ts)
+            # nothing is compared across a reset: the next balances start afresh
+            out.pop("last_balances", None)
+            out.pop("last_balances_ts", None)
     resume = requests.get("resume")
     if isinstance(resume, Mapping) and out.get("halted"):
         ts = _number(resume.get("ts"))
@@ -160,6 +170,18 @@ def apply_requests(
                 out.pop(key, None)
             out["resumed_ts"] = ts
     return out
+
+
+@dataclass(frozen=True)
+class BalanceChange:
+    """A change in the stop's balances that no recorded fill explained."""
+
+    ts: float
+    kind: str  # "deposit" (a rise) or "loss" (a fall)
+    value: float  # at the bids then: above 0 a rise, below 0 a fall
+    assets: Tuple[Tuple[str, float], ...]  # (asset, change in quantity)
+    peak_from: Optional[float] = None  # a deposit: the peak scaled from and to
+    peak_to: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -179,6 +201,33 @@ class RiskView:
     # (from, to, when) the saved peak was scaled to the stop's own measure, until a
     # Reset peak after it
     peak_scaled: Optional[Tuple[float, float, float]] = None
+    balance_changes: Tuple[BalanceChange, ...] = ()  # oldest first
+
+
+def _balance_changes(entries: Any) -> Tuple[BalanceChange, ...]:
+    """The saved ``balance_changes``; unusable entries are skipped."""
+    out = []
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, Mapping) or entry.get("kind") not in (
+            "deposit",
+            "loss",
+        ):
+            continue
+        assets = entry.get("assets")
+        assets = assets if isinstance(assets, Mapping) else {}
+        peak_from = _number(entry.get("peak_from"))
+        peak_to = _number(entry.get("peak_to"))
+        out.append(
+            BalanceChange(
+                ts=_number(entry.get("ts")),
+                kind=str(entry["kind"]),
+                value=_number(entry.get("value")),
+                assets=tuple((str(a), _number(q)) for a, q in assets.items()),
+                peak_from=peak_from if peak_from > 0.0 else None,
+                peak_to=peak_to if peak_to > 0.0 else None,
+            )
+        )
+    return tuple(out)
 
 
 def _peak_scaled(state: Mapping[str, Any]) -> Optional[Tuple[float, float, float]]:
@@ -224,6 +273,7 @@ def current(folder: Optional[str]) -> RiskView:
         buys_waiting=str(state.get("buys_waiting") or ""),
         buys_waiting_ts=_number(state.get("buys_waiting_ts")),
         peak_scaled=_peak_scaled(state),
+        balance_changes=_balance_changes(state.get("balance_changes")),
     )
 
 

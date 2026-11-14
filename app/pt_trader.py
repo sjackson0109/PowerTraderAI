@@ -90,6 +90,17 @@ NOT_YET_PRICED = "no price yet"
 # With no account value at all for this long (the balances cannot be read), the
 # drawdown cannot be checked: buys wait until there is one again; sells go on
 ACCOUNT_VALUE_MAX_AGE_SECONDS = 10 * 60
+# The drawdown stop compares its balances each pass with the last ones it settled on,
+# after the fills recorded since. A change no fill explains is classified only once
+# the balances have been still this long (fixed, as long as the wait for an order of
+# unknown outcome), so both legs of a trade land in one change. Meanwhile buys wait
+# and the stop is checked without the change; sells go on. Then a net rise is a
+# deposit (the peak is scaled with it, keeping the drawdown) and a net fall a loss.
+BALANCE_CHANGE_SETTLE_SECONDS = 60
+# A change worth less than this (a fill's rounding) is not a change
+BALANCE_CHANGE_TOLERANCE_USD = 0.01
+# The cash assets are one balance in that comparison: moving USD into USDC is none
+CASH_KEY = "USD"
 
 
 # Initialize colorama
@@ -331,6 +342,10 @@ def _market_exchanges():
     return market_exchanges()
 
 
+def _cash_first(item: tuple) -> tuple:
+    return (item[0] != CASH_KEY, item[0])
+
+
 class _TraderRiskAdapter:
     """
     The trader's view of risk management, backed by pt_risk.RiskManager.
@@ -468,6 +483,71 @@ class _TraderRiskAdapter:
         self._state["peak_measure"] = risk_state.ALL_BALANCES
         self._save_state()
         return True
+
+    def last_balances(self) -> Optional[tuple]:
+        """(balances, when read) the stop last settled on, or None when there are
+        none (a new install, an older file, or a Reset peak since)."""
+        raw = self._state.get("last_balances")
+        if not isinstance(raw, dict):
+            return None
+        balances = {}
+        for asset, qty in raw.items():
+            try:
+                qty = float(qty)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(qty):
+                balances[str(asset)] = qty
+        try:
+            ts = float(self._state.get("last_balances_ts") or 0.0)
+        except (TypeError, ValueError):
+            ts = 0.0
+        return balances, ts
+
+    def keep_balances(self, balances: Dict[str, float], ts: float) -> None:
+        """The balances to compare the next ones with; saved when they change."""
+        kept = {a: float(q) for a, q in sorted(balances.items()) if abs(q) > 1e-12}
+        if kept != self._state.get("last_balances"):
+            self._state["last_balances"] = kept
+            self._state["last_balances_ts"] = float(ts)
+            self._save_state()
+
+    def count_change(
+        self, change: Dict[str, float], value: float, before: float, after: float
+    ) -> None:
+        """A settled change no recorded fill explains, worth ``value`` at the bids:
+        a rise is a deposit, so the peak is scaled by ``after / before`` (the stop's
+        value with and without it) and the drawdown is what it was; a fall is a loss
+        and changes nothing. Kept for Settings > Risk (the last 10)."""
+        assets = {a: float(q) for a, q in sorted(change.items(), key=_cash_first)}
+        listed = ", ".join(f"{a} {q:+g}" for a, q in assets.items())
+        entry = {"ts": time.time(), "value": float(value), "assets": assets}
+        if value > 0.0:
+            entry["kind"] = "deposit"
+            message = (
+                f"Balances rose by ${value:,.2f} with no recorded fill ({listed}): "
+                "counted as a deposit"
+            )
+            if self.peak_value > 0.0 and before > 0.0:
+                entry["peak_from"] = self.peak_value
+                self.peak_value *= float(after) / float(before)
+                entry["peak_to"] = self.peak_value
+                message += (
+                    f"; peak scaled from ${entry['peak_from']:,.2f} to "
+                    f"${self.peak_value:,.2f}, keeping the drawdown"
+                )
+        else:
+            entry["kind"] = "loss"
+            message = (
+                f"Balances fell by ${-value:,.2f} with no recorded fill ({listed}): "
+                "counted as a loss"
+            )
+        print(message)
+        logger.warning(message)
+        changes = self._state.get("balance_changes")
+        changes = changes if isinstance(changes, list) else []
+        self._state["balance_changes"] = (changes + [entry])[-10:]
+        self._save_state()
 
     def update_portfolio_value(self, value: float) -> None:
         if self.state_dir:
@@ -652,6 +732,9 @@ class CryptoAPITrading:
         self._no_value_yet = False
         # <ASSET>-USD -> when this run first saw it held with no price at all
         self._unpriced_since: Dict[str, float] = {}
+        # a change in the stop's balances no recorded fill explains, waiting to
+        # settle: {"change": {asset: quantity}, "since": when first seen}
+        self._balance_change: Optional[dict] = None
 
         self.dca_levels_triggered = {}  # Track DCA levels for each crypto
         self.dca_levels = list(DCA_LEVELS)  # Hard DCA triggers (percent PnL)
@@ -2008,6 +2091,139 @@ class CryptoAPITrading:
                 value += qty * bid
         return value, not_counted, not_yet
 
+    def _settled_value(
+        self,
+        totals: Dict[str, float],
+        buy_prices: dict,
+        sell_prices: dict,
+        value: float,
+        now: float,
+    ) -> float:
+        """The value the drawdown stop checks this pass. ``totals`` (the stop's
+        balances, worth ``value``) are compared with the last balances it settled on
+        plus the fills recorded since; each asset is valued at its bid
+        (``_held_price``; one with no usable price, or none yet in this run, is not
+        compared this pass, and what the fills say it holds is kept for later). A change no fill explains
+        waits BALANCE_CHANGE_SETTLE_SECONDS, restarting whenever it changes; until
+        then buys wait and the value without it is checked. Settled, a net rise is a
+        deposit and a net fall a loss (``count_change``). A rise is never read as a
+        gain, so a misread can only make the stop stricter; this holds with an order
+        of unknown outcome too, so such a change is classified all the same."""
+        rm = self.risk_manager
+        held: Dict[str, float] = {}
+        for code, qty in totals.items():
+            key = CASH_KEY if code in CASH_ASSETS else code
+            held[key] = held.get(key, 0.0) + float(qty)
+        bids: Dict[str, float] = {}
+
+        def bid(asset: str) -> Optional[float]:
+            if asset == CASH_KEY:
+                return 1.0
+            if asset not in bids:
+                _ask, price, why = self._held_price(
+                    f"{asset}-USD", buy_prices, sell_prices, now
+                )
+                bids[asset] = None if why else price
+            return bids[asset]
+
+        counted = {a: q for a, q in held.items() if bid(a) is not None}
+        saved = rm.last_balances()
+        if saved is None:
+            self._balance_change = None
+            rm.keep_balances(counted, now)  # nothing to compare with yet
+            return value
+        last, last_ts = saved
+        expected = dict(last)
+        for asset, qty in self._fill_changes_since(last_ts).items():
+            expected[asset] = expected.get(asset, 0.0) + qty
+        change: Dict[str, float] = {}
+        compared = set()
+        for asset in set(expected) | set(counted):
+            price = bid(asset)
+            if price is None:
+                continue
+            compared.add(asset)
+            moved = counted.get(asset, 0.0) - expected.get(asset, 0.0)
+            if abs(moved * price) >= BALANCE_CHANGE_TOLERANCE_USD:
+                change[asset] = moved
+        # what to compare with next: these balances, and for an asset not valued
+        # this pass, what the fills say it holds
+        settled = {a: q for a, q in expected.items() if a not in compared}
+        settled.update(counted)
+        if not change:
+            self._balance_change = None
+            rm.keep_balances(settled, now)
+            return value
+        flow = sum(qty * bid(asset) for asset, qty in change.items())
+        before = float(value) - flow
+        pending = self._balance_change
+        if pending is None or not self._same_change(pending["change"], change, bid):
+            pending = self._balance_change = {"change": change, "since": now}
+        if now - pending["since"] < BALANCE_CHANGE_SETTLE_SECONDS:
+            return before
+        rm.count_change(change, flow, before, value)
+        self._balance_change = None
+        rm.keep_balances(settled, now)
+        return value
+
+    @staticmethod
+    def _same_change(seen: dict, change: dict, bid) -> bool:
+        """Whether the balances are where they were when ``seen`` was found."""
+        if set(seen) != set(change):
+            return False
+        return all(
+            abs((change[a] - seen[a]) * bid(a)) < BALANCE_CHANGE_TOLERANCE_USD
+            for a in change
+        )
+
+    def _fill_changes_since(self, since: float) -> Dict[str, float]:
+        """What the fills recorded after ``since`` did to the balances, from
+        trade_history.jsonl (this trader's and Order Management's): each coin's
+        quantity, a fee charged in another asset (``other_fees``), and the cash
+        (CASH_KEY), from the row's cash change or else its quantity, price and fee.
+        A row whose cash cannot be told explains only its coin. Read again only
+        when the file changes."""
+        try:
+            stat = os.stat(self.trade_history_path)
+            key = (since, stat.st_size, stat.st_mtime)
+        except OSError:
+            key = (since, None, None)
+        cached = getattr(self, "_fill_changes", None)
+        if cached is not None and cached[0] == key:
+            return dict(cached[1])
+        changes: Dict[str, float] = {}
+        for row in self._read_trade_history():
+            try:
+                if float(row.get("ts") or 0.0) <= since:
+                    continue
+                side = str(row.get("side") or "").lower().strip()
+                base = str(row.get("symbol") or "").upper().split("-")[0].strip()
+                qty = float(row.get("qty") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if side not in ("buy", "sell") or not base or not qty > 0.0:
+                continue
+            changes[base] = changes.get(base, 0.0) + (qty if side == "buy" else -qty)
+            others = row.get("other_fees")
+            for asset, fee in (others if isinstance(others, dict) else {}).items():
+                try:
+                    key_asset = str(asset).upper()
+                    key_asset = CASH_KEY if key_asset in CASH_ASSETS else key_asset
+                    changes[key_asset] = changes.get(key_asset, 0.0) - float(fee)
+                except (TypeError, ValueError):
+                    continue
+            try:
+                cash = row.get("buying_power_delta")
+                if cash is None:
+                    value = qty * float(row["price"])
+                    fee = float(row.get("fees_usd") or 0.0)
+                    cash = -(value + fee) if side == "buy" else value - fee
+                changes[CASH_KEY] = changes.get(CASH_KEY, 0.0) + float(cash)
+            except (KeyError, TypeError, ValueError):
+                continue  # its cash cannot be told: left unexplained
+        self._fill_changes = (key, dict(changes))
+        return changes
+
     def _held_price(
         self, symbol: str, buy_prices: dict, sell_prices: dict, now: float
     ) -> tuple:
@@ -2044,16 +2260,22 @@ class CryptoAPITrading:
     def _buys_wait_reason(self) -> str:
         """Why buys wait ("" when they do not): while this run's passes have formed
         no account value yet, and with none for over ACCOUNT_VALUE_MAX_AGE_SECONDS,
-        the drawdown cannot be checked, so buys wait until there is one again.
-        Sells are never held back."""
+        the drawdown cannot be checked, so buys wait until there is one again; and
+        while a balance change no recorded fill explains settles
+        (``_settled_value``). Sells are never held back."""
         since = getattr(self, "_account_value_ts", None)
         why = getattr(self, "_no_value_why", "") or "the balances could not be read"
         if getattr(self, "_no_value_yet", False):
             return f"no account value yet since the trader started ({why})"
-        if since is None or time.time() - since <= ACCOUNT_VALUE_MAX_AGE_SECONDS:
-            return ""
-        minutes = ACCOUNT_VALUE_MAX_AGE_SECONDS // 60
-        return f"no account value for over {minutes} minutes ({why})"
+        if since is not None and time.time() - since > ACCOUNT_VALUE_MAX_AGE_SECONDS:
+            minutes = ACCOUNT_VALUE_MAX_AGE_SECONDS // 60
+            return f"no account value for over {minutes} minutes ({why})"
+        if getattr(self, "_balance_change", None):
+            return (
+                "the balances changed with no recorded fill; buys go on once they "
+                f"have been unchanged for {BALANCE_CHANGE_SETTLE_SECONDS} seconds"
+            )
+        return ""
 
     def _risk_check(
         self,
@@ -2882,7 +3104,10 @@ class CryptoAPITrading:
             # here; until then the stop measures the account value, as the peak was
             measured = None
             if self.risk_manager.measure_all_balances(halt_equity, total_account_value):
-                measured = float(halt_equity)
+                # a deposit never reduces the drawdown
+                measured = self._settled_value(
+                    totals, current_buy_prices, current_sell_prices, halt_equity, now
+                )
             # Save last complete snapshot
             self._last_good_account_snapshot = {
                 "total_account_value": float(total_account_value),

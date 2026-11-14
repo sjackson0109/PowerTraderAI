@@ -89,6 +89,19 @@ class MeasureTests(HaltEquityCase):
         self.assertTrue(trader.risk_manager.is_trading_halted())
         self.assertIn("EMERGENCY STOP: Account drawdown 9.0%", said)
 
+    def test_an_asset_held_only_on_hold_with_no_price_yet_holds_the_value_back(self):
+        self.account.holds["SOL"] = 2.0  # all on hold for an order; no quote yet
+        trader = self.live_trader()
+        self.one_pass(trader)
+        self.assertIsNone(trader._get_halt_value())  # as for any held asset
+        self.unpriced_for(trader, "SOL-USD", 11 * 60)
+        self.one_pass(trader)
+        self.assertEqual(trader._get_halt_value(), 10000.0)
+        self.assertEqual(
+            risk_state.current(trader.data_dir).not_counted,
+            (("SOL", 2.0, "no USD price"),),
+        )
+
     def test_the_owners_own_coins_still_count(self):
         self.account.balances["ETH"] = 1.0  # not a coin the trader trades
         self.account.bids["ETH"] = 2000.0
